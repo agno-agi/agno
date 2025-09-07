@@ -225,18 +225,6 @@ class ReaderFactory:
         return cls.create_reader("url")
 
     @classmethod
-    def get_reader_for_url_file(cls, extension: str) -> Reader:
-        """Get the appropriate reader for a URL file extension."""
-        extension = extension.lower()
-
-        if extension == ".pdf":
-            return cls.create_reader("pdf_url")
-        elif extension == ".csv":
-            return cls.create_reader("csv_url")
-        else:
-            return cls.create_reader("url")
-
-    @classmethod
     def get_all_reader_keys(cls) -> List[str]:
         """Get all available reader keys in priority order."""
         # Extract reader keys from method names

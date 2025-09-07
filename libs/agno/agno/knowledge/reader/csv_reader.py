@@ -1,13 +1,9 @@
 import asyncio
 import csv
 import io
-import os
 from pathlib import Path
 from typing import IO, Any, List, Optional, Union
-from urllib.parse import urlparse
 from uuid import uuid4
-
-from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 
 try:
     import aiofiles
@@ -168,72 +164,3 @@ class CSVReader(Reader):
                 f"Error reading async: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}: {e}"
             )
             return []
-
-
-class CSVUrlReader(Reader):
-    """Reader for CSV files"""
-
-    def __init__(
-        self, chunking_strategy: Optional[ChunkingStrategy] = RowChunking(), proxy: Optional[str] = None, **kwargs
-    ):
-        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
-        self.proxy = proxy
-
-    @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
-        """Get the list of supported chunking strategies for CSV URL readers."""
-        return [
-            ChunkingStrategyType.ROW_CHUNKER,
-            ChunkingStrategyType.SEMANTIC_CHUNKER,
-            ChunkingStrategyType.FIXED_SIZE_CHUNKER,
-            ChunkingStrategyType.AGENTIC_CHUNKER,
-            ChunkingStrategyType.DOCUMENT_CHUNKER,
-        ]
-
-    @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
-        return [ContentType.URL]
-
-    def read(self, url: str, name: Optional[str] = None) -> List[Document]:
-        if not url:
-            raise ValueError("No URL provided")
-
-        logger.info(f"Reading: {url}")
-        # Retry the request up to 3 times with exponential backoff
-        response = fetch_with_retry(url, proxy=self.proxy)
-
-        parsed_url = urlparse(url)
-        filename = os.path.basename(parsed_url.path) or "data.csv"
-
-        file_obj = io.BytesIO(response.content)
-        file_obj.name = filename
-        documents = CSVReader().read(file=file_obj, name=name)
-
-        file_obj.close()
-
-        return documents
-
-    async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
-        if not url:
-            raise ValueError("No URL provided")
-
-        import httpx
-
-        logger.info(f"Reading async: {url}")
-
-        client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
-            response = await async_fetch_with_retry(url, client=client)
-
-            parsed_url = urlparse(url)
-            filename = os.path.basename(parsed_url.path) or "data.csv"
-
-            file_obj = io.BytesIO(response.content)
-            file_obj.name = filename
-
-            # Use the async version of CSVReader
-            documents = await CSVReader().async_read(file=file_obj, name=name)
-
-            file_obj.close()
-
-            return documents

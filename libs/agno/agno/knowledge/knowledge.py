@@ -421,6 +421,13 @@ class Knowledge:
         upsert: bool,
         skip_if_exists: bool,
     ):
+        """Load the content in the contextual URL
+
+        1. Set content hash
+        2. Validate the URL
+        3. Read the content
+        4. Prepare and insert the content in the vector database
+        2."""
         log_info(f"Adding content from URL {content.url}")
         content.file_type = "url"
 
@@ -428,13 +435,14 @@ class Knowledge:
             await self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
             return
 
+        # 1. Set content hash
         content.content_hash = self._build_content_hash(content)
         if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
             log_info(f"Content {content.content_hash} already exists, skipping")
             return
         self._add_to_contents_db(content)
 
-        # Validate URL
+        # 2. Validate URL
         try:
             from urllib.parse import urlparse
 
@@ -450,62 +458,19 @@ class Knowledge:
             self._update_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
 
-        # Determine file type from URL
-        url_path = Path(parsed_url.path)  # type: ignore
-        file_extension = url_path.suffix.lower()
+        # 3. Read the content
         read_documents = []
         try:
-            if content.url.endswith("llms-full.txt") or content.url.endswith("llms.txt"):  # type: ignore
-                log_info("Detected llms, using url reader")
-                reader = content.reader or self.url_reader
-                if reader is not None:
-                    # TODO: We will refactor this to eventually pass authorization to all readers
-                    import inspect
+            reader = content.reader or self.url_reader
+            if reader is not None:
+                # TODO: We will refactor this to eventually pass authorization to all readers
+                import inspect
 
-                    read_signature = inspect.signature(reader.read)
-                    if "password" in read_signature.parameters and content.auth and content.auth.password:
-                        read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
-                    else:
-                        read_documents = reader.read(content.url, name=content.name)
-
-            elif file_extension and file_extension is not None:
-                log_info(f"Detected file type: {file_extension} from URL: {content.url}")
-
-                if content.reader:
-                    reader = content.reader
+                read_signature = inspect.signature(reader.read)
+                if "password" in read_signature.parameters and content.auth and content.auth.password:
+                    read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
                 else:
-                    reader = self._select_url_file_reader(file_extension)
-                if reader is not None:
-                    log_info(f"Selected reader: {reader.__class__.__name__}")
-                    # TODO: We will refactor this to eventually pass authorization to all readers
-                    import inspect
-
-                    read_signature = inspect.signature(reader.read)
-                    if "password" in read_signature.parameters and content.auth and content.auth.password:
-                        read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
-                    else:
-                        read_documents = reader.read(content.url, name=content.name)
-                else:
-                    log_info(f"No reader found for file extension: {file_extension}")
-            else:
-                log_info(f"No file extension found for URL: {content.url}, determining website type")
-                if content.reader:
-                    reader = content.reader
-                else:
-                    reader = self._select_url_reader(content.url)  # type: ignore
-                if reader is not None:
-                    log_info(f"Selected reader: {reader.__class__.__name__}")
-                    # TODO: We will refactor this to eventually pass authorization to all readers
-                    import inspect
-
-                    read_signature = inspect.signature(reader.read)
-                    if "password" in read_signature.parameters and content.auth and content.auth.password:
-                        read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
-                    else:
-                        read_documents = reader.read(content.url, name=content.name)
-                else:
-                    log_info(f"No reader found for URL: {content.url}")
-
+                    read_documents = reader.read(content.url, name=content.name)
         except Exception as e:
             log_error(f"Error reading URL: {content.url} - {str(e)}")
             content.status = ContentStatus.FAILED
@@ -513,13 +478,13 @@ class Knowledge:
             self._update_content(content)
             return
 
+        # 4. Prepare and insert the content in the vector database
         file_size = 0
         if read_documents:
             for read_document in read_documents:
                 if read_document.size:
                     file_size += read_document.size
                 read_document.content_id = content.id
-
         await self._handle_vector_db_insert(content, read_documents, upsert)
 
     async def _load_from_content(
@@ -1358,10 +1323,6 @@ class Knowledge:
     def _select_url_reader(self, url: str) -> Reader:
         """Select the appropriate reader for a URL."""
         return ReaderFactory.get_reader_for_url(url)
-
-    def _select_url_file_reader(self, extension: str) -> Reader:
-        """Select the appropriate reader for a URL file extension."""
-        return ReaderFactory.get_reader_for_url_file(extension)
 
     def get_filters(self) -> List[str]:
         return [

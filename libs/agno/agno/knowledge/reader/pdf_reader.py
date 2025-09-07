@@ -8,7 +8,6 @@ from agno.knowledge.chunking.strategy import ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 from agno.utils.log import log_error, log_info, logger
 
 try:
@@ -222,19 +221,19 @@ class BasePDFReader(Reader):
         # Use provided password or fall back to instance password
         pdf_password = password or self.password
         if not pdf_password:
-            logger.error(f"PDF {doc_name} is password protected but no password provided")
+            logger.error(f'PDF file "{doc_name}" is password protected but no password provided')
             return False
 
         try:
             decrypted_pdf = doc_reader.decrypt(pdf_password)
             if decrypted_pdf:
-                log_info(f"Successfully decrypted PDF {doc_name} with user password")
+                log_info(f'Successfully decrypted PDF file "{doc_name}" with user password')
                 return True
             else:
-                log_error(f"Failed to decrypt PDF {doc_name}: incorrect password")
+                log_error(f'Failed to decrypt PDF file "{doc_name}": incorrect password')
                 return False
         except Exception as e:
-            log_error(f"Error decrypting PDF {doc_name}: {e}")
+            log_error(f'Error decrypting PDF file "{doc_name}": {e}')
             return False
 
     def _create_documents(self, pdf_content: List[str], doc_name: str, use_uuid_for_id: bool, page_number_shift):
@@ -368,7 +367,7 @@ class PDFReader(BasePDFReader):
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
-        # Read and chunk.
+        # Read and chunk
         return self._pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=True)
 
     async def async_read(
@@ -403,63 +402,6 @@ class PDFReader(BasePDFReader):
 
         # Read and chunk.
         return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=True)
-
-
-class PDFUrlReader(BasePDFReader):
-    """Reader for PDF files from URL"""
-
-    def __init__(self, proxy: Optional[str] = None, password: Optional[str] = None, **kwargs):
-        super().__init__(password=password, **kwargs)
-        self.proxy = proxy
-
-    @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
-        return [ContentType.URL]
-
-    def read(self, url: str, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
-        if not url:
-            raise ValueError("No url provided")
-
-        from io import BytesIO
-
-        log_info(f"Reading: {url}")
-
-        # Retry the request up to 3 times with exponential backoff
-        response = fetch_with_retry(url, proxy=self.proxy)
-
-        doc_name = name or url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
-        pdf_reader = DocumentReader(BytesIO(response.content))
-
-        # Handle PDF decryption
-        if not self._decrypt_pdf(pdf_reader, doc_name, password):
-            return []
-
-        # Read and chunk.
-        return self._pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=False)
-
-    async def async_read(self, url: str, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
-        if not url:
-            raise ValueError("No url provided")
-
-        from io import BytesIO
-
-        import httpx
-
-        log_info(f"Reading: {url}")
-
-        client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
-            response = await async_fetch_with_retry(url, client=client)
-
-        doc_name = name or url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
-        pdf_reader = DocumentReader(BytesIO(response.content))
-
-        # Handle PDF decryption
-        if not self._decrypt_pdf(pdf_reader, doc_name, password):
-            return []
-
-        # Read and chunk.
-        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=False)
 
 
 class PDFImageReader(BasePDFReader):
@@ -505,61 +447,6 @@ class PDFImageReader(BasePDFReader):
 
         log_info(f"Reading: {doc_name}")
         pdf_reader = DocumentReader(pdf)
-
-        # Handle PDF decryption
-        if not self._decrypt_pdf(pdf_reader, doc_name, password):
-            return []
-
-        # Read and chunk.
-        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
-
-
-class PDFUrlImageReader(BasePDFReader):
-    """Reader for PDF files from URL with text and images extraction"""
-
-    def __init__(self, proxy: Optional[str] = None, password: Optional[str] = None, **kwargs):
-        super().__init__(password=password, **kwargs)
-        self.proxy = proxy
-
-    def read(self, url: str, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
-        if not url:
-            raise ValueError("No url provided")
-
-        from io import BytesIO
-
-        import httpx
-
-        # Read the PDF from the URL
-        log_info(f"Reading: {url}")
-        response = httpx.get(url, proxy=self.proxy) if self.proxy else httpx.get(url)
-
-        doc_name = name or url.split("/")[-1].split(".")[0].replace(" ", "_")
-        pdf_reader = DocumentReader(BytesIO(response.content))
-
-        # Handle PDF decryption
-        if not self._decrypt_pdf(pdf_reader, doc_name, password):
-            return []
-
-        # Read and chunk.
-        return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
-
-    async def async_read(self, url: str, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
-        if not url:
-            raise ValueError("No url provided")
-
-        from io import BytesIO
-
-        import httpx
-
-        log_info(f"Reading: {url}")
-
-        client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
-            response = await client.get(url)
-            response.raise_for_status()
-
-        doc_name = name or url.split("/")[-1].split(".")[0].replace(" ", "_")
-        pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
