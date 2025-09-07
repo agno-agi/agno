@@ -5,12 +5,13 @@ import uuid
 from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import AsyncIterator, Deque, List, Optional, Set, Tuple, Union
+from typing import AsyncIterator, Deque, List, Optional, Set, Tuple, Union, cast
 
 from ag_ui.core import (
     BaseEvent,
     EventType,
     RunFinishedEvent,
+    StateSnapshotEvent,
     StepFinishedEvent,
     StepStartedEvent,
     TextMessageContentEvent,
@@ -173,7 +174,7 @@ def _create_events_from_chunk(
             tool_call = chunk.tool  # type: ignore
             start_event = ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
-                tool_call_id=tool_call.tool_call_id,  # type: ignore
+                tool_call_id=tool_call.tool_call_id or "",
                 tool_call_name=tool_call.tool_name,  # type: ignore
                 parent_message_id=message_id,
             )
@@ -181,7 +182,7 @@ def _create_events_from_chunk(
 
             args_event = ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
-                tool_call_id=tool_call.tool_call_id,  # type: ignore
+                tool_call_id=tool_call.tool_call_id or "",
                 delta=json.dumps(tool_call.tool_args),
             )
             events_to_emit.append(args_event)
@@ -193,14 +194,14 @@ def _create_events_from_chunk(
             if tool_call.tool_call_id not in event_buffer.ended_tool_call_ids:
                 end_event = ToolCallEndEvent(
                     type=EventType.TOOL_CALL_END,
-                    tool_call_id=tool_call.tool_call_id,  # type: ignore
+                    tool_call_id=tool_call.tool_call_id or "",
                 )
                 events_to_emit.append(end_event)
 
                 if tool_call.result is not None:
                     result_event = ToolCallResultEvent(
                         type=EventType.TOOL_CALL_RESULT,
-                        tool_call_id=tool_call.tool_call_id,  # type: ignore
+                        tool_call_id=tool_call.tool_call_id or "",
                         content=str(tool_call.result),
                         role="tool",
                         message_id=str(uuid.uuid4()),
@@ -327,7 +328,9 @@ def _emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseE
 
 
 def stream_agno_response_as_agui_events(
-    response_stream: Iterator[Union[RunResponseEvent, TeamRunResponseEvent]], thread_id: str, run_id: str
+    response_stream: Iterator[Union[RunResponseEvent, TeamRunResponseEvent]],
+    thread_id: str,
+    run_id: str,
 ) -> Iterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
     message_id = str(uuid.uuid4())
@@ -336,6 +339,17 @@ def stream_agno_response_as_agui_events(
 
     for chunk in response_stream:
         # Handle the lifecycle end event
+        if chunk.event == RunEvent.run_paused:
+            paused_event = cast(RunResponsePausedEvent, chunk)
+            if any(t.requires_confirmation for t in paused_event.tools or []):
+                tools_to_confirm = [t.to_dict() for t in paused_event.tools or [] if t.requires_confirmation]
+                state_snapshot = {
+                    "status": "paused_for_confirmation",
+                    "tools_to_confirm": tools_to_confirm,
+                }
+                yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=state_snapshot)
+                return  # Stop the generator.
+
         if (
             chunk.event == RunEvent.run_completed
             or chunk.event == TeamRunEvent.run_completed
@@ -373,6 +387,17 @@ async def async_stream_agno_response_as_agui_events(
 
     async for chunk in response_stream:
         # Handle the lifecycle end event
+        if chunk.event == RunEvent.run_paused:
+            paused_event = cast(RunResponsePausedEvent, chunk)
+            if any(t.requires_confirmation for t in paused_event.tools or []):
+                tools_to_confirm = [t.to_dict() for t in paused_event.tools or [] if t.requires_confirmation]
+                state_snapshot = {
+                    "status": "paused_for_confirmation",
+                    "tools_to_confirm": tools_to_confirm,
+                }
+                yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=state_snapshot)
+                return  # Stop the generator.
+
         if (
             chunk.event == RunEvent.run_completed
             or chunk.event == TeamRunEvent.run_completed

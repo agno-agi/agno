@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 
 from agno.agent.agent import Agent
 from agno.app.agui.utils import convert_agui_messages_to_agno_messages, stream_agno_response_as_agui_events
+from agno.models.response import ToolExecution
 from agno.team.team import Team
 
 logger = logging.getLogger(__name__)
@@ -27,21 +28,40 @@ def run_agent(agent: Agent, run_input: RunAgentInput) -> Iterator[BaseEvent]:
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
-        # Preparing the input for the Agent and emitting the run started event
-        messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
-        yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
+        # Handle continuation from a paused state
+        if (
+            hasattr(run_input, "state")
+            and run_input.state
+            and run_input.state.get("status") == "paused_for_confirmation"
+        ):
+            updated_tools = [ToolExecution.from_dict(t) for t in run_input.state.get("tools_to_confirm", [])]
 
-        # Request streaming response from agent
-        response_stream = agent.run(
-            messages=messages,
-            session_id=run_input.thread_id,
-            stream=True,
-            stream_intermediate_steps=True,
-        )
+            response_stream = agent.continue_run(
+                run_id=run_id,
+                updated_tools=updated_tools,
+                session_id=run_input.thread_id,
+                stream=True,
+                stream_intermediate_steps=True,
+            )
+        else:
+            # Preparing the input for the Agent and emitting the run started event
+            messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
+            yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
+
+            # Request streaming response from agent
+            response_stream = agent.run(
+                run_id=run_id,
+                messages=messages,
+                session_id=run_input.thread_id,
+                stream=True,
+                stream_intermediate_steps=True,
+            )
 
         # Stream the response content in AG-UI format
         for event in stream_agno_response_as_agui_events(
-            response_stream=response_stream, thread_id=run_input.thread_id, run_id=run_id
+            response_stream=response_stream,
+            thread_id=run_input.thread_id,
+            run_id=run_id,
         ):
             yield event
 
