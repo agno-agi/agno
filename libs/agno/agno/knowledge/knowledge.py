@@ -427,7 +427,7 @@ class Knowledge:
         2. Validate the URL
         3. Read the content
         4. Prepare and insert the content in the vector database
-        2."""
+        """
         log_info(f"Adding content from URL {content.url}")
         content.file_type = "url"
 
