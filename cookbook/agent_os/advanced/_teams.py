@@ -40,5 +40,4 @@ finance_reasoning_team = Team(
     tools=[ReasoningTools(add_instructions=True)],
     markdown=True,
     show_members_responses=True,
-    enable_agentic_context=True,
 )

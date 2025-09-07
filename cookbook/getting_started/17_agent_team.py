@@ -105,7 +105,7 @@ agent_team = Team(
     """),
     add_datetime_to_context=True,
     markdown=True,
-    enable_agentic_context=True,
+
     show_members_responses=False,
 )
 

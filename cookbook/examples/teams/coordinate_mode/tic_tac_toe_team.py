@@ -43,7 +43,7 @@ agent_team = Team(
         "Don't confirm the results of the game afterwards, just report the final board state and the results.",
         "You have to stop the game when one of the players has won.",
     ],
-    enable_agentic_context=True,
+
     share_member_interactions=True,
     debug_mode=True,
     markdown=True,

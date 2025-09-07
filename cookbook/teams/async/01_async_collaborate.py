@@ -68,7 +68,6 @@ agent_team = Team(
         "You are a discussion master.",
         "You have to stop the discussion when you think the team has reached a consensus.",
     ],
-    enable_agentic_context=True,
     markdown=True,
     show_members_responses=True,
 )

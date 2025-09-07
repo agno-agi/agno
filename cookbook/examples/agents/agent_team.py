@@ -38,7 +38,6 @@ team_leader = Team(
     ],
     markdown=True,
     show_members_responses=True,
-    enable_agentic_context=True,
     add_datetime_to_context=True,
 )
 
