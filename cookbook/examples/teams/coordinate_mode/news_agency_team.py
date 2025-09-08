@@ -63,7 +63,6 @@ editor = Team(
         "Remember: you are the final gatekeeper before the article is published, so make sure the article is perfect.",
     ],
     add_datetime_to_context=True,
-
     markdown=True,
     debug_mode=True,
     show_members_responses=True,
