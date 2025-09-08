@@ -176,7 +176,6 @@ class OpenAITools(Toolkit):
             text_input (str): The text to synthesize into speech.
         """
         try:
-            import base64
 
             response = OpenAIClient(api_key=self.api_key).audio.speech.create(
                 model=self.tts_model,
