@@ -23,6 +23,61 @@ from agno.team.team import Team
 from agno.workflow.workflow import Workflow
 
 
+class BadRequestResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}}
+
+
+class NotFoundResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {"example": {"detail": "Not found", "error_code": "NOT_FOUND"}}
+
+
+class UnauthorizedResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {"example": {"detail": "Unauthorized access", "error_code": "UNAUTHORIZED"}}
+
+
+class UnauthenticatedResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {"example": {"detail": "Unauthenticated access", "error_code": "UNAUTHENTICATED"}}
+
+
+class ValidationErrorResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {"example": {"detail": "Validation error", "error_code": "VALIDATION_ERROR"}}
+
+
+class InternalServerErrorResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {"example": {"detail": "Internal server error", "error_code": "INTERNAL_SERVER_ERROR"}}
+
+
+class HealthResponse(BaseModel):
+    status: str
+
+    class Config:
+        json_schema_extra = {"example": {"status": "ok"}}
+
+
 class InterfaceResponse(BaseModel):
     type: str
     version: str
