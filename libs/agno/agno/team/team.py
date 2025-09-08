@@ -132,7 +132,7 @@ class Team:
     # If True, the team leader won't process responses from the members and instead will return them directly
     # Should not be used in combination with delegate_task_to_all_members
     respond_directly: bool = False
-    # If True, the team leader will delegate to all members automatically, without any decision from the team leader
+    # If True, the team leader will delegate the task to all members, instead of deciding for a subset
     delegate_task_to_all_members: bool = False
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_member: bool = True
@@ -735,7 +735,7 @@ class Team:
 
         if self.delegate_task_to_all_members and self.respond_directly:
             log_warning(
-                "Delegate to all members and respond directly are both enabled. Respond directly will be ignored."
+                "delegate_task_to_all_members and respond_directly are both enabled. The task will be delegated to all members."
             )
             self.respond_directly = False
 
