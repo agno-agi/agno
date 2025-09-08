@@ -772,12 +772,13 @@ class Knowledge:
             # 5. Fetch and load the content
             temporary_file = None
             obj_name = content_name or s3_object.name.split("/")[-1]
+            readable_content: Optional[Union[BytesIO, Path]] = None
             if s3_object.uri.endswith(".pdf"):
                 readable_content = BytesIO(s3_object.get_resource().get()["Body"].read())
             else:
                 temporary_file = Path("storage").joinpath(obj_name)
                 readable_content = temporary_file
-                s3_object.download(readable_content)
+                s3_object.download(readable_content)  # type: ignore
 
             # 6. Read the content
             read_documents = reader.read(readable_content, name=obj_name)
