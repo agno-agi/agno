@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 from pydantic import BaseModel
 
-from agno.media import Audio, AudioResponse, Image, Video
+from agno.media import Audio, Image, Video
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
@@ -82,7 +82,7 @@ class BaseRunOutputEvent:
                     _dict["audio"].append(aud)
 
         if hasattr(self, "response_audio") and self.response_audio is not None:
-            if isinstance(self.response_audio, AudioResponse):
+            if isinstance(self.response_audio, Audio):
                 _dict["response_audio"] = self.response_audio.to_dict()
             else:
                 _dict["response_audio"] = self.response_audio
@@ -146,7 +146,7 @@ class BaseRunOutputEvent:
 
         response_audio = data.pop("response_audio", None)
         if response_audio:
-            data["response_audio"] = AudioResponse.model_validate(response_audio)
+            data["response_audio"] = Audio.model_validate(response_audio)
 
         additional_input = data.pop("additional_input", None)
         if additional_input is not None:

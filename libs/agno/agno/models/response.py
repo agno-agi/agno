@@ -3,7 +3,7 @@ from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional
 
-from agno.media import Audio, AudioResponse, Image, Video
+from agno.media import Audio, Image, Video
 from agno.models.message import Citations
 from agno.models.metrics import Metrics
 from agno.tools.function import UserInputField
@@ -87,7 +87,7 @@ class ModelResponse:
 
     content: Optional[Any] = None
     parsed: Optional[Any] = None
-    audio: Optional[AudioResponse] = None
+    audio: Optional[Audio] = None
 
     # Unified media fields for LLM-generated and tool-generated media artifacts
     images: Optional[List[Image]] = None

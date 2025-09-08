@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel
 
-from agno.media import Audio, AudioResponse, File, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
@@ -98,7 +98,7 @@ class RunContentEvent(BaseTeamRunEvent):
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
-    response_audio: Optional[AudioResponse] = None  # Model audio response
+    response_audio: Optional[Audio] = None  # Model audio response
     image: Optional[Image] = None  # Image attached to the response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
@@ -123,7 +123,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
-    response_audio: Optional[AudioResponse] = None  # Model audio response
+    response_audio: Optional[Audio] = None  # Model audio response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
@@ -370,7 +370,7 @@ class TeamRunOutput:
     videos: Optional[List[Video]] = None  # Videos from member runs
     audio: Optional[List[Audio]] = None  # Audio from member runs
 
-    response_audio: Optional[AudioResponse] = None  # Model audio response
+    response_audio: Optional[Audio] = None  # Model audio response
 
     # Input media and messages from user
     input: Optional[TeamRunInput] = None
@@ -551,7 +551,7 @@ class TeamRunOutput:
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
         response_audio = data.pop("response_audio", None)
-        response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
+        response_audio = Audio.model_validate(response_audio) if response_audio else None
 
         input_data = data.pop("input", None)
         input_obj = None

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
-from agno.media import Audio, AudioResponse, Image, Video
+from agno.media import Audio, Image, Video
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
@@ -182,7 +182,7 @@ class StepCompletedEvent(BaseWorkflowRunOutputEvent):
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
     audio: Optional[List[Audio]] = None
-    response_audio: Optional[AudioResponse] = None
+    response_audio: Optional[Audio] = None
 
     # Store actual step execution results as StepOutput objects
     step_response: Optional["StepOutput"] = None  # noqa: F821
@@ -433,7 +433,7 @@ class WorkflowRunOutput:
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
     audio: Optional[List[Audio]] = None
-    response_audio: Optional[AudioResponse] = None
+    response_audio: Optional[Audio] = None
 
     # Store actual step execution results as StepOutput objects
     step_results: List[Union["StepOutput", List["StepOutput"]]] = field(default_factory=list)  # noqa: F821
@@ -560,7 +560,7 @@ class WorkflowRunOutput:
         audio = [Audio.model_validate(audio) for audio in audio] if audio else None
 
         response_audio = data.pop("response_audio", None)
-        response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
+        response_audio = Audio.model_validate(response_audio) if response_audio else None
 
         events = data.pop("events", [])
 

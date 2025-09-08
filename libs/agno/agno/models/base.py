@@ -21,7 +21,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.exceptions import AgentRunException
-from agno.media import Audio, AudioResponse, Image, Video
+from agno.media import Audio, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
@@ -43,7 +43,7 @@ class MessageData:
     response_citations: Optional[Citations] = None
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
 
-    response_audio: Optional[AudioResponse] = None
+    response_audio: Optional[Audio] = None
     response_image: Optional[Image] = None
     response_video: Optional[Video] = None
 
@@ -503,8 +503,6 @@ class Model(ABC):
             model_response.citations = assistant_message.citations
         if assistant_message.audio_output is not None:
             if isinstance(assistant_message.audio_output, Audio):
-                model_response.audios = [assistant_message.audio_output]
-            elif isinstance(assistant_message.audio_output, AudioResponse):
                 model_response.audio = assistant_message.audio_output
         if assistant_message.image_output is not None:
             model_response.images = [assistant_message.image_output]
@@ -558,8 +556,6 @@ class Model(ABC):
             model_response.citations = assistant_message.citations
         if assistant_message.audio_output is not None:
             if isinstance(assistant_message.audio_output, Audio):
-                model_response.audios = [assistant_message.audio_output]
-            elif isinstance(assistant_message.audio_output, AudioResponse):
                 model_response.audio = assistant_message.audio_output
         if assistant_message.image_output is not None:
             model_response.images = [assistant_message.image_output]
@@ -993,13 +989,13 @@ class Model(ABC):
             stream_data.response_tool_calls.extend(model_response_delta.tool_calls)
             should_yield = True
 
-        if model_response_delta.audio is not None and isinstance(model_response_delta.audio, AudioResponse):
+        if model_response_delta.audio is not None and isinstance(model_response_delta.audio, Audio):
             if stream_data.response_audio is None:
-                stream_data.response_audio = AudioResponse(id=str(uuid4()), content="", transcript="")
+                stream_data.response_audio = Audio(id=str(uuid4()), content="", transcript="")
 
             from typing import cast
 
-            audio_response = cast(AudioResponse, model_response_delta.audio)
+            audio_response = cast(Audio, model_response_delta.audio)
 
             # Update the stream data with audio information
             if audio_response.id is not None:

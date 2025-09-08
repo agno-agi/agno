@@ -43,18 +43,6 @@ class Image(BaseModel):
             elif len(sources) > 1:
                 raise ValueError("Only one of 'url', 'filepath', or 'content' should be provided")
 
-            # Normalize content to bytes if it's a string
-            if content is not None and isinstance(content, str):
-                import base64
-
-                try:
-                    # Try to decode as base64
-                    content = base64.b64decode(content)
-                except Exception:
-                    # If not base64, encode as UTF-8 bytes
-                    content = content.encode("utf-8")
-                data["content"] = content
-
             # Auto-generate ID if not provided
             if data.get("id") is None:
                 data["id"] = str(uuid4())
@@ -82,6 +70,32 @@ class Image(BaseModel):
 
             return base64.b64encode(content_bytes).decode("utf-8")
         return None
+
+    @classmethod
+    def from_base64(
+        cls,
+        base64_content: str,
+        id: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        format: Optional[str] = None,
+        **kwargs
+    ) -> "Image":
+        """Create Image from base64 content"""
+        import base64
+        
+        try:
+            content_bytes = base64.b64decode(base64_content)
+        except Exception:
+            content_bytes = base64_content.encode("utf-8")
+        
+        return cls(
+            content=content_bytes,
+            id=id or str(uuid4()),
+            mime_type=mime_type,
+            format=format,
+            **kwargs
+        )
+
 
     def to_dict(self, include_base64_content: bool = True) -> Dict[str, Any]:
         """Convert to dict, optionally including base64-encoded content"""
@@ -118,8 +132,8 @@ class Audio(BaseModel):
 
     # Audio-specific metadata
     duration: Optional[float] = None  # Duration in seconds
-    sample_rate: Optional[int] = None  # Sample rate in Hz
-    channels: Optional[int] = None  # Number of audio channels
+    sample_rate: Optional[int] = 24000  # Sample rate in Hz
+    channels: Optional[int] = 1  # Number of audio channels
 
     # Output-specific fields (from LLMs)
     transcript: Optional[str] = None  # Text transcript of audio
@@ -139,16 +153,6 @@ class Audio(BaseModel):
             elif len(sources) > 1:
                 raise ValueError("Only one of 'url', 'filepath', or 'content' should be provided")
 
-            # Normalize content to bytes
-            if content is not None and isinstance(content, str):
-                import base64
-
-                try:
-                    content = base64.b64decode(content)
-                except Exception:
-                    content = content.encode("utf-8")
-                data["content"] = content
-
             if data.get("id") is None:
                 data["id"] = str(uuid4())
 
@@ -160,7 +164,6 @@ class Audio(BaseModel):
             return self.content
         elif self.url:
             import httpx
-
             return httpx.get(self.url).content
         elif self.filepath:
             with open(self.filepath, "rb") as f:
@@ -172,9 +175,40 @@ class Audio(BaseModel):
         content_bytes = self.get_content_bytes()
         if content_bytes:
             import base64
-
             return base64.b64encode(content_bytes).decode("utf-8")
         return None
+
+    @classmethod
+    def from_base64(
+        cls,
+        base64_content: str,
+        id: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        transcript: Optional[str] = None,
+        expires_at: Optional[int] = None,
+        sample_rate: Optional[int] = 24000,
+        channels: Optional[int] = 1,
+        **kwargs
+    ) -> "Audio":
+        """Create Audio from base64 content (useful for API responses)"""
+        import base64
+        
+        try:
+            content_bytes = base64.b64decode(base64_content)
+        except Exception:
+            # If not valid base64, encode as UTF-8 bytes
+            content_bytes = base64_content.encode("utf-8")
+        
+        return cls(
+            content=content_bytes,
+            id=id or str(uuid4()),
+            mime_type=mime_type,
+            transcript=transcript,
+            expires_at=expires_at,
+            sample_rate=sample_rate,
+            channels=channels,
+            **kwargs
+        )
 
     def to_dict(self, include_base64_content: bool = True) -> Dict[str, Any]:
         """Convert to dict, optionally including base64-encoded content"""
@@ -235,16 +269,6 @@ class Video(BaseModel):
             elif len(sources) > 1:
                 raise ValueError("Only one of 'url', 'filepath', or 'content' should be provided")
 
-            # Normalize content to bytes
-            if content is not None and isinstance(content, str):
-                import base64
-
-                try:
-                    content = base64.b64decode(content)
-                except Exception:
-                    content = content.encode("utf-8")
-                data["content"] = content
-
             if data.get("id") is None:
                 data["id"] = str(uuid4())
 
@@ -272,6 +296,32 @@ class Video(BaseModel):
             return base64.b64encode(content_bytes).decode("utf-8")
         return None
 
+    @classmethod
+    def from_base64(
+        cls,
+        base64_content: str,
+        id: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        format: Optional[str] = None,
+        **kwargs
+    ) -> "Image":
+        """Create Image from base64 content"""
+        import base64
+        
+        try:
+            content_bytes = base64.b64decode(base64_content)
+        except Exception:
+            content_bytes = base64_content.encode("utf-8")
+        
+        return cls(
+            content=content_bytes,
+            id=id or str(uuid4()),
+            mime_type=mime_type,
+            format=format,
+            **kwargs
+        )
+
+
     def to_dict(self, include_base64_content: bool = True) -> Dict[str, Any]:
         """Convert to dict, optionally including base64-encoded content"""
         result = {
@@ -293,21 +343,6 @@ class Video(BaseModel):
             result["content"] = self.to_base64()
 
         return {k: v for k, v in result.items() if v is not None}
-
-
-class AudioResponse(BaseModel):
-    """Special case for direct audio responses from LLMs (like OpenAI TTS)"""
-
-    id: Optional[str] = None
-    content: Optional[str] = None  # Base64 encoded for API compatibility
-    expires_at: Optional[int] = None
-    transcript: Optional[str] = None
-    mime_type: Optional[str] = None
-    sample_rate: Optional[int] = 24000
-    channels: Optional[int] = 1
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {k: v for k, v in self.model_dump().items() if v is not None}
 
 
 class File(BaseModel):

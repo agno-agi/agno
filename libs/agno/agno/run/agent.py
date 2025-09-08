@@ -1,11 +1,12 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+from re import A
 from time import time
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel
 
-from agno.media import Audio, AudioResponse, File, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
@@ -97,7 +98,7 @@ class RunContentEvent(BaseAgentRunEvent):
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
-    response_audio: Optional[AudioResponse] = None  # Model audio response
+    response_audio: Optional[Audio] = None  # Model audio response
     image: Optional[Image] = None  # Image attached to the response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
@@ -122,7 +123,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
-    response_audio: Optional[AudioResponse] = None  # Model audio response
+    response_audio: Optional[Audio] = None  # Model audio response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
@@ -392,7 +393,7 @@ class RunOutput:
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
-    response_audio: Optional[AudioResponse] = None  # Model audio response
+    response_audio: Optional[Audio] = None  # Model audio response
 
     # Input media and messages from user
     input: Optional[RunInput] = None
@@ -509,7 +510,7 @@ class RunOutput:
                     _dict["audio"].append(aud)
 
         if self.response_audio is not None:
-            if isinstance(self.response_audio, AudioResponse):
+            if isinstance(self.response_audio, Audio):
                 _dict["response_audio"] = self.response_audio.to_dict()
             else:
                 _dict["response_audio"] = self.response_audio
@@ -574,7 +575,7 @@ class RunOutput:
         audio = [Audio.model_validate(audio) for audio in audio] if audio else None
 
         response_audio = data.pop("response_audio", None)
-        response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
+        response_audio = Audio.model_validate(response_audio) if response_audio else None
 
         input_data = data.pop("input", None)
         input_obj = None

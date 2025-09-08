@@ -1,6 +1,6 @@
 from typing import Any, List, Optional
 
-from agno.media import AudioResponse, Image
+from agno.media import Image, Audio
 from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
@@ -344,7 +344,7 @@ def create_run_output_content_event(
     reasoning_content: Optional[str] = None,
     redacted_reasoning_content: Optional[str] = None,
     citations: Optional[Citations] = None,
-    response_audio: Optional[AudioResponse] = None,
+    response_audio: Optional[Audio] = None,
     image: Optional[Image] = None,
 ) -> RunContentEvent:
     thinking_combined = (reasoning_content or "") + (redacted_reasoning_content or "")
@@ -374,7 +374,7 @@ def create_team_run_output_content_event(
     reasoning_content: Optional[str] = None,
     redacted_reasoning_content: Optional[str] = None,
     citations: Optional[Citations] = None,
-    response_audio: Optional[AudioResponse] = None,
+    response_audio: Optional[Audio] = None,
     image: Optional[Image] = None,
 ) -> TeamRunContentEvent:
     thinking_combined = (reasoning_content or "") + (redacted_reasoning_content or "")

@@ -33,7 +33,7 @@ from agno.agent import Agent
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import ModelProviderError, RunCancelledException
 from agno.knowledge.knowledge import Knowledge
-from agno.media import Audio, AudioResponse, File, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
@@ -2165,7 +2165,7 @@ class Team:
                 # Process audio
                 if model_response_event.audio is not None:
                     if full_model_response.audio is None:
-                        full_model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
+                        full_model_response.audio = Audio(id=str(uuid4()), content="", transcript="")
 
                     if model_response_event.audio.id is not None:
                         full_model_response.audio.id = model_response_event.audio.id  # type: ignore
