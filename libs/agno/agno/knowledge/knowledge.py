@@ -501,7 +501,9 @@ class Knowledge:
                 import inspect
 
                 read_signature = inspect.signature(reader.read)
-                if "password" in read_signature.parameters and content.auth and content.auth.password:
+                if reader.__class__.__name__ == "YouTubeReader":
+                    read_documents = reader.read(content.url, name=name)
+                elif "password" in read_signature.parameters and content.auth and content.auth.password:
                     read_documents = reader.read(bytes_content, name=name, password=content.auth.password)
                 else:
                     read_documents = reader.read(bytes_content, name=name)
