@@ -9,6 +9,8 @@ from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_info, logger
 
+DEFAULT_CHUNKER_STRATEGY: ChunkingStrategy
+
 # Try to import MarkdownChunking, fallback to FixedSizeChunking if not available
 try:
     from agno.knowledge.chunking.markdown import MarkdownChunking
