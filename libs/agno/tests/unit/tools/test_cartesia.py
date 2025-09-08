@@ -3,7 +3,6 @@
 import json
 
 # import logging # Removed unused import
-from base64 import b64encode  # Added for TTS test
 from unittest.mock import MagicMock, patch  # Removed unused mock_open
 
 import pytest

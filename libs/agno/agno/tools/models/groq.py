@@ -1,4 +1,3 @@
-import base64
 from os import getenv
 from pathlib import Path
 from typing import Any, List, Optional
