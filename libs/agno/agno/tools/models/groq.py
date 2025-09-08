@@ -148,7 +148,7 @@ class GroqTools(Toolkit):
             media_id = str(uuid4())
             audio_artifact = Audio(
                 id=media_id,
-                base64_audio=base64_encoded_audio,
+                content=base64_encoded_audio,
                 mime_type="audio/wav",
             )
 

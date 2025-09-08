@@ -175,7 +175,7 @@ class CartesiaTools(Toolkit):
             # Create AudioArtifact
             audio_artifact = Audio(
                 id=str(uuid4()),
-                base64_audio=base64_audio,
+                content=base64_audio,
                 mime_type=mime_type,  # Hardcoded to audio/mpeg
             )
 
