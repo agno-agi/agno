@@ -756,11 +756,13 @@ class Knowledge:
             reader = cast(Reader, reader)
 
             # 5. Fetch and load the content
+            temporary_file = None
             obj_name = content_name or s3_object.name.split("/")[-1]
             if s3_object.uri.endswith(".pdf"):
-                readable_content = s3_object.get_resource().get()["Body"].read()
+                readable_content = BytesIO(s3_object.get_resource().get()["Body"].read())
             else:
-                readable_content = s3_object.download(Path("storage").joinpath(obj_name))
+                temporary_file = Path("storage").joinpath(obj_name)
+                readable_content = s3_object.download(temporary_file)
 
             # 6. Read the content
             read_documents = reader.read(readable_content, name=obj_name)
@@ -771,8 +773,8 @@ class Knowledge:
             await self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
             # 8. Remove temporary file if needed
-            if readable_content and not s3_object.uri.endswith(".pdf"):
-                readable_content.unlink()
+            if temporary_file:
+                temporary_file.unlink()
 
     async def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
         if content.reader is None:
