@@ -12,7 +12,6 @@ from agno.vectordb.pgvector import PgVector
 
 contents_db = PostgresDb(
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    knowledge_table="knowledge_contents",
 )
 
 # Create Knowledge Instance

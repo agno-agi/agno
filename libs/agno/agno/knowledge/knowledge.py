@@ -777,48 +777,67 @@ class Knowledge:
                 temporary_file.unlink()
 
     async def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
-        if content.reader is None:
-            reader = self.gcs_reader
-        else:
-            reader = content.reader
+        """Load the contextual GCS content.
 
-        if reader is None:
-            log_warning("No reader provided for content")
-            return
-
+        1. Identify objects to read
+        2. Setup Content object
+        3. Hash content and add it to the contents database
+        4. Select reader
+        5. Fetch and load the content
+        6. Read the content
+        7. Prepare and insert the content in the vector database
+        """
         remote_content: GCSContent = cast(GCSContent, content.remote_content)
+
+        # 1. Identify objects to read
         objects_to_read = []
-
         if remote_content.blob_name is not None:
-            objects_to_read.append(remote_content.bucket.blob(remote_content.blob_name))
+            objects_to_read.append(remote_content.bucket.blob(remote_content.blob_name))  # type: ignore
         elif remote_content.prefix is not None:
-            objects_to_read.extend(remote_content.bucket.list_blobs(prefix=remote_content.prefix))
+            objects_to_read.extend(remote_content.bucket.list_blobs(prefix=remote_content.prefix))  # type: ignore
         else:
-            objects_to_read.extend(remote_content.bucket.list_blobs())
+            objects_to_read.extend(remote_content.bucket.list_blobs())  # type: ignore
 
-        for object in objects_to_read:
+        for gcs_object in objects_to_read:
+            # 2. Setup Content object
             id = str(uuid4())
+            name = (content.name or "content") + "_" + gcs_object.name
             content_entry = Content(
                 id=id,
-                name=(content.name or "content") + "_" + object.name,
+                name=name,
                 description=content.description,
                 status=ContentStatus.PROCESSING,
                 metadata=content.metadata,
                 file_type="gcs",
             )
 
+            # 3. Hash content and add it to the contents database
             content_hash = self._build_content_hash(content_entry)
             if self.vector_db and self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
                 log_info(f"Content {content_hash} already exists, skipping")
                 continue
 
+            # 4. Add it to the contents database
             self._add_to_contents_db(content_entry)
 
-            read_documents = reader.read(content_entry.name, object)
+            # 5. Select reader
+            reader = content.reader
+            if reader is None:
+                if gcs_object.name.endswith(".pdf"):
+                    reader = self.pdf_reader
+                else:
+                    reader = self.text_reader
+            reader = cast(Reader, reader)
 
+            # 5. Fetch and load the content
+            readable_content = BytesIO(gcs_object.download_as_bytes())
+
+            # 6. Read the content
+            read_documents = reader.read(readable_content, name=name)
+
+            # 7. Prepare and insert the content in the vector database
             for read_document in read_documents:
                 read_document.content_id = content.id
-
             await self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
     async def _handle_vector_db_insert(self, content, read_documents, upsert):
@@ -1504,8 +1523,3 @@ class Knowledge:
     def youtube_reader(self) -> Optional[Reader]:
         """YouTube reader - lazy loaded via factory."""
         return self._get_reader("youtube")
-
-    @property
-    def gcs_reader(self) -> Optional[Reader]:
-        """GCS reader - lazy loaded via factory."""
-        return self._get_reader("gcs")

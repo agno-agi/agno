@@ -96,16 +96,6 @@ class ReaderFactory:
         config.update(kwargs)
         return YouTubeReader(**config)
 
-    @classmethod
-    def _get_gcs_reader(cls, **kwargs) -> Reader:
-        """Get GCS reader instance."""
-        from agno.knowledge.reader.gcs_reader import GCSReader
-
-        config: Dict[str, Any] = {"name": "GCS Reader", "description": "Reads GCS files"}
-        config.update(kwargs)
-        return GCSReader(**config)
-
-    @classmethod
     def _get_arxiv_reader(cls, **kwargs) -> Reader:
         """Get Arxiv reader instance."""
         from agno.knowledge.reader.arxiv_reader import ArxivReader
