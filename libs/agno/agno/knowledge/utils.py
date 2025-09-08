@@ -11,23 +11,23 @@ def _get_chunker_class(strategy_type):
 
     # Map strategy types to their corresponding classes
     strategy_class_mapping = {
-        ChunkingStrategyType.AGENTIC_CHUNKING: lambda: _import_class(
+        ChunkingStrategyType.AGENTIC_CHUNKER: lambda: _import_class(
             "agno.knowledge.chunking.agentic", "AgenticChunking"
         ),
-        ChunkingStrategyType.DOCUMENT_CHUNKING: lambda: _import_class(
+        ChunkingStrategyType.DOCUMENT_CHUNKER: lambda: _import_class(
             "agno.knowledge.chunking.document", "DocumentChunking"
         ),
-        ChunkingStrategyType.RECURSIVE_CHUNKING: lambda: _import_class(
+        ChunkingStrategyType.RECURSIVE_CHUNKER: lambda: _import_class(
             "agno.knowledge.chunking.recursive", "RecursiveChunking"
         ),
-        ChunkingStrategyType.SEMANTIC_CHUNKING: lambda: _import_class(
+        ChunkingStrategyType.SEMANTIC_CHUNKER: lambda: _import_class(
             "agno.knowledge.chunking.semantic", "SemanticChunking"
         ),
-        ChunkingStrategyType.FIXED_SIZE_CHUNKING: lambda: _import_class(
+        ChunkingStrategyType.FIXED_SIZE_CHUNKER: lambda: _import_class(
             "agno.knowledge.chunking.fixed", "FixedSizeChunking"
         ),
-        ChunkingStrategyType.ROW_CHUNKING: lambda: _import_class("agno.knowledge.chunking.row", "RowChunking"),
-        ChunkingStrategyType.MARKDOWN_CHUNKING: lambda: _import_class(
+        ChunkingStrategyType.ROW_CHUNKER: lambda: _import_class("agno.knowledge.chunking.row", "RowChunking"),
+        ChunkingStrategyType.MARKDOWN_CHUNKER: lambda: _import_class(
             "agno.knowledge.chunking.markdown", "MarkdownChunking"
         ),
     }
@@ -61,8 +61,8 @@ def get_reader_info(reader_key: str) -> Dict:
 
         return {
             "id": reader_key,
-            "name": reader_key.replace("_", " ").title() + " Reader",
-            "description": f"Reads {reader_key} files",
+            "name": "".join(word.capitalize() for word in reader_key.split("_")) + "Reader",
+            "description": reader_instance.description,
             "chunking_strategies": [
                 strategy.value for strategy in supported_strategies
             ],  # Convert enums to string values
@@ -132,7 +132,7 @@ def get_chunker_info(chunker_key: str) -> Dict:
             return {
                 "key": chunker_key,
                 "class_name": class_name,
-                "name": class_name.replace("Chunking", "").replace("Strategy", ""),
+                "name": chunker_key,
                 "description": docstring.strip(),
                 "strategy_type": strategy_type.value,
             }

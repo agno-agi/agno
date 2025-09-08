@@ -64,7 +64,6 @@ news_agent = Agent(
 # Create team with both agents
 financial_team = Team(
     name="Financial Analysis Team",
-    mode="coordinate",
     id=str(uuid4()),
     user_id=str(uuid4()),
     model=OpenAIChat(id="gpt-4.1"),

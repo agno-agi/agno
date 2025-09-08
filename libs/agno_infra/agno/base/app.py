@@ -7,7 +7,7 @@ from agno.base.resource import InfraResource
 from agno.utilities.logging import logger
 
 
-@dataclass
+@dataclass(init=False)
 class InfraApp(InfraBase):
     """Base class for Infrastructure Apps."""
 

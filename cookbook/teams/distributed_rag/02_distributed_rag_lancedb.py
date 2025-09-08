@@ -108,7 +108,6 @@ quality_validator = Agent(
 # Create distributed RAG team
 distributed_rag_team = Team(
     name="Distributed RAG Team",
-    mode="coordinate",  # Sequential coordination for RAG processing
     model=OpenAIChat(id="o3-mini"),
     members=[
         primary_retriever,

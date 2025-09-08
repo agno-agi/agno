@@ -1,5 +1,7 @@
+from contextlib import asynccontextmanager
+from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
@@ -34,14 +36,31 @@ from agno.os.routers.session import get_session_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import generate_id
 from agno.team.team import Team
+from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.workflow.workflow import Workflow
+
+
+@asynccontextmanager
+async def mcp_lifespan(app, mcp_tools: List[Union[MCPTools, MultiMCPTools]]):
+    """Manage MCP connection lifecycle inside a FastAPI app"""
+    # Startup logic: connect to all contextual MCP servers
+    for tool in mcp_tools:
+        await tool.connect()
+
+    yield
+
+    # Shutdown logic: Close all contextual MCP connections
+    for tool in mcp_tools:
+        await tool.close()
 
 
 class AgentOS:
     def __init__(
         self,
         os_id: Optional[str] = None,
+        name: Optional[str] = None,
         description: Optional[str] = None,
+        version: Optional[str] = None,
         agents: Optional[List[Agent]] = None,
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
@@ -49,13 +68,14 @@ class AgentOS:
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         fastapi_app: Optional[FastAPI] = None,
+        lifespan: Optional[Any] = None,
+        enable_mcp: bool = False,
         telemetry: bool = True,
     ):
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
 
         self.config = self._load_yaml_config(config) if isinstance(config, str) else config
-        self.description = description
 
         self.agents: Optional[List[Agent]] = agents
         self.workflows: Optional[List[Workflow]] = workflows
@@ -63,19 +83,36 @@ class AgentOS:
         self.interfaces = interfaces or []
 
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
-        self.fastapi_app: Optional[FastAPI] = fastapi_app
+
+        self._app_set = False
+        self.fastapi_app: Optional[FastAPI] = None
+        if fastapi_app:
+            self.fastapi_app = fastapi_app
+            self._app_set = True
 
         self.interfaces = interfaces or []
 
         self.os_id: Optional[str] = os_id
+        self.name = name
+        self.version = version
         self.description = description
 
         self.telemetry = telemetry
 
-        self.interfaces_loaded: List[Tuple[str, str]] = []
+        self.enable_mcp = enable_mcp
+        self.lifespan = lifespan
+
+        # List of all MCP tools used inside the AgentOS
+        self.mcp_tools: List[Union[MCPTools, MultiMCPTools]] = []
 
         if self.agents:
             for agent in self.agents:
+                # Track all MCP tools to later handle their connection
+                if agent.tools:
+                    for tool in agent.tools:
+                        if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                            self.mcp_tools.append(tool)
+
                 agent.initialize_agent()
 
                 # Required for the built-in routes to work
@@ -83,6 +120,12 @@ class AgentOS:
 
         if self.teams:
             for team in self.teams:
+                # Track all MCP tools to later handle their connection
+                if team.tools:
+                    for tool in team.tools:
+                        if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                            self.mcp_tools.append(tool)
+
                 team.initialize_team()
 
                 # Required for the built-in routes to work
@@ -97,6 +140,7 @@ class AgentOS:
 
         if self.workflows:
             for workflow in self.workflows:
+                # TODO: track MCP tools in workflow members
                 if not workflow.id:
                     workflow.id = generate_id(workflow.name)
 
@@ -104,6 +148,117 @@ class AgentOS:
             from agno.api.os import OSLaunch, log_os_telemetry
 
             log_os_telemetry(launch=OSLaunch(os_id=self.os_id, data=self._get_telemetry_data()))
+
+    def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
+        # Adjust the FastAPI app lifespan to handle MCP connections if relevant
+        app_lifespan = lifespan
+        if self.mcp_tools is not None:
+            mcp_tools_lifespan = partial(mcp_lifespan, mcp_tools=self.mcp_tools)
+            # If there is already a lifespan, combine it with the MCP lifespan
+            if lifespan is not None:
+                # Combine both lifespans
+                @asynccontextmanager
+                async def combined_lifespan(app: FastAPI):
+                    # Run both lifespans
+                    async with lifespan(app):  # type: ignore
+                        async with mcp_tools_lifespan(app):  # type: ignore
+                            yield
+
+                app_lifespan = combined_lifespan  # type: ignore
+            else:
+                app_lifespan = mcp_tools_lifespan
+
+        return FastAPI(
+            title=self.name or "Agno AgentOS",
+            version=self.version or "1.0.0",
+            description=self.description or "An agent operating system.",
+            docs_url="/docs" if self.settings.docs_enabled else None,
+            redoc_url="/redoc" if self.settings.docs_enabled else None,
+            openapi_url="/openapi.json" if self.settings.docs_enabled else None,
+            lifespan=app_lifespan,
+        )
+
+    def get_app(self) -> FastAPI:
+        if not self.fastapi_app:
+            if self.enable_mcp:
+                from contextlib import asynccontextmanager
+
+                from agno.os.mcp import get_mcp_server
+
+                self.mcp_app = get_mcp_server(self)
+
+                final_lifespan = self.mcp_app.lifespan
+                if self.lifespan is not None:
+                    # Combine both lifespans
+                    @asynccontextmanager
+                    async def combined_lifespan(app: FastAPI):
+                        # Run both lifespans
+                        async with self.lifespan(app):  # type: ignore
+                            async with self.mcp_app.lifespan(app):  # type: ignore
+                                yield
+
+                    final_lifespan = combined_lifespan  # type: ignore
+
+                self.fastapi_app = self._make_app(lifespan=final_lifespan)
+            else:
+                self.fastapi_app = self._make_app(lifespan=self.lifespan)
+
+        # Add routes
+        self.fastapi_app.include_router(get_base_router(self, settings=self.settings))
+
+        for interface in self.interfaces:
+            interface_router = interface.get_router()
+            self.fastapi_app.include_router(interface_router)
+
+        self._auto_discover_databases()
+        self._auto_discover_knowledge_instances()
+        self._setup_routers()
+
+        # Mount MCP if needed
+        if self.enable_mcp and self.mcp_app:
+            self.fastapi_app.mount("/", self.mcp_app)
+
+        # Add middleware (only if app is not set)
+        if not self._app_set:
+
+            @self.fastapi_app.exception_handler(HTTPException)
+            async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"detail": str(exc.detail)},
+                )
+
+            async def general_exception_handler(request: Request, call_next):
+                try:
+                    return await call_next(request)
+                except Exception as e:
+                    return JSONResponse(
+                        status_code=e.status_code if hasattr(e, "status_code") else 500,  # type: ignore
+                        content={"detail": str(e)},
+                    )
+
+            self.fastapi_app.middleware("http")(general_exception_handler)
+
+            self.fastapi_app.add_middleware(
+                CORSMiddleware,
+                allow_origins=self.settings.cors_origin_list,  # type: ignore
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+                expose_headers=["*"],
+            )
+
+        return self.fastapi_app
+
+    def get_routes(self) -> List[Any]:
+        """Retrieve all routes from the FastAPI app.
+
+        Returns:
+            List[Any]: List of routes included in the FastAPI app.
+        """
+        app = self.get_app()
+
+        return app.routes
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
         """Get the telemetry data for the OS"""
@@ -303,68 +458,6 @@ class AgentOS:
 
         return self.os_id
 
-    def get_app(self) -> FastAPI:
-        if not self.fastapi_app:
-            self.fastapi_app = FastAPI(
-                title=self.settings.title,
-                docs_url="/docs" if self.settings.docs_enabled else None,
-                redoc_url="/redoc" if self.settings.docs_enabled else None,
-                openapi_url="/openapi.json" if self.settings.docs_enabled else None,
-            )
-
-        if not self.fastapi_app:
-            raise Exception("API App could not be created.")
-
-        @self.fastapi_app.exception_handler(HTTPException)
-        async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": str(exc.detail)},
-            )
-
-        async def general_exception_handler(request: Request, call_next):
-            try:
-                return await call_next(request)
-            except Exception as e:
-                return JSONResponse(
-                    status_code=e.status_code if hasattr(e, "status_code") else 500,  # type: ignore
-                    content={"detail": str(e)},
-                )
-
-        self.fastapi_app.middleware("http")(general_exception_handler)
-
-        self.fastapi_app.include_router(get_base_router(self, settings=self.settings))
-
-        for interface in self.interfaces:
-            interface_router = interface.get_router()
-            self.fastapi_app.include_router(interface_router)
-            self.interfaces_loaded.append((interface.type, interface.router_prefix))
-
-        self._auto_discover_databases()
-        self._auto_discover_knowledge_instances()
-        self._setup_routers()
-
-        self.fastapi_app.add_middleware(
-            CORSMiddleware,
-            allow_origins=self.settings.cors_origin_list,  # type: ignore
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-            expose_headers=["*"],
-        )
-
-        return self.fastapi_app
-
-    def get_routes(self) -> List[Any]:
-        """Retrieve all routes from the FastAPI app.
-
-        Returns:
-            List[Any]: List of routes included in the FastAPI app.
-        """
-        app = self.get_app()
-
-        return app.routes
-
     def serve(
         self,
         app: Union[str, FastAPI],
@@ -372,6 +465,7 @@ class AgentOS:
         host: str = "localhost",
         port: int = 7777,
         reload: bool = False,
+        workers: Optional[int] = None,
         **kwargs,
     ):
         import uvicorn
@@ -400,4 +494,4 @@ class AgentOS:
             )
         )
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
+        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, **kwargs)

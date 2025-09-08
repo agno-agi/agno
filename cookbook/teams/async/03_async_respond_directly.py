@@ -53,8 +53,8 @@ german_agent = Agent(
 
 multi_language_team = Team(
     name="Multi Language Team",
-    mode="route",
     model=OpenAIChat("o3-mini"),
+    respond_directly=True,
     members=[
         english_agent,
         spanish_agent,
@@ -72,6 +72,7 @@ multi_language_team = Team(
         "For unsupported languages like Italian, respond in English with the above message.",
     ],
     show_members_responses=True,
+    debug_mode=True,
 )
 
 
@@ -90,7 +91,7 @@ async def main():
     #     "お元気ですか?", stream=True  # Japanese
     # )
 
-    await multi_language_team.aprint_response(input="Comment allez-vous?")
+    await multi_language_team.aprint_response("Comment allez-vous?", stream=True)
 
     # await multi_language_team.aprint_response(
     #     "Wie geht es Ihnen?", stream=True  # German

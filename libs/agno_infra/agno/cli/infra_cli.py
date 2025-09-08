@@ -19,7 +19,7 @@ from agno.utilities.logging import logger, set_log_level_to_debug
 
 infra_cli = typer.Typer(
     name="infra",
-    short_help="Manage Infrastructure",
+    short_help="Manage Agent Infrastructure",
     help="""\b
 Use `ag infra [COMMAND]` to create, setup, start or stop your infrastructure.
 Run `ag infra [COMMAND] --help` for more info.

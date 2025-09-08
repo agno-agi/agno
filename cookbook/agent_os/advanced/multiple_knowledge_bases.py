@@ -22,12 +22,6 @@ knowledge_base = Knowledge(
     contents_db=contents_db,
     vector_db=vector_db,
 )
-second_knowledge_base = Knowledge(
-    name="Secondary Knowledge Base",
-    description="A secondary knowledge base",
-    contents_db=secondary_contents_db,
-    vector_db=secondary_vector_db,
-)
 
 main_agent = Agent(
     name="Main Agent",
@@ -37,19 +31,11 @@ main_agent = Agent(
     markdown=True,
     db=contents_db,
 )
-secondary_agent = Agent(
-    name="Secondary Agent",
-    model=OpenAIChat(id="gpt-4o"),
-    knowledge=second_knowledge_base,
-    add_datetime_to_context=True,
-    markdown=True,
-    db=contents_db,
-)
 
 agent_os = AgentOS(
     description="Example app for basic agent with knowledge capabilities",
     os_id="knowledge-demo",
-    agents=[main_agent, secondary_agent],
+    agents=[main_agent],
 )
 app = agent_os.get_app()
 
@@ -61,4 +47,4 @@ if __name__ == "__main__":
     - http://localhost:8001/knowledge/{id}/documents?agent_id=123
     - http://localhost:8001/knowledge/{id}/documents?limit=10&page=0&sort_by=created_at&sort_order=desc
     """
-    agent_os.serve(app="knowledge_demo:app", reload=True)
+    agent_os.serve(app="multiple_knowledge_bases:app", reload=True)

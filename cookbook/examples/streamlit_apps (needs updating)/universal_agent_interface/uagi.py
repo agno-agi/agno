@@ -125,7 +125,6 @@ def create_uagi(
 
     uagi = Team(
         name="Universal Agent Interface",
-        mode="coordinate",
         model=model,
         user_id=config.user_id,
         session_id=session_id,

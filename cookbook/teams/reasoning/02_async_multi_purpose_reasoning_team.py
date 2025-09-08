@@ -64,18 +64,7 @@ calculator_agent = Agent(
     name="Calculator Agent",
     model=Claude(id="claude-3-5-sonnet-latest"),
     role="Perform mathematical calculations",
-    tools=[
-        CalculatorTools(
-            add=True,
-            subtract=True,
-            multiply=True,
-            divide=True,
-            exponentiate=True,
-            factorial=True,
-            is_prime=True,
-            square_root=True,
-        )
-    ],
+    tools=[CalculatorTools()],
     instructions=[
         "Perform accurate mathematical calculations.",
         "Show your work step by step.",
@@ -142,7 +131,6 @@ agent_team = Team(
     ],
     markdown=True,
     show_members_responses=True,
-    enable_agentic_context=True,
     share_member_interactions=True,
 )
 

@@ -6,10 +6,7 @@ from agno.team.team import Team
 
 
 def team_factory(shared_db, session_id: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None):
-    """Create a route team with storage and memory for testing."""
     return Team(
-        name="Route Team",
-        mode="route",
         model=OpenAIChat(id="gpt-4o-mini"),
         session_id=session_id,
         session_state=session_state,

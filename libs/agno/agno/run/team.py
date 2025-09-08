@@ -1,11 +1,11 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel
 
-from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
+from agno.media import AudioArtifact, AudioResponse, File, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
@@ -39,6 +39,8 @@ class TeamRunEvent(str, Enum):
 
     output_model_response_started = "TeamOutputModelResponseStarted"
     output_model_response_completed = "TeamOutputModelResponseCompleted"
+
+    custom_event = "CustomEvent"
 
 
 @dataclass
@@ -213,6 +215,11 @@ class OutputModelResponseCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.output_model_response_completed.value
 
 
+@dataclass
+class CustomEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.custom_event.value
+
+
 TeamRunOutputEvent = Union[
     RunStartedEvent,
     RunContentEvent,
@@ -231,6 +238,7 @@ TeamRunOutputEvent = Union[
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    CustomEvent,
 ]
 
 # Map event string to dataclass for team events
@@ -252,6 +260,7 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     TeamRunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    TeamRunEvent.custom_event.value: CustomEvent,
 }
 
 
@@ -264,6 +273,76 @@ def team_run_output_event_from_dict(data: dict) -> BaseTeamRunEvent:
     if not event_class:
         raise ValueError(f"Unknown team event type: {event_type}")
     return event_class.from_dict(data)  # type: ignore
+
+
+@dataclass
+class TeamRunInput:
+    """Container for the raw input data passed to Agent.run().
+    This captures the original input exactly as provided by the user,
+    separate from the processed messages that go to the model.
+    Attributes:
+        input_content: The literal input message/content passed to run()
+        images: Images directly passed to run()
+        videos: Videos directly passed to run()
+        audios: Audio files directly passed to run()
+        files: Files directly passed to run()
+    """
+
+    input_content: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None
+    images: Optional[Sequence[ImageArtifact]] = None
+    videos: Optional[Sequence[VideoArtifact]] = None
+    audios: Optional[Sequence[AudioArtifact]] = None
+    files: Optional[Sequence[File]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation"""
+        result: Dict[str, Any] = {}
+
+        if self.input_content is not None:
+            if isinstance(self.input_content, (str)):
+                result["input_content"] = self.input_content
+            elif isinstance(self.input_content, BaseModel):
+                result["input_content"] = self.input_content.model_dump(exclude_none=True)
+            elif isinstance(self.input_content, Message):
+                result["input_content"] = self.input_content.to_dict()
+            elif (
+                isinstance(self.input_content, list)
+                and self.input_content
+                and isinstance(self.input_content[0], Message)
+            ):
+                result["input_content"] = [m.to_dict() for m in self.input_content]
+            else:
+                result["input_content"] = self.input_content
+
+        if self.images:
+            result["images"] = [img.to_dict() for img in self.images]
+        if self.videos:
+            result["videos"] = [vid.to_dict() for vid in self.videos]
+        if self.audios:
+            result["audios"] = [aud.to_dict() for aud in self.audios]
+
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TeamRunInput":
+        """Create TeamRunInput from dictionary"""
+        images = None
+        if data.get("images"):
+            images = [ImageArtifact.model_validate(img_data) for img_data in data["images"]]
+
+        videos = None
+        if data.get("videos"):
+            videos = [VideoArtifact.model_validate(vid_data) for vid_data in data["videos"]]
+
+        audios = None
+        if data.get("audios"):
+            audios = [AudioArtifact.model_validate(aud_data) for aud_data in data["audios"]]
+
+        files = None
+        if data.get("files"):
+            files = [File.model_validate(file_data) for file_data in data["files"]]
+
+        return cls(input_content=data.get("input_content"), images=images, videos=videos, audios=audios, files=files)
 
 
 @dataclass
@@ -292,6 +371,9 @@ class TeamRunOutput:
     audio: Optional[List[AudioArtifact]] = None  # Audio from member runs
 
     response_audio: Optional[AudioResponse] = None  # Model audio response
+
+    # Input media and messages from user
+    input: Optional[TeamRunInput] = None
 
     reasoning_content: Optional[str] = None
 
@@ -401,6 +483,9 @@ class TeamRunOutput:
                 else:
                     _dict["tools"].append(tool)
 
+        if self.input is not None:
+            _dict["input"] = self.input.to_dict()
+
         return _dict
 
     def to_json(self) -> str:
@@ -468,6 +553,11 @@ class TeamRunOutput:
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
+        input_data = data.pop("input", None)
+        input_obj = None
+        if input_data:
+            input_obj = TeamRunInput.from_dict(input_data)
+
         metrics = data.pop("metrics", None)
         if metrics:
             metrics = Metrics(**metrics)
@@ -487,6 +577,7 @@ class TeamRunOutput:
             videos=videos,
             audio=audio,
             response_audio=response_audio,
+            input=input_obj,
             citations=citations,
             tools=tools,
             events=events,

@@ -37,8 +37,7 @@ stock_searcher = Agent(
     role="Searches for stock price and analyst information",
     tools=[
         YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
+            include_tools=["get_current_stock_price", "get_analyst_recommendations"],
         )
     ],
     instructions=[
@@ -55,9 +54,7 @@ company_info_agent = Agent(
     output_schema=CompanyAnalysis,
     tools=[
         YFinanceTools(
-            stock_price=False,
-            company_info=True,
-            company_news=True,
+            include_tools=["get_company_info", "get_company_news"],
         )
     ],
     instructions=[
@@ -69,8 +66,8 @@ company_info_agent = Agent(
 # Create routing team
 team = Team(
     name="Stock Research Team",
-    mode="route",
     model=OpenAIChat("o3-mini"),
+    respond_directly=True,
     members=[stock_searcher, company_info_agent],
     markdown=True,
     show_members_responses=True,

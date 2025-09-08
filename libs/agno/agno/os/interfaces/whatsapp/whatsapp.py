@@ -20,10 +20,9 @@ class Whatsapp(BaseInterface):
         if not self.agent and not self.team:
             raise ValueError("Whatsapp requires an agent and a team")
 
-    def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:
+    def get_router(self, **kwargs) -> APIRouter:
         # Cannot be overridden
-        self.router_prefix = "/whatsapp"
-        self.router = APIRouter(prefix=self.router_prefix, tags=["Whatsapp"])
+        self.router = APIRouter(prefix="/whatsapp", tags=["Whatsapp"])
 
         self.router = attach_routes(router=self.router, agent=self.agent, team=self.team)
 

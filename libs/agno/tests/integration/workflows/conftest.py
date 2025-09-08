@@ -22,7 +22,7 @@ def test_agent():
 @pytest.fixture
 def test_team(test_agent):
     """Create minimal test team."""
-    return Team(name="TestTeam", mode="route", members=[test_agent])
+    return Team(name="TestTeam", members=[test_agent])
 
 
 @pytest.fixture
@@ -90,7 +90,6 @@ def team_workflow(tmp_path):
     team = Team(
         name="Test Team",
         members=[agent1, agent2],
-        mode="coordinate",
         instructions="Work together to analyze the topic",
     )
 

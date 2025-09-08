@@ -1,5 +1,6 @@
 """This cookbook shows how to add content from a S3 bucket to the knowledge base.
-1. Run: `python cookbook/agent_concepts/knowledge/11_from_s3.py` to run the cookbook
+
+1. Run: `python cookbook/agent_concepts/knowledge/06_from_s3.py` to run the cookbook
 """
 
 import asyncio
@@ -10,10 +11,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content.remote_content import S3Content
 from agno.vectordb.pgvector import PgVector
 
-contents_db = PostgresDb(
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    knowledge_table="knowledge_contents",
-)
+contents_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # Create Knowledge Instance
 knowledge = Knowledge(
