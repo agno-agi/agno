@@ -30,7 +30,7 @@ class ReaderFactory:
 
         config: Dict[str, Any] = {
             "name": "CSV Reader",
-            "description": "Parses CSV, XLSX, and XLS files with row-based chunking and custom delimiter support",
+            "description": "Parses CSV, XLSX, and XLS files with custom delimiter support",
         }
         config.update(kwargs)
         return CSVReader(**config)
