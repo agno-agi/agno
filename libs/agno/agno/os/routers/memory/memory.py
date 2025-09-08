@@ -15,7 +15,16 @@ from agno.os.routers.memory.schemas import (
     UserMemorySchema,
     UserStatsSchema,
 )
-from agno.os.schema import UnauthenticatedResponse, BadRequestResponse, NotFoundResponse, ValidationErrorResponse, InternalServerErrorResponse, PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.schema import (
+    BadRequestResponse,
+    InternalServerErrorResponse,
+    NotFoundResponse,
+    PaginatedResponse,
+    PaginationInfo,
+    SortOrder,
+    UnauthenticatedResponse,
+    ValidationErrorResponse,
+)
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
 
@@ -33,7 +42,7 @@ def get_memory_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoAP
             404: {"description": "Not Found", "model": NotFoundResponse},
             422: {"description": "Validation Error", "model": ValidationErrorResponse},
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
-        }
+        },
     )
     return attach_routes(router=router, dbs=dbs)
 
@@ -60,15 +69,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                             "topics": ["preferences", "communication_style", "technical"],
                             "user_id": "user-456",
                             "created_at": "2024-01-15T10:30:00Z",
-                            "updated_at": "2024-01-15T10:30:00Z"
+                            "updated_at": "2024-01-15T10:30:00Z",
                         }
                     }
-                }
+                },
             },
             400: {"description": "Invalid request data", "model": BadRequestResponse},
             422: {"description": "Validation error in payload", "model": ValidationErrorResponse},
-            500: {"description": "Failed to create memory", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Failed to create memory", "model": InternalServerErrorResponse},
+        },
     )
     async def create_memory(
         payload: UserMemoryCreateSchema,
@@ -98,12 +107,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         responses={
             204: {"description": "Memory deleted successfully"},
             404: {"description": "Memory not found", "model": NotFoundResponse},
-            500: {"description": "Failed to delete memory", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Failed to delete memory", "model": InternalServerErrorResponse},
+        },
     )
     async def delete_memory(
         memory_id: str = Path(description="Memory ID to delete"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion")
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
     ) -> None:
         db = get_db(dbs, db_id)
         db.delete_user_memory(memory_id=memory_id)
@@ -120,8 +129,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         responses={
             204: {"description": "Memories deleted successfully"},
             400: {"description": "Invalid request - empty memory_ids list", "model": BadRequestResponse},
-            500: {"description": "Failed to delete memories", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Failed to delete memories", "model": InternalServerErrorResponse},
+        },
     )
     async def delete_memories(
         request: DeleteMemoriesRequest,
@@ -153,7 +162,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                                     "topics": ["preferences", "communication_style"],
                                     "user_id": "user-456",
                                     "created_at": "2024-01-15T10:30:00Z",
-                                    "updated_at": "2024-01-15T10:30:00Z"
+                                    "updated_at": "2024-01-15T10:30:00Z",
                                 },
                                 {
                                     "memory_id": "mem-789",
@@ -161,15 +170,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                                     "topics": ["industry", "compliance", "requirements"],
                                     "user_id": "user-456",
                                     "created_at": "2024-01-14T15:20:00Z",
-                                    "updated_at": "2024-01-15T09:15:00Z"
-                                }
+                                    "updated_at": "2024-01-15T09:15:00Z",
+                                },
                             ],
-                            "meta": {"page": 1, "limit": 20, "total_count": 45, "total_pages": 3}
+                            "meta": {"page": 1, "limit": 20, "total_count": 45, "total_pages": 3},
                         }
                     }
-                }
+                },
             }
-        }
+        },
     )
     async def get_memories(
         user_id: Optional[str] = Query(default=None, description="Filter memories by user ID"),
@@ -224,13 +233,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                             "topics": ["preferences", "communication_style", "technical", "code_examples"],
                             "user_id": "user-456",
                             "created_at": "2024-01-15T10:30:00Z",
-                            "updated_at": "2024-01-15T11:45:00Z"
+                            "updated_at": "2024-01-15T11:45:00Z",
                         }
                     }
-                }
+                },
             },
-            404: {"description": "Memory not found", "model": NotFoundResponse}
-        }
+            404: {"description": "Memory not found", "model": NotFoundResponse},
+        },
     )
     async def get_memory(
         memory_id: str = Path(description="Memory ID to retrieve"),
@@ -267,12 +276,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                             "code_examples",
                             "requirements",
                             "healthcare",
-                            "finance"
+                            "finance",
                         ]
                     }
-                }
+                },
             }
-        }
+        },
     )
     async def get_topics(
         db_id: Optional[str] = Query(default=None, description="Database ID to query topics from"),
@@ -301,16 +310,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                             "topics": ["preferences", "communication_style", "visual_learning"],
                             "user_id": "user-456",
                             "created_at": "2024-01-15T10:30:00Z",
-                            "updated_at": "2024-01-15T14:22:00Z"
+                            "updated_at": "2024-01-15T14:22:00Z",
                         }
                     }
-                }
+                },
             },
             400: {"description": "Invalid request data", "model": BadRequestResponse},
             404: {"description": "Memory not found", "model": NotFoundResponse},
             422: {"description": "Validation error in payload", "model": ValidationErrorResponse},
-            500: {"description": "Failed to update memory", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Failed to update memory", "model": InternalServerErrorResponse},
+        },
     )
     async def update_memory(
         payload: UserMemoryCreateSchema,
@@ -353,22 +362,22 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                                     "user_id": "user-456",
                                     "memory_count": 15,
                                     "last_memory_created": "2024-01-15T14:30:00Z",
-                                    "most_common_topics": ["preferences", "technical", "communication_style"]
+                                    "most_common_topics": ["preferences", "technical", "communication_style"],
                                 },
                                 {
                                     "user_id": "user-789",
                                     "memory_count": 8,
                                     "last_memory_created": "2024-01-14T09:15:00Z",
-                                    "most_common_topics": ["healthcare", "compliance", "industry"]
-                                }
+                                    "most_common_topics": ["healthcare", "compliance", "industry"],
+                                },
                             ],
-                            "meta": {"page": 1, "limit": 20, "total_count": 125, "total_pages": 7}
+                            "meta": {"page": 1, "limit": 20, "total_count": 125, "total_pages": 7},
                         }
                     }
-                }
+                },
             },
-            500: {"description": "Failed to retrieve user statistics", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Failed to retrieve user statistics", "model": InternalServerErrorResponse},
+        },
     )
     async def get_user_memory_stats(
         limit: Optional[int] = Query(default=20, description="Number of user statistics to return per page"),
@@ -401,8 +410,8 @@ def parse_topics(
     topics: Optional[List[str]] = Query(
         default=None,
         description="Comma-separated list of topics to filter by",
-        example=["preferences,technical,communication_style"]
-    )
+        example=["preferences,technical,communication_style"],
+    ),
 ) -> Optional[List[str]]:
     """Parse comma-separated topics into a list for filtering memories by topic."""
     if not topics:

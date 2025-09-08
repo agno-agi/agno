@@ -21,7 +21,16 @@ from agno.os.routers.knowledge.schemas import (
     ContentUpdateSchema,
     ReaderSchema,
 )
-from agno.os.schema import UnauthenticatedResponse, BadRequestResponse, NotFoundResponse, ValidationErrorResponse, InternalServerErrorResponse, PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.schema import (
+    BadRequestResponse,
+    InternalServerErrorResponse,
+    NotFoundResponse,
+    PaginatedResponse,
+    PaginationInfo,
+    SortOrder,
+    UnauthenticatedResponse,
+    ValidationErrorResponse,
+)
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.utils.log import log_debug, log_info
@@ -42,7 +51,7 @@ def get_knowledge_router(
             404: {"description": "Not Found", "model": NotFoundResponse},
             422: {"description": "Validation Error", "model": ValidationErrorResponse},
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
-        }
+        },
     )
     return attach_routes(router=router, knowledge_instances=knowledge_instances)
 
@@ -68,14 +77,17 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                             "name": "example-document.pdf",
                             "description": "Sample document for processing",
                             "metadata": {"category": "documentation", "priority": "high"},
-                            "status": "processing"
+                            "status": "processing",
                         }
                     }
-                }
+                },
             },
-            400: {"description": "Invalid request - malformed metadata or missing content", "model": BadRequestResponse},
-            422: {"description": "Validation error in form data", "model": ValidationErrorResponse}
-        }
+            400: {
+                "description": "Invalid request - malformed metadata or missing content",
+                "model": BadRequestResponse,
+            },
+            422: {"description": "Validation error in form data", "model": ValidationErrorResponse},
+        },
     )
     async def upload_content(
         background_tasks: BackgroundTasks,
@@ -190,14 +202,17 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                             "status": "completed",
                             "status_message": "Content successfully processed",
                             "created_at": "2024-01-15T10:30:00Z",
-                            "updated_at": "2024-01-15T11:45:00Z"
+                            "updated_at": "2024-01-15T11:45:00Z",
                         }
                     }
-                }
+                },
             },
-            400: {"description": "Invalid request - malformed metadata or invalid reader_id", "model": BadRequestResponse},
-            404: {"description": "Content not found", "model": NotFoundResponse}
-        }
+            400: {
+                "description": "Invalid request - malformed metadata or invalid reader_id",
+                "model": BadRequestResponse,
+            },
+            404: {"description": "Content not found", "model": NotFoundResponse},
+        },
     )
     async def update_content(
         content_id: str = Path(..., description="Content ID"),
@@ -269,7 +284,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                     "size": 2048576,
                                     "metadata": {"category": "docs", "tags": ["important"]},
                                     "status": "completed",
-                                    "created_at": "2024-01-15T10:30:00Z"
+                                    "created_at": "2024-01-15T10:30:00Z",
                                 },
                                 {
                                     "id": "content-456",
@@ -279,15 +294,15 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                     "size": 1024000,
                                     "metadata": {"source": "web", "url": "https://example.com"},
                                     "status": "processing",
-                                    "created_at": "2024-01-15T11:00:00Z"
-                                }
+                                    "created_at": "2024-01-15T11:00:00Z",
+                                },
                             ],
-                            "meta": {"page": 1, "limit": 20, "total_count": 45, "total_pages": 3}
+                            "meta": {"page": 1, "limit": 20, "total_count": 45, "total_pages": 3},
                         }
                     }
-                }
+                },
             }
-        }
+        },
     )
     def get_content(
         limit: Optional[int] = Query(default=20, description="Number of content entries to return"),
@@ -343,21 +358,17 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                             "description": "Quarterly report with financial data",
                             "file_type": "pdf",
                             "size": 2048576,
-                            "metadata": {
-                                "category": "financial",
-                                "quarter": "Q4-2024",
-                                "department": "finance"
-                            },
+                            "metadata": {"category": "financial", "quarter": "Q4-2024", "department": "finance"},
                             "status": "completed",
                             "status_message": "Successfully processed and indexed",
                             "created_at": "2024-01-15T10:30:00Z",
-                            "updated_at": "2024-01-15T10:35:00Z"
+                            "updated_at": "2024-01-15T10:35:00Z",
                         }
                     }
-                }
+                },
             },
-            404: {"description": "Content not found", "model": NotFoundResponse}
-        }
+            404: {"description": "Content not found", "model": NotFoundResponse},
+        },
     )
     def get_content_by_id(
         content_id: str,
@@ -396,17 +407,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         responses={
             200: {
                 "description": "Content deleted successfully",
-                "content": {
-                    "application/json": {
-                        "example": {
-                            "id": "content-123"
-                        }
-                    }
-                }
+                "content": {"application/json": {"example": {"id": "content-123"}}},
             },
             404: {"description": "Content not found", "model": NotFoundResponse},
-            500: {"description": "Failed to delete content", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Failed to delete content", "model": InternalServerErrorResponse},
+        },
     )
     def delete_content_by_id(
         content_id: str,
@@ -432,14 +437,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         responses={
             200: {
                 "description": "All content deleted successfully",
-                "content": {
-                    "application/json": {
-                        "example": "success"
-                    }
-                }
+                "content": {"application/json": {"example": "success"}},
             },
-            500: {"description": "Failed to delete all content", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Failed to delete all content", "model": InternalServerErrorResponse},
+        },
     )
     def delete_all_content(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -469,29 +470,29 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                 "summary": "Content Being Processed",
                                 "value": {
                                     "status": "processing",
-                                    "status_message": "Content is being analyzed and chunked"
-                                }
+                                    "status_message": "Content is being analyzed and chunked",
+                                },
                             },
                             "completed": {
                                 "summary": "Content Successfully Processed",
                                 "value": {
                                     "status": "completed",
-                                    "status_message": "Content successfully processed and indexed"
-                                }
+                                    "status_message": "Content successfully processed and indexed",
+                                },
                             },
                             "failed": {
                                 "summary": "Content Processing Failed",
                                 "value": {
                                     "status": "failed",
-                                    "status_message": "Failed to process: unsupported file format"
-                                }
-                            }
+                                    "status_message": "Failed to process: unsupported file format",
+                                },
+                            },
                         }
                     }
-                }
+                },
             },
-            404: {"description": "Content not found", "model": NotFoundResponse}
-        }
+            404: {"description": "Content not found", "model": NotFoundResponse},
+        },
     )
     def get_content_status(
         content_id: str,
@@ -550,38 +551,38 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                     "id": "pdf_reader",
                                     "name": "PDF Reader",
                                     "description": "Extracts text from PDF documents",
-                                    "chunkers": ["paragraph", "sentence", "fixed_size"]
+                                    "chunkers": ["paragraph", "sentence", "fixed_size"],
                                 },
                                 "web_reader": {
                                     "id": "web_reader",
                                     "name": "Web Reader",
                                     "description": "Fetches and processes web content",
-                                    "chunkers": ["paragraph", "sentence"]
-                                }
+                                    "chunkers": ["paragraph", "sentence"],
+                                },
                             },
                             "readersForType": {
                                 "application/pdf": ["pdf_reader"],
                                 "text/html": ["web_reader", "text_reader"],
-                                "text/plain": ["text_reader"]
+                                "text/plain": ["text_reader"],
                             },
                             "chunkers": {
                                 "paragraph": {
                                     "key": "paragraph",
                                     "name": "Paragraph Chunker",
-                                    "description": "Splits content into paragraphs"
+                                    "description": "Splits content into paragraphs",
                                 },
                                 "sentence": {
-                                    "key": "sentence", 
+                                    "key": "sentence",
                                     "name": "Sentence Chunker",
-                                    "description": "Splits content into sentences"
-                                }
+                                    "description": "Splits content into sentences",
+                                },
                             },
-                            "filters": ["status", "file_type", "metadata"]
+                            "filters": ["status", "file_type", "metadata"],
                         }
                     }
-                }
+                },
             }
-        }
+        },
     )
     def get_config(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),

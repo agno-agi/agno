@@ -16,7 +16,16 @@ from agno.os.routers.evals.schemas import (
     UpdateEvalRunRequest,
 )
 from agno.os.routers.evals.utils import run_accuracy_eval, run_performance_eval, run_reliability_eval
-from agno.os.schema import UnauthenticatedResponse, BadRequestResponse, NotFoundResponse, ValidationErrorResponse, InternalServerErrorResponse, PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.schema import (
+    BadRequestResponse,
+    InternalServerErrorResponse,
+    NotFoundResponse,
+    PaginatedResponse,
+    PaginationInfo,
+    SortOrder,
+    UnauthenticatedResponse,
+    ValidationErrorResponse,
+)
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_agent_by_id, get_db, get_team_by_id
 from agno.team.team import Team
@@ -40,7 +49,7 @@ def get_eval_router(
             404: {"description": "Not Found", "model": NotFoundResponse},
             422: {"description": "Validation Error", "model": ValidationErrorResponse},
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
-        }
+        },
     )
     return attach_routes(router=router, dbs=dbs, agents=agents, teams=teams)
 
@@ -70,15 +79,15 @@ def attach_routes(
                                     "name": "Accuracy Test",
                                     "agent_id": "agent-1",
                                     "eval_type": "accuracy",
-                                    "eval_data": {"score": 0.85, "correct": 17, "total": 20}
+                                    "eval_data": {"score": 0.85, "correct": 17, "total": 20},
                                 }
                             ],
-                            "meta": {"page": 1, "limit": 20, "total_count": 45, "total_pages": 3}
+                            "meta": {"page": 1, "limit": 20, "total_count": 45, "total_pages": 3},
                         }
                     }
-                }
+                },
             }
-        }
+        },
     )
     async def get_eval_runs(
         agent_id: Optional[str] = Query(default=None, description="Agent ID"),
@@ -141,15 +150,15 @@ def attach_routes(
                                 "score": 0.85,
                                 "correct_answers": 17,
                                 "total_questions": 20,
-                                "accuracy_percentage": 85.0
+                                "accuracy_percentage": 85.0,
                             },
-                            "created_at": "2024-01-15T10:30:00Z"
+                            "created_at": "2024-01-15T10:30:00Z",
                         }
                     }
-                }
+                },
             },
-            404: {"description": "Evaluation run not found", "model": NotFoundResponse}
-        }
+            404: {"description": "Evaluation run not found", "model": NotFoundResponse},
+        },
     )
     async def get_eval_run(
         eval_run_id: str,
@@ -170,8 +179,8 @@ def attach_routes(
         description="Delete multiple evaluation runs by their IDs. This action cannot be undone.",
         responses={
             204: {"description": "Evaluation runs deleted successfully"},
-            500: {"description": "Failed to delete evaluation runs", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Failed to delete evaluation runs", "model": InternalServerErrorResponse},
+        },
     )
     async def delete_eval_runs(
         request: DeleteEvalRunsRequest,
@@ -200,14 +209,14 @@ def attach_routes(
                             "name": "Updated Test Name",
                             "agent_id": "agent-1",
                             "eval_type": "accuracy",
-                            "eval_data": {"score": 0.85}
+                            "eval_data": {"score": 0.85},
                         }
                     }
-                }
+                },
             },
             404: {"description": "Evaluation run not found", "model": NotFoundResponse},
-            500: {"description": "Failed to update evaluation run", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Failed to update evaluation run", "model": InternalServerErrorResponse},
+        },
     )
     async def update_eval_run(
         eval_run_id: str,
@@ -250,12 +259,8 @@ def attach_routes(
                                     "model_id": "gpt-4",
                                     "model_provider": "openai",
                                     "eval_type": "accuracy",
-                                    "eval_data": {
-                                        "score": 0.92,
-                                        "correct_answers": 23,
-                                        "total_questions": 25
-                                    }
-                                }
+                                    "eval_data": {"score": 0.92, "correct_answers": 23, "total_questions": 25},
+                                },
                             },
                             "performance_eval": {
                                 "summary": "Performance Evaluation",
@@ -268,9 +273,9 @@ def attach_routes(
                                         "avg_response_time": 1.2,
                                         "min_response_time": 0.8,
                                         "max_response_time": 2.1,
-                                        "total_runs": 10
-                                    }
-                                }
+                                        "total_runs": 10,
+                                    },
+                                },
                             },
                             "reliability_eval": {
                                 "summary": "Reliability Evaluation",
@@ -282,17 +287,17 @@ def attach_routes(
                                     "eval_data": {
                                         "success_rate": 0.95,
                                         "expected_tools_used": 8,
-                                        "actual_tools_used": 8
-                                    }
-                                }
-                            }
+                                        "actual_tools_used": 8,
+                                    },
+                                },
+                            },
                         }
                     }
-                }
+                },
             },
             400: {"description": "Invalid request - provide either agent_id or team_id", "model": BadRequestResponse},
-            404: {"description": "Agent or team not found", "model": NotFoundResponse}
-        }
+            404: {"description": "Agent or team not found", "model": NotFoundResponse},
+        },
     )
     async def run_eval(
         eval_run_input: EvalRunInput,
@@ -371,9 +376,9 @@ def attach_routes(
 
 def parse_eval_types_filter(
     eval_types: Optional[str] = Query(
-        default=None, 
+        default=None,
         description="Comma-separated eval types (accuracy,performance,reliability)",
-        example="accuracy,performance"
+        example="accuracy,performance",
     ),
 ) -> Optional[List[EvalType]]:
     """Parse comma-separated eval types into EvalType enums for filtering evaluation runs."""
@@ -383,7 +388,4 @@ def parse_eval_types_filter(
         return [EvalType(item.strip()) for item in eval_types.split(",")]
     except ValueError as e:
         valid_types = ", ".join([t.value for t in EvalType])
-        raise HTTPException(
-            status_code=422, 
-            detail=f"Invalid eval_type: {e}. Valid types: {valid_types}"
-        )
+        raise HTTPException(status_code=422, detail=f"Invalid eval_type: {e}. Valid types: {valid_types}")

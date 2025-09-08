@@ -21,21 +21,20 @@ from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentResponse,
     AgentSummaryResponse,
+    BadRequestResponse,
     ConfigResponse,
+    HealthResponse,
     InterfaceResponse,
+    InternalServerErrorResponse,
     Model,
+    NotFoundResponse,
     TeamResponse,
     TeamSummaryResponse,
+    UnauthenticatedResponse,
+    ValidationErrorResponse,
     WorkflowResponse,
     WorkflowSummaryResponse,
-    HealthResponse,
-    UnauthenticatedResponse,
-    BadRequestResponse,
-    NotFoundResponse,
-    ValidationErrorResponse,
-    InternalServerErrorResponse,
 )
-
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     get_agent_by_id,
@@ -316,14 +315,14 @@ def get_base_router(
 ) -> APIRouter:
     """
     Create the base FastAPI router with comprehensive OpenAPI documentation.
-    
+
     This router provides endpoints for:
     - Core system operations (health, config, models)
     - Agent management and execution
     - Team collaboration and coordination
     - Workflow automation and orchestration
     - Real-time WebSocket communications
-    
+
     All endpoints include detailed documentation, examples, and proper error handling.
     """
     router = APIRouter(
@@ -334,7 +333,7 @@ def get_base_router(
             404: {"description": "Not Found", "model": NotFoundResponse},
             422: {"description": "Validation Error", "model": ValidationErrorResponse},
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
-        }
+        },
     )
 
     # -- Main Routes ---
@@ -349,13 +348,9 @@ def get_base_router(
         responses={
             200: {
                 "description": "API is healthy and operational",
-                "content": {
-                    "application/json": {
-                        "example": {"status": "ok"}
-                    }
-                }
+                "content": {"application/json": {"example": {"status": "ok"}}},
             }
-        }
+        },
     )
     async def health_check() -> HealthResponse:
         return HealthResponse(status="ok")
@@ -386,12 +381,12 @@ def get_base_router(
                             "databases": ["main_db"],
                             "agents": [{"id": "agent1", "name": "Assistant"}],
                             "teams": [{"id": "team1", "name": "Support Team"}],
-                            "workflows": [{"id": "workflow1", "name": "Data Processing"}]
+                            "workflows": [{"id": "workflow1", "name": "Data Processing"}],
                         }
                     }
-                }
+                },
             }
-        }
+        },
     )
     async def config() -> ConfigResponse:
         return ConfigResponse(
@@ -432,12 +427,12 @@ def get_base_router(
                     "application/json": {
                         "example": [
                             {"id": "gpt-4", "provider": "openai"},
-                            {"id": "claude-3-sonnet", "provider": "anthropic"}
+                            {"id": "claude-3-sonnet", "provider": "anthropic"},
                         ]
                     }
-                }
+                },
             }
-        }
+        },
     )
     async def get_models() -> List[Model]:
         """Return the list of all models used by agents and teams in the contextual OS"""
@@ -483,17 +478,17 @@ def get_base_router(
                     "application/json": {
                         "example": {
                             "run_id": "123e4567-e89b-12d3-a456-426614174000",
-                            "content": "Hello! How can I help you today?"
+                            "content": "Hello! How can I help you today?",
                         }
                     },
                     "text/event-stream": {
-                        "example": "event: run_content\ndata: {\"content\": \"Hello!\", \"run_id\": \"123...\"}\n\n"
-                    }
-                }
+                        "example": 'event: run_content\ndata: {"content": "Hello!", "run_id": "123..."}\n\n'
+                    },
+                },
             },
             400: {"description": "Invalid request or unsupported file type", "model": BadRequestResponse},
-            404: {"description": "Agent not found", "model": NotFoundResponse}
-        }
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
     )
     async def create_agent_run(
         agent_id: str,
@@ -609,17 +604,10 @@ def get_base_router(
             "**Note:** Cancellation may not be immediate for all operations."
         ),
         responses={
-            200: {
-                "description": "Agent run cancelled successfully",
-                "content": {
-                    "application/json": {
-                        "example": {}
-                    }
-                }
-            },
+            200: {"description": "Agent run cancelled successfully", "content": {"application/json": {"example": {}}}},
             404: {"description": "Agent not found", "model": NotFoundResponse},
-            500: {"description": "Failed to cancel run", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Failed to cancel run", "model": InternalServerErrorResponse},
+        },
     )
     async def cancel_agent_run(
         agent_id: str,
@@ -656,14 +644,14 @@ def get_base_router(
                         "example": {
                             "run_id": "123e4567-e89b-12d3-a456-426614174000",
                             "content": "Based on the tool results, here's my response...",
-                            "metrics": {"total_tokens": 42, "time_taken": 2.1}
+                            "metrics": {"total_tokens": 42, "time_taken": 2.1},
                         }
                     }
-                }
+                },
             },
             400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
-            404: {"description": "Agent not found", "model": NotFoundResponse}
-        }
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
     )
     async def continue_agent_run(
         agent_id: str,
@@ -748,13 +736,13 @@ def get_base_router(
                                 "id": "assistant",
                                 "name": "AI Assistant",
                                 "model": {"name": "gpt-4", "provider": "openai"},
-                                "tools": {"tools": ["web_search", "calculator"]}
+                                "tools": {"tools": ["web_search", "calculator"]},
                             }
                         ]
                     }
-                }
+                },
             }
-        }
+        },
     )
     async def get_agents() -> List[AgentResponse]:
         """Return the list of all Agents present in the contextual OS"""
@@ -795,13 +783,13 @@ def get_base_router(
                             "description": "A helpful AI assistant",
                             "model": {"name": "gpt-4", "provider": "openai"},
                             "tools": {"tools": ["web_search", "calculator"], "tool_call_limit": 10},
-                            "system_message": {"description": "You are a helpful assistant"}
+                            "system_message": {"description": "You are a helpful assistant"},
                         }
                     }
-                }
+                },
             },
-            404: {"description": "Agent not found", "model": NotFoundResponse}
-        }
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
     )
     async def get_agent(agent_id: str) -> AgentResponse:
         agent = get_agent_by_id(agent_id, os.agents)
@@ -836,17 +824,17 @@ def get_base_router(
                     "application/json": {
                         "example": {
                             "run_id": "123e4567-e89b-12d3-a456-426614174000",
-                            "content": "Hello! How can I help you today?"
+                            "content": "Hello! How can I help you today?",
                         }
                     },
                     "text/event-stream": {
-                        "example": "event: run_content\ndata: {\"content\": \"Hello!\", \"run_id\": \"123...\"}\n\n"
-                    }
-                }
+                        "example": 'event: run_content\ndata: {"content": "Hello!", "run_id": "123..."}\n\n'
+                    },
+                },
             },
             400: {"description": "Invalid request or unsupported file type", "model": BadRequestResponse},
-            404: {"description": "Team not found", "model": NotFoundResponse}
-        }
+            404: {"description": "Team not found", "model": NotFoundResponse},
+        },
     )
     async def create_team_run(
         team_id: str,
@@ -959,17 +947,10 @@ def get_base_router(
             "**Note:** Cancellation may not be immediate for all operations."
         ),
         responses={
-            200: {
-                "description": "Team run cancelled successfully",
-                "content": {
-                    "application/json": {
-                        "example": {}
-                    }
-                }
-            },
+            200: {"description": "Team run cancelled successfully", "content": {"application/json": {"example": {}}}},
             404: {"description": "Team not found", "model": NotFoundResponse},
-            500: {"description": "Failed to cancel team run", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Failed to cancel team run", "model": InternalServerErrorResponse},
+        },
     )
     async def cancel_team_run(
         team_id: str,
@@ -1010,15 +991,15 @@ def get_base_router(
                                 "name": "Customer Support Team",
                                 "members": [
                                     {"id": "triage_agent", "name": "Triage Specialist"},
-                                    {"id": "tech_agent", "name": "Technical Support"}
+                                    {"id": "tech_agent", "name": "Technical Support"},
                                 ],
-                                "model": {"name": "gpt-4", "provider": "openai"}
+                                "model": {"name": "gpt-4", "provider": "openai"},
                             }
                         ]
                     }
-                }
+                },
             }
-        }
+        },
     )
     async def get_teams() -> List[TeamResponse]:
         """Return the list of all Teams present in the contextual OS"""
@@ -1038,9 +1019,7 @@ def get_base_router(
         tags=["Teams"],
         operation_id="get_team",
         summary="Get Team Details",
-        description=(
-            "Retrieve detailed configuration and member information for a specific team."
-        ),
+        description=("Retrieve detailed configuration and member information for a specific team."),
         responses={
             200: {
                 "description": "Team details retrieved successfully",
@@ -1055,21 +1034,21 @@ def get_base_router(
                                 {
                                     "id": "triage_agent",
                                     "name": "Triage Specialist",
-                                    "tools": {"tools": ["ticket_classifier", "priority_scorer"]}
+                                    "tools": {"tools": ["ticket_classifier", "priority_scorer"]},
                                 },
                                 {
                                     "id": "tech_agent",
                                     "name": "Technical Support",
-                                    "tools": {"tools": ["system_diagnostics", "knowledge_search"]}
-                                }
+                                    "tools": {"tools": ["system_diagnostics", "knowledge_search"]},
+                                },
                             ],
-                            "tools": {"tools": ["get_news", "search_web"]}
+                            "tools": {"tools": ["get_news", "search_web"]},
                         }
                     }
-                }
+                },
             },
-            404: {"description": "Team not found", "model": NotFoundResponse}
-        }
+            404: {"description": "Team not found", "model": NotFoundResponse},
+        },
     )
     async def get_team(team_id: str) -> TeamResponse:
         team = get_team_by_id(team_id, os.teams)
@@ -1134,13 +1113,13 @@ def get_base_router(
                                 "id": "data_pipeline",
                                 "name": "Data Processing Pipeline",
                                 "description": "Multi-step data analysis workflow",
-                                "db_id": "main_db"
+                                "db_id": "main_db",
                             }
                         ]
                     }
-                }
+                },
             }
-        }
+        },
     )
     async def get_workflows() -> List[WorkflowSummaryResponse]:
         if os.workflows is None:
@@ -1155,9 +1134,7 @@ def get_base_router(
         tags=["Workflows"],
         operation_id="get_workflow",
         summary="Get Workflow Details",
-        description=(
-            "Retrieve detailed configuration and step information for a specific workflow."
-        ),
+        description=("Retrieve detailed configuration and step information for a specific workflow."),
         responses={
             200: {
                 "description": "Workflow details retrieved successfully",
@@ -1169,28 +1146,19 @@ def get_base_router(
                             "description": "Multi-step data analysis workflow",
                             "input_schema": {
                                 "type": "object",
-                                "properties": {
-                                    "data_source": {"type": "string"},
-                                    "analysis_type": {"type": "string"}
-                                },
-                                "required": ["data_source"]
+                                "properties": {"data_source": {"type": "string"}, "analysis_type": {"type": "string"}},
+                                "required": ["data_source"],
                             },
                             "steps": [
-                                {
-                                    "name": "data_ingestion",
-                                    "agent": {"id": "data_agent", "name": "Data Processor"}
-                                },
-                                {
-                                    "name": "analysis",
-                                    "team": {"id": "analysis_team", "name": "Analysis Team"}
-                                }
-                            ]
+                                {"name": "data_ingestion", "agent": {"id": "data_agent", "name": "Data Processor"}},
+                                {"name": "analysis", "team": {"id": "analysis_team", "name": "Analysis Team"}},
+                            ],
                         }
                     }
-                }
+                },
             },
-            404: {"description": "Workflow not found", "model": NotFoundResponse}
-        }
+            404: {"description": "Workflow not found", "model": NotFoundResponse},
+        },
     )
     async def get_workflow(workflow_id: str) -> WorkflowResponse:
         workflow = get_workflow_by_id(workflow_id, os.workflows)
@@ -1229,30 +1197,25 @@ def get_base_router(
                             "content": {
                                 "final_result": "Data processing completed successfully",
                                 "processed_records": 1000,
-                                "analysis_summary": "Key insights extracted"
+                                "analysis_summary": "Key insights extracted",
                             },
                             "status": "completed",
                             "step_results": [
                                 {"step": "data_ingestion", "status": "completed", "output": "1000 records loaded"},
-                                {"step": "analysis", "status": "completed", "output": "Analysis complete"}
+                                {"step": "analysis", "status": "completed", "output": "Analysis complete"},
                             ],
-                            "metrics": {
-                                "duration": 45.2,
-                                "input_tokens": 2,
-                                "output_tokens": 250,
-                                "total_tokens": 252
-                            }
+                            "metrics": {"duration": 45.2, "input_tokens": 2, "output_tokens": 250, "total_tokens": 252},
                         }
                     },
                     "text/event-stream": {
-                        "example": "event: step_started\ndata: {\"step\": \"data_ingestion\", \"status\": \"running\"}\n\nevent: step_completed\ndata: {\"step\": \"data_ingestion\", \"output\": \"1000 records\"}\n\n"
-                    }
-                }
+                        "example": 'event: step_started\ndata: {"step": "data_ingestion", "status": "running"}\n\nevent: step_completed\ndata: {"step": "data_ingestion", "output": "1000 records"}\n\n'
+                    },
+                },
             },
             400: {"description": "Invalid input data or workflow configuration", "model": BadRequestResponse},
             404: {"description": "Workflow not found", "model": NotFoundResponse},
-            500: {"description": "Workflow execution error", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Workflow execution error", "model": InternalServerErrorResponse},
+        },
     )
     async def create_workflow_run(
         workflow_id: str,
@@ -1311,15 +1274,11 @@ def get_base_router(
         responses={
             200: {
                 "description": "Workflow run cancelled successfully",
-                "content": {
-                    "application/json": {
-                        "example": {}
-                    }
-                }
+                "content": {"application/json": {"example": {}}},
             },
             404: {"description": "Workflow or run not found", "model": NotFoundResponse},
-            500: {"description": "Failed to cancel workflow run", "model": InternalServerErrorResponse}
-        }
+            500: {"description": "Failed to cancel workflow run", "model": InternalServerErrorResponse},
+        },
     )
     async def cancel_workflow_run(workflow_id: str, run_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)

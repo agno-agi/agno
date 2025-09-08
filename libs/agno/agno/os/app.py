@@ -83,7 +83,7 @@ class AgentOS:
         self.interfaces = interfaces or []
 
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
-        
+
         self._app_set = False
         self.fastapi_app: Optional[FastAPI] = None
         if fastapi_app:
@@ -220,6 +220,7 @@ class AgentOS:
 
         # Add middleware (only if app is not set)
         if not self._app_set:
+
             @self.fastapi_app.exception_handler(HTTPException)
             async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
                 return JSONResponse(
