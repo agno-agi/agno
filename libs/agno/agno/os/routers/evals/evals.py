@@ -16,7 +16,7 @@ from agno.os.routers.evals.schemas import (
     UpdateEvalRunRequest,
 )
 from agno.os.routers.evals.utils import run_accuracy_eval, run_performance_eval, run_reliability_eval
-from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.schema import UnauthenticatedResponse, BadRequestResponse, NotFoundResponse, ValidationErrorResponse, InternalServerErrorResponse, PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_agent_by_id, get_db, get_team_by_id
 from agno.team.team import Team
@@ -30,7 +30,18 @@ def get_eval_router(
     teams: Optional[List[Team]] = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
 ) -> APIRouter:
-    router = APIRouter(dependencies=[Depends(get_authentication_dependency(settings))], tags=["Evals"])
+    """Create eval router with comprehensive OpenAPI documentation for agent/team evaluation endpoints."""
+    router = APIRouter(
+        dependencies=[Depends(get_authentication_dependency(settings))],
+        tags=["Evals"],
+        responses={
+            400: {"description": "Bad Request", "model": BadRequestResponse},
+            401: {"description": "Unauthorized", "model": UnauthenticatedResponse},
+            404: {"description": "Not Found", "model": NotFoundResponse},
+            422: {"description": "Validation Error", "model": ValidationErrorResponse},
+            500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
+        }
+    )
     return attach_routes(router=router, dbs=dbs, agents=agents, teams=teams)
 
 
@@ -38,7 +49,36 @@ def attach_routes(
     router: APIRouter, dbs: dict[str, BaseDb], agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None
 ) -> APIRouter:
     @router.get(
-        "/eval-runs", response_model=PaginatedResponse[EvalSchema], status_code=200, operation_id="get_eval_runs"
+        "/eval-runs",
+        response_model=PaginatedResponse[EvalSchema],
+        status_code=200,
+        operation_id="get_eval_runs",
+        summary="List Evaluation Runs",
+        description=(
+            "Retrieve paginated evaluation runs with filtering and sorting options. "
+            "Filter by agent, team, workflow, model, or evaluation type."
+        ),
+        responses={
+            200: {
+                "description": "Evaluation runs retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "data": [
+                                {
+                                    "id": "eval-123",
+                                    "name": "Accuracy Test",
+                                    "agent_id": "agent-1",
+                                    "eval_type": "accuracy",
+                                    "eval_data": {"score": 0.85, "correct": 17, "total": 20}
+                                }
+                            ],
+                            "meta": {"page": 1, "limit": 20, "total_count": 45, "total_pages": 3}
+                        }
+                    }
+                }
+            }
+        }
     )
     async def get_eval_runs(
         agent_id: Optional[str] = Query(default=None, description="Agent ID"),
@@ -78,7 +118,39 @@ def attach_routes(
             ),
         )
 
-    @router.get("/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200, operation_id="get_eval_run")
+    @router.get(
+        "/eval-runs/{eval_run_id}",
+        response_model=EvalSchema,
+        status_code=200,
+        operation_id="get_eval_run",
+        summary="Get Evaluation Run",
+        description="Retrieve detailed results and metrics for a specific evaluation run.",
+        responses={
+            200: {
+                "description": "Evaluation run details retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "eval-123",
+                            "name": "Accuracy Test",
+                            "agent_id": "agent-1",
+                            "model_id": "gpt-4",
+                            "model_provider": "openai",
+                            "eval_type": "accuracy",
+                            "eval_data": {
+                                "score": 0.85,
+                                "correct_answers": 17,
+                                "total_questions": 20,
+                                "accuracy_percentage": 85.0
+                            },
+                            "created_at": "2024-01-15T10:30:00Z"
+                        }
+                    }
+                }
+            },
+            404: {"description": "Evaluation run not found", "model": NotFoundResponse}
+        }
+    )
     async def get_eval_run(
         eval_run_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -90,10 +162,20 @@ def attach_routes(
 
         return EvalSchema.from_dict(eval_run)  # type: ignore
 
-    @router.delete("/eval-runs", status_code=204, operation_id="delete_eval_runs")
+    @router.delete(
+        "/eval-runs",
+        status_code=204,
+        operation_id="delete_eval_runs",
+        summary="Delete Evaluation Runs",
+        description="Delete multiple evaluation runs by their IDs. This action cannot be undone.",
+        responses={
+            204: {"description": "Evaluation runs deleted successfully"},
+            500: {"description": "Failed to delete evaluation runs", "model": InternalServerErrorResponse}
+        }
+    )
     async def delete_eval_runs(
         request: DeleteEvalRunsRequest,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
     ) -> None:
         try:
             db = get_db(dbs, db_id)
@@ -102,7 +184,30 @@ def attach_routes(
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
     @router.patch(
-        "/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200, operation_id="update_eval_run"
+        "/eval-runs/{eval_run_id}",
+        response_model=EvalSchema,
+        status_code=200,
+        operation_id="update_eval_run",
+        summary="Update Evaluation Run",
+        description="Update the name or other properties of an existing evaluation run.",
+        responses={
+            200: {
+                "description": "Evaluation run updated successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "eval-123",
+                            "name": "Updated Test Name",
+                            "agent_id": "agent-1",
+                            "eval_type": "accuracy",
+                            "eval_data": {"score": 0.85}
+                        }
+                    }
+                }
+            },
+            404: {"description": "Evaluation run not found", "model": NotFoundResponse},
+            500: {"description": "Failed to update evaluation run", "model": InternalServerErrorResponse}
+        }
     )
     async def update_eval_run(
         eval_run_id: str,
@@ -120,10 +225,78 @@ def attach_routes(
 
         return EvalSchema.from_dict(eval_run)  # type: ignore
 
-    @router.post("/eval-runs", response_model=EvalSchema, status_code=200, operation_id="run_eval")
+    @router.post(
+        "/eval-runs",
+        response_model=EvalSchema,
+        status_code=200,
+        operation_id="run_eval",
+        summary="Execute Evaluation",
+        description=(
+            "Run evaluation tests on agents or teams. Supports accuracy, performance, and reliability evaluations. "
+            "Requires either agent_id or team_id, but not both."
+        ),
+        responses={
+            200: {
+                "description": "Evaluation executed successfully",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "accuracy_eval": {
+                                "summary": "Accuracy Evaluation",
+                                "value": {
+                                    "id": "eval-acc-123",
+                                    "name": "GPT-4 Accuracy Test",
+                                    "agent_id": "agent-1",
+                                    "model_id": "gpt-4",
+                                    "model_provider": "openai",
+                                    "eval_type": "accuracy",
+                                    "eval_data": {
+                                        "score": 0.92,
+                                        "correct_answers": 23,
+                                        "total_questions": 25
+                                    }
+                                }
+                            },
+                            "performance_eval": {
+                                "summary": "Performance Evaluation",
+                                "value": {
+                                    "id": "eval-perf-456",
+                                    "name": "Response Time Test",
+                                    "team_id": "team-1",
+                                    "eval_type": "performance",
+                                    "eval_data": {
+                                        "avg_response_time": 1.2,
+                                        "min_response_time": 0.8,
+                                        "max_response_time": 2.1,
+                                        "total_runs": 10
+                                    }
+                                }
+                            },
+                            "reliability_eval": {
+                                "summary": "Reliability Evaluation",
+                                "value": {
+                                    "id": "eval-rel-789",
+                                    "name": "Tool Usage Test",
+                                    "agent_id": "agent-2",
+                                    "eval_type": "reliability",
+                                    "eval_data": {
+                                        "success_rate": 0.95,
+                                        "expected_tools_used": 8,
+                                        "actual_tools_used": 8
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            400: {"description": "Invalid request - provide either agent_id or team_id", "model": BadRequestResponse},
+            404: {"description": "Agent or team not found", "model": NotFoundResponse}
+        }
+    )
     async def run_eval(
         eval_run_input: EvalRunInput,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for evaluation"),
     ) -> Optional[EvalSchema]:
         db = get_db(dbs, db_id)
 
@@ -197,12 +370,20 @@ def attach_routes(
 
 
 def parse_eval_types_filter(
-    eval_types: Optional[str] = Query(default=None, description="Comma-separated eval types"),
+    eval_types: Optional[str] = Query(
+        default=None, 
+        description="Comma-separated eval types (accuracy,performance,reliability)",
+        example="accuracy,performance"
+    ),
 ) -> Optional[List[EvalType]]:
-    """Parse a comma-separated string of eval types into a list of EvalType enums"""
+    """Parse comma-separated eval types into EvalType enums for filtering evaluation runs."""
     if not eval_types:
         return None
     try:
         return [EvalType(item.strip()) for item in eval_types.split(",")]
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid eval_type: {e}")
+        valid_types = ", ".join([t.value for t in EvalType])
+        raise HTTPException(
+            status_code=422, 
+            detail=f"Invalid eval_type: {e}. Valid types: {valid_types}"
+        )

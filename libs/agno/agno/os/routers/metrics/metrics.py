@@ -8,6 +8,7 @@ from fastapi.routing import APIRouter
 from agno.db.base import BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
+from agno.os.schema import UnauthenticatedResponse, BadRequestResponse, NotFoundResponse, ValidationErrorResponse, InternalServerErrorResponse
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
 

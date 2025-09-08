@@ -15,7 +15,7 @@ from agno.os.routers.memory.schemas import (
     UserMemorySchema,
     UserStatsSchema,
 )
-from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.schema import UnauthenticatedResponse, BadRequestResponse, NotFoundResponse, ValidationErrorResponse, InternalServerErrorResponse, PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
 
@@ -23,15 +23,56 @@ logger = logging.getLogger(__name__)
 
 
 def get_memory_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs) -> APIRouter:
-    router = APIRouter(dependencies=[Depends(get_authentication_dependency(settings))], tags=["Memory"])
+    """Create memory router with comprehensive OpenAPI documentation for user memory management endpoints."""
+    router = APIRouter(
+        dependencies=[Depends(get_authentication_dependency(settings))],
+        tags=["Memory"],
+        responses={
+            400: {"description": "Bad Request", "model": BadRequestResponse},
+            401: {"description": "Unauthorized", "model": UnauthenticatedResponse},
+            404: {"description": "Not Found", "model": NotFoundResponse},
+            422: {"description": "Validation Error", "model": ValidationErrorResponse},
+            500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
+        }
+    )
     return attach_routes(router=router, dbs=dbs)
 
 
 def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
-    @router.post("/memories", response_model=UserMemorySchema, status_code=200, operation_id="create_memory")
+    @router.post(
+        "/memories",
+        response_model=UserMemorySchema,
+        status_code=200,
+        operation_id="create_memory",
+        summary="Create Memory",
+        description=(
+            "Create a new user memory with content and associated topics. "
+            "Memories are used to store contextual information for users across conversations."
+        ),
+        responses={
+            200: {
+                "description": "Memory created successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "memory_id": "mem-123",
+                            "memory": "User prefers technical explanations with code examples",
+                            "topics": ["preferences", "communication_style", "technical"],
+                            "user_id": "user-456",
+                            "created_at": "2024-01-15T10:30:00Z",
+                            "updated_at": "2024-01-15T10:30:00Z"
+                        }
+                    }
+                }
+            },
+            400: {"description": "Invalid request data", "model": BadRequestResponse},
+            422: {"description": "Validation error in payload", "model": ValidationErrorResponse},
+            500: {"description": "Failed to create memory", "model": InternalServerErrorResponse}
+        }
+    )
     async def create_memory(
         payload: UserMemoryCreateSchema,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for memory storage"),
     ) -> UserMemorySchema:
         db = get_db(dbs, db_id)
         user_memory = db.upsert_user_memory(
@@ -48,35 +89,99 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
 
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
-    @router.delete("/memories/{memory_id}", status_code=204, operation_id="delete_memory")
+    @router.delete(
+        "/memories/{memory_id}",
+        status_code=204,
+        operation_id="delete_memory",
+        summary="Delete Memory",
+        description="Permanently delete a specific user memory. This action cannot be undone.",
+        responses={
+            204: {"description": "Memory deleted successfully"},
+            404: {"description": "Memory not found", "model": NotFoundResponse},
+            500: {"description": "Failed to delete memory", "model": InternalServerErrorResponse}
+        }
+    )
     async def delete_memory(
-        memory_id: str = Path(), db_id: Optional[str] = Query(default=None, description="The ID of the database to use")
+        memory_id: str = Path(description="Memory ID to delete"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion")
     ) -> None:
         db = get_db(dbs, db_id)
         db.delete_user_memory(memory_id=memory_id)
 
-    @router.delete("/memories", status_code=204, operation_id="delete_memories")
+    @router.delete(
+        "/memories",
+        status_code=204,
+        operation_id="delete_memories",
+        summary="Delete Multiple Memories",
+        description=(
+            "Delete multiple user memories by their IDs in a single operation. "
+            "This action cannot be undone and all specified memories will be permanently removed."
+        ),
+        responses={
+            204: {"description": "Memories deleted successfully"},
+            400: {"description": "Invalid request - empty memory_ids list", "model": BadRequestResponse},
+            500: {"description": "Failed to delete memories", "model": InternalServerErrorResponse}
+        }
+    )
     async def delete_memories(
         request: DeleteMemoriesRequest,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
     ) -> None:
         db = get_db(dbs, db_id)
         db.delete_user_memories(memory_ids=request.memory_ids)
 
     @router.get(
-        "/memories", response_model=PaginatedResponse[UserMemorySchema], status_code=200, operation_id="get_memories"
+        "/memories",
+        response_model=PaginatedResponse[UserMemorySchema],
+        status_code=200,
+        operation_id="get_memories",
+        summary="List Memories",
+        description=(
+            "Retrieve paginated list of user memories with filtering and search capabilities. "
+            "Filter by user, agent, team, topics, or search within memory content."
+        ),
+        responses={
+            200: {
+                "description": "Memories retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "data": [
+                                {
+                                    "memory_id": "mem-123",
+                                    "memory": "User prefers concise technical explanations",
+                                    "topics": ["preferences", "communication_style"],
+                                    "user_id": "user-456",
+                                    "created_at": "2024-01-15T10:30:00Z",
+                                    "updated_at": "2024-01-15T10:30:00Z"
+                                },
+                                {
+                                    "memory_id": "mem-789",
+                                    "memory": "User works in healthcare and needs HIPAA compliance info",
+                                    "topics": ["industry", "compliance", "requirements"],
+                                    "user_id": "user-456",
+                                    "created_at": "2024-01-14T15:20:00Z",
+                                    "updated_at": "2024-01-15T09:15:00Z"
+                                }
+                            ],
+                            "meta": {"page": 1, "limit": 20, "total_count": 45, "total_pages": 3}
+                        }
+                    }
+                }
+            }
+        }
     )
     async def get_memories(
         user_id: Optional[str] = Query(default=None, description="Filter memories by user ID"),
         agent_id: Optional[str] = Query(default=None, description="Filter memories by agent ID"),
         team_id: Optional[str] = Query(default=None, description="Filter memories by team ID"),
         topics: Optional[List[str]] = Depends(parse_topics),
-        search_content: Optional[str] = Query(default=None, description="Fuzzy search memory content"),
-        limit: Optional[int] = Query(default=20, description="Number of memories to return"),
-        page: Optional[int] = Query(default=1, description="Page number"),
-        sort_by: Optional[str] = Query(default="updated_at", description="Field to sort by"),
+        search_content: Optional[str] = Query(default=None, description="Fuzzy search within memory content"),
+        limit: Optional[int] = Query(default=20, description="Number of memories to return per page"),
+        page: Optional[int] = Query(default=1, description="Page number for pagination"),
+        sort_by: Optional[str] = Query(default="updated_at", description="Field to sort memories by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query memories from"),
     ) -> PaginatedResponse[UserMemorySchema]:
         db = get_db(dbs, db_id)
         user_memories, total_count = db.get_user_memories(
@@ -101,10 +206,35 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             ),
         )
 
-    @router.get("/memories/{memory_id}", response_model=UserMemorySchema, status_code=200, operation_id="get_memory")
+    @router.get(
+        "/memories/{memory_id}",
+        response_model=UserMemorySchema,
+        status_code=200,
+        operation_id="get_memory",
+        summary="Get Memory by ID",
+        description="Retrieve detailed information about a specific user memory by its ID.",
+        responses={
+            200: {
+                "description": "Memory retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "memory_id": "mem-123",
+                            "memory": "User prefers detailed technical explanations with code examples and best practices",
+                            "topics": ["preferences", "communication_style", "technical", "code_examples"],
+                            "user_id": "user-456",
+                            "created_at": "2024-01-15T10:30:00Z",
+                            "updated_at": "2024-01-15T11:45:00Z"
+                        }
+                    }
+                }
+            },
+            404: {"description": "Memory not found", "model": NotFoundResponse}
+        }
+    )
     async def get_memory(
-        memory_id: str = Path(),
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        memory_id: str = Path(description="Memory ID to retrieve"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query memory from"),
     ) -> UserMemorySchema:
         db = get_db(dbs, db_id)
         user_memory = db.get_user_memory(memory_id=memory_id, deserialize=False)
@@ -113,20 +243,79 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
 
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
-    @router.get("/memories/topics", response_model=List[str], status_code=200, operation_id="get_memory_topics")
+    @router.get(
+        "/memories/topics",
+        response_model=List[str],
+        status_code=200,
+        operation_id="get_memory_topics",
+        summary="Get Memory Topics",
+        description=(
+            "Retrieve all unique topics associated with memories in the system. "
+            "Useful for filtering and categorizing memories by topic."
+        ),
+        responses={
+            200: {
+                "description": "Memory topics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            "preferences",
+                            "communication_style",
+                            "technical",
+                            "industry",
+                            "compliance",
+                            "code_examples",
+                            "requirements",
+                            "healthcare",
+                            "finance"
+                        ]
+                    }
+                }
+            }
+        }
+    )
     async def get_topics(
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query topics from"),
     ) -> List[str]:
         db = get_db(dbs, db_id)
         return db.get_all_memory_topics()
 
     @router.patch(
-        "/memories/{memory_id}", response_model=UserMemorySchema, status_code=200, operation_id="update_memory"
+        "/memories/{memory_id}",
+        response_model=UserMemorySchema,
+        status_code=200,
+        operation_id="update_memory",
+        summary="Update Memory",
+        description=(
+            "Update an existing user memory's content and topics. "
+            "Replaces the entire memory content and topic list with the provided values."
+        ),
+        responses={
+            200: {
+                "description": "Memory updated successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "memory_id": "mem-123",
+                            "memory": "Updated: User prefers concise explanations with diagrams when possible",
+                            "topics": ["preferences", "communication_style", "visual_learning"],
+                            "user_id": "user-456",
+                            "created_at": "2024-01-15T10:30:00Z",
+                            "updated_at": "2024-01-15T14:22:00Z"
+                        }
+                    }
+                }
+            },
+            400: {"description": "Invalid request data", "model": BadRequestResponse},
+            404: {"description": "Memory not found", "model": NotFoundResponse},
+            422: {"description": "Validation error in payload", "model": ValidationErrorResponse},
+            500: {"description": "Failed to update memory", "model": InternalServerErrorResponse}
+        }
     )
     async def update_memory(
         payload: UserMemoryCreateSchema,
-        memory_id: str = Path(),
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        memory_id: str = Path(description="Memory ID to update"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for update"),
     ) -> UserMemorySchema:
         db = get_db(dbs, db_id)
         user_memory = db.upsert_user_memory(
@@ -148,11 +337,43 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         response_model=PaginatedResponse[UserStatsSchema],
         status_code=200,
         operation_id="get_user_memory_stats",
+        summary="Get User Memory Statistics",
+        description=(
+            "Retrieve paginated statistics about memory usage by user. "
+            "Provides insights into user engagement and memory distribution across users."
+        ),
+        responses={
+            200: {
+                "description": "User memory statistics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "data": [
+                                {
+                                    "user_id": "user-456",
+                                    "memory_count": 15,
+                                    "last_memory_created": "2024-01-15T14:30:00Z",
+                                    "most_common_topics": ["preferences", "technical", "communication_style"]
+                                },
+                                {
+                                    "user_id": "user-789",
+                                    "memory_count": 8,
+                                    "last_memory_created": "2024-01-14T09:15:00Z",
+                                    "most_common_topics": ["healthcare", "compliance", "industry"]
+                                }
+                            ],
+                            "meta": {"page": 1, "limit": 20, "total_count": 125, "total_pages": 7}
+                        }
+                    }
+                }
+            },
+            500: {"description": "Failed to retrieve user statistics", "model": InternalServerErrorResponse}
+        }
     )
     async def get_user_memory_stats(
-        limit: Optional[int] = Query(default=20, description="Number of items to return"),
-        page: Optional[int] = Query(default=1, description="Page number"),
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        limit: Optional[int] = Query(default=20, description="Number of user statistics to return per page"),
+        page: Optional[int] = Query(default=1, description="Page number for pagination"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
     ) -> PaginatedResponse[UserStatsSchema]:
         db = get_db(dbs, db_id)
         try:
@@ -176,8 +397,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     return router
 
 
-def parse_topics(topics: Optional[List[str]] = Query(default=None)) -> Optional[List[str]]:
-    """Parse a comma-separated string of topics into a list of topics"""
+def parse_topics(
+    topics: Optional[List[str]] = Query(
+        default=None,
+        description="Comma-separated list of topics to filter by",
+        example=["preferences,technical,communication_style"]
+    )
+) -> Optional[List[str]]:
+    """Parse comma-separated topics into a list for filtering memories by topic."""
     if not topics:
         return None
 
@@ -185,4 +412,4 @@ def parse_topics(topics: Optional[List[str]] = Query(default=None)) -> Optional[
         return [topic.strip() for topic in topics[0].split(",") if topic.strip()]
 
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Invalid topics: {e}")
+        raise HTTPException(status_code=422, detail=f"Invalid topics format: {e}")
