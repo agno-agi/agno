@@ -457,8 +457,13 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                 "content": {
                     "application/json": {
                         "examples": {
-                            "status": "completed",
-                            "status_message": "",
+                            "completed": {
+                                "summary": "Example completed content status",
+                                "value": {
+                                    "status": "completed",
+                                    "status_message": "",
+                                },
+                            }
                         }
                     }
                 },
