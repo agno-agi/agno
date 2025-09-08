@@ -1069,7 +1069,7 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
+        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
             images=images, videos=videos, audios=audio
         )
 
@@ -1638,7 +1638,7 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
+        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
             images=images, videos=videos, audios=audio
         )
 
@@ -7106,7 +7106,7 @@ class Agent:
         message.image_output = None
         message.video_output = None
 
-    def _convert_media_to_artifacts(
+    def _validate_media_object_id(
         self,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,

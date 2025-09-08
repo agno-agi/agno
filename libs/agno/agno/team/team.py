@@ -1110,7 +1110,7 @@ class Team:
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
+        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
             images=images, videos=videos, audios=audio
         )
 
@@ -1652,7 +1652,7 @@ class Team:
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
+        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
             images=images, videos=videos, audios=audio
         )
 
@@ -2146,28 +2146,37 @@ class Team:
                     should_yield = True
 
                 # Process thinking
-                if model_response_event.reasoning_content is not None:
-                    if not full_model_response.reasoning_content:
-                        full_model_response.reasoning_content = model_response_event.reasoning_content
-                    else:
-                        full_model_response.reasoning_content += model_response_event.reasoning_content
-                    should_yield = True
-
-                if model_response_event.citations is not None:
-                    # We get citations in one chunk
-                    full_model_response.citations = model_response_event.citations
-                    should_yield = True
-
-                # Process audio
                 if model_response_event.audio is not None:
                     if full_model_response.audio is None:
-                        full_model_response.audio = Audio(id=str(uuid4()), content="", transcript="")
+                        full_model_response.audio = Audio(id=str(uuid4()), content=b"", transcript="")
 
                     if model_response_event.audio.id is not None:
                         full_model_response.audio.id = model_response_event.audio.id  # type: ignore
+                        
                     if model_response_event.audio.content is not None:
-                        full_model_response.audio.content += model_response_event.audio.content  # type: ignore
+                        # Handle both base64 string and bytes content
+                        if isinstance(model_response_event.audio.content, str):
+                            # Decode base64 string to bytes
+                            try:
+                                import base64
+                                decoded_content = base64.b64decode(model_response_event.audio.content)
+                                if full_model_response.audio.content is None:
+                                    full_model_response.audio.content = b""
+                                full_model_response.audio.content += decoded_content
+                            except Exception:
+                                # If decode fails, encode string as bytes
+                                if full_model_response.audio.content is None:
+                                    full_model_response.audio.content = b""
+                                full_model_response.audio.content += model_response_event.audio.content.encode("utf-8")
+                        elif isinstance(model_response_event.audio.content, bytes):
+                            # Content is already bytes
+                            if full_model_response.audio.content is None:
+                                full_model_response.audio.content = b""
+                            full_model_response.audio.content += model_response_event.audio.content
+                            
                     if model_response_event.audio.transcript is not None:
+                        if full_model_response.audio.transcript is None:
+                            full_model_response.audio.transcript = ""
                         full_model_response.audio.transcript += model_response_event.audio.transcript  # type: ignore
                     if model_response_event.audio.expires_at is not None:
                         full_model_response.audio.expires_at = model_response_event.audio.expires_at  # type: ignore
@@ -3012,7 +3021,7 @@ class Team:
         message.image_output = None
         message.video_output = None
 
-    def _convert_media_to_artifacts(
+    def _validate_media_object_id(
         self,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
