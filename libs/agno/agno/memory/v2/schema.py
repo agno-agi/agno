@@ -50,6 +50,8 @@ class SessionSummary:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SessionSummary":
         last_updated = data.get("last_updated")
-        if last_updated:
+        if type(last_updated) is str:
             data["last_updated"] = datetime.fromisoformat(last_updated)
+        elif type(last_updated) is datetime:
+            data["last_updated"] = last_updated
         return cls(**data)

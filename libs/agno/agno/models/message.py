@@ -70,6 +70,7 @@ class MessageMetrics:
 
     time: Optional[float] = None
     time_to_first_token: Optional[float] = None
+    cost: Optional[float] = None
 
     timer: Optional[Timer] = None
 
@@ -152,6 +153,14 @@ class MessageMetrics:
 
         # Handle time_to_first_token (take the first non-None value)
         result.time_to_first_token = self.time_to_first_token or other.time_to_first_token
+
+        # Handle cost
+        if self.cost is not None and other.cost is not None:
+            result.cost = self.cost + other.cost
+        elif self.cost is not None:
+            result.cost = self.cost
+        elif other.cost is not None:
+            result.cost = other.cost
 
         return result
 
