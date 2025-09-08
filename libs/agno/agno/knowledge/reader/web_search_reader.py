@@ -62,11 +62,11 @@ class WebSearchReader(Reader):
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Web Search readers."""
         return [
-            ChunkingStrategyType.AGENTIC_CHUNKING,
-            ChunkingStrategyType.DOCUMENT_CHUNKING,
-            ChunkingStrategyType.RECURSIVE_CHUNKING,
-            ChunkingStrategyType.SEMANTIC_CHUNKING,
-            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyType.AGENTIC_CHUNKER,
+            ChunkingStrategyType.DOCUMENT_CHUNKER,
+            ChunkingStrategyType.RECURSIVE_CHUNKER,
+            ChunkingStrategyType.SEMANTIC_CHUNKER,
+            ChunkingStrategyType.FIXED_SIZE_CHUNKER,
         ]
 
     @classmethod

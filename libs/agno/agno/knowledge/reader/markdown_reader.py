@@ -13,13 +13,13 @@ from agno.utils.log import log_info, logger
 try:
     from agno.knowledge.chunking.markdown import MarkdownChunking
 
-    DEFAULT_CHUNKING_STRATEGY = MarkdownChunking()
-    MARKDOWN_CHUNKING_AVAILABLE = True
+    DEFAULT_CHUNKER_STRATEGY = MarkdownChunking()
+    MARKDOWN_CHUNKER_AVAILABLE = True
 except ImportError:
     from agno.knowledge.chunking.fixed import FixedSizeChunking
 
-    DEFAULT_CHUNKING_STRATEGY = FixedSizeChunking()
-    MARKDOWN_CHUNKING_AVAILABLE = False
+    DEFAULT_CHUNKER_STRATEGY = FixedSizeChunking()
+    MARKDOWN_CHUNKER_AVAILABLE = False
 
 
 class MarkdownReader(Reader):
@@ -29,16 +29,16 @@ class MarkdownReader(Reader):
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Markdown readers."""
         strategies = [
-            ChunkingStrategyType.DOCUMENT_CHUNKING,
-            ChunkingStrategyType.AGENTIC_CHUNKING,
-            ChunkingStrategyType.RECURSIVE_CHUNKING,
-            ChunkingStrategyType.SEMANTIC_CHUNKING,
-            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKER,
+            ChunkingStrategyType.AGENTIC_CHUNKER,
+            ChunkingStrategyType.RECURSIVE_CHUNKER,
+            ChunkingStrategyType.SEMANTIC_CHUNKER,
+            ChunkingStrategyType.FIXED_SIZE_CHUNKER,
         ]
 
         # Only include MarkdownChunking if it's available
-        if MARKDOWN_CHUNKING_AVAILABLE:
-            strategies.insert(0, ChunkingStrategyType.MARKDOWN_CHUNKING)
+        if MARKDOWN_CHUNKER_AVAILABLE:
+            strategies.insert(0, ChunkingStrategyType.MARKDOWN_CHUNKER)
 
         return strategies
 
@@ -54,7 +54,7 @@ class MarkdownReader(Reader):
     ) -> None:
         # Use the default chunking strategy if none provided
         if chunking_strategy is None:
-            chunking_strategy = DEFAULT_CHUNKING_STRATEGY
+            chunking_strategy = DEFAULT_CHUNKER_STRATEGY
 
         super().__init__(chunking_strategy=chunking_strategy, name=name, description=description)
 

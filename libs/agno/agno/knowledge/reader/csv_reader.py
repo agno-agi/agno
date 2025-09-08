@@ -32,11 +32,11 @@ class CSVReader(Reader):
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for CSV readers."""
         return [
-            ChunkingStrategyType.ROW_CHUNKING,
-            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
-            ChunkingStrategyType.AGENTIC_CHUNKING,
-            ChunkingStrategyType.DOCUMENT_CHUNKING,
-            ChunkingStrategyType.RECURSIVE_CHUNKING,
+            ChunkingStrategyType.ROW_CHUNKER,
+            ChunkingStrategyType.FIXED_SIZE_CHUNKER,
+            ChunkingStrategyType.AGENTIC_CHUNKER,
+            ChunkingStrategyType.DOCUMENT_CHUNKER,
+            ChunkingStrategyType.RECURSIVE_CHUNKER,
         ]
 
     @classmethod
@@ -183,11 +183,11 @@ class CSVUrlReader(Reader):
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for CSV URL readers."""
         return [
-            ChunkingStrategyType.ROW_CHUNKING,
-            ChunkingStrategyType.SEMANTIC_CHUNKING,
-            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
-            ChunkingStrategyType.AGENTIC_CHUNKING,
-            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.ROW_CHUNKER,
+            ChunkingStrategyType.SEMANTIC_CHUNKER,
+            ChunkingStrategyType.FIXED_SIZE_CHUNKER,
+            ChunkingStrategyType.AGENTIC_CHUNKER,
+            ChunkingStrategyType.DOCUMENT_CHUNKER,
         ]
 
     @classmethod

@@ -202,11 +202,11 @@ class BasePDFReader(Reader):
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for PDF readers."""
         return [
-            ChunkingStrategyType.DOCUMENT_CHUNKING,
-            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
-            ChunkingStrategyType.AGENTIC_CHUNKING,
-            ChunkingStrategyType.SEMANTIC_CHUNKING,
-            ChunkingStrategyType.RECURSIVE_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKER,
+            ChunkingStrategyType.FIXED_SIZE_CHUNKER,
+            ChunkingStrategyType.AGENTIC_CHUNKER,
+            ChunkingStrategyType.SEMANTIC_CHUNKER,
+            ChunkingStrategyType.RECURSIVE_CHUNKER,
         ]
 
     def _build_chunked_documents(self, documents: List[Document]) -> List[Document]:
