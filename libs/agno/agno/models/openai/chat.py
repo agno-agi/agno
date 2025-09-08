@@ -729,16 +729,16 @@ class OpenAIChat(Model):
             # If the audio output modality is requested, we can extract an audio response
             try:
                 if isinstance(response_message.audio, dict):
-                    model_response.audio = Audio.from_base64(
-                        base64_content=response_message.audio.get("data", ""),
+                    model_response.audio = Audio(
                         id=response_message.audio.get("id"),
+                        content=response_message.audio.get("data"),
                         expires_at=response_message.audio.get("expires_at"),
                         transcript=response_message.audio.get("transcript"),
                     )
                 else:
-                    model_response.audio = Audio.from_base64(
-                        base64_content=response_message.audio.data or "",
+                    model_response.audio = Audio(
                         id=response_message.audio.id,
+                        content=response_message.audio.data,
                         expires_at=response_message.audio.expires_at,
                         transcript=response_message.audio.transcript,
                     )
@@ -784,18 +784,18 @@ class OpenAIChat(Model):
                 if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
                     try:
                         if isinstance(choice_delta.audio, dict):
-                            model_response.audio = Audio.from_base64(
-                                base64_content=choice_delta.audio.get("data", ""),
+                            model_response.audio = Audio(
                                 id=choice_delta.audio.get("id"),
+                                content=choice_delta.audio.get("data"),
                                 expires_at=choice_delta.audio.get("expires_at"),
                                 transcript=choice_delta.audio.get("transcript"),
                                 sample_rate=24000,
                                 mime_type="pcm16",
                             )
                         else:
-                            model_response.audio = Audio.from_base64(
-                                base64_content=choice_delta.audio.data or "",
+                            model_response.audio = Audio(
                                 id=choice_delta.audio.id,
+                                content=choice_delta.audio.data,
                                 expires_at=choice_delta.audio.expires_at,
                                 transcript=choice_delta.audio.transcript,
                                 sample_rate=24000,
