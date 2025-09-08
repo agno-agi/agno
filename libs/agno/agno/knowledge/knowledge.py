@@ -5,9 +5,13 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
+from io import BytesIO
+from os.path import basename
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast, overload
 from uuid import uuid4
+
+from httpx import AsyncClient
 
 from agno.db.base import BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -15,6 +19,7 @@ from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.remote_content.remote_content import GCSContent, RemoteContent, S3Content
+from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb
 
@@ -431,6 +436,9 @@ class Knowledge:
         log_info(f"Adding content from URL {content.url}")
         content.file_type = "url"
 
+        if not content.url:
+            raise ValueError("No url provided")
+
         if self.vector_db.__class__.__name__ == "LightRag":
             await self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
             return
@@ -458,19 +466,39 @@ class Knowledge:
             self._update_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
 
-        # 3. Read the content
-        read_documents = []
+        # 3. Fetch and load content
+        async with AsyncClient() as client:
+            response = await async_fetch_with_retry(content.url, client=client)
+        bytes_content = BytesIO(response.content)
+
+        # 4. Select reader
+        # If a reader was provided by the user, use it
+        reader = content.reader
+        # Else select based on file extension
+        if reader is None:
+            name = content.name
+            url_path = Path(parsed_url.path)
+            file_extension = url_path.suffix.lower()
+            if file_extension == ".csv":
+                name = basename(parsed_url.path) or "data.csv"
+                reader = self.csv_reader
+            elif file_extension == ".pdf":
+                reader = self.pdf_reader
+            else:
+                reader = self.text_reader
+
+        # 5. Read content
         try:
-            reader = content.reader or self.url_reader
+            read_documents = []
             if reader is not None:
                 # TODO: We will refactor this to eventually pass authorization to all readers
                 import inspect
 
                 read_signature = inspect.signature(reader.read)
                 if "password" in read_signature.parameters and content.auth and content.auth.password:
-                    read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
+                    read_documents = reader.read(bytes_content, name=name, password=content.auth.password)
                 else:
-                    read_documents = reader.read(content.url, name=content.name)
+                    read_documents = reader.read(bytes_content, name=name)
         except Exception as e:
             log_error(f"Error reading URL: {content.url} - {str(e)}")
             content.status = ContentStatus.FAILED
@@ -478,7 +506,11 @@ class Knowledge:
             self._update_content(content)
             return
 
-        # 4. Prepare and insert the content in the vector database
+        # 6. Chunk documents if needed
+        if reader and not reader.chunk:
+            read_documents = await reader.chunk_documents_async(read_documents)
+
+        # 7. Prepare and insert the content in the vector database
         file_size = 0
         if read_documents:
             for read_document in read_documents:
@@ -665,21 +697,23 @@ class Knowledge:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
 
     async def _load_from_s3(self, content: Content, upsert: bool, skip_if_exists: bool):
+        """Load the contextual S3 content.
+
+        1. Identify objects to read
+        2. Setup Content object
+        3. Hash content and add it to the contents database
+        4. Select reader
+        5. Fetch and load the content
+        6. Read the content
+        7. Prepare and insert the content in the vector database
+        8. Remove temporary file if needed
+        """
         from agno.aws.resource.s3.object import S3Object  # type: ignore
-
-        if content.reader is None:
-            reader = self.s3_reader
-        else:
-            reader = content.reader
-
-        if reader is None:
-            log_warning("No reader provided for content")
-            return
 
         remote_content: S3Content = cast(S3Content, content.remote_content)
 
+        # 1. Identify objects to read
         objects_to_read: List[S3Object] = []
-
         if remote_content.bucket is not None:
             if remote_content.key is not None:
                 _object = S3Object(bucket_name=remote_content.bucket.name, name=remote_content.key)
@@ -691,10 +725,11 @@ class Knowledge:
             else:
                 objects_to_read.extend(remote_content.bucket.get_objects())
 
-        for object in objects_to_read:
+        for s3_object in objects_to_read:
+            # 2. Setup Content object
             id = str(uuid4())
             content_name = content.name or ""
-            content_name += "_" + (object.name or "")
+            content_name += "_" + (s3_object.name or "")
             content_entry = Content(
                 id=id,
                 name=content_name,
@@ -704,19 +739,41 @@ class Knowledge:
                 file_type="s3",
             )
 
+            # 3. Hash content and add it to the contents database
             content_hash = self._build_content_hash(content_entry)
             if self.vector_db and self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
                 log_info(f"Content {content_hash} already exists, skipping")
                 continue
-
             self._add_to_contents_db(content_entry)
 
-            read_documents = reader.read(content_entry.name, object)
+            # 4. Select reader
+            reader = content.reader
+            if reader is None:
+                if s3_object.uri.endswith(".pdf"):
+                    reader = self.pdf_reader
+                else:
+                    reader = self.text_reader
+                    obj_name = s3_object.name.split("/")[-1]
+            reader = cast(Reader, reader)
 
+            # 5. Fetch and load the content
+            if s3_object.uri.endswith(".pdf"):
+                readable_content = s3_object.get_resource().get()["Body"]
+            else:
+                obj_name = s3_object.name.split("/")[-1]
+                readable_content = s3_object.download(Path("storage").joinpath(obj_name))
+
+            # 6. Read the content
+            read_documents = reader.read(readable_content, s3_object)
+
+            # 7. Prepare and insert the content in the vector database
             for read_document in read_documents:
                 read_document.content_id = content.id
-
             await self._handle_vector_db_insert(content_entry, read_documents, upsert)
+
+            # 8. Remove temporary file if needed
+            if not s3_object.uri.endswith(".pdf"):
+                readable_content.unlink()
 
     async def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
         if content.reader is None:
@@ -972,7 +1029,7 @@ class Knowledge:
         elif content_type == KnowledgeContentOrigin.URL:
             log_info(f"Uploading file to LightRAG from URL: {content.url}")
             try:
-                reader = self.url_reader
+                reader = content.reader or self.website_reader
                 if reader is None:
                     log_error("No URL reader available")
                     content.status = ContentStatus.FAILED
@@ -1320,10 +1377,6 @@ class Knowledge:
         log_info(f"Selecting reader for extension: {extension}")
         return ReaderFactory.get_reader_for_extension(extension)
 
-    def _select_url_reader(self, url: str) -> Reader:
-        """Select the appropriate reader for a URL."""
-        return ReaderFactory.get_reader_for_url(url)
-
     def get_filters(self) -> List[str]:
         return [
             "filter_tag_1",
@@ -1447,29 +1500,9 @@ class Knowledge:
         return self._get_reader("firecrawl")
 
     @property
-    def url_reader(self) -> Optional[Reader]:
-        """URL reader - lazy loaded via factory."""
-        return self._get_reader("url")
-
-    @property
-    def pdf_url_reader(self) -> Optional[Reader]:
-        """PDF URL reader - lazy loaded via factory."""
-        return self._get_reader("pdf_url")
-
-    @property
     def youtube_reader(self) -> Optional[Reader]:
         """YouTube reader - lazy loaded via factory."""
         return self._get_reader("youtube")
-
-    @property
-    def csv_url_reader(self) -> Optional[Reader]:
-        """CSV URL reader - lazy loaded via factory."""
-        return self._get_reader("csv_url")
-
-    @property
-    def s3_reader(self) -> Optional[Reader]:
-        """S3 reader - lazy loaded via factory."""
-        return self._get_reader("s3")
 
     @property
     def gcs_reader(self) -> Optional[Reader]:

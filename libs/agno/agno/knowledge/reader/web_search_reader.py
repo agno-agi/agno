@@ -11,7 +11,6 @@ from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
-from agno.knowledge.reader.url_reader import URLReader
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, logger
 
@@ -48,15 +47,10 @@ class WebSearchReader(Reader):
 
     # Internal state
     _visited_urls: Set[str] = field(default_factory=set)
-    _url_reader: Optional[URLReader] = None
     _last_search_time: float = field(default=0.0, init=False)
 
     # Override default chunking strategy
     chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking()
-
-    def __post_init__(self):
-        """Initialize the URL reader and chunking strategy after dataclass initialization"""
-        self._url_reader = URLReader()
 
     @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
@@ -328,23 +322,6 @@ class WebSearchReader(Reader):
             self._visited_urls.add(url)
 
             try:
-                # Use the URL reader for async fetching
-                if self._url_reader:
-                    docs = await self._url_reader.async_read(url)
-                    if docs:
-                        # Use the first document and add search metadata
-                        doc = docs[0]
-                        doc.meta_data.update(
-                            {
-                                "search_title": result.get("title", ""),
-                                "search_description": result.get("description", ""),
-                                "source": "web_search",
-                                "search_engine": self.search_engine,
-                            }
-                        )
-                        return doc
-
-                # Fallback to manual async fetching
                 headers = {"User-Agent": self.user_agent}
                 async with httpx.AsyncClient(timeout=self.request_timeout) as client:
                     response = await client.get(url, headers=headers, follow_redirects=True)

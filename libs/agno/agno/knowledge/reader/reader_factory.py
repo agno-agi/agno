@@ -65,15 +65,6 @@ class ReaderFactory:
         return TextReader(**config)
 
     @classmethod
-    def _get_url_reader(cls, **kwargs) -> Reader:
-        """Get URL reader instance."""
-        from agno.knowledge.reader.url_reader import URLReader
-
-        config: Dict[str, Any] = {"name": "URL Reader", "description": "Reads URLs"}
-        config.update(kwargs)
-        return URLReader(**config)
-
-    @classmethod
     def _get_website_reader(cls, **kwargs) -> Reader:
         """Get Website reader instance."""
         from agno.knowledge.reader.website_reader import WebsiteReader
@@ -104,33 +95,6 @@ class ReaderFactory:
         config: Dict[str, Any] = {"name": "YouTube Reader", "description": "Reads YouTube videos"}
         config.update(kwargs)
         return YouTubeReader(**config)
-
-    @classmethod
-    def _get_pdf_url_reader(cls, **kwargs) -> Reader:
-        """Get PDF URL reader instance."""
-        from agno.knowledge.reader.pdf_reader import PDFUrlReader
-
-        config: Dict[str, Any] = {"name": "PDF URL Reader", "description": "Reads PDF URLs"}
-        config.update(kwargs)
-        return PDFUrlReader(**config)
-
-    @classmethod
-    def _get_csv_url_reader(cls, **kwargs) -> Reader:
-        """Get CSV URL reader instance."""
-        from agno.knowledge.reader.csv_reader import CSVUrlReader
-
-        config: Dict[str, Any] = {"name": "CSV URL Reader", "description": "Reads CSV URLs"}
-        config.update(kwargs)
-        return CSVUrlReader(**config)
-
-    @classmethod
-    def _get_s3_reader(cls, **kwargs) -> Reader:
-        """Get S3 reader instance."""
-        from agno.knowledge.reader.s3_reader import S3Reader
-
-        config: Dict[str, Any] = {"name": "S3 Reader", "description": "Reads S3 files"}
-        config.update(kwargs)
-        return S3Reader(**config)
 
     @classmethod
     def _get_gcs_reader(cls, **kwargs) -> Reader:
