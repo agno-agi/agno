@@ -1,5 +1,5 @@
 <div align="center" id="top">
-  <a href="https://docs-v2.agno.com">
+  <a href="https://docs.agno.com">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://agno-public.s3.us-east-1.amazonaws.com/assets/logo-dark.svg">
       <source media="(prefers-color-scheme: light)" srcset="https://agno-public.s3.us-east-1.amazonaws.com/assets/logo-light.svg">
@@ -8,8 +8,8 @@
   </a>
 </div>
 <div align="center">
-  <a href="https://docs-v2.agno.com">📚 Documentation</a> &nbsp;|&nbsp;
-  <a href="https://docs-v2.agno.com/examples/introduction">💡 Examples</a> &nbsp;|&nbsp;
+  <a href="https://docs.agno.com">📚 Documentation</a> &nbsp;|&nbsp;
+  <a href="https://docs.agno.com/examples/introduction">💡 Examples</a> &nbsp;|&nbsp;
   <a href="https://github.com/agno-agi/agno/stargazers">🌟 Star Us</a>
 </div>
 
@@ -19,167 +19,80 @@
 
 **Agno gives you:**
 
-1. The fastest framework for building agents, multi-agent teams and agentic workflows.
-2. A high-performance runtime for your agents, teams and workflows called the AgentOS.
-3. A powerful platform for testing, monitoring and managing your agent system.
+1. The fastest framework for building agents and multi-agent workflows.
+2. A high-performance runtime for your multi-agent systems called the AgentOS.
+3. Built-in session management, memory, knowledge, human in the loop and MCP support.
+4. SSE compatible API endpoints for building your agentic product.
+5. A powerful platform for monitoring and managing your AgentOS.
 
-### Example: Reasoning Agent that uses the DuckDuckGo API to answer questions:
+### Example
 
-```python reasoning_web_search_agent.py
+In 10 lines of code, we can build an Agent that will fetch the top stories from HackerNews and summarize them.
+
+```python hackernews_agent.py
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.tools.reasoning import ReasoningTools
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.hackernews import HackerNewsTools
 
-reasoning_agent = Agent(
-    model=Claude(id="claude-sonnet-4-20250514"),
-    tools=[
-        ReasoningTools(add_instructions=True),
-        DuckDuckGoTools(),
-    ],
-    instructions="Search the web for information",
+agent = Agent(
+    model=Claude(id="claude-sonnet-4-0"),
+    tools=[HackerNewsTools()],
     markdown=True,
 )
+agent.print_response("Summarize the top 5 stories on hackernews", stream=True)
 ```
 
 ## Get Started
 
-If you're new to Agno, read the documentation to build your [first Agent](https://docs-v2.agno.com/introduction/first-agent) and interact with it on [AgentOS](https://docs-v2.agno.com/agent-os/introduction).
+If you're new to Agno, start by [building your first Agent](/introduction/first-agent) and run it using the AgentOS.
 
-After that, checkout the [Examples Gallery](https://docs-v2.agno.com/examples) and build real-world applications with Agno.
+After that, checkout the [Examples Gallery](https://docs.agno.com/examples) and build real-world applications with Agno.
 
+## Setup your coding agent to use Agno
+
+For LLMs and AI assistants to understand and navigate Agno's documentation, we provide an [LLMs.txt](https://docs.agno.com/llms.txt) or [LLMs-Full.txt](https://docs.agno.com/llms-full.txt) file.
+
+This file is specifically formatted for AI systems to efficiently parse and reference our documentation.
+
+### Cursor Setup
+
+When building Agno agents, using Agno documentation as a source in Cursor is a great way to speed up your development.
+
+1. In Cursor, go to the "Cursor Settings" menu.
+2. Find the "Indexing & Docs" section.
+3. Add `https://docs.agno.com/llms-full.txt` to the list of documentation URLs.
+4. Save the changes.
+
+Now, Cursor will have access to the Agno documentation.
+
+### Agno MCP Server
+
+You can also also add the Agno MCP server to your Agent to query and search the Agno documentation. Add [http://docs.agno.com/mcp](http://docs.agno.com/mcp) to your Agent's tools.
+
+## Documentation, Community & More examples
+
+- Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
+- Cookbook: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
+- Community forum: <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">community.agno.com</a>
+- Discord: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
 
 ## Why Agno?
 
-Agno will help you build best-in-class, highly-performant agentic systems, saving you hours of research and boilerplate. Here are some key features that set Agno apart:
+AI engineering is a systems problem (infrastructure, software, context, security) and Agno is the only framework that delivers a complete solution with a delightful developer experience.
 
-- **Model Agnostic**: Agno provides a unified interface to 25+ model providers, no lock-in.
-- **Highly performant**: Agents instantiate in **~3μs** and use **~6.5Kib** memory on average.
-- **Reasoning is a first class citizen**: Reasoning improves reliability and is a must-have for complex autonomous agents. Agno supports 3 approaches to reasoning: Reasoning Models, `ReasoningTools` or our custom `chain-of-thought` approach.
-- **Natively Multi-Modal**: Agno Agents are natively multi-modal, they accept text, image, audio and video as input and generate text, image, audio and video as output.
-- **Advanced Multi-Agent Architecture**: Agno provides an industry leading multi-agent architecture (**Agent Teams**) with reasoning, memory, and shared context.
-- **Built-in Agentic Search**: Agents can search for information at runtime using 20+ vector databases. Agno provides state-of-the-art Agentic RAG, **fully async and highly performant.**
-- **Built-in Memory & Session Storage**: Agents come with built-in `Storage` & `Memory` drivers that give your Agents long-term memory and session storage.
-- **Structured Outputs**: Agno Agents can return fully-typed responses using model provided structured outputs or `json_mode`.
-- **Pre-built FastAPI Routes**: After building your Agents, serve them using pre-built FastAPI routes. 0 to production in minutes.
-- **Monitoring**: Monitor agent sessions and performance in real-time on [agno.com](https://app.agno.com).
+You get the fastest framework for building agents with out of the box session management, memory, knowledge, human in the loop and MCP support, this helps you build and iterate quickly.
 
-## Installation
+But to be honest, you can probably get there using other frameworks or rolling your own, it'll take extra effort and your code won't be as performant, but you'll get there.
 
-```shell
-pip install -U agno
-```
+The real advantage of Agno is the AgentOS runtime:
 
-## Example - Documentation Support Agent
+1. You get a FastAPI app with pre-built API endpoints, meaning you get started with building your product on day one. This is a remarkable advantage over other solutions.
+2. You get a control plane which connects directly to the FastAPI app for testing, monitoring and managing your agentic system. This gives you unmatched control over your system.
+3. Your AgentOS runs in your cloud and you get complete data control because no data ever leaves your system. This is incredible for security conscious enterprises.
 
-Let's build a Reasoning Agent to get a sense of Agno's capabilities.
+With Agno, you can build your agents, ship them to production with a pre-built FastAPI app, scale it horizontally and keep your data private and secure. If your goal is to build your product as quickly as possible, Agno get's you there while delivering the best developer experience.
 
-Save this code to a file: `documentation_support_agent.py`.
-
-```python
-import asyncio
-from agno.agent import Agent
-from agno.models.anthropic import Claude
-from agno.tools.reasoning import ReasoningTools
-from agno.tools.mcp import MCPTools
-
-async def run_agent(message: str) -> None:
-  agno_tools = MCPTools(
-    transport="streamable-http",
-    # You can use any MCP server you want
-    url="https://docs-v2.agno.com/mcp"
-  )
-  await agno_tools.connect()
-
-  agent = Agent(
-      model=Claude(id="claude-sonnet-4-20250514"),
-      tools=[
-          ReasoningTools(add_instructions=True),
-          agno_tools,
-      ],
-      instructions=[
-          "Use tables to display data",
-          "Only output the report, no other text",
-      ],
-      markdown=True,
-  )
-  await agent.aprint_response(
-      message,
-      stream=True,
-      show_full_reasoning=True,
-      stream_intermediate_steps=True,
-  )
-
-  await agno_tools.close()
-
-if __name__ == "__main__":
-  asyncio.run(run_agent("What is AgentOS and how can I use it?"))
-```
-
-Then create a virtual environment, install dependencies, export your `ANTHROPIC_API_KEY` and run the agent.
-
-```shell
-uv venv --python 3.12
-source .venv/bin/activate
-
-uv pip install agno anthropic
-
-export ANTHROPIC_API_KEY=sk-ant-api03-xxxx
-
-python documentation_support_agent.py
-```
-
-We can see the Agent is reasoning through the task, using the `ReasoningTools` and `MCPTools` to gather information. 
-
-## Example - Multi Agent Teams
-
-Agents are the atomic unit of work, and work best when they have a narrow scope and a small number of tools. When the number of tools grows beyond what the model can handle or you need to handle multiple concepts, use a team of agents to spread the load.
-
-```python
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.hackernews import HackerNewsTools
-from agno.team import Team
-
-web_agent = Agent(
-    name="Web Agent",
-    role="Search the web for information",
-    model=OpenAIChat(id="gpt-5-nano"),
-    tools=[DuckDuckGoTools()],
-    instructions="Always include sources",
-    markdown=True,
-)
-
-hackernews_agent = Agent(
-    name="HackerNews Agent",
-    role="Get top stories from hackernews",
-    model=OpenAIChat(id="gpt-5-nano"),
-    tools=[HackerNewsTools()],
-
-    markdown=True,
-)
-
-agent_team = Team(
-    members=[web_agent, hackernews_agent],
-    model=OpenAIChat(id="gpt-5-nano"),
-    instructions=["Always include sources", "Use tables to display data"],
-
-    markdown=True,
-)
-
-agent_team.print_response("What's the market outlook and financial performance of AI semiconductor companies?", stream=True)
-```
-
-Install dependencies and run the Agent team:
-
-```shell
-pip install ddgs
-
-python agent_team.py
-```
-
-[View another example in this cookbook](./cookbook/getting_started/17_agent_team.py)
+If you're an enterprise that's worried about data privacy and security, Agno is the only framework that gives you complete control over your data. Your AgentOS runs securely in your cloud, what could be more private than that?
 
 ## Performance
 
@@ -231,30 +144,6 @@ We recommend running the evaluation yourself on your own machine, and digging in
 Agno agents are designed for performance and while we do share some benchmarks against other frameworks, we should be mindful that accuracy and reliability are more important than speed.
 
 Given that each framework is different and we won't be able to tune their performance like we do with Agno, for future benchmarks we'll only be comparing against ourselves.
-
-## Complete Documentation Index
-
-For LLMs and AI assistants to understand and navigate Agno's complete documentation, we provide an [LLMs.txt](https://docs-v2.agno.com/llms.txt) or [LLMs-Full.txt](https://docs-v2.agno.com/llms-full.txt) file.
-
-This file is specifically formatted for AI systems to efficiently parse and reference our documentation.
-
-### Cursor Setup
-
-When building Agno agents, using Agno documentation as a source in Cursor is a great way to speed up your development.
-
-1. In Cursor, go to the "Cursor Settings" menu.
-2. Find the "Indexing & Docs" section.
-3. Add `https://docs-v2.agno.com/llms-full.txt` to the list of documentation URLs.
-4. Save the changes.
-
-Now, Cursor will have access to the Agno documentation.
-
-## Documentation, Community & More examples
-
-- Docs: <a href="https://docs-v2.agno.com" target="_blank" rel="noopener noreferrer">docs-v2.agno.com</a>
-- Cookbook: <a href="https://github.com/agno-agi/agno/tree/v2.0/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
-- Community forum: <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">community.agno.com</a>
-- Discord: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
 
 ## Contributions
 
