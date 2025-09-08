@@ -74,7 +74,6 @@ hn_team = Team(
     add_member_tools_to_context=False,
     markdown=True,
     show_members_responses=True,
-
 )
 
 

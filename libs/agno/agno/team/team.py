@@ -2121,6 +2121,15 @@ class Team:
             model_response_event, tuple(get_args(TeamRunOutputEvent))
         ):
             if self.stream_member_events:
+                if model_response_event.event == TeamRunEvent.custom_event:  # type: ignore
+                    if hasattr(model_response_event, "team_id"):
+                        model_response_event.team_id = self.id
+                    if hasattr(model_response_event, "team_name"):
+                        model_response_event.team_name = self.name
+                    if not model_response_event.session_id:  # type: ignore
+                        model_response_event.session_id = session.session_id  # type: ignore
+                    if not model_response_event.run_id:  # type: ignore
+                        model_response_event.run_id = run_response.run_id  # type: ignore
                 # We just bubble the event up
                 yield self._handle_event(model_response_event, run_response)  # type: ignore
             else:
@@ -6491,7 +6500,7 @@ class Team:
 
             return team_session
 
-        log_warning(f"TeamSession {session_id_to_load} not found in db")
+        log_debug(f"TeamSession {session_id_to_load} not found in db")
         return None
 
     def save_session(self, session: TeamSession) -> None:

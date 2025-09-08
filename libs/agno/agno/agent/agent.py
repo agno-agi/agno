@@ -3231,6 +3231,12 @@ class Agent:
         if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunOutputEvent))
         ):
+            if model_response_event.event == RunEvent.custom_event:  # type: ignore
+                model_response_event.agent_id = self.id  # type: ignore
+                model_response_event.agent_name = self.name  # type: ignore
+                model_response_event.session_id = session.session_id  # type: ignore
+                model_response_event.run_id = run_response.run_id  # type: ignore
+
             # We just bubble the event up
             yield self._handle_event(model_response_event, run_response)  # type: ignore
         else:
@@ -4365,7 +4371,7 @@ class Agent:
 
             return agent_session
 
-        log_warning(f"AgentSession {session_id_to_load} not found in db")
+        log_debug(f"AgentSession {session_id_to_load} not found in db")
         return None
 
     def save_session(self, session: AgentSession) -> None:

@@ -32,7 +32,6 @@ agent_team = Team(
     ),  # You can use a different model for the team leader agent
     instructions=["Always include sources", "Use tables to display data"],
     markdown=True,
-
     show_members_responses=False,  # Comment to hide responses from team members
 )
 

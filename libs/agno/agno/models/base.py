@@ -1654,17 +1654,17 @@ class Model(ABC):
                         function_execution_result.audios = tool_result.audios
                 else:
                     function_call_output = str(function_call.result)
-                
+
                 if function_call.function.show_result:
                     yield ModelResponse(content=function_call_output)
 
             # Create and yield function call result
             function_call_result = self.create_function_call_result(
-                function_call, 
-                success=function_call_success, 
-                output=function_call_output, 
+                function_call,
+                success=function_call_success,
+                output=function_call_output,
                 timer=function_call_timer,
-                function_execution_result=function_execution_result
+                function_execution_result=function_execution_result,
             )
             yield ModelResponse(
                 content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
