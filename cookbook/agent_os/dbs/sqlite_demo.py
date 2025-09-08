@@ -12,7 +12,7 @@ db = SqliteDb(
     db_file="agno.db",
     session_table="sessions",
     eval_table="eval_runs",
-    user_memory_table="user_memories",
+    memory_table="user_memories",
     metrics_table="metrics",
 )
 
