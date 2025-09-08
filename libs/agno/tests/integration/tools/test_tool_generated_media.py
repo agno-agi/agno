@@ -134,7 +134,7 @@ def test_openai_speech_generation_in_run_output(openai_agent):
     if response.audio:  # Audio generation might not always trigger
         assert len(response.audio) >= 1
         assert isinstance(response.audio[0], Audio)
-        assert response.audio[0].base64_audio is not None
+        assert response.audio[0].content is not None
 
 
 def test_media_persistence_across_runs(shared_db):

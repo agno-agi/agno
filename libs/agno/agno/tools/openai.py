@@ -188,14 +188,11 @@ class OpenAITools(Toolkit):
             # Get raw audio data for artifact creation before potentially saving
             audio_data: bytes = response.content
 
-            # Base64 encode the audio data
-            base64_encoded_audio = base64.b64encode(audio_data).decode("utf-8")
-
             # Create AudioArtifact and return in ToolResult
             media_id = str(uuid4())
             audio_artifact = Audio(
                 id=media_id,
-                base64_audio=base64_encoded_audio,
+                content=audio_data,
                 mime_type=f"audio/{self.tts_format}",
             )
 
