@@ -170,12 +170,11 @@ class CartesiaTools(Toolkit):
 
             audio_iterator = self.client.tts.bytes(**params)
             audio_data = b"".join(chunk for chunk in audio_iterator)
-            base64_audio = b64encode(audio_data).decode("utf-8")
 
             # Create AudioArtifact
             audio_artifact = Audio(
                 id=str(uuid4()),
-                content=base64_audio,
+                content=audio_data,
                 mime_type=mime_type,  # Hardcoded to audio/mpeg
             )
 

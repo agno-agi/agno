@@ -222,8 +222,8 @@ def test_text_to_speech(cartesia_tools, mock_cartesia_client, mock_agent):
     audio_artifact = result.audios[0]
     assert isinstance(audio_artifact, Audio)
     assert audio_artifact.mime_type == "audio/mpeg"
-    expected_base64 = b64encode(b"audio data").decode("utf-8")
-    assert audio_artifact.base64_audio == expected_base64
+    expected_content = b"audio data"
+    assert audio_artifact.content == expected_content
 
 
 def test_text_to_speech_error(cartesia_tools, mock_cartesia_client, mock_agent):

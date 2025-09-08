@@ -143,12 +143,11 @@ class GroqTools(Toolkit):
             log_debug(f"Groq TTS Response: {response}")
 
             audio_data: bytes = response.read()
-            base64_encoded_audio = base64.b64encode(audio_data).decode("utf-8")
 
             media_id = str(uuid4())
             audio_artifact = Audio(
                 id=media_id,
-                content=base64_encoded_audio,
+                content=audio_data,
                 mime_type="audio/wav",
             )
 
