@@ -672,7 +672,9 @@ class MongoDb(BaseDb):
             if result is None or not deserialize:
                 return result
 
-            return UserMemory.from_dict(result)
+            # Remove MongoDB's _id field before creating UserMemory object
+            result_filtered = {k: v for k, v in result.items() if k != "_id"}
+            return UserMemory.from_dict(result_filtered)
 
         except Exception as e:
             log_error(f"Exception reading from collection: {e}")
@@ -750,7 +752,8 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return records, total_count
 
-            return [UserMemory.from_dict(record) for record in records]
+            # Remove MongoDB's _id field before creating UserMemory objects
+            return [UserMemory.from_dict({k: v for k, v in record.items() if k != "_id"}) for record in records]
 
         except Exception as e:
             log_error(f"Exception reading from collection: {e}")
@@ -861,7 +864,9 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return update_doc
 
-            return UserMemory.from_dict(update_doc)
+            # Remove MongoDB's _id field before creating UserMemory object
+            update_doc_filtered = {k: v for k, v in update_doc.items() if k != "_id"}
+            return UserMemory.from_dict(update_doc_filtered)
 
         except Exception as e:
             log_error(f"Exception upserting user memory: {e}")

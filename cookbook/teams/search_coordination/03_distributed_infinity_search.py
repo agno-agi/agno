@@ -116,7 +116,6 @@ result_synthesizer = Agent(
 # Create distributed search team
 distributed_search_team = Team(
     name="Distributed Search Team with Infinity Reranker",
-    mode="coordinate",  # Sequential coordination for search distribution
     model=Claude(id="claude-3-7-sonnet-latest"),
     members=[
         primary_searcher,

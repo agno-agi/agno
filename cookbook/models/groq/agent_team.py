@@ -26,7 +26,6 @@ finance_agent = Agent(
 
 agent_team = Team(
     members=[web_agent, finance_agent],
-    mode="coordinate",
     model=Groq(
         id="llama-3.3-70b-versatile"
     ),  # You can use a different model for the team leader agent

@@ -29,7 +29,6 @@ web_agent = Agent(
 # Define research team for complex analysis
 research_team = Team(
     name="Research Team",
-    mode="coordinate",
     members=[hackernews_agent, web_agent],
     instructions="Analyze content and create comprehensive social media strategy",
 )

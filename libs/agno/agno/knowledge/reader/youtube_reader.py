@@ -35,7 +35,7 @@ class YouTubeReader(Reader):
 
     @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
-        return [ContentType.URL, ContentType.YOUTUBE]
+        return [ContentType.YOUTUBE]
 
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         try:

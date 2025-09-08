@@ -195,3 +195,77 @@ async def test_csv_knowledge_async_single_file():
         assert any(term in response.content.lower() for term in ["q1", "q2", "laptop", "sales"])
 
         await vector_db.async_drop()
+
+
+def test_csv_via_url():
+    table_name = f"csv_test_{uuid.uuid4().hex}"
+    vector_db = LanceDb(table_name=table_name, uri="tmp/lancedb")
+    knowledge = Knowledge(
+        vector_db=vector_db,
+    )
+
+    knowledge.add_content(
+        url="https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
+    )
+    knowledge.add_content(
+        url="https://agno-public.s3.amazonaws.com/csvs/employees.csv",
+    )
+
+    assert vector_db.exists()
+    doc_count = vector_db.get_count()
+    assert doc_count > 2, f"Expected multiple documents but got {doc_count}"
+
+    # Query the agent
+    agent = Agent(
+        knowledge=knowledge,
+        search_knowledge=True,
+        instructions=[
+            "You are a helpful assistant that can answer questions.",
+            "You can use the search_knowledge tool to search the knowledge base of CSVs for information.",
+        ],
+    )
+    response = agent.run("Give me top rated movies", markdown=True)
+
+    # Check that we got relevant content
+    assert response.content is not None
+    assert any(term in response.content.lower() for term in ["movie", "rating", "imdb", "title"])
+
+    # Clean up
+    vector_db.drop()
+
+
+@pytest.mark.asyncio
+async def test_csv_via_url_async():
+    table_name = f"csv_test_{uuid.uuid4().hex}"
+    vector_db = LanceDb(table_name=table_name, uri="tmp/lancedb")
+    knowledge = Knowledge(
+        vector_db=vector_db,
+    )
+
+    # Set chunk explicitly to False
+    await knowledge.add_contents_async(
+        urls=[
+            "https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
+            "https://agno-public.s3.amazonaws.com/csvs/employees.csv",
+        ],
+    )
+    assert await vector_db.async_exists()
+
+    doc_count = await vector_db.async_get_count()
+    assert doc_count > 2, f"Expected multiple documents but got {doc_count}"
+
+    # Query the agent
+    agent = Agent(
+        knowledge=knowledge,
+        search_knowledge=True,
+        instructions=[
+            "You are a helpful assistant that can answer questions.",
+            "You can use the search_knowledge tool to search the knowledge base of CSVs for information.",
+        ],
+    )
+    response = await agent.arun("Which employees have salaries above 50000?", markdown=True)
+
+    assert response.content is not None
+    assert "employees" in response.content.lower()
+
+    await vector_db.async_drop()

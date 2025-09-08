@@ -153,7 +153,6 @@ def main():
         members=[storyteller_agent, editor_agent],
         model=OpenAIChat(id="o3-mini"),  # Team leader model
         description="A team that collaborates to write detailed stories",
-        mode="coordinate",  # Team members collaborate on the task
     )
 
     print("🚀 Starting team run cancellation example...")

@@ -83,7 +83,12 @@ class AgentOS:
         self.interfaces = interfaces or []
 
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
-        self.fastapi_app: Optional[FastAPI] = fastapi_app
+
+        self._app_set = False
+        self.fastapi_app: Optional[FastAPI] = None
+        if fastapi_app:
+            self.fastapi_app = fastapi_app
+            self._app_set = True
 
         self.interfaces = interfaces or []
 
@@ -213,33 +218,35 @@ class AgentOS:
         if self.enable_mcp and self.mcp_app:
             self.fastapi_app.mount("/", self.mcp_app)
 
-        # Add middleware
-        @self.fastapi_app.exception_handler(HTTPException)
-        async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": str(exc.detail)},
-            )
+        # Add middleware (only if app is not set)
+        if not self._app_set:
 
-        async def general_exception_handler(request: Request, call_next):
-            try:
-                return await call_next(request)
-            except Exception as e:
+            @self.fastapi_app.exception_handler(HTTPException)
+            async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
                 return JSONResponse(
-                    status_code=e.status_code if hasattr(e, "status_code") else 500,  # type: ignore
-                    content={"detail": str(e)},
+                    status_code=exc.status_code,
+                    content={"detail": str(exc.detail)},
                 )
 
-        self.fastapi_app.middleware("http")(general_exception_handler)
+            async def general_exception_handler(request: Request, call_next):
+                try:
+                    return await call_next(request)
+                except Exception as e:
+                    return JSONResponse(
+                        status_code=e.status_code if hasattr(e, "status_code") else 500,  # type: ignore
+                        content={"detail": str(e)},
+                    )
 
-        self.fastapi_app.add_middleware(
-            CORSMiddleware,
-            allow_origins=self.settings.cors_origin_list,  # type: ignore
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-            expose_headers=["*"],
-        )
+            self.fastapi_app.middleware("http")(general_exception_handler)
+
+            self.fastapi_app.add_middleware(
+                CORSMiddleware,
+                allow_origins=self.settings.cors_origin_list,  # type: ignore
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+                expose_headers=["*"],
+            )
 
         return self.fastapi_app
 
@@ -458,6 +465,7 @@ class AgentOS:
         host: str = "localhost",
         port: int = 7777,
         reload: bool = False,
+        workers: Optional[int] = None,
         **kwargs,
     ):
         import uvicorn
@@ -486,4 +494,4 @@ class AgentOS:
             )
         )
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
+        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, **kwargs)

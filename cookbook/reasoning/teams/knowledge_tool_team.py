@@ -44,7 +44,6 @@ finance_agent = Agent(
 
 team_leader = Team(
     name="Reasoning Finance Team",
-    mode="coordinate",
     model=OpenAIChat(id="gpt-4o"),
     members=[
         web_agent,

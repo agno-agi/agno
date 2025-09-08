@@ -22,7 +22,6 @@ french_agent = Agent(
 
 multi_language_team = Team(
     name="Multi Language Team",
-    mode="route",
     model=OpenAIChat("gpt-4o"),
     members=[english_agent, chinese_agent, french_agent],
     markdown=True,
@@ -35,6 +34,8 @@ multi_language_team = Team(
         "Always check the language of the user's input before routing to an agent.",
         "For unsupported languages like Italian, respond in English with the above message.",
     ],
+    respond_directly=True,
+    determine_input_for_members=False,
     show_members_responses=True,
 )
 

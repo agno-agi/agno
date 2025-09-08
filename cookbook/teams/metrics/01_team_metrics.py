@@ -32,7 +32,6 @@ stock_searcher = Agent(
 # Create team with metrics tracking enabled
 team = Team(
     name="Stock Research Team",
-    mode="route",
     model=OpenAIChat("o3-mini"),
     members=[stock_searcher],
     db=db,  # Database required for session metrics

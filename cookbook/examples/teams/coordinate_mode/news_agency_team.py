@@ -50,7 +50,6 @@ writer = Agent(
 
 editor = Team(
     name="Editor",
-    mode="coordinate",
     model=OpenAIChat("gpt-4o"),
     members=[searcher, writer],
     description="You are a senior NYT editor. Given a topic, your goal is to write a NYT worthy article.",

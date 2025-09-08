@@ -321,8 +321,6 @@ class Agent:
     # --- If this Agent is part of a workflow ---
     # Optional workflow ID. Indicates this agent is part of a workflow.
     workflow_id: Optional[str] = None
-    # Set when this agent is part of a workflow.
-    workflow_session_id: Optional[str] = None
 
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
@@ -345,7 +343,6 @@ class Agent:
         id: Optional[str] = None,
         introduction: Optional[str] = None,
         user_id: Optional[str] = None,
-        app_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         add_session_state_to_context: bool = False,
@@ -429,7 +426,6 @@ class Agent:
         self.id = id
         self.introduction = introduction
         self.user_id = user_id
-        self.app_id = app_id
 
         self.session_id = session_id
         self.session_state = session_state
@@ -3231,6 +3227,12 @@ class Agent:
         if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunOutputEvent))
         ):
+            if model_response_event.event == RunEvent.custom_event:  # type: ignore
+                model_response_event.agent_id = self.id  # type: ignore
+                model_response_event.agent_name = self.name  # type: ignore
+                model_response_event.session_id = session.session_id  # type: ignore
+                model_response_event.run_id = run_response.run_id  # type: ignore
+
             # We just bubble the event up
             yield self._handle_event(model_response_event, run_response)  # type: ignore
         else:
@@ -4312,7 +4314,7 @@ class Agent:
 
             return agent_session
 
-        log_warning(f"AgentSession {session_id_to_load} not found in db")
+        log_debug(f"AgentSession {session_id_to_load} not found in db")
         return None
 
     def save_session(self, session: AgentSession) -> None:
@@ -6787,6 +6789,7 @@ class Agent:
             markdown = self.markdown
 
         if self.output_schema is not None:
+            markdown = False
             markdown = False
 
         if stream is None:

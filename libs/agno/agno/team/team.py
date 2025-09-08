@@ -100,7 +100,6 @@ from agno.utils.reasoning import (
 from agno.utils.response import (
     async_generator_wrapper,
     check_if_run_cancelled,
-    escape_markdown_tags,
     generator_wrapper,
 )
 from agno.utils.safe_formatter import SafeFormatter
@@ -117,8 +116,6 @@ class Team:
 
     members: List[Union[Agent, "Team"]]
 
-    mode: Literal["route", "coordinate", "collaborate"] = "coordinate"
-
     # Model for this Team
     model: Optional[Model] = None
 
@@ -131,6 +128,14 @@ class Team:
     parent_team_id: Optional[str] = None
     # If this team is part of a team itself, this is the role of the team
     role: Optional[str] = None
+
+    # If True, the team leader won't process responses from the members and instead will return them directly
+    # Should not be used in combination with delegate_task_to_all_members
+    respond_directly: bool = False
+    # If True, the team leader will delegate the task to all members, instead of deciding for a subset
+    delegate_task_to_all_members: bool = False
+    # Set to false if you want to send the run input directly to the member agents
+    determine_input_for_member: bool = True
 
     # --- If this Team is part of a workflow ---
     # Optional workflow ID. Indicates this team is part of a workflow.
@@ -345,11 +350,13 @@ class Team:
     def __init__(
         self,
         members: List[Union[Agent, "Team"]],
-        mode: Literal["route", "coordinate", "collaborate"] = "coordinate",
+        id: Optional[str] = None,
         model: Optional[Model] = None,
         name: Optional[str] = None,
         role: Optional[str] = None,
-        id: Optional[str] = None,
+        respond_directly: bool = False,
+        determine_input_for_member: bool = True,
+        delegate_task_to_all_members: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -428,13 +435,15 @@ class Team:
     ):
         self.members = members
 
-        self.mode = mode
-
         self.model = model
 
         self.name = name
         self.id = id
         self.role = role
+
+        self.respond_directly = respond_directly
+        self.determine_input_for_member = determine_input_for_member
+        self.delegate_task_to_all_members = delegate_task_to_all_members
 
         self.user_id = user_id
         self.session_id = session_id
@@ -723,6 +732,12 @@ class Team:
     def initialize_team(self, debug_mode: Optional[bool] = None) -> None:
         # Make sure for the team, we are using the team logger
         use_team_logger()
+
+        if self.delegate_task_to_all_members and self.respond_directly:
+            log_warning(
+                "delegate_task_to_all_members and respond_directly are both enabled. The task will be delegated to all members."
+            )
+            self.respond_directly = False
 
         self._set_default_model()
 
@@ -1021,7 +1036,6 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        store_member_responses: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1047,7 +1061,6 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        store_member_responses: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1072,7 +1085,6 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        store_member_responses: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1087,9 +1099,6 @@ class Team:
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
-
-        if store_member_responses is not None:
-            self.store_member_responses = store_member_responses
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
@@ -1149,9 +1158,6 @@ class Team:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        if store_member_responses is None:
-            store_member_responses = False if self.store_member_responses is None else self.store_member_responses
-
         if stream_intermediate_steps is None:
             stream_intermediate_steps = (
                 False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
@@ -1207,7 +1213,6 @@ class Team:
             audio=audio,
             files=files,
             workflow_context=workflow_context,
-            store_member_responses=store_member_responses,
             debug_mode=debug_mode,
             add_history_to_context=add_history,
             dependencies=run_dependencies,
@@ -1223,8 +1228,6 @@ class Team:
 
         for attempt in range(num_attempts):
             # Initialize the current run
-
-            log_debug(f"Team Mode: '{self.mode}'", center=True)
 
             # Run the team
             try:
@@ -1245,10 +1248,6 @@ class Team:
                     add_session_state_to_context=add_session_state,
                     **kwargs,
                 )
-                if len(run_messages.messages) == 0:
-                    log_error("No messages to be sent to the model.")
-
-                self.run_messages = run_messages
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
@@ -1579,7 +1578,6 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        store_member_responses: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1604,7 +1602,6 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        store_member_responses: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1631,7 +1628,6 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        store_member_responses: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1645,9 +1641,6 @@ class Team:
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
-
-        if store_member_responses is not None:
-            self.store_member_responses = store_member_responses
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
@@ -1705,9 +1698,6 @@ class Team:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        if store_member_responses is None:
-            store_member_responses = False if self.store_member_responses is None else self.store_member_responses
-
         if stream_intermediate_steps is None:
             stream_intermediate_steps = (
                 False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
@@ -1764,7 +1754,6 @@ class Team:
             audio=audio,
             files=files,
             workflow_context=workflow_context,
-            store_member_responses=store_member_responses,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -1779,8 +1768,6 @@ class Team:
         num_attempts = retries + 1
 
         for attempt in range(num_attempts):
-            log_debug(f"Mode: '{self.mode}'", center=True)
-
             # Run the team
             try:
                 run_messages = self._get_run_messages(
@@ -2121,6 +2108,15 @@ class Team:
             model_response_event, tuple(get_args(TeamRunOutputEvent))
         ):
             if self.stream_member_events:
+                if model_response_event.event == TeamRunEvent.custom_event:  # type: ignore
+                    if hasattr(model_response_event, "team_id"):
+                        model_response_event.team_id = self.id
+                    if hasattr(model_response_event, "team_name"):
+                        model_response_event.team_name = self.name
+                    if not model_response_event.session_id:  # type: ignore
+                        model_response_event.session_id = session.session_id  # type: ignore
+                    if not model_response_event.run_id:  # type: ignore
+                        model_response_event.run_id = run_response.run_id  # type: ignore
                 # We just bubble the event up
                 yield self._handle_event(model_response_event, run_response)  # type: ignore
             else:
@@ -2974,32 +2970,6 @@ class Team:
                     return member.name or entity_id
         return entity_id
 
-    def _parse_response_content(
-        self,
-        run_response: Union[TeamRunOutput, RunOutput],
-        tags_to_include_in_markdown: Set[str],
-        show_markdown: bool = True,
-    ) -> Any:
-        from rich.json import JSON
-        from rich.markdown import Markdown
-
-        if isinstance(run_response.content, str):
-            if show_markdown:
-                escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
-                return Markdown(escaped_content)
-            else:
-                return run_response.get_content_as_string(indent=4)
-        elif isinstance(run_response.content, BaseModel):
-            try:
-                return JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
-            except Exception as e:
-                log_warning(f"Failed to convert response to JSON: {e}")
-        else:
-            try:
-                return JSON(json.dumps(run_response.content), indent=4)
-            except Exception as e:
-                log_warning(f"Failed to convert response to JSON: {e}")
-
     def _scrub_media_from_run_output(self, run_response: TeamRunOutput) -> None:
         """
         Completely remove all media from RunOutput when store_media=False.
@@ -3048,13 +3018,10 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         audios: Optional[Sequence[Audio]] = None,
     ) -> tuple:
-        """Convert raw Image/Video/Audio objects - now unified, so just return as-is."""
-        # With unified classes, no conversion needed - just ensure IDs are set
         image_list = None
         if images:
             image_list = []
             for img in images:
-                # Ensure ID is set (validation should handle this, but double-check)
                 if not img.id:
                     from uuid import uuid4
 
@@ -3899,7 +3866,6 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         files: Optional[Sequence[File]] = None,
         workflow_context: Optional[Dict] = None,
-        store_member_responses: bool = False,
         debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
@@ -3951,94 +3917,46 @@ class Team:
         if self.knowledge is not None and self.update_knowledge:
             _tools.append(self.add_to_knowledge)
 
-        if self.mode == "route":
+        # Get the user message if we are using the input directly
+        user_message = None
+        if self.determine_input_for_member is False:
             user_message = self._get_user_message(
                 run_response=run_response,
                 session_state=session_state,
                 input_message=input_message,
+                user_id=user_id,
                 audio=audio,
                 images=images,
                 videos=videos,
                 files=files,
-                user_id=user_id,
                 dependencies=dependencies,
                 add_dependencies_to_context=add_dependencies_to_context,
                 metadata=metadata,
             )
-            forward_task_func: Function = self._get_forward_task_function(
-                input=user_message,
-                run_response=run_response,
-                session_state=session_state,
-                team_run_context=team_run_context,
-                user_id=user_id,
-                session=session,
-                stream=self.stream or False,
-                stream_intermediate_steps=self.stream_intermediate_steps,
-                async_mode=async_mode,
-                images=images,  # type: ignore
-                videos=videos,  # type: ignore
-                audio=audio,  # type: ignore
-                files=files,  # type: ignore
-                knowledge_filters=knowledge_filters,
-                workflow_context=workflow_context,
-                store_member_responses=store_member_responses,
-                debug_mode=debug_mode,
-                add_history_to_context=add_history_to_context,
-                dependencies=dependencies,
-            )
-            _tools.append(forward_task_func)
-            if self.get_member_information_tool:
-                _tools.append(self.get_member_information)
 
-        elif self.mode == "coordinate":
-            _tools.append(
-                self._get_delegate_task_function(
-                    run_response=run_response,
-                    session=session,
-                    session_state=session_state,
-                    team_run_context=team_run_context,
-                    user_id=user_id,
-                    stream=self.stream or False,
-                    stream_intermediate_steps=self.stream_intermediate_steps,
-                    async_mode=async_mode,
-                    images=images,  # type: ignore
-                    videos=videos,  # type: ignore
-                    audio=audio,  # type: ignore
-                    files=files,  # type: ignore
-                    knowledge_filters=knowledge_filters,
-                    workflow_context=workflow_context,
-                    store_member_responses=store_member_responses,
-                    debug_mode=debug_mode,
-                    add_history_to_context=add_history_to_context,
-                    dependencies=dependencies,
-                )
-            )
-            if self.get_member_information_tool:
-                _tools.append(self.get_member_information)
+        delegate_task_func = self._get_delegate_task_function(
+            run_response=run_response,
+            session=session,
+            session_state=session_state,
+            team_run_context=team_run_context,
+            input=user_message,
+            user_id=user_id,
+            stream=self.stream or False,
+            stream_intermediate_steps=self.stream_intermediate_steps,
+            async_mode=async_mode,
+            images=images,  # type: ignore
+            videos=videos,  # type: ignore
+            audio=audio,  # type: ignore
+            files=files,  # type: ignore
+            knowledge_filters=knowledge_filters,
+            workflow_context=workflow_context,
+            debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
+        )
 
-        elif self.mode == "collaborate":
-            run_member_agents_func = self._get_run_member_agents_function(
-                run_response=run_response,
-                session=session,
-                session_state=session_state,
-                team_run_context=team_run_context,
-                user_id=user_id,
-                stream=self.stream or False,
-                stream_intermediate_steps=self.stream_intermediate_steps,
-                async_mode=async_mode,
-                images=images,  # type: ignore
-                videos=videos,  # type: ignore
-                audio=audio,  # type: ignore
-                files=files,  # type: ignore
-                workflow_context=workflow_context,
-                store_member_responses=store_member_responses,
-                debug_mode=debug_mode,
-                add_history_to_context=add_history_to_context,
-            )
-            _tools.append(run_member_agents_func)
-
-            if self.get_member_information_tool:
-                _tools.append(self.get_member_information)
+        _tools.append(delegate_task_func)
+        if self.get_member_information_tool:
+            _tools.append(self.get_member_information)
 
         self._functions_for_model = {}
         self._tools_for_model = []
@@ -4313,9 +4231,17 @@ class Team:
         system_message_content += "</team_members>\n"
 
         system_message_content += "\n<how_to_respond>\n"
-        if self.mode == "coordinate":
+
+        if self.delegate_task_to_all_members:
             system_message_content += (
-                "- Your role is to forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
+                "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
+                "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
+                "- If you feel the task has been completed, you can stop and respond to the user.\n"
+            )
+        else:
+            system_message_content += (
+                "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
                 "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
                 "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
                 "- When you delegate a task to another member, make sure to include:\n"
@@ -4328,24 +4254,6 @@ class Team:
                 "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
                 "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
                 "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
-            )
-        elif self.mode == "route":
-            system_message_content += (
-                "- Your role is to forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
-                "- Carefully analyze the tools available to the members and their roles before forwarding tasks.\n"
-                "- When you forward a task to another Agent, make sure to include:\n"
-                "  - member_id (str): The ID of the member to forward the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
-                "  - expected_output (str): The expected output.\n"
-                "- You can forward tasks to multiple members at once.\n"
-                "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
-                "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
-            )
-        elif self.mode == "collaborate":
-            system_message_content += (
-                "- You can either respond directly or use the `run_member_agents` tool to run all members in your team to get a collaborative response.\n"
-                "- To run the members in your team, call `run_member_agents` ONLY once. This will run all members in your team.\n"
-                "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
-                "- If you feel the task has been completed, you can stop and respond to the user.\n"
             )
         system_message_content += "</how_to_respond>\n\n"
 
@@ -5139,405 +5047,6 @@ class Team:
 
         return None
 
-    def _get_run_member_agents_function(
-        self,
-        run_response: TeamRunOutput,
-        session: TeamSession,
-        session_state: Dict[str, Any],
-        team_run_context: Dict[str, Any],
-        user_id: Optional[str] = None,
-        stream: bool = False,
-        stream_intermediate_steps: bool = False,
-        async_mode: bool = False,
-        images: Optional[List[Image]] = None,
-        videos: Optional[List[Video]] = None,
-        audio: Optional[List[Audio]] = None,
-        files: Optional[List[File]] = None,
-        workflow_context: Optional[Dict] = None,
-        store_member_responses: bool = False,
-        debug_mode: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-    ) -> Function:
-        if not images:
-            images = []
-        if not videos:
-            videos = []
-        if not audio:
-            audio = []
-        if not files:
-            files = []
-
-        def run_member_agents(
-            task_description: str, expected_output: Optional[str] = None
-        ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
-            """
-            Send the same task to all the member agents and return the responses.
-
-            Args:
-                task_description (str): The task description to send to the member agents.
-                expected_output (str, optional): The expected output from the member agents.
-
-            Returns:
-                str: The responses from the member agents.
-            """
-            # Make sure for the member agent, we are using the agent logger
-            use_agent_logger()
-
-            # 1. Determine team context to send
-            team_member_interactions_str = self._determine_team_member_interactions(
-                team_run_context, images, videos, audio
-            )
-
-            # 2. Create the member agent task
-            member_agent_task = format_member_agent_task(
-                task_description, expected_output, team_member_interactions_str
-            )
-
-            for member_agent_index, member_agent in enumerate(self.members):
-                self._initialize_member(member_agent)
-
-                # Add history for the member if enabled
-                history = None
-                if member_agent.add_history_to_context:
-                    history = self._get_history_for_member_agent(session, member_agent)
-                    if history:
-                        history.append(Message(role="user", content=member_agent_task))
-
-                member_session_state_copy = copy(session_state)
-                if stream:
-                    member_agent_run_response_stream = member_agent.run(
-                        input=member_agent_task if history is None else history,
-                        user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
-                        session_state=member_session_state_copy,  # Send a copy to the agent
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=True,
-                        stream_intermediate_steps=stream_intermediate_steps,
-                        workflow_context=workflow_context,
-                        debug_mode=debug_mode,
-                        add_history_to_context=add_history_to_context,
-                        yield_run_response=True,
-                    )
-                    member_agent_run_response = None
-                    for member_agent_run_response_chunk in member_agent_run_response_stream:
-                        # If we get the full run response, we can break out of the loop
-                        if isinstance(member_agent_run_response_chunk, TeamRunOutput) or isinstance(
-                            member_agent_run_response_chunk, RunOutput
-                        ):
-                            member_agent_run_response = member_agent_run_response_chunk  # type: ignore
-                            break
-                        check_if_run_cancelled(member_agent_run_response_chunk)
-                        yield member_agent_run_response_chunk
-
-                else:
-                    member_agent_run_response = member_agent.run(  # type: ignore
-                        input=member_agent_task if history is None else history,
-                        user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
-                        session_state=member_session_state_copy,  # Send a copy to the agent
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=False,
-                        workflow_context=workflow_context,
-                        debug_mode=debug_mode,
-                        add_history_to_context=add_history_to_context,
-                    )
-
-                    check_if_run_cancelled(member_agent_run_response)  # type: ignore
-
-                    try:
-                        if member_agent_run_response.content is None and (  # type: ignore
-                            member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                        ):
-                            yield f"Agent {member_agent.name}: No response from the member agent."
-                        elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                            if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
-                                yield f"Agent {member_agent.name}: {member_agent_run_response.content}"  # type: ignore
-                            elif (
-                                member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0  # type: ignore
-                            ):
-                                yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"  # type: ignore
-                        elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                            yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
-                        else:
-                            import json
-
-                            yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2)}"  # type: ignore
-                    except Exception as e:
-                        yield f"Agent {member_agent.name}: Error - {str(e)}"
-
-                # Add team run id to the member run
-                if member_agent_run_response is not None:
-                    member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
-
-                # Update the memory
-                member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-                self._add_interaction_to_team_run_context(
-                    team_run_context=team_run_context,
-                    member_name=member_name,
-                    task=task_description,
-                    run_response=member_agent_run_response,  # type: ignore
-                )
-
-                # Add the member run to the team run response
-                if self.store_member_responses and run_response and member_agent_run_response:
-                    run_response.add_member_run(member_agent_run_response)
-
-                # Add the member run to the team session
-                if member_agent_run_response:
-                    session.upsert_run(member_agent_run_response)
-
-                # Update team session state
-                merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
-
-                # Update the team media
-                if member_agent_run_response is not None:
-                    self._update_team_media(member_agent_run_response)  # type: ignore
-
-            # Afterward, switch back to the team logger
-            use_team_logger()
-
-        async def arun_member_agents(
-            task_description: str, expected_output: Optional[str] = None
-        ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
-            """
-            Send the same task to all the member agents and return the responses.
-
-            Args:
-                task_description (str): The task description to send to the member agents.
-                expected_output (str): The expected output from the member agents.
-
-            Returns:
-                str: The responses from the member agents.
-            """
-            # Make sure for the member agent, we are using the agent logger
-            use_agent_logger()
-
-            # 1. Determine team context to send
-            team_member_interactions_str = self._determine_team_member_interactions(
-                team_run_context, images, videos, audio
-            )
-
-            if stream:
-                # Concurrent streaming: launch each member as a streaming worker and merge events
-                done_marker = object()
-                queue: "asyncio.Queue[Union[RunOutputEvent, TeamRunOutputEvent, str, object]]" = asyncio.Queue()
-
-                async def stream_member(agent: Union[Agent, "Team"], idx: int) -> None:
-                    # Compute expected output per agent (do not mutate shared var)
-                    local_expected_output = None if agent.expected_output is not None else expected_output
-
-                    member_agent_task = format_member_agent_task(
-                        task_description, local_expected_output, team_member_interactions_str
-                    )
-
-                    # Add history for the member if enabled
-                    history = None
-                    if agent.add_history_to_context:
-                        history = self._get_history_for_member_agent(session, agent)
-                        if history:
-                            history.append(Message(role="user", content=member_agent_task))
-
-                    member_session_state_copy = copy(session_state)
-
-                    # Stream events from the member
-                    member_stream = agent.arun(  # type: ignore
-                        input=member_agent_task if history is None else history,
-                        user_id=user_id,
-                        session_id=session.session_id,
-                        session_state=member_session_state_copy,  # Send a copy to the agent
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=True,
-                        stream_intermediate_steps=stream_intermediate_steps,
-                        debug_mode=debug_mode,
-                        yield_run_response=True,
-                    )
-                    member_agent_run_response = None
-                    try:
-                        async for member_agent_run_output_event in member_stream:
-                            if isinstance(member_agent_run_output_event, TeamRunOutput) or isinstance(
-                                member_agent_run_output_event, RunOutput
-                            ):
-                                member_agent_run_response = member_agent_run_output_event  # type: ignore
-                                break
-                            check_if_run_cancelled(member_agent_run_output_event)
-                            await queue.put(member_agent_run_output_event)
-                    finally:
-                        # Add team run id to the member run
-                        if member_agent_run_response is not None:
-                            member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
-
-                        member_name = agent.name if agent.name else f"agent_{idx}"
-                        self._add_interaction_to_team_run_context(
-                            team_run_context=team_run_context,
-                            member_name=member_name,
-                            task=task_description,
-                            run_response=member_agent_run_response,  # type: ignore
-                        )
-
-                        # Add the member run to the team run response
-                        if store_member_responses and run_response:
-                            run_response.add_member_run(member_agent_run_response)  # type: ignore
-
-                        # Add the member run to the team session
-                        session.upsert_run(member_agent_run_response)  # type: ignore
-
-                        # Update team session state
-                        merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
-
-                        # Update the team media
-                        if member_agent_run_response is not None:
-                            self._update_team_media(member_agent_run_response)
-
-                        # Signal completion for this member
-                        await queue.put(done_marker)
-
-                # Initialize and launch all members
-                tasks: List[asyncio.Task[None]] = []
-                for member_agent_index, member_agent in enumerate(self.members):
-                    current_agent = member_agent
-                    current_index = member_agent_index
-                    self._initialize_member(current_agent)
-                    tasks.append(asyncio.create_task(stream_member(current_agent, current_index)))
-
-                # Drain queue until all members reported done
-                completed = 0
-                try:
-                    while completed < len(tasks):
-                        item = await queue.get()
-                        if item is done_marker:
-                            completed += 1
-                        else:
-                            yield item  # type: ignore
-                finally:
-                    # Ensure tasks do not leak on cancellation
-                    for t in tasks:
-                        if not t.done():
-                            t.cancel()
-                    # Await cancellation to suppress warnings
-                    for t in tasks:
-                        with contextlib.suppress(Exception):
-                            await t
-            else:
-                # Non-streaming concurrent run of members; collect results when done
-                tasks = []
-                for member_agent_index, member_agent in enumerate(self.members):
-                    current_agent = member_agent
-                    current_index = member_agent_index
-                    self._initialize_member(current_agent)
-
-                    # Compute expected output per agent (do not mutate shared var)
-                    local_expected_output = None if current_agent.expected_output is not None else expected_output
-
-                    member_agent_task = format_member_agent_task(
-                        task_description, local_expected_output, team_member_interactions_str
-                    )
-
-                    # Add history for the member if enabled
-                    history = None
-                    if current_agent.add_history_to_context:
-                        history = self._get_history_for_member_agent(session, current_agent)
-                        if history:
-                            history.append(Message(role="user", content=member_agent_task))
-
-                    async def run_member_agent(agent=current_agent) -> str:
-                        member_session_state_copy = copy(session_state)
-                        member_agent_run_response = await agent.arun(
-                            input=member_agent_task if history is None else history,
-                            user_id=user_id,
-                            # All members have the same session_id
-                            session_id=session.session_id,
-                            images=images,
-                            videos=videos,
-                            audio=audio,
-                            files=files,
-                            stream=False,
-                            debug_mode=debug_mode,
-                        )
-                        check_if_run_cancelled(member_agent_run_response)
-
-                        # Add team run id to the member run
-                        if member_agent_run_response is not None:
-                            member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
-
-                        # Update the memory
-                        member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-                        self._add_interaction_to_team_run_context(
-                            team_run_context=team_run_context,
-                            member_name=member_name,
-                            task=task_description,
-                            run_response=member_agent_run_response,  # type: ignore
-                        )
-
-                        # Add the member run to the team run response
-                        if store_member_responses and run_response and member_agent_run_response:
-                            run_response.add_member_run(member_agent_run_response)
-
-                        # Add the member run to the team session
-                        if member_agent_run_response:
-                            session.upsert_run(member_agent_run_response)
-
-                        # Update team session state
-                        merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
-
-                        # Update the team media
-                        if member_agent_run_response is not None:
-                            self._update_team_media(member_agent_run_response)  # type: ignore
-
-                        try:
-                            if member_agent_run_response.content is None and (
-                                member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
-                            ):
-                                return f"Agent {member_name}: No response from the member agent."
-                            elif isinstance(member_agent_run_response.content, str):
-                                if len(member_agent_run_response.content.strip()) > 0:
-                                    return f"Agent {member_name}: {member_agent_run_response.content}"
-                                elif (
-                                    member_agent_run_response.tools is not None
-                                    and len(member_agent_run_response.tools) > 0
-                                ):
-                                    return f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
-                            elif issubclass(type(member_agent_run_response.content), BaseModel):
-                                return f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
-                            else:
-                                import json
-
-                                return f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}"
-                        except Exception as e:
-                            return f"Agent {member_name}: Error - {str(e)}"
-
-                        return f"Agent {member_name}: No Response"
-
-                    tasks.append(run_member_agent)  # type: ignore
-
-                results = await asyncio.gather(*[task() for task in tasks])  # type: ignore
-                for result in results:
-                    yield result
-
-            # Afterward, switch back to the team logger
-            use_team_logger()
-
-        if async_mode:
-            run_member_agents_function = arun_member_agents  # type: ignore
-        else:
-            run_member_agents_function = run_member_agents  # type: ignore
-
-        run_member_agents_func = Function.from_callable(
-            run_member_agents_function, name="run_member_agents", strict=True
-        )
-
-        return run_member_agents_func
-
     def _get_delegate_task_function(
         self,
         run_response: TeamRunOutput,
@@ -5548,16 +5057,15 @@ class Team:
         stream: bool = False,
         stream_intermediate_steps: bool = False,
         async_mode: bool = False,
+        input: Optional[Message] = None,  # Used for determine_input_for_members=False
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         audio: Optional[List[Audio]] = None,
         files: Optional[List[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         workflow_context: Optional[Dict] = None,
-        store_member_responses: bool = False,
         debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Function:
         if not images:
             images = []
@@ -5567,6 +5075,97 @@ class Team:
             audio = []
         if not files:
             files = []
+
+        def _setup_delegate_task_to_member(
+            member_agent: Union[Agent, "Team"], task_description: str, expected_output: Optional[str] = None
+        ):
+            # 1. Initialize the member agent
+            self._initialize_member(member_agent)
+
+            # 2. Determine team context to send
+            team_member_interactions_str = self._determine_team_member_interactions(
+                team_run_context, images, videos, audio
+            )
+
+            member_agent_task: Union[str, Message]
+
+            # 3. Create the member agent task or use the input directly
+            if self.determine_input_for_member is False:
+                member_agent_task = input  # type: ignore
+            else:
+                # Don't override the expected output of a member agent
+                if member_agent.expected_output is not None:
+                    expected_output = None
+
+                member_agent_task = format_member_agent_task(  # type: ignore
+                    task_description, expected_output, team_member_interactions_str
+                )
+
+            # 4. Add history for the member if enabled
+            history = None
+            if member_agent.add_history_to_context:
+                history = self._get_history_for_member_agent(session, member_agent)
+                if history:
+                    if isinstance(member_agent_task, str):
+                        history.append(Message(role="user", content=member_agent_task))
+                    else:
+                        history.append(member_agent_task)
+
+            # 5. Handle respond_directly
+            if self.respond_directly:
+                # Since we return the response directly from the member agent, we need to set the output schema from the team down.
+                if not member_agent.output_schema and self.output_schema:
+                    member_agent.output_schema = self.output_schema
+
+                # If the member will produce structured output, we need to parse the response
+                if member_agent.output_schema is not None:
+                    self._member_response_model = member_agent.output_schema
+
+            # 6. Handle enable_agentic_knowledge_filters on the member agent
+            if self.enable_agentic_knowledge_filters and not member_agent.enable_agentic_knowledge_filters:
+                member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
+
+            return member_agent_task, history
+
+        def _process_delegate_task_to_member(
+            member_agent_run_response: Optional[Union[TeamRunOutput, RunOutput]],
+            member_agent: Union[Agent, "Team"],
+            member_agent_task: Union[str, Message],
+            member_session_state_copy: Dict[str, Any],
+        ):
+            # Add team run id to the member run
+            if member_agent_run_response is not None:
+                member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
+
+            # Update the team run context
+            member_name = member_agent.name if member_agent.name else member_agent.id if member_agent.id else "Unknown"
+            if isinstance(member_agent_task, str):
+                normalized_task = member_agent_task
+            elif member_agent_task.content:
+                normalized_task = str(member_agent_task.content)
+            else:
+                normalized_task = ""
+            self._add_interaction_to_team_run_context(
+                team_run_context=team_run_context,
+                member_name=member_name,
+                task=normalized_task,
+                run_response=member_agent_run_response,  # type: ignore
+            )
+
+            # Add the member run to the team run response if enabled
+            if run_response and member_agent_run_response:
+                run_response.add_member_run(member_agent_run_response)
+
+            # Add the member run to the team session
+            if member_agent_run_response:
+                session.upsert_run(member_agent_run_response)
+
+            # Update team session state
+            merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
+
+            # Update the team media
+            if member_agent_run_response is not None:
+                self._update_team_media(member_agent_run_response)  # type: ignore
 
         def delegate_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
@@ -5581,41 +5180,19 @@ class Team:
             Returns:
                 str: The result of the delegated task.
             """
-            # 1. Find the member agent using the helper function
+
+            # Find the member agent using the helper function
             result = self._find_member_by_id(member_id)
             history = None
             if result is None:
                 yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{self.get_members_system_message_content(indent=0)}"
                 return
 
-            member_agent_index, member_agent = result
-            self._initialize_member(member_agent)
-
-            # 2. Determine team context to send
-            team_member_interactions_str = self._determine_team_member_interactions(
-                team_run_context, images, videos, audio
-            )
-
-            # 3. Create the member agent task
-            # Don't override the expected output of a member agent
-            if member_agent.expected_output is not None:
-                expected_output = None
-            member_agent_task = format_member_agent_task(
-                task_description, expected_output, team_member_interactions_str
-            )
-
-            # 4. Add history for the member if enabled
-            if member_agent.add_history_to_context:
-                history = self._get_history_for_member_agent(session, member_agent)
-                if history:
-                    history.append(Message(role="user", content=member_agent_task))
+            _, member_agent = result
+            member_agent_task, history = _setup_delegate_task_to_member(member_agent, task_description, expected_output)
 
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
-
-            # Handle enable_agentic_knowledge_filters on the member agent
-            if self.enable_agentic_knowledge_filters and not member_agent.enable_agentic_knowledge_filters:
-                member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
 
             member_session_state_copy = copy(session_state)
             if stream:
@@ -5641,11 +5218,14 @@ class Team:
                 )
                 member_agent_run_response = None
                 for member_agent_run_output_event in member_agent_run_response_stream:
+                    # If we get the final response, we can break out of the loop
                     if isinstance(member_agent_run_output_event, TeamRunOutput) or isinstance(
                         member_agent_run_output_event, RunOutput
                     ):
                         member_agent_run_response = member_agent_run_output_event  # type: ignore
                         break
+
+                    # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_output_event)
 
                     # Yield the member event directly
@@ -5663,6 +5243,7 @@ class Team:
                     files=files,
                     stream=False,
                     debug_mode=debug_mode,
+                    workflow_context=workflow_context,
                     add_history_to_context=add_history_to_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
@@ -5701,33 +5282,9 @@ class Team:
             # Afterward, switch back to the team logger
             use_team_logger()
 
-            # Add team run id to the member run
-            if member_agent_run_response is not None:
-                member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
-
-            # Update the memory
-            member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-            self._add_interaction_to_team_run_context(
-                team_run_context=team_run_context,
-                member_name=member_name,
-                task=task_description,
-                run_response=member_agent_run_response,  # type: ignore
+            _process_delegate_task_to_member(
+                member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
             )
-
-            # Add the member run to the team run response
-            if store_member_responses and run_response and member_agent_run_response:
-                run_response.add_member_run(member_agent_run_response)
-
-            # Add the member run to the team session
-            if member_agent_run_response:
-                session.upsert_run(member_agent_run_response)
-
-            # Update team session state
-            merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
-
-            # Update the team media
-            if member_agent_run_response is not None:
-                self._update_team_media(member_agent_run_response)  # type: ignore
 
         async def adelegate_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
@@ -5750,41 +5307,16 @@ class Team:
                 yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{self.get_members_system_message_content(indent=0)}"
                 return
 
-            member_agent_index, member_agent = result
-            self._initialize_member(member_agent)
-
-            # 2. Determine team context to send
-            team_member_interactions_str = self._determine_team_member_interactions(
-                team_run_context=team_run_context, images=images, videos=videos, audio=audio
-            )
-
-            # 3. Create the member agent task
-            # Don't override the expected output of a member agent
-            if member_agent.expected_output is not None:
-                expected_output = None
-            member_agent_task = format_member_agent_task(
-                task_description, expected_output, team_member_interactions_str
-            )
-
-            # 4. Add history for the member if enabled
-            if member_agent.add_history_to_context:
-                history = self._get_history_for_member_agent(session, member_agent)
-                if history:
-                    history.append(Message(role="user", content=member_agent_task))
+            _, member_agent = result
+            member_agent_task, history = _setup_delegate_task_to_member(member_agent, task_description, expected_output)
 
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
 
-            # Handle enable_agentic_knowledge_filters
-            if self.enable_agentic_knowledge_filters and not member_agent.enable_agentic_knowledge_filters:
-                member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
-
-            member_input = member_agent_task if history is None else history
-
             member_session_state_copy = copy(session_state)
             if stream:
                 member_agent_run_response_stream = member_agent.arun(  # type: ignore
-                    input=member_input,
+                    input=member_agent_task if history is None else history,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
@@ -5805,16 +5337,21 @@ class Team:
                 )
                 member_agent_run_response = None
                 async for member_agent_run_response_event in member_agent_run_response_stream:
+                    # If we get the final response, we can break out of the loop
                     if isinstance(member_agent_run_response_event, TeamRunOutput) or isinstance(
                         member_agent_run_response_event, RunOutput
                     ):
                         member_agent_run_response = member_agent_run_response_event  # type: ignore
                         break
+
+                    # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_response_event)
+
+                    # Yield the member event directly
                     yield member_agent_run_response_event
             else:
                 member_agent_run_response = await member_agent.arun(  # type: ignore
-                    input=member_input,
+                    input=member_agent_task if history is None else history,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
@@ -5825,6 +5362,7 @@ class Team:
                     files=files,
                     stream=False,
                     debug_mode=debug_mode,
+                    workflow_context=workflow_context,
                     add_history_to_context=add_history_to_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
@@ -5859,402 +5397,295 @@ class Team:
             # Afterward, switch back to the team logger
             use_team_logger()
 
-            # Add team run id to the member run
-            if member_agent_run_response is not None:
-                member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
-
-            # Update the memory
-            member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-            self._add_interaction_to_team_run_context(
-                team_run_context=team_run_context,
-                member_name=member_name,
-                task=task_description,
-                run_response=member_agent_run_response,  # type: ignore
+            _process_delegate_task_to_member(
+                member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
             )
 
-            # Add the member run to the team run response
-            if store_member_responses and run_response and member_agent_run_response:
-                run_response.add_member_run(member_agent_run_response)
+        # When the task should be delegated to all members
+        def delegate_task_to_members(
+            task_description: str, expected_output: Optional[str] = None
+        ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+            """
+            Use this function to delegate a task to all the member agents and return a response.
+            You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
-            # Add the member run to the team session
-            if member_agent_run_response:
-                session.upsert_run(member_agent_run_response)
+            Args:
+                task_description (str): A clear and concise description of the task to send to member agents.
+                expected_output (str, optional): The expected output from the member agents (optional).
+            Returns:
+                str: The result of the delegated task.
+            """
 
-            # Update team session state
-            merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
+            # Run all the members sequentially
+            for _, member_agent in enumerate(self.members):
+                member_agent_task, history = _setup_delegate_task_to_member(
+                    member_agent, task_description, expected_output
+                )
 
-            # Update the team media
-            if member_agent_run_response is not None:
-                self._update_team_media(member_agent_run_response)  # type: ignore
+                member_session_state_copy = copy(session_state)
+                if stream:
+                    member_agent_run_response_stream = member_agent.run(
+                        input=member_agent_task if history is None else history,
+                        user_id=user_id,
+                        # All members have the same session_id
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,  # Send a copy to the agent
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                        workflow_context=workflow_context,
+                        knowledge_filters=knowledge_filters
+                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        else None,
+                        debug_mode=debug_mode,
+                        add_history_to_context=add_history_to_context,
+                        yield_run_response=True,
+                    )
+                    member_agent_run_response = None
+                    for member_agent_run_response_chunk in member_agent_run_response_stream:
+                        # If we get the final response, we can break out of the loop
+                        if isinstance(member_agent_run_response_chunk, TeamRunOutput) or isinstance(
+                            member_agent_run_response_chunk, RunOutput
+                        ):
+                            member_agent_run_response = member_agent_run_response_chunk  # type: ignore
+                            break
 
-        if async_mode:
-            delegate_function = adelegate_task_to_member  # type: ignore
+                        # Check if the run is cancelled
+                        check_if_run_cancelled(member_agent_run_response_chunk)
+
+                        # Yield the member event directly
+                        yield member_agent_run_response_chunk
+
+                else:
+                    member_agent_run_response = member_agent.run(  # type: ignore
+                        input=member_agent_task if history is None else history,
+                        user_id=user_id,
+                        # All members have the same session_id
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,  # Send a copy to the agent
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=False,
+                        workflow_context=workflow_context,
+                        knowledge_filters=knowledge_filters
+                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        else None,
+                        debug_mode=debug_mode,
+                        add_history_to_context=add_history_to_context,
+                    )
+
+                    check_if_run_cancelled(member_agent_run_response)  # type: ignore
+
+                    try:
+                        if member_agent_run_response.content is None and (  # type: ignore
+                            member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
+                        ):
+                            yield f"Agent {member_agent.name}: No response from the member agent."
+                        elif isinstance(member_agent_run_response.content, str):  # type: ignore
+                            if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
+                                yield f"Agent {member_agent.name}: {member_agent_run_response.content}"  # type: ignore
+                            elif (
+                                member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0  # type: ignore
+                            ):
+                                yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"  # type: ignore
+                        elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
+                            yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
+                        else:
+                            import json
+
+                            yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2)}"  # type: ignore
+                    except Exception as e:
+                        yield f"Agent {member_agent.name}: Error - {str(e)}"
+
+                _process_delegate_task_to_member(
+                    member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
+                )
+
+            # After all the member runs, switch back to the team logger
+            use_team_logger()
+
+        # When the task should be delegated to all members
+        async def adelegate_task_to_members(
+            task_description: str, expected_output: Optional[str] = None
+        ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+            """Use this function to delegate a task to all the member agents and return a response.
+            You must provide a clear and concise description of the task to send to member agents AND the expected output.
+
+            Args:
+                task_description (str): A clear and concise description of the task to send to member agents.
+                expected_output (str, optional): The expected output from the member agents (optional).
+            Returns:
+                str: The result of the delegated task.
+            """
+
+            if stream:
+                # Concurrent streaming: launch each member as a streaming worker and merge events
+                done_marker = object()
+                queue: "asyncio.Queue[Union[RunOutputEvent, TeamRunOutputEvent, str, object]]" = asyncio.Queue()
+
+                async def stream_member(agent: Union[Agent, "Team"], idx: int) -> None:
+                    member_agent_task, history = _setup_delegate_task_to_member(
+                        agent, task_description, expected_output
+                    )
+                    member_session_state_copy = copy(session_state)
+
+                    member_stream = agent.arun(  # type: ignore
+                        input=member_agent_task if history is None else history,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,  # Send a copy to the agent
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                        workflow_context=workflow_context,
+                        debug_mode=debug_mode,
+                        knowledge_filters=knowledge_filters
+                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        else None,
+                        add_history_to_context=add_history_to_context,
+                        yield_run_response=True,
+                    )
+                    member_agent_run_response = None
+                    try:
+                        async for member_agent_run_output_event in member_stream:
+                            if isinstance(member_agent_run_output_event, TeamRunOutput) or isinstance(
+                                member_agent_run_output_event, RunOutput
+                            ):
+                                member_agent_run_response = member_agent_run_output_event  # type: ignore
+                                break
+                            check_if_run_cancelled(member_agent_run_output_event)
+                            await queue.put(member_agent_run_output_event)
+                    finally:
+                        _process_delegate_task_to_member(
+                            member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
+                        )
+
+                # Initialize and launch all members
+                tasks: List[asyncio.Task[None]] = []
+                for member_agent_index, member_agent in enumerate(self.members):
+                    current_agent = member_agent
+                    current_index = member_agent_index
+                    self._initialize_member(current_agent)
+                    tasks.append(asyncio.create_task(stream_member(current_agent, current_index)))
+
+                # Drain queue until all members reported done
+                completed = 0
+                try:
+                    while completed < len(tasks):
+                        item = await queue.get()
+                        if item is done_marker:
+                            completed += 1
+                        else:
+                            yield item  # type: ignore
+                finally:
+                    # Ensure tasks do not leak on cancellation
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    # Await cancellation to suppress warnings
+                    for t in tasks:
+                        with contextlib.suppress(Exception):
+                            await t
+
+            else:
+                # Non-streaming concurrent run of members; collect results when done
+                tasks = []
+                for member_agent_index, member_agent in enumerate(self.members):
+                    current_agent = member_agent
+                    current_index = member_agent_index
+                    member_agent_task, history = _setup_delegate_task_to_member(
+                        current_agent, task_description, expected_output
+                    )
+
+                    async def run_member_agent(agent=current_agent) -> str:
+                        member_session_state_copy = copy(session_state)
+                        member_agent_run_response = await agent.arun(
+                            input=member_agent_task if history is None else history,
+                            user_id=user_id,
+                            # All members have the same session_id
+                            session_id=session.session_id,
+                            session_state=member_session_state_copy,  # Send a copy to the agent
+                            images=images,
+                            videos=videos,
+                            audio=audio,
+                            files=files,
+                            stream=False,
+                            stream_intermediate_steps=stream_intermediate_steps,
+                            debug_mode=debug_mode,
+                            workflow_context=workflow_context,
+                            knowledge_filters=knowledge_filters
+                            if not member_agent.knowledge_filters and member_agent.knowledge
+                            else None,
+                            add_history_to_context=add_history_to_context,
+                        )
+                        check_if_run_cancelled(member_agent_run_response)
+
+                        _process_delegate_task_to_member(
+                            member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
+                        )
+
+                        member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
+                        try:
+                            if member_agent_run_response.content is None and (
+                                member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                            ):
+                                return f"Agent {member_name}: No response from the member agent."
+                            elif isinstance(member_agent_run_response.content, str):
+                                if len(member_agent_run_response.content.strip()) > 0:
+                                    return f"Agent {member_name}: {member_agent_run_response.content}"
+                                elif (
+                                    member_agent_run_response.tools is not None
+                                    and len(member_agent_run_response.tools) > 0
+                                ):
+                                    return f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
+                            elif issubclass(type(member_agent_run_response.content), BaseModel):
+                                return f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
+                            else:
+                                import json
+
+                                return f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}"
+                        except Exception as e:
+                            return f"Agent {member_name}: Error - {str(e)}"
+
+                        return f"Agent {member_name}: No Response"
+
+                    tasks.append(run_member_agent)  # type: ignore
+
+                results = await asyncio.gather(*[task() for task in tasks])  # type: ignore
+                for result in results:
+                    yield result
+
+            # After all the member runs, switch back to the team logger
+            use_team_logger()
+
+        if self.delegate_task_to_all_members:
+            if async_mode:
+                delegate_function = adelegate_task_to_members  # type: ignore
+            else:
+                delegate_function = delegate_task_to_members  # type: ignore
+
+            delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_members")
         else:
-            delegate_function = delegate_task_to_member  # type: ignore
+            if async_mode:
+                delegate_function = adelegate_task_to_member  # type: ignore
+            else:
+                delegate_function = delegate_task_to_member  # type: ignore
 
-        delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_member", strict=True)
+            delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_member")
+
+        if self.respond_directly:
+            delegate_func.stop_after_tool_call = True
+            delegate_func.show_result = True
 
         return delegate_func
-
-    def _get_forward_task_function(
-        self,
-        input: Message,
-        run_response: TeamRunOutput,
-        team_run_context: Dict[str, Any],
-        session: TeamSession,
-        session_state: Dict[str, Any],
-        user_id: Optional[str] = None,
-        stream: bool = False,
-        stream_intermediate_steps: bool = False,
-        async_mode: bool = False,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        workflow_context: Optional[Dict] = None,
-        store_member_responses: bool = False,
-        debug_mode: Optional[bool] = None,
-        add_history_to_context: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-    ) -> Function:
-        if not images:
-            images = []
-        if not videos:
-            videos = []
-        if not audio:
-            audio = []
-        if not files:
-            files = []
-
-        def forward_task_to_member(
-            member_id: str, expected_output: Optional[str] = None
-        ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
-            """Use this function to forward the request to the selected team member.
-            Args:
-                member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
-                expected_output (str, optional): The expected output from the member (optional).
-            Returns:
-                str: The result of the delegated task.
-            """
-            self._member_response_model = None
-
-            # Find the member agent using the helper function
-            result = self._find_member_by_id(member_id)
-            history = None
-            if result is None:
-                yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{self.get_members_system_message_content(indent=0)}"
-                return
-
-            member_agent_index, member_agent = result
-            self._initialize_member(member_agent)
-
-            # Since we return the response directly from the member agent, we need to set the response model from the team down.
-            if not member_agent.output_schema and self.output_schema:
-                member_agent.output_schema = self.output_schema
-
-            # If the member will produce structured output, we need to parse the response
-            if member_agent.output_schema is not None:
-                self._member_response_model = member_agent.output_schema
-
-            # Make sure for the member agent, we are using the agent logger
-            use_agent_logger()
-
-            # If found in subteam, include the path in the task description
-            member_agent_task = input.get_content_string() if input is not None else ""
-
-            # Add history for the member if enabled
-            should_add_member_history = (
-                add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
-            )
-            if should_add_member_history:
-                history = self._get_history_for_member_agent(session, member_agent)
-                if history:
-                    history.append(Message(role="user", content=member_agent_task))
-
-            # Don't override the expected output of a member agent
-            if member_agent.expected_output is None and expected_output:
-                member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
-
-            # Handle enable_agentic_knowledge_filters
-            if self.enable_agentic_knowledge_filters and not member_agent.enable_agentic_knowledge_filters:
-                member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
-
-            # 2. Get the response from the member agent
-            member_session_state_copy = copy(session_state)
-            if stream:
-                member_agent_run_response_stream = member_agent.run(
-                    input=member_agent_task if history is None else history,
-                    user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,  # Send a copy to the agent
-                    images=images,
-                    videos=videos,
-                    audio=audio,
-                    files=files,
-                    stream=True,
-                    stream_intermediate_steps=stream_intermediate_steps,
-                    debug_mode=debug_mode,
-                    add_history_to_context=add_history_to_context,
-                    workflow_context=workflow_context,
-                    knowledge_filters=knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    yield_run_response=True,
-                )
-                member_agent_run_response = None
-                for member_agent_run_response_chunk in member_agent_run_response_stream:
-                    if isinstance(member_agent_run_response_chunk, TeamRunOutput) or isinstance(
-                        member_agent_run_response_chunk, RunOutput
-                    ):
-                        member_agent_run_response = member_agent_run_response_chunk  # type: ignore
-                        break
-                    check_if_run_cancelled(member_agent_run_response_chunk)
-                    yield member_agent_run_response_chunk
-            else:
-                member_agent_run_response = member_agent.run(  # type: ignore
-                    input=member_agent_task if history is None else history,
-                    user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,  # Send a copy to the agent
-                    images=images,
-                    videos=videos,
-                    audio=audio,
-                    files=files,
-                    stream=False,
-                    debug_mode=debug_mode,
-                    add_history_to_context=add_history_to_context,
-                    knowledge_filters=knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                )
-                check_if_run_cancelled(member_agent_run_response)  # type: ignore
-
-                try:
-                    if member_agent_run_response.content is None and (  # type: ignore
-                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                    ):
-                        yield "No response from the member agent."
-                    elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                        if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
-                            yield member_agent_run_response.content  # type: ignore
-
-                        # If the content is empty but we have tool calls
-                        elif (
-                            member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0  # type: ignore
-                        ):
-                            tool_str = ""
-                            for tool in member_agent_run_response.tools:  # type: ignore
-                                if tool.result:
-                                    tool_str += f"{tool.result},"
-                            yield tool_str.rstrip(",")
-
-                    elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                    else:
-                        import json
-
-                        yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
-                except Exception as e:
-                    yield str(e)
-
-            # Afterward, switch back to the team logger
-            use_team_logger()
-
-            # Add team run id to the member run
-            if member_agent_run_response is not None:
-                member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
-
-            # Update the memory
-            member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-            self._add_interaction_to_team_run_context(
-                team_run_context=team_run_context,
-                member_name=member_name,
-                task=member_agent_task,
-                run_response=member_agent_run_response,  # type: ignore
-            )
-
-            # Add the member run to the team run response
-            if store_member_responses and run_response and member_agent_run_response:
-                run_response.add_member_run(member_agent_run_response)
-
-            # Add the member run to the team session
-            if member_agent_run_response:
-                session.upsert_run(member_agent_run_response)
-
-            # Update team session state
-            merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
-
-            # Update the team media
-            if member_agent_run_response is not None:
-                self._update_team_media(member_agent_run_response)  # type: ignore
-
-        async def aforward_task_to_member(
-            member_id: str, expected_output: Optional[str] = None
-        ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
-            """Use this function to forward a message to the selected team member.
-
-            Args:
-                member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
-                expected_output (str, optional): The expected output from the member (optional).
-            Returns:
-                str: The result of the delegated task.
-            """
-            self._member_response_model = None
-
-            # Find the member agent using the helper function
-            result = self._find_member_by_id(member_id)
-            history = None
-            if result is None:
-                yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{self.get_members_system_message_content(indent=0)}"
-                return
-
-            member_agent_index, member_agent = result
-            self._initialize_member(member_agent)
-
-            # If the member will produce structured output, we need to parse the response
-            if member_agent.output_schema is not None:
-                self._member_response_model = member_agent.output_schema
-
-            # Make sure for the member agent, we are using the agent logger
-            use_agent_logger()
-
-            # If found in subteam, include the path in the task description
-            member_agent_task = input.get_content_string() if input is not None else ""
-
-            if member_agent.add_history_to_context:
-                history = self._get_history_for_member_agent(session, member_agent)
-                if history:
-                    history.append(Message(role="user", content=member_agent_task))
-
-            # Don't override the expected output of a member agent
-            if member_agent.expected_output is None and expected_output:
-                member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
-
-            # Handle enable_agentic_knowledge_filters
-            if self.enable_agentic_knowledge_filters and not member_agent.enable_agentic_knowledge_filters:
-                member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
-
-            member_input = member_agent_task if history is None else history
-            # 2. Get the response from the member agent
-            member_session_state_copy = copy(session_state)
-            if stream:
-                member_agent_run_response_stream = member_agent.arun(  # type: ignore
-                    input=member_input,
-                    user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,  # Send a copy to the agent
-                    images=images,
-                    videos=videos,
-                    audio=audio,
-                    files=files,
-                    stream=True,
-                    stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
-                    debug_mode=debug_mode,
-                    add_history_to_context=add_history_to_context,
-                    knowledge_filters=knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    yield_run_response=True,
-                )
-                member_agent_run_response = None
-                async for member_agent_run_response_event in member_agent_run_response_stream:
-                    if isinstance(member_agent_run_response_event, TeamRunOutput) or isinstance(
-                        member_agent_run_response_event, RunOutput
-                    ):
-                        member_agent_run_response = member_agent_run_response_event  # type: ignore
-                        break
-                    check_if_run_cancelled(member_agent_run_response_event)
-                    yield member_agent_run_response_event
-            else:
-                member_agent_run_response = await member_agent.arun(  # type: ignore
-                    input=member_input,
-                    user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,  # Send a copy to the agent
-                    images=images,
-                    videos=videos,
-                    audio=audio,
-                    files=files,
-                    stream=False,
-                    debug_mode=debug_mode,
-                    add_history_to_context=add_history_to_context,
-                    knowledge_filters=knowledge_filters
-                    if (member_agent.knowledge_filters and member_agent.knowledge)
-                    else None,
-                )
-                check_if_run_cancelled(member_agent_run_response)  # type: ignore
-
-                try:
-                    if member_agent_run_response.content is None and (  # type: ignore
-                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                    ):
-                        yield "No response from the member agent."
-                    elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                        if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
-                            yield member_agent_run_response.content  # type: ignore
-
-                        # If the content is empty but we have tool calls
-                        elif (
-                            member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0  # type: ignore
-                        ):
-                            yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
-                    elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                    else:
-                        import json
-
-                        yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
-                except Exception as e:
-                    yield str(e)
-
-            # Afterward, switch back to the team logger
-            use_team_logger()
-
-            # Add team run id to the member run
-            if member_agent_run_response is not None:
-                member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
-
-            # Update the memory
-            member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-            self._add_interaction_to_team_run_context(
-                team_run_context=team_run_context,
-                member_name=member_name,
-                task=member_agent_task,
-                run_response=member_agent_run_response,  # type: ignore
-            )
-
-            # Add the member run to the team run response
-            if store_member_responses and run_response and member_agent_run_response:
-                run_response.add_member_run(member_agent_run_response)
-
-            # Add the member run to the team session
-            if member_agent_run_response:
-                session.upsert_run(member_agent_run_response)
-
-            # Update team session state
-            merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
-
-            # Update the team media
-            if member_agent_run_response is not None:
-                self._update_team_media(member_agent_run_response)  # type: ignore
-
-        if async_mode:
-            forward_function = aforward_task_to_member  # type: ignore
-        else:
-            forward_function = forward_task_to_member  # type: ignore
-
-        forward_func = Function.from_callable(forward_function, name="forward_task_to_member", strict=True)
-
-        forward_func.stop_after_tool_call = True
-        forward_func.show_result = True
-
-        return forward_func
 
     ###########################################################################
     # Session Management
@@ -6402,7 +5833,7 @@ class Team:
 
             return team_session
 
-        log_warning(f"TeamSession {session_id_to_load} not found in db")
+        log_debug(f"TeamSession {session_id_to_load} not found in db")
         return None
 
     def save_session(self, session: TeamSession) -> None:
@@ -6412,6 +5843,12 @@ class Team:
                 session.session_data["session_state"].pop("current_session_id", None)  # type: ignore
                 session.session_data["session_state"].pop("current_user_id", None)  # type: ignore
                 session.session_data["session_state"].pop("current_run_id", None)  # type: ignore
+
+            # scrub the member responses if not storing them
+            if not self.store_member_responses and session.runs is not None:
+                for run in session.runs:
+                    if hasattr(run, "member_responses"):
+                        run.member_responses = []
             self._upsert_session(session=session)
             log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
@@ -7141,8 +6578,6 @@ class Team:
             team_data["team_id"] = self.id
         if self.model is not None:
             team_data["model"] = self.model.to_dict()
-        if self.mode is not None:
-            team_data["mode"] = self.mode
         return team_data
 
     ###########################################################################
