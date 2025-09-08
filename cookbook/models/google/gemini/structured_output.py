@@ -1,34 +1,85 @@
-from typing import List
+from typing import Optional, Union
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent
 from agno.models.google import Gemini
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
 
 
-class MovieScript(BaseModel):
-    setting: str = Field(
-        ..., description="Provide a nice setting for a blockbuster movie."
+class ContactInfo(BaseModel):
+    """Contact information with structured properties"""
+
+    contact_name: str = Field(description="Name of the contact person")
+    contact_method: str = Field(
+        description="Preferred communication method",
+        enum=["email", "phone", "teams", "slack"],
     )
-    ending: str = Field(
-        ...,
-        description="Ending of the movie. If not available, provide a happy ending.",
+    contact_details: str = Field(description="Email address or phone number")
+
+
+class EventSchema(BaseModel):
+    event_id: str = Field(description="Unique event identifier")
+    event_name: str = Field(description="Name of the event")
+
+    event_date: str = Field(
+        description="Event date in YYYY-MM-DD format",
+        format="date",
     )
-    genre: str = Field(
-        ...,
-        description="Genre of the movie. If not available, select action, thriller or romantic comedy.",
+
+    start_time: str = Field(
+        description="Event start time in HH:MM format",
+        format="time",
     )
-    name: str = Field(..., description="Give a name to this movie")
-    characters: List[str] = Field(..., description="Name of characters for this movie.")
-    storyline: str = Field(
-        ..., description="3 sentence storyline for the movie. Make it exciting!"
+
+    duration: str = Field(
+        description="Event duration in ISO 8601 format (e.g., PT2H30M)",
+        format="duration",
+    )
+
+    status: str = Field(
+        description="Current event status",
+        enum=[
+            "planning",
+            "confirmed",
+            "in_progress",
+            "completed",
+            "cancelled",
+        ],
+    )
+
+    attendee_count: int = Field(
+        description="Expected number of attendees",
+        ge=1,
+        le=10000,
+    )
+
+    budget_range: Union[float, str] = Field(
+        description="Budget as number (USD) or 'TBD' if not determined"
+    )
+
+    optional_notes: Optional[str] = Field(
+        description="Additional notes about the event (can be null)",
+        default=None,
+    )
+
+    contact_info: ContactInfo = Field(
+        description="Contact information with structured properties"
     )
 
 
 structured_output_agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-001"),
-    description="You help people write movie scripts.",
-    response_model=MovieScript,
+    name="Advanced Event Planner",
+    model=Gemini(id="gemini-2.5-pro"),
+    response_model=EventSchema,
+    instructions="""
+    Create a detailed event plan that demonstrates all schema constraints:
+    - Use proper date/time/duration formats
+    - Set a realistic status from the enum options
+    - Handle budget as either a number or 'TBD'
+    - Include optional notes if relevant
+    - Create contact info as a nested object
+    """,
 )
 
-structured_output_agent.print_response("New York")
+structured_output_agent.print_response(
+    "Plan a corporate product launch event for 150 people next month"
+)
