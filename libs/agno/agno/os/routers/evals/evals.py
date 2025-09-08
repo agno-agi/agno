@@ -75,14 +75,25 @@ def attach_routes(
                         "example": {
                             "data": [
                                 {
-                                    "id": "eval-123",
-                                    "name": "Accuracy Test",
-                                    "agent_id": "agent-1",
-                                    "eval_type": "accuracy",
-                                    "eval_data": {"score": 0.85, "correct": 17, "total": 20},
+                                    "id": "a03fa2f4-900d-482d-afe0-470d4cd8d1f4",
+                                    "agent_id": "basic-agent",
+                                    "model_id": "gpt-4o",
+                                    "model_provider": "OpenAI",
+                                    "team_id": None,
+                                    "workflow_id": None,
+                                    "name": "Test ",
+                                    "evaluated_component_name": None,
+                                    "eval_type": "reliability",
+                                    "eval_data": {
+                                        "eval_status": "PASSED",
+                                        "failed_tool_calls": [],
+                                        "passed_tool_calls": ["multiply"],
+                                    },
+                                    "eval_input": {"expected_tool_calls": ["multiply"]},
+                                    "created_at": "2025-08-27T15:41:59Z",
+                                    "updated_at": "2025-08-27T15:41:59Z",
                                 }
-                            ],
-                            "meta": {"page": 1, "limit": 20, "total_count": 45, "total_pages": 3},
+                            ]
                         }
                     }
                 },
@@ -140,19 +151,23 @@ def attach_routes(
                 "content": {
                     "application/json": {
                         "example": {
-                            "id": "eval-123",
-                            "name": "Accuracy Test",
-                            "agent_id": "agent-1",
-                            "model_id": "gpt-4",
-                            "model_provider": "openai",
-                            "eval_type": "accuracy",
+                            "id": "a03fa2f4-900d-482d-afe0-470d4cd8d1f4",
+                            "agent_id": "basic-agent",
+                            "model_id": "gpt-4o",
+                            "model_provider": "OpenAI",
+                            "team_id": None,
+                            "workflow_id": None,
+                            "name": "Test ",
+                            "evaluated_component_name": None,
+                            "eval_type": "reliability",
                             "eval_data": {
-                                "score": 0.85,
-                                "correct_answers": 17,
-                                "total_questions": 20,
-                                "accuracy_percentage": 85.0,
+                                "eval_status": "PASSED",
+                                "failed_tool_calls": [],
+                                "passed_tool_calls": ["multiply"],
                             },
-                            "created_at": "2024-01-15T10:30:00Z",
+                            "eval_input": {"expected_tool_calls": ["multiply"]},
+                            "created_at": "2025-08-27T15:41:59Z",
+                            "updated_at": "2025-08-27T15:41:59Z",
                         }
                     }
                 },
@@ -178,7 +193,7 @@ def attach_routes(
         summary="Delete Evaluation Runs",
         description="Delete multiple evaluation runs by their IDs. This action cannot be undone.",
         responses={
-            204: {"description": "Evaluation runs deleted successfully"},
+            204: {},
             500: {"description": "Failed to delete evaluation runs", "model": InternalServerErrorResponse},
         },
     )
@@ -205,11 +220,23 @@ def attach_routes(
                 "content": {
                     "application/json": {
                         "example": {
-                            "id": "eval-123",
-                            "name": "Updated Test Name",
-                            "agent_id": "agent-1",
-                            "eval_type": "accuracy",
-                            "eval_data": {"score": 0.85},
+                            "id": "a03fa2f4-900d-482d-afe0-470d4cd8d1f4",
+                            "agent_id": "basic-agent",
+                            "model_id": "gpt-4o",
+                            "model_provider": "OpenAI",
+                            "team_id": None,
+                            "workflow_id": None,
+                            "name": "Test ",
+                            "evaluated_component_name": None,
+                            "eval_type": "reliability",
+                            "eval_data": {
+                                "eval_status": "PASSED",
+                                "failed_tool_calls": [],
+                                "passed_tool_calls": ["multiply"],
+                            },
+                            "eval_input": {"expected_tool_calls": ["multiply"]},
+                            "created_at": "2025-08-27T15:41:59Z",
+                            "updated_at": "2025-08-27T15:41:59Z",
                         }
                     }
                 },
@@ -250,47 +277,22 @@ def attach_routes(
                 "content": {
                     "application/json": {
                         "examples": {
-                            "accuracy_eval": {
-                                "summary": "Accuracy Evaluation",
-                                "value": {
-                                    "id": "eval-acc-123",
-                                    "name": "GPT-4 Accuracy Test",
-                                    "agent_id": "agent-1",
-                                    "model_id": "gpt-4",
-                                    "model_provider": "openai",
-                                    "eval_type": "accuracy",
-                                    "eval_data": {"score": 0.92, "correct_answers": 23, "total_questions": 25},
-                                },
+                            "id": "f2b2d72f-e9e2-4f0e-8810-0a7e1ff58614",
+                            "agent_id": "basic-agent",
+                            "model_id": "gpt-4o",
+                            "model_provider": "OpenAI",
+                            "team_id": None,
+                            "workflow_id": None,
+                            "name": None,
+                            "evaluated_component_name": None,
+                            "eval_type": "reliability",
+                            "eval_data": {
+                                "eval_status": "PASSED",
+                                "failed_tool_calls": [],
+                                "passed_tool_calls": ["multiply"],
                             },
-                            "performance_eval": {
-                                "summary": "Performance Evaluation",
-                                "value": {
-                                    "id": "eval-perf-456",
-                                    "name": "Response Time Test",
-                                    "team_id": "team-1",
-                                    "eval_type": "performance",
-                                    "eval_data": {
-                                        "avg_response_time": 1.2,
-                                        "min_response_time": 0.8,
-                                        "max_response_time": 2.1,
-                                        "total_runs": 10,
-                                    },
-                                },
-                            },
-                            "reliability_eval": {
-                                "summary": "Reliability Evaluation",
-                                "value": {
-                                    "id": "eval-rel-789",
-                                    "name": "Tool Usage Test",
-                                    "agent_id": "agent-2",
-                                    "eval_type": "reliability",
-                                    "eval_data": {
-                                        "success_rate": 0.95,
-                                        "expected_tools_used": 8,
-                                        "actual_tools_used": 8,
-                                    },
-                                },
-                            },
+                            "created_at": "2025-08-27T15:41:59Z",
+                            "updated_at": "2025-08-27T15:41:59Z",
                         }
                     }
                 },

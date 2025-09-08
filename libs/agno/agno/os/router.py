@@ -375,13 +375,60 @@ def get_base_router(
                 "content": {
                     "application/json": {
                         "example": {
-                            "os_id": "my-agent-os",
-                            "description": "My AgentOS instance",
-                            "available_models": ["gpt-4", "claude-3"],
-                            "databases": ["main_db"],
-                            "agents": [{"id": "agent1", "name": "Assistant"}],
-                            "teams": [{"id": "team1", "name": "Support Team"}],
-                            "workflows": [{"id": "workflow1", "name": "Data Processing"}],
+                            "os_id": "demo",
+                            "description": "Example AgentOS configuration",
+                            "available_models": [],
+                            "databases": ["9c884dc4-9066-448c-9074-ef49ec7eb73c"],
+                            "session": {
+                                "dbs": [
+                                    {
+                                        "db_id": "9c884dc4-9066-448c-9074-ef49ec7eb73c",
+                                        "domain_config": {"display_name": "Sessions"},
+                                    }
+                                ]
+                            },
+                            "metrics": {
+                                "dbs": [
+                                    {
+                                        "db_id": "9c884dc4-9066-448c-9074-ef49ec7eb73c",
+                                        "domain_config": {"display_name": "Metrics"},
+                                    }
+                                ]
+                            },
+                            "memory": {
+                                "dbs": [
+                                    {
+                                        "db_id": "9c884dc4-9066-448c-9074-ef49ec7eb73c",
+                                        "domain_config": {"display_name": "Memory"},
+                                    }
+                                ]
+                            },
+                            "knowledge": {
+                                "dbs": [
+                                    {
+                                        "db_id": "9c884dc4-9066-448c-9074-ef49ec7eb73c",
+                                        "domain_config": {"display_name": "Knowledge"},
+                                    }
+                                ]
+                            },
+                            "evals": {
+                                "dbs": [
+                                    {
+                                        "db_id": "9c884dc4-9066-448c-9074-ef49ec7eb73c",
+                                        "domain_config": {"display_name": "Evals"},
+                                    }
+                                ]
+                            },
+                            "agents": [
+                                {
+                                    "id": "main-agent",
+                                    "name": "Main Agent",
+                                    "db_id": "9c884dc4-9066-448c-9074-ef49ec7eb73c",
+                                }
+                            ],
+                            "teams": [],
+                            "workflows": [],
+                            "interfaces": [],
                         }
                     }
                 },
@@ -475,14 +522,8 @@ def get_base_router(
             200: {
                 "description": "Agent run executed successfully",
                 "content": {
-                    "application/json": {
-                        "example": {
-                            "run_id": "123e4567-e89b-12d3-a456-426614174000",
-                            "content": "Hello! How can I help you today?",
-                        }
-                    },
                     "text/event-stream": {
-                        "example": 'event: run_content\ndata: {"content": "Hello!", "run_id": "123..."}\n\n'
+                        "example": 'event: RunStarted\ndata: {"content": "Hello!", "run_id": "123..."}\n\n'
                     },
                 },
             },
@@ -604,7 +645,7 @@ def get_base_router(
             "**Note:** Cancellation may not be immediate for all operations."
         ),
         responses={
-            200: {"description": "Agent run cancelled successfully", "content": {"application/json": {"example": {}}}},
+            200: {},
             404: {"description": "Agent not found", "model": NotFoundResponse},
             500: {"description": "Failed to cancel run", "model": InternalServerErrorResponse},
         },
@@ -640,13 +681,9 @@ def get_base_router(
             200: {
                 "description": "Agent run continued successfully",
                 "content": {
-                    "application/json": {
-                        "example": {
-                            "run_id": "123e4567-e89b-12d3-a456-426614174000",
-                            "content": "Based on the tool results, here's my response...",
-                            "metrics": {"total_tokens": 42, "time_taken": 2.1},
-                        }
-                    }
+                    "text/event-stream": {
+                        "example": 'event: RunContent\ndata: {"created_at": 1757348314, "run_id": "123..."}\n\n'
+                    },
                 },
             },
             400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
@@ -733,10 +770,14 @@ def get_base_router(
                     "application/json": {
                         "example": [
                             {
-                                "id": "assistant",
-                                "name": "AI Assistant",
-                                "model": {"name": "gpt-4", "provider": "openai"},
-                                "tools": {"tools": ["web_search", "calculator"]},
+                                "id": "main-agent",
+                                "name": "Main Agent",
+                                "db_id": "c6bf0644-feb8-4930-a305-380dae5ad6aa",
+                                "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                "tools": None,
+                                "sessions": {"session_table": "agno_sessions"},
+                                "knowledge": {"knowledge_table": "main_knowledge"},
+                                "system_message": {"markdown": True, "add_datetime_to_context": True},
                             }
                         ]
                     }
@@ -778,12 +819,14 @@ def get_base_router(
                 "content": {
                     "application/json": {
                         "example": {
-                            "id": "assistant",
-                            "name": "AI Assistant",
-                            "description": "A helpful AI assistant",
-                            "model": {"name": "gpt-4", "provider": "openai"},
-                            "tools": {"tools": ["web_search", "calculator"], "tool_call_limit": 10},
-                            "system_message": {"description": "You are a helpful assistant"},
+                            "id": "main-agent",
+                            "name": "Main Agent",
+                            "db_id": "9e064c70-6821-4840-a333-ce6230908a70",
+                            "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                            "tools": None,
+                            "sessions": {"session_table": "agno_sessions"},
+                            "knowledge": {"knowledge_table": "main_knowledge"},
+                            "system_message": {"markdown": True, "add_datetime_to_context": True},
                         }
                     }
                 },
@@ -821,14 +864,8 @@ def get_base_router(
             200: {
                 "description": "Team run executed successfully",
                 "content": {
-                    "application/json": {
-                        "example": {
-                            "run_id": "123e4567-e89b-12d3-a456-426614174000",
-                            "content": "Hello! How can I help you today?",
-                        }
-                    },
                     "text/event-stream": {
-                        "example": 'event: run_content\ndata: {"content": "Hello!", "run_id": "123..."}\n\n'
+                        "example": 'event: RunStarted\ndata: {"content": "Hello!", "run_id": "123..."}\n\n'
                     },
                 },
             },
@@ -947,7 +984,7 @@ def get_base_router(
             "**Note:** Cancellation may not be immediate for all operations."
         ),
         responses={
-            200: {"description": "Team run cancelled successfully", "content": {"application/json": {"example": {}}}},
+            200: {},
             404: {"description": "Team not found", "model": NotFoundResponse},
             500: {"description": "Failed to cancel team run", "model": InternalServerErrorResponse},
         },
@@ -987,13 +1024,58 @@ def get_base_router(
                     "application/json": {
                         "example": [
                             {
-                                "id": "support_team",
-                                "name": "Customer Support Team",
-                                "members": [
-                                    {"id": "triage_agent", "name": "Triage Specialist"},
-                                    {"id": "tech_agent", "name": "Technical Support"},
+                                "team_id": "basic-team",
+                                "name": "Basic Team",
+                                "mode": "coordinate",
+                                "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                "tools": [
+                                    {
+                                        "name": "transfer_task_to_member",
+                                        "description": "Use this function to transfer a task to the selected team member.\nYou must provide a clear and concise description of the task the member should achieve AND the expected output.",
+                                        "parameters": {
+                                            "type": "object",
+                                            "properties": {
+                                                "member_id": {
+                                                    "type": "string",
+                                                    "description": "(str) The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.",
+                                                },
+                                                "task_description": {
+                                                    "type": "string",
+                                                    "description": "(str) A clear and concise description of the task the member should achieve.",
+                                                },
+                                                "expected_output": {
+                                                    "type": "string",
+                                                    "description": "(str) The expected output from the member (optional).",
+                                                },
+                                            },
+                                            "additionalProperties": False,
+                                            "required": ["member_id", "task_description"],
+                                        },
+                                    }
                                 ],
-                                "model": {"name": "gpt-4", "provider": "openai"},
+                                "members": [
+                                    {
+                                        "agent_id": "basic-agent",
+                                        "name": "Basic Agent",
+                                        "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI gpt-4o"},
+                                        "memory": {
+                                            "app_name": "Memory",
+                                            "app_url": None,
+                                            "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                        },
+                                        "session_table": "agno_sessions",
+                                        "memory_table": "agno_memories",
+                                    }
+                                ],
+                                "enable_agentic_context": False,
+                                "memory": {
+                                    "app_name": "agno_memories",
+                                    "app_url": "/memory/1",
+                                    "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                },
+                                "async_mode": False,
+                                "session_table": "agno_sessions",
+                                "memory_table": "agno_memories",
                             }
                         ]
                     }
@@ -1026,23 +1108,69 @@ def get_base_router(
                 "content": {
                     "application/json": {
                         "example": {
-                            "id": "support_team",
-                            "name": "Customer Support Team",
-                            "description": "Multi-agent customer support team",
-                            "model": {"name": "gpt-5", "provider": "openai"},
+                            "team_id": "basic-team",
+                            "name": "Basic Team",
+                            "description": None,
+                            "mode": "coordinate",
+                            "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                            "tools": [
+                                {
+                                    "name": "transfer_task_to_member",
+                                    "description": "Use this function to transfer a task to the selected team member.\nYou must provide a clear and concise description of the task the member should achieve AND the expected output.",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {
+                                            "member_id": {
+                                                "type": "string",
+                                                "description": "(str) The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.",
+                                            },
+                                            "task_description": {
+                                                "type": "string",
+                                                "description": "(str) A clear and concise description of the task the member should achieve.",
+                                            },
+                                            "expected_output": {
+                                                "type": "string",
+                                                "description": "(str) The expected output from the member (optional).",
+                                            },
+                                        },
+                                        "additionalProperties": False,
+                                        "required": ["member_id", "task_description"],
+                                    },
+                                }
+                            ],
+                            "instructions": None,
                             "members": [
                                 {
-                                    "id": "triage_agent",
-                                    "name": "Triage Specialist",
-                                    "tools": {"tools": ["ticket_classifier", "priority_scorer"]},
-                                },
-                                {
-                                    "id": "tech_agent",
-                                    "name": "Technical Support",
-                                    "tools": {"tools": ["system_diagnostics", "knowledge_search"]},
-                                },
+                                    "agent_id": "basic-agent",
+                                    "name": "Basic Agent",
+                                    "description": None,
+                                    "instructions": None,
+                                    "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI gpt-4o"},
+                                    "tools": None,
+                                    "memory": {
+                                        "app_name": "Memory",
+                                        "app_url": None,
+                                        "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                    },
+                                    "knowledge": None,
+                                    "session_table": "agno_sessions",
+                                    "memory_table": "agno_memories",
+                                    "knowledge_table": None,
+                                }
                             ],
-                            "tools": {"tools": ["get_news", "search_web"]},
+                            "expected_output": None,
+                            "dependencies": None,
+                            "enable_agentic_context": False,
+                            "memory": {
+                                "app_name": "Memory",
+                                "app_url": None,
+                                "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                            },
+                            "knowledge": None,
+                            "async_mode": False,
+                            "session_table": "agno_sessions",
+                            "memory_table": "agno_memories",
+                            "knowledge_table": None,
                         }
                     }
                 },
@@ -1110,10 +1238,10 @@ def get_base_router(
                     "application/json": {
                         "example": [
                             {
-                                "id": "data_pipeline",
-                                "name": "Data Processing Pipeline",
-                                "description": "Multi-step data analysis workflow",
-                                "db_id": "main_db",
+                                "id": "content-creation-workflow",
+                                "name": "Content Creation Workflow",
+                                "description": "Automated content creation from blog posts to social media",
+                                "db_id": "123",
                             }
                         ]
                     }
@@ -1141,18 +1269,10 @@ def get_base_router(
                 "content": {
                     "application/json": {
                         "example": {
-                            "id": "data_pipeline",
-                            "name": "Data Processing Pipeline",
-                            "description": "Multi-step data analysis workflow",
-                            "input_schema": {
-                                "type": "object",
-                                "properties": {"data_source": {"type": "string"}, "analysis_type": {"type": "string"}},
-                                "required": ["data_source"],
-                            },
-                            "steps": [
-                                {"name": "data_ingestion", "agent": {"id": "data_agent", "name": "Data Processor"}},
-                                {"name": "analysis", "team": {"id": "analysis_team", "name": "Analysis Team"}},
-                            ],
+                            "id": "content-creation-workflow",
+                            "name": "Content Creation Workflow",
+                            "description": "Automated content creation from blog posts to social media",
+                            "db_id": "123",
                         }
                     }
                 },
@@ -1191,24 +1311,8 @@ def get_base_router(
             200: {
                 "description": "Workflow executed successfully",
                 "content": {
-                    "application/json": {
-                        "example": {
-                            "run_id": "wf-run-456",
-                            "content": {
-                                "final_result": "Data processing completed successfully",
-                                "processed_records": 1000,
-                                "analysis_summary": "Key insights extracted",
-                            },
-                            "status": "completed",
-                            "step_results": [
-                                {"step": "data_ingestion", "status": "completed", "output": "1000 records loaded"},
-                                {"step": "analysis", "status": "completed", "output": "Analysis complete"},
-                            ],
-                            "metrics": {"duration": 45.2, "input_tokens": 2, "output_tokens": 250, "total_tokens": 252},
-                        }
-                    },
                     "text/event-stream": {
-                        "example": 'event: step_started\ndata: {"step": "data_ingestion", "status": "running"}\n\nevent: step_completed\ndata: {"step": "data_ingestion", "output": "1000 records"}\n\n'
+                        "example": 'event: RunStarted\ndata: {"content": "Hello!", "run_id": "123..."}\n\n'
                     },
                 },
             },
@@ -1272,10 +1376,7 @@ def get_base_router(
             "**Note:** Complex workflows with multiple parallel steps may take time to fully cancel."
         ),
         responses={
-            200: {
-                "description": "Workflow run cancelled successfully",
-                "content": {"application/json": {"example": {}}},
-            },
+            200: {},
             404: {"description": "Workflow or run not found", "model": NotFoundResponse},
             500: {"description": "Failed to cancel workflow run", "model": InternalServerErrorResponse},
         },

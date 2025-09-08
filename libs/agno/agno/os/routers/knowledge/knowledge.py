@@ -193,16 +193,18 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                 "content": {
                     "application/json": {
                         "example": {
-                            "id": "content-123",
-                            "name": "Updated Document Title",
-                            "description": "Updated description with new context",
-                            "file_type": "pdf",
-                            "size": 2048576,
-                            "metadata": {"category": "updated", "tags": ["processed"]},
+                            "id": "3c2fc685-d451-4d47-b0c0-b9a544c672b7",
+                            "name": "example.pdf",
+                            "description": "",
+                            "type": "application/pdf",
+                            "size": "251261",
+                            "linked_to": None,
+                            "metadata": {},
+                            "access_count": 1,
                             "status": "completed",
-                            "status_message": "Content successfully processed",
-                            "created_at": "2024-01-15T10:30:00Z",
-                            "updated_at": "2024-01-15T11:45:00Z",
+                            "status_message": "",
+                            "created_at": "2025-09-08T15:22:53Z",
+                            "updated_at": "2025-09-08T15:22:54Z",
                         }
                     }
                 },
@@ -277,27 +279,21 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                         "example": {
                             "data": [
                                 {
-                                    "id": "content-123",
-                                    "name": "document.pdf",
-                                    "description": "Important document",
-                                    "file_type": "pdf",
-                                    "size": 2048576,
-                                    "metadata": {"category": "docs", "tags": ["important"]},
+                                    "id": "3c2fc685-d451-4d47-b0c0-b9a544c672b7",
+                                    "name": "example.pdf",
+                                    "description": "",
+                                    "type": "application/pdf",
+                                    "size": "251261",
+                                    "linked_to": None,
+                                    "metadata": {},
+                                    "access_count": 1,
                                     "status": "completed",
-                                    "created_at": "2024-01-15T10:30:00Z",
-                                },
-                                {
-                                    "id": "content-456",
-                                    "name": "website-content",
-                                    "description": "Web scrapped content",
-                                    "file_type": "text",
-                                    "size": 1024000,
-                                    "metadata": {"source": "web", "url": "https://example.com"},
-                                    "status": "processing",
-                                    "created_at": "2024-01-15T11:00:00Z",
+                                    "status_message": "",
+                                    "created_at": "2025-09-08T15:22:53Z",
+                                    "updated_at": "2025-09-08T15:22:54Z",
                                 },
                             ],
-                            "meta": {"page": 1, "limit": 20, "total_count": 45, "total_pages": 3},
+                            "meta": {"page": 1, "limit": 20, "total_pages": 1, "total_count": 2},
                         }
                     }
                 },
@@ -353,16 +349,18 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                 "content": {
                     "application/json": {
                         "example": {
-                            "id": "content-123",
-                            "name": "important-document.pdf",
-                            "description": "Quarterly report with financial data",
-                            "file_type": "pdf",
-                            "size": 2048576,
-                            "metadata": {"category": "financial", "quarter": "Q4-2024", "department": "finance"},
+                            "id": "3c2fc685-d451-4d47-b0c0-b9a544c672b7",
+                            "name": "example.pdf",
+                            "description": "",
+                            "type": "application/pdf",
+                            "size": "251261",
+                            "linked_to": None,
+                            "metadata": {},
+                            "access_count": 1,
                             "status": "completed",
-                            "status_message": "Successfully processed and indexed",
-                            "created_at": "2024-01-15T10:30:00Z",
-                            "updated_at": "2024-01-15T10:35:00Z",
+                            "status_message": "",
+                            "created_at": "2025-09-08T15:22:53Z",
+                            "updated_at": "2025-09-08T15:22:54Z",
                         }
                     }
                 },
@@ -405,10 +403,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         summary="Delete Content by ID",
         description="Permanently remove a specific content item from the knowledge base. This action cannot be undone.",
         responses={
-            200: {
-                "description": "Content deleted successfully",
-                "content": {"application/json": {"example": {"id": "content-123"}}},
-            },
+            200: {},
             404: {"description": "Content not found", "model": NotFoundResponse},
             500: {"description": "Failed to delete content", "model": InternalServerErrorResponse},
         },
@@ -435,10 +430,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             "cannot be undone. Use with extreme caution."
         ),
         responses={
-            200: {
-                "description": "All content deleted successfully",
-                "content": {"application/json": {"example": "success"}},
-            },
+            200: {},
             500: {"description": "Failed to delete all content", "model": InternalServerErrorResponse},
         },
     )
@@ -466,27 +458,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                 "content": {
                     "application/json": {
                         "examples": {
-                            "processing": {
-                                "summary": "Content Being Processed",
-                                "value": {
-                                    "status": "processing",
-                                    "status_message": "Content is being analyzed and chunked",
-                                },
-                            },
-                            "completed": {
-                                "summary": "Content Successfully Processed",
-                                "value": {
-                                    "status": "completed",
-                                    "status_message": "Content successfully processed and indexed",
-                                },
-                            },
-                            "failed": {
-                                "summary": "Content Processing Failed",
-                                "value": {
-                                    "status": "failed",
-                                    "status_message": "Failed to process: unsupported file format",
-                                },
-                            },
+                            "status": "completed",
+                            "status_message": "",
                         }
                     }
                 },
@@ -547,37 +520,213 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                     "application/json": {
                         "example": {
                             "readers": {
-                                "pdf_reader": {
-                                    "id": "pdf_reader",
-                                    "name": "PDF Reader",
-                                    "description": "Extracts text from PDF documents",
-                                    "chunkers": ["paragraph", "sentence", "fixed_size"],
+                                "website": {
+                                    "id": "website",
+                                    "name": "WebsiteReader",
+                                    "description": "Reads website files",
+                                    "chunkers": [
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                        "FixedSizeChunker",
+                                    ],
                                 },
-                                "web_reader": {
-                                    "id": "web_reader",
-                                    "name": "Web Reader",
-                                    "description": "Fetches and processes web content",
-                                    "chunkers": ["paragraph", "sentence"],
+                                "firecrawl": {
+                                    "id": "firecrawl",
+                                    "name": "FirecrawlReader",
+                                    "description": "Reads firecrawl files",
+                                    "chunkers": [
+                                        "SemanticChunker",
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                    ],
+                                },
+                                "youtube": {
+                                    "id": "youtube",
+                                    "name": "YoutubeReader",
+                                    "description": "Reads youtube files",
+                                    "chunkers": [
+                                        "RecursiveChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "SemanticChunker",
+                                        "FixedSizeChunker",
+                                    ],
+                                },
+                                "web_search": {
+                                    "id": "web_search",
+                                    "name": "WebSearchReader",
+                                    "description": "Reads web_search files",
+                                    "chunkers": [
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                        "FixedSizeChunker",
+                                    ],
+                                },
+                                "arxiv": {
+                                    "id": "arxiv",
+                                    "name": "ArxivReader",
+                                    "description": "Reads arxiv files",
+                                    "chunkers": [
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                    ],
+                                },
+                                "csv": {
+                                    "id": "csv",
+                                    "name": "CsvReader",
+                                    "description": "Reads csv files",
+                                    "chunkers": [
+                                        "RowChunker",
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                    ],
+                                },
+                                "docx": {
+                                    "id": "docx",
+                                    "name": "DocxReader",
+                                    "description": "Reads docx files",
+                                    "chunkers": [
+                                        "DocumentChunker",
+                                        "FixedSizeChunker",
+                                        "SemanticChunker",
+                                        "AgenticChunker",
+                                        "RecursiveChunker",
+                                    ],
+                                },
+                                "gcs": {
+                                    "id": "gcs",
+                                    "name": "GcsReader",
+                                    "description": "Reads gcs files",
+                                    "chunkers": [
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                    ],
+                                },
+                                "json": {
+                                    "id": "json",
+                                    "name": "JsonReader",
+                                    "description": "Reads json files",
+                                    "chunkers": [
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                    ],
+                                },
+                                "markdown": {
+                                    "id": "markdown",
+                                    "name": "MarkdownReader",
+                                    "description": "Reads markdown files",
+                                    "chunkers": [
+                                        "MarkdownChunker",
+                                        "DocumentChunker",
+                                        "AgenticChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                        "FixedSizeChunker",
+                                    ],
+                                },
+                                "pdf": {
+                                    "id": "pdf",
+                                    "name": "PdfReader",
+                                    "description": "Reads pdf files",
+                                    "chunkers": [
+                                        "DocumentChunker",
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "SemanticChunker",
+                                        "RecursiveChunker",
+                                    ],
+                                },
+                                "text": {
+                                    "id": "text",
+                                    "name": "TextReader",
+                                    "description": "Reads text files",
+                                    "chunkers": [
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                    ],
                                 },
                             },
                             "readersForType": {
-                                "application/pdf": ["pdf_reader"],
-                                "text/html": ["web_reader", "text_reader"],
-                                "text/plain": ["text_reader"],
+                                "url": [
+                                    "url",
+                                    "website",
+                                    "firecrawl",
+                                    "youtube",
+                                    "web_search",
+                                    "gcs",
+                                ],
+                                "youtube": ["youtube"],
+                                "text": ["web_search"],
+                                "topic": ["arxiv"],
+                                "file": ["csv", "gcs"],
+                                ".csv": ["csv"],
+                                ".xlsx": ["csv"],
+                                ".xls": ["csv"],
+                                ".docx": ["docx"],
+                                ".doc": ["docx"],
+                                ".json": ["json"],
+                                ".md": ["markdown"],
+                                ".pdf": ["pdf"],
+                                ".txt": ["text"],
                             },
                             "chunkers": {
-                                "paragraph": {
-                                    "key": "paragraph",
-                                    "name": "Paragraph Chunker",
-                                    "description": "Splits content into paragraphs",
+                                "AgenticChunker": {
+                                    "key": "AgenticChunker",
+                                    "name": "AgenticChunker",
+                                    "description": "Chunking strategy that uses an LLM to determine natural breakpoints in the text",
                                 },
-                                "sentence": {
-                                    "key": "sentence",
-                                    "name": "Sentence Chunker",
-                                    "description": "Splits content into sentences",
+                                "DocumentChunker": {
+                                    "key": "DocumentChunker",
+                                    "name": "DocumentChunker",
+                                    "description": "A chunking strategy that splits text based on document structure like paragraphs and sections",
+                                },
+                                "RecursiveChunker": {
+                                    "key": "RecursiveChunker",
+                                    "name": "RecursiveChunker",
+                                    "description": "Chunking strategy that recursively splits text into chunks by finding natural break points",
+                                },
+                                "SemanticChunker": {
+                                    "key": "SemanticChunker",
+                                    "name": "SemanticChunker",
+                                    "description": "Chunking strategy that splits text into semantic chunks using chonkie",
+                                },
+                                "FixedSizeChunker": {
+                                    "key": "FixedSizeChunker",
+                                    "name": "FixedSizeChunker",
+                                    "description": "Chunking strategy that splits text into fixed-size chunks with optional overlap",
+                                },
+                                "RowChunker": {
+                                    "key": "RowChunker",
+                                    "name": "RowChunker",
+                                    "description": "RowChunking chunking strategy",
+                                },
+                                "MarkdownChunker": {
+                                    "key": "MarkdownChunker",
+                                    "name": "MarkdownChunker",
+                                    "description": "A chunking strategy that splits markdown based on structure like headers, paragraphs and sections",
                                 },
                             },
-                            "filters": ["status", "file_type", "metadata"],
+                            "filters": ["filter_tag_1", "filter_tag2"],
                         }
                     }
                 },

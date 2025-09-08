@@ -157,23 +157,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                         "example": {
                             "data": [
                                 {
-                                    "memory_id": "mem-123",
-                                    "memory": "User prefers concise technical explanations",
-                                    "topics": ["preferences", "communication_style"],
-                                    "user_id": "user-456",
-                                    "created_at": "2024-01-15T10:30:00Z",
-                                    "updated_at": "2024-01-15T10:30:00Z",
-                                },
-                                {
-                                    "memory_id": "mem-789",
-                                    "memory": "User works in healthcare and needs HIPAA compliance info",
-                                    "topics": ["industry", "compliance", "requirements"],
-                                    "user_id": "user-456",
-                                    "created_at": "2024-01-14T15:20:00Z",
-                                    "updated_at": "2024-01-15T09:15:00Z",
-                                },
-                            ],
-                            "meta": {"page": 1, "limit": 20, "total_count": 45, "total_pages": 3},
+                                    "memory_id": "f9361a69-2997-40c7-ae4e-a5861d434047",
+                                    "memory": "User likes coffee.",
+                                    "topics": ["preferences"],
+                                    "agent_id": None,
+                                    "team_id": None,
+                                    "user_id": "123",
+                                    "updated_at": "2025-09-01T07:53:17Z",
+                                }
+                            ]
                         }
                     }
                 },
@@ -228,12 +220,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                 "content": {
                     "application/json": {
                         "example": {
-                            "memory_id": "mem-123",
-                            "memory": "User prefers detailed technical explanations with code examples and best practices",
-                            "topics": ["preferences", "communication_style", "technical", "code_examples"],
-                            "user_id": "user-456",
-                            "created_at": "2024-01-15T10:30:00Z",
-                            "updated_at": "2024-01-15T11:45:00Z",
+                            "memory_id": "f9361a69-2997-40c7-ae4e-a5861d434047",
+                            "memory": "User likes coffee.",
+                            "topics": ["preferences"],
+                            "agent_id": None,
+                            "team_id": None,
+                            "user_id": "123",
+                            "updated_at": "2025-09-01T07:53:17Z",
                         }
                     }
                 },
@@ -253,7 +246,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
     @router.get(
-        "/memories/topics",
+        "/memory_topics",
         response_model=List[str],
         status_code=200,
         operation_id="get_memory_topics",
@@ -305,12 +298,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                 "content": {
                     "application/json": {
                         "example": {
-                            "memory_id": "mem-123",
-                            "memory": "Updated: User prefers concise explanations with diagrams when possible",
-                            "topics": ["preferences", "communication_style", "visual_learning"],
-                            "user_id": "user-456",
-                            "created_at": "2024-01-15T10:30:00Z",
-                            "updated_at": "2024-01-15T14:22:00Z",
+                            "memory_id": "f9361a69-2997-40c7-ae4e-a5861d434047",
+                            "memory": "User likes coffee.",
+                            "topics": ["preferences"],
+                            "agent_id": None,
+                            "team_id": None,
+                            "user_id": "123",
+                            "updated_at": "2025-09-01T07:53:17Z",
                         }
                     }
                 },
@@ -359,19 +353,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                         "example": {
                             "data": [
                                 {
-                                    "user_id": "user-456",
-                                    "memory_count": 15,
-                                    "last_memory_created": "2024-01-15T14:30:00Z",
-                                    "most_common_topics": ["preferences", "technical", "communication_style"],
-                                },
-                                {
-                                    "user_id": "user-789",
-                                    "memory_count": 8,
-                                    "last_memory_created": "2024-01-14T09:15:00Z",
-                                    "most_common_topics": ["healthcare", "compliance", "industry"],
-                                },
-                            ],
-                            "meta": {"page": 1, "limit": 20, "total_count": 125, "total_pages": 7},
+                                    "user_id": "123",
+                                    "total_memories": 3,
+                                    "last_memory_updated_at": "2025-09-01T07:53:17Z",
+                                }
+                            ]
                         }
                     }
                 },

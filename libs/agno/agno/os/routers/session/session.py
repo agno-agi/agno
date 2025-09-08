@@ -65,29 +65,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                         "example": {
                             "data": [
                                 {
-                                    "session_id": "sess-123",
-                                    "session_name": "Customer Support Chat",
-                                    "session_type": "agent",
-                                    "component_id": "agent-456",
-                                    "user_id": "user-789",
-                                    "created_at": "2024-01-15T10:30:00Z",
-                                    "updated_at": "2024-01-15T11:45:00Z",
-                                    "run_count": 8,
-                                    "last_message": "Thank you for your help!",
-                                },
-                                {
-                                    "session_id": "sess-124",
-                                    "session_name": "Technical Planning Session",
-                                    "session_type": "team",
-                                    "component_id": "team-789",
-                                    "user_id": "user-123",
-                                    "created_at": "2024-01-14T14:20:00Z",
-                                    "updated_at": "2024-01-15T09:30:00Z",
-                                    "run_count": 15,
-                                    "last_message": "Let's proceed with the implementation",
-                                },
-                            ],
-                            "meta": {"page": 1, "limit": 20, "total_count": 67, "total_pages": 4},
+                                    "session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
+                                    "session_name": "What tools do you have?",
+                                    "session_state": {},
+                                    "created_at": "2025-09-05T16:02:09Z",
+                                    "updated_at": "2025-09-05T16:02:09Z",
+                                }
+                            ]
                         }
                     }
                 },
@@ -152,49 +136,64 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                 "content": {
                     "application/json": {
                         "examples": {
-                            "agent_session": {
-                                "summary": "Agent Session Details",
-                                "value": {
-                                    "session_id": "sess-123",
-                                    "session_name": "Customer Support Chat",
-                                    "session_type": "agent",
-                                    "agent_id": "agent-456",
-                                    "user_id": "user-789",
-                                    "agent_data": {
-                                        "name": "Support Assistant",
-                                        "model": "gpt-4",
-                                        "instructions": "Help customers with their inquiries",
-                                    },
-                                    "created_at": "2024-01-15T10:30:00Z",
-                                    "updated_at": "2024-01-15T11:45:00Z",
-                                    "run_count": 8,
-                                    "runs": [
-                                        {
-                                            "run_id": "run-001",
-                                            "message": "How can I reset my password?",
-                                            "response": "I'll help you reset your password...",
-                                            "created_at": "2024-01-15T10:31:00Z",
-                                        }
-                                    ],
-                                },
+                            "user_id": "123",
+                            "agent_session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
+                            "session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
+                            "session_name": "What tools do you have?",
+                            "session_summary": {
+                                "summary": "The user and assistant engaged in a conversation about the tools the agent has available.",
+                                "updated_at": "2025-09-05T18:02:12.269392",
                             },
-                            "team_session": {
-                                "summary": "Team Session Details",
-                                "value": {
-                                    "session_id": "sess-124",
-                                    "session_name": "Technical Planning Session",
-                                    "session_type": "team",
-                                    "team_id": "team-789",
-                                    "user_id": "user-123",
-                                    "team_data": {
-                                        "name": "Engineering Team",
-                                        "agents": ["architect", "developer", "reviewer"],
-                                    },
-                                    "created_at": "2024-01-14T14:20:00Z",
-                                    "updated_at": "2024-01-15T09:30:00Z",
-                                    "run_count": 15,
-                                },
+                            "session_state": {},
+                            "agent_id": "basic-agent",
+                            "total_tokens": 160,
+                            "agent_data": {
+                                "name": "Basic Agent",
+                                "agent_id": "basic-agent",
+                                "model": {"provider": "OpenAI", "name": "OpenAIChat", "id": "gpt-4o"},
                             },
+                            "metrics": {
+                                "input_tokens": 134,
+                                "output_tokens": 26,
+                                "total_tokens": 160,
+                                "audio_input_tokens": 0,
+                                "audio_output_tokens": 0,
+                                "audio_total_tokens": 0,
+                                "cache_read_tokens": 0,
+                                "cache_write_tokens": 0,
+                                "reasoning_tokens": 0,
+                                "timer": None,
+                                "time_to_first_token": None,
+                                "duration": None,
+                                "provider_metrics": None,
+                                "additional_metrics": None,
+                            },
+                            "chat_history": [
+                                {
+                                    "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-05 18:02:09.171627.\n</additional_information>\n\nYou have access to memories from previous interactions with the user that you can use:\n\n<memories_from_previous_interactions>\n- User really likes Digimon and Japan.\n- User really likes Japan.\n- User likes coffee.\n</memories_from_previous_interactions>\n\nNote: this information is from previous interactions and may be updated in this conversation. You should always prefer information from this conversation over the past memories.",
+                                    "from_history": False,
+                                    "stop_after_tool_call": False,
+                                    "role": "system",
+                                    "created_at": 1757088129,
+                                },
+                                {
+                                    "content": "What tools do you have?",
+                                    "from_history": False,
+                                    "stop_after_tool_call": False,
+                                    "role": "user",
+                                    "created_at": 1757088129,
+                                },
+                                {
+                                    "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                    "from_history": False,
+                                    "stop_after_tool_call": False,
+                                    "role": "assistant",
+                                    "metrics": {"input_tokens": 134, "output_tokens": 26, "total_tokens": 160},
+                                    "created_at": 1757088129,
+                                },
+                            ],
+                            "created_at": "2025-09-05T16:02:09Z",
+                            "updated_at": "2025-09-05T16:02:09Z",
                         }
                     }
                 },
@@ -237,47 +236,95 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                 "description": "Session runs retrieved successfully",
                 "content": {
                     "application/json": {
-                        "examples": {
-                            "agent_runs": {
-                                "summary": "Agent Session Runs",
-                                "value": [
+                        "examples": [
+                            {
+                                "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                "agent_session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                "user_id": "",
+                                "run_input": "Which tools do you have access to?",
+                                "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                "run_response_format": "text",
+                                "reasoning_content": "",
+                                "metrics": {
+                                    "input_tokens": 82,
+                                    "output_tokens": 56,
+                                    "total_tokens": 138,
+                                    "time_to_first_token": 0.047505500027909875,
+                                    "duration": 4.840060166025069,
+                                },
+                                "messages": [
                                     {
-                                        "run_id": "run-001",
-                                        "session_id": "sess-123",
-                                        "message": "How can I reset my password?",
-                                        "response": "I'll help you reset your password. Please follow these steps...",
-                                        "model_used": "gpt-4",
-                                        "tokens_consumed": 150,
-                                        "response_time": 1.2,
-                                        "created_at": "2024-01-15T10:31:00Z",
+                                        "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-08 17:52:10.101003.\n</additional_information>\n\nYou have the capability to retain memories from previous interactions with the user, but have not had any interactions with the user yet.",
+                                        "from_history": False,
+                                        "stop_after_tool_call": False,
+                                        "role": "system",
+                                        "created_at": 1757346730,
                                     },
                                     {
-                                        "run_id": "run-002",
-                                        "session_id": "sess-123",
-                                        "message": "Thank you, that worked!",
-                                        "response": "You're welcome! Is there anything else I can help you with?",
-                                        "model_used": "gpt-4",
-                                        "tokens_consumed": 75,
-                                        "response_time": 0.8,
-                                        "created_at": "2024-01-15T10:35:00Z",
+                                        "content": "Which tools do you have access to?",
+                                        "from_history": False,
+                                        "stop_after_tool_call": False,
+                                        "role": "user",
+                                        "created_at": 1757346730,
+                                    },
+                                    {
+                                        "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                        "from_history": False,
+                                        "stop_after_tool_call": False,
+                                        "role": "assistant",
+                                        "metrics": {"input_tokens": 82, "output_tokens": 56, "total_tokens": 138},
+                                        "created_at": 1757346730,
                                     },
                                 ],
-                            },
-                            "team_runs": {
-                                "summary": "Team Session Runs",
-                                "value": [
+                                "tools": None,
+                                "events": [
                                     {
-                                        "run_id": "run-003",
-                                        "session_id": "sess-124",
-                                        "task": "Design system architecture",
-                                        "agents_involved": ["architect", "developer"],
-                                        "result": "Proposed microservices architecture with API gateway",
-                                        "execution_time": 45.5,
-                                        "created_at": "2024-01-14T14:25:00Z",
-                                    }
+                                        "created_at": 1757346730,
+                                        "event": "RunStarted",
+                                        "agent_id": "basic-agent",
+                                        "agent_name": "Basic Agent",
+                                        "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                        "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                        "model": "gpt-4o",
+                                        "model_provider": "OpenAI",
+                                    },
+                                    {
+                                        "created_at": 1757346733,
+                                        "event": "MemoryUpdateStarted",
+                                        "agent_id": "basic-agent",
+                                        "agent_name": "Basic Agent",
+                                        "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                        "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                    },
+                                    {
+                                        "created_at": 1757346734,
+                                        "event": "MemoryUpdateCompleted",
+                                        "agent_id": "basic-agent",
+                                        "agent_name": "Basic Agent",
+                                        "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                        "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                    },
+                                    {
+                                        "created_at": 1757346734,
+                                        "event": "RunCompleted",
+                                        "agent_id": "basic-agent",
+                                        "agent_name": "Basic Agent",
+                                        "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                        "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                        "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                        "content_type": "str",
+                                        "metrics": {
+                                            "input_tokens": 82,
+                                            "output_tokens": 56,
+                                            "total_tokens": 138,
+                                            "time_to_first_token": 0.047505500027909875,
+                                            "duration": 4.840060166025069,
+                                        },
+                                    },
                                 ],
-                            },
-                        }
+                                "created_at": "2025-09-08T15:52:10Z",
+                            }
+                        ]
                     }
                 },
             },
@@ -323,8 +370,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             "This action cannot be undone and will remove all conversation history."
         ),
         responses={
-            204: {"description": "Session deleted successfully"},
-            404: {"description": "Session not found", "model": NotFoundResponse},
+            204: {},
             500: {"description": "Failed to delete session", "model": InternalServerErrorResponse},
         },
     )
@@ -382,32 +428,64 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                 "content": {
                     "application/json": {
                         "examples": {
-                            "agent_session": {
-                                "summary": "Renamed Agent Session",
-                                "value": {
-                                    "session_id": "sess-123",
-                                    "session_name": "Updated Customer Support Chat",
-                                    "session_type": "agent",
-                                    "agent_id": "agent-456",
-                                    "user_id": "user-789",
-                                    "created_at": "2024-01-15T10:30:00Z",
-                                    "updated_at": "2024-01-15T12:00:00Z",
-                                    "run_count": 8,
-                                },
+                            "user_id": "123",
+                            "agent_session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
+                            "session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
+                            "session_name": "What tools do you have?",
+                            "session_summary": {
+                                "summary": "The user and assistant engaged in a conversation about the tools the agent has available.",
+                                "updated_at": "2025-09-05T18:02:12.269392",
                             },
-                            "team_session": {
-                                "summary": "Renamed Team Session",
-                                "value": {
-                                    "session_id": "sess-124",
-                                    "session_name": "Updated Technical Planning Session",
-                                    "session_type": "team",
-                                    "team_id": "team-789",
-                                    "user_id": "user-123",
-                                    "created_at": "2024-01-14T14:20:00Z",
-                                    "updated_at": "2024-01-15T10:15:00Z",
-                                    "run_count": 15,
-                                },
+                            "session_state": {},
+                            "agent_id": "basic-agent",
+                            "total_tokens": 160,
+                            "agent_data": {
+                                "name": "Basic Agent",
+                                "agent_id": "basic-agent",
+                                "model": {"provider": "OpenAI", "name": "OpenAIChat", "id": "gpt-4o"},
                             },
+                            "metrics": {
+                                "input_tokens": 134,
+                                "output_tokens": 26,
+                                "total_tokens": 160,
+                                "audio_input_tokens": 0,
+                                "audio_output_tokens": 0,
+                                "audio_total_tokens": 0,
+                                "cache_read_tokens": 0,
+                                "cache_write_tokens": 0,
+                                "reasoning_tokens": 0,
+                                "timer": None,
+                                "time_to_first_token": None,
+                                "duration": None,
+                                "provider_metrics": None,
+                                "additional_metrics": None,
+                            },
+                            "chat_history": [
+                                {
+                                    "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-05 18:02:09.171627.\n</additional_information>\n\nYou have access to memories from previous interactions with the user that you can use:\n\n<memories_from_previous_interactions>\n- User really likes Digimon and Japan.\n- User really likes Japan.\n- User likes coffee.\n</memories_from_previous_interactions>\n\nNote: this information is from previous interactions and may be updated in this conversation. You should always prefer information from this conversation over the past memories.",
+                                    "from_history": False,
+                                    "stop_after_tool_call": False,
+                                    "role": "system",
+                                    "created_at": 1757088129,
+                                },
+                                {
+                                    "content": "What tools do you have?",
+                                    "from_history": False,
+                                    "stop_after_tool_call": False,
+                                    "role": "user",
+                                    "created_at": 1757088129,
+                                },
+                                {
+                                    "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                    "from_history": False,
+                                    "stop_after_tool_call": False,
+                                    "role": "assistant",
+                                    "metrics": {"input_tokens": 134, "output_tokens": 26, "total_tokens": 160},
+                                    "created_at": 1757088129,
+                                },
+                            ],
+                            "created_at": "2025-09-05T16:02:09Z",
+                            "updated_at": "2025-09-05T16:02:09Z",
                         }
                     }
                 },
