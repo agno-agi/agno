@@ -35,5 +35,4 @@ agent = Agent(
 - **[JSON](./json_reader.py)** - JSON data and API responses
 - **[Markdown Async](./markdown_reader_async.py)** - Markdown documentation
 - **[PDF Async](./pdf_reader_async.py)** - PDF documents with OCR
-- **[URL](./url_reader.py)** - Web page content
 - **[Web](./web_reader.py)** - Website crawling and scraping

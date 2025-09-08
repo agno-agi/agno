@@ -26,7 +26,6 @@ finance_agent = Agent(
 
 team_leader = Team(
     name="Reasoning Team Leader",
-    mode="route",
     model=Claude(id="claude-3-7-sonnet-latest"),
     members=[
         web_agent,

@@ -28,8 +28,8 @@ def test_team_with_parser_model():
 
     team = Team(
         name="National Park Expert",
-        mode="route",
         members=[agent],
+        respond_directly=True,
         telemetry=False,
     )
 
@@ -47,16 +47,16 @@ def test_team_with_parser_model_stream(shared_db):
         name="National Park Expert",
         model=OpenAIChat(id="gpt-4o"),
         output_schema=ParkGuide,
-        parser_model=OpenAIChat(id="gpt-4o-mini"),  # Use OpenAI instead of Claude
+        parser_model=OpenAIChat(id="gpt-4o-mini"),
         description="You are an expert on national parks and provide concise guides.",
     )
 
     team = Team(
         name="National Park Expert",
-        mode="route",
         members=[agent],
+        db=shared_db,
+        respond_directly=True,
         telemetry=False,
-        db=shared_db,  # Add database support
     )
 
     response = team.run("Tell me about Yosemite National Park.", stream=True)

@@ -62,7 +62,7 @@ def get_reader_info(reader_key: str) -> Dict:
         return {
             "id": reader_key,
             "name": "".join(word.capitalize() for word in reader_key.split("_")) + "Reader",
-            "description": f"Reads {reader_key} files",
+            "description": reader_instance.description,
             "chunking_strategies": [
                 strategy.value for strategy in supported_strategies
             ],  # Convert enums to string values

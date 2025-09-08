@@ -321,8 +321,6 @@ class Agent:
     # --- If this Agent is part of a workflow ---
     # Optional workflow ID. Indicates this agent is part of a workflow.
     workflow_id: Optional[str] = None
-    # Set when this agent is part of a workflow.
-    workflow_session_id: Optional[str] = None
 
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
@@ -345,7 +343,6 @@ class Agent:
         id: Optional[str] = None,
         introduction: Optional[str] = None,
         user_id: Optional[str] = None,
-        app_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         add_session_state_to_context: bool = False,
@@ -429,7 +426,6 @@ class Agent:
         self.id = id
         self.introduction = introduction
         self.user_id = user_id
-        self.app_id = app_id
 
         self.session_id = session_id
         self.session_state = session_state
@@ -6846,6 +6842,7 @@ class Agent:
             markdown = self.markdown
 
         if self.output_schema is not None:
+            markdown = False
             markdown = False
 
         if stream is None:

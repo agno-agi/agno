@@ -127,9 +127,10 @@ def get_chess_team(
 
         return Team(
             name="Chess Team",
-            mode="route",
             model=master_model,
             members=[white_piece_agent, black_piece_agent],
+            respond_directly=True,
+            determine_input_for_members=False,
             instructions=[
                 "You are the chess game coordinator and master analyst.",
                 "Your role is to coordinate between two player agents and provide game analysis:",

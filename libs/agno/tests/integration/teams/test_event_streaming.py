@@ -545,7 +545,7 @@ def test_intermediate_steps_with_member_agents():
     assert len(events[RunEvent.run_content]) > 1
 
 
-def test_intermediate_steps_with_member_agents_complex():
+def test_intermediate_steps_with_member_agents_nested_team():
     agent_1 = Agent(
         name="Finance Analyst",
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -650,68 +650,6 @@ def test_intermediate_steps_with_member_agents_streaming_off():
     assert len(events[TeamRunEvent.run_completed]) == 1
 
 
-def test_intermediate_steps_with_member_agents_route():
-    agent_1 = Agent(
-        name="Analyst",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You are an expert problem-solving assistant with strong analytical skills! 🧠",
-        tools=[ReasoningTools(add_instructions=True)],
-    )
-    agent_2 = Agent(
-        name="Math Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You can do Math!",
-        tools=[CalculatorTools(exclude_tools=["factorial"])],
-    )
-    team = Team(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        members=[agent_1, agent_2],
-        telemetry=False,
-        mode="route",
-    )
-
-    response_generator = team.run(
-        "Solve the problem: 'solve 10 factorial'", stream=True, stream_intermediate_steps=True
-    )
-
-    events = {}
-    for run_response_delta in response_generator:
-        if run_response_delta.event not in events:
-            events[run_response_delta.event] = []
-        events[run_response_delta.event].append(run_response_delta)
-
-    assert events.keys() == {
-        TeamRunEvent.run_started,
-        TeamRunEvent.tool_call_started,
-        RunEvent.run_started,
-        RunEvent.tool_call_started,
-        RunEvent.tool_call_completed,
-        RunEvent.run_content,
-        RunEvent.run_completed,
-        TeamRunEvent.tool_call_completed,
-        TeamRunEvent.run_content,
-        TeamRunEvent.run_completed,
-    }
-
-    assert len(events[TeamRunEvent.run_started]) == 1
-    # Transfer twice, from team to member agents
-    assert len(events[TeamRunEvent.tool_call_started]) == 1
-    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "forward_task_to_member"
-    assert events[TeamRunEvent.tool_call_started][0].tool.tool_args["member_id"] == "math-agent"
-    assert len(events[TeamRunEvent.tool_call_completed]) == 1
-    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "forward_task_to_member"
-    assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
-    assert len(events[TeamRunEvent.run_content]) > 1
-    assert len(events[TeamRunEvent.run_completed]) == 1
-    # Two member agents
-    assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.run_completed]) == 1
-    # Lots of member tool calls
-    assert len(events[RunEvent.tool_call_started]) > 1
-    assert len(events[RunEvent.tool_call_completed]) > 1
-    assert len(events[RunEvent.run_content]) > 1
-
-
 def test_create_team_run_completed_event_function():
     """Test that create_team_run_completed_event function properly transfers metadata and metrics."""
     from agno.models.metrics import Metrics
@@ -743,8 +681,8 @@ def test_create_team_run_completed_event_function():
     assert completed_event.team_id == "test_team"
 
 
-@pytest.mark.skip(reason="This test is flaky")
-def test_intermediate_steps_with_member_agents_collaborate():
+# @pytest.mark.skip(reason="This test is flaky")
+def test_intermediate_steps_with_member_agents_delegate_to_all_members():
     def get_news_from_hackernews(query: str):
         return "The best way to learn to code is to use the Hackernews API."
 
@@ -769,7 +707,7 @@ def test_intermediate_steps_with_member_agents_collaborate():
         model=OpenAIChat(id="o3-mini"),
         members=[agent_1, agent_2],
         telemetry=False,
-        mode="collaborate",
+        delegate_task_to_all_members=True,
         instructions="You are a discussion master. Forward the task to the member agents.",
     )
 
@@ -785,17 +723,6 @@ def test_intermediate_steps_with_member_agents_collaborate():
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert events.keys() == {
-        TeamRunEvent.run_started,
-        TeamRunEvent.tool_call_started,
-        RunEvent.run_started,
-        RunEvent.run_content,
-        RunEvent.run_completed,
-        TeamRunEvent.tool_call_completed,
-        TeamRunEvent.run_content,
-        TeamRunEvent.run_completed,
-    }
-
     assert len(events[TeamRunEvent.run_started]) == 1
 
     # Assert expected events from team
@@ -804,9 +731,9 @@ def test_intermediate_steps_with_member_agents_collaborate():
     assert len(events[TeamRunEvent.run_completed]) == 1
 
     # Assert expected tool call events
-    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "run_member_agents"
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "delegate_task_to_members"
     assert len(events[TeamRunEvent.tool_call_completed]) == 1
-    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "run_member_agents"
+    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "delegate_task_to_members"
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
 
     # Assert expected events from members

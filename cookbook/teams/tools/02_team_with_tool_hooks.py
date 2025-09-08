@@ -75,7 +75,6 @@ user_id = str(uuid4())
 # Create team with tool hooks
 company_info_team = Team(
     name="Company Info Team",
-    mode="coordinate",
     model=Claude(id="claude-3-7-sonnet-latest"),
     members=[
         reddit_agent,

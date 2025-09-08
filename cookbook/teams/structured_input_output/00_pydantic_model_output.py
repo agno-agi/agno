@@ -42,8 +42,8 @@ class StockReport(BaseModel):
 
 team = Team(
     name="Stock Research Team",
-    mode="route",
     model=OpenAIChat("gpt-4o"),
+    respond_directly=True,
     members=[stock_searcher, company_info_agent],
     output_schema=StockReport,
     markdown=True,

@@ -131,7 +131,6 @@ async def run_team():
         # Create and run the team
         team = Team(
             name="SkyPlanner",
-            mode="coordinate",
             model=OpenAIChat("gpt-4o"),
             members=[
                 airbnb_agent,

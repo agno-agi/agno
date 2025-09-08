@@ -153,9 +153,10 @@ def test_team_memory_impact_with_gc_monitoring(shared_db):
     # Create team with memory and storage
     team = Team(
         name="Memory Test Team",
-        mode="route",
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[calculator_agent, text_agent],
+        respond_directly=True,
+        determine_input_for_members=False,
         db=shared_db,
         enable_user_memories=True,
         instructions="Route mathematical questions to the calculator agent and text processing questions to the text processor agent.",
@@ -265,7 +266,6 @@ def test_team_memory_cleanup_after_session_switch(shared_db):
 
     team = Team(
         name="Session Switch Team",
-        mode="route",
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[agent],
         db=shared_db,
@@ -443,9 +443,10 @@ async def test_team_memory_with_multiple_members(shared_db):
 
     team = Team(
         name="Personal Assistant Team",
-        mode="route",
         model=MockModel(id="gpt-4o-mini"),  # type: ignore
         members=[agent1, agent2, agent3],
+        respond_directly=True,
+        determine_input_for_members=False,
         db=shared_db,
         enable_user_memories=True,
         add_history_to_context=True,

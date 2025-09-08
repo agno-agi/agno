@@ -129,7 +129,6 @@ budget_analyst = Agent(
 research_team = Team(
     name="AI Research Team",
     members=[research_specialist, data_analyst],
-    mode="route",
     model=OpenAIChat(id="gpt-4o"),
     description="A collaborative team that researches AI trends and extracts structured insights",
     output_schema=ResearchFindings,
@@ -144,7 +143,6 @@ research_team = Team(
 strategy_team = Team(
     name="Content Strategy Team",
     members=[content_strategist, marketing_expert],
-    mode="coordinate",
     model=OpenAIChat(id="gpt-4o"),
     description="A strategic team that creates comprehensive content strategies",
     output_schema=ContentStrategy,
@@ -159,7 +157,7 @@ strategy_team = Team(
 planning_team = Team(
     name="Content Planning Team",
     members=[project_manager, budget_analyst],
-    mode="collaborate",
+    delegate_task_to_all_members=True,
     model=OpenAIChat(id="gpt-4o"),
     description="A planning team that creates detailed implementation plans",
     output_schema=FinalContentPlan,

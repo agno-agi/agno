@@ -112,7 +112,6 @@ final_synthesizer = Agent(
 # Create distributed reranking RAG team
 distributed_reranking_team = Team(
     name="Distributed Reranking RAG Team",
-    mode="coordinate",  # Sequential coordination for reranking optimization
     model=OpenAIChat(id="o3-mini"),
     members=[
         initial_retriever,

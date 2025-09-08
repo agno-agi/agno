@@ -32,7 +32,6 @@ player_2 = Agent(
 # This is a simple team that plays Tic Tac Toe. It is not perfect and would work better with reasoning.
 agent_team = Team(
     name="Tic Tac Toe Team",
-    mode="coordinate",
     model=OpenAIChat("gpt-4o"),
     members=[player_1, player_2],
     instructions=[

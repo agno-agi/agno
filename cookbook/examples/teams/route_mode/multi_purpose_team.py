@@ -81,7 +81,6 @@ calculator_agent = Agent(
 
 calculator_writer_team = Team(
     name="Calculator Writer Team",
-    mode="coordinate",
     model=OpenAIChat("gpt-4o"),
     members=[calculator_agent, writer_agent],
     instructions=[
@@ -124,7 +123,6 @@ code_execution_agent = Agent(
 
 agent_team = Team(
     name="Agent Team",
-    mode="route",
     model=Claude(id="claude-3-5-sonnet-latest"),
     members=[
         web_agent,
@@ -142,6 +140,7 @@ agent_team = Team(
         "if you are asked about a file, use the file analysis agent to analyze the file.",
         "You can also answer directly, you don't HAVE to forward the question to a member agent.",
     ],
+    respond_directly=True,
     markdown=True,
     show_members_responses=True,
 )
