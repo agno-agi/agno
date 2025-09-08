@@ -840,6 +840,14 @@ class Knowledge:
             if reader is None:
                 if gcs_object.name.endswith(".pdf"):
                     reader = self.pdf_reader
+                elif gcs_object.name.endswith(".csv"):
+                    reader = self.csv_reader
+                elif gcs_object.name.endswith(".docx"):
+                    reader = self.docx_reader
+                elif gcs_object.name.endswith(".json"):
+                    reader = self.json_reader
+                elif gcs_object.name.endswith(".markdown"):
+                    reader = self.markdown_reader
                 else:
                     reader = self.text_reader
             reader = cast(Reader, reader)
