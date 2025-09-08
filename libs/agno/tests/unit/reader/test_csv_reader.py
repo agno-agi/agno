@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from agno.knowledge.document.base import Document
-from agno.knowledge.reader.csv_reader import CSVReader, CSVUrlReader
+from agno.knowledge.reader.csv_reader import CSVReader
 
 # Sample CSV data
 SAMPLE_CSV = """name,age,city
@@ -216,34 +216,3 @@ async def test_async_read_empty_file(csv_reader, temp_dir):
 
     documents = await csv_reader.async_read(empty_path)
     assert documents == []
-
-
-@pytest.fixture
-def csv_url_reader():
-    return CSVUrlReader()
-
-
-def test_read_url(csv_url_reader):
-    documents = csv_url_reader.read(CSV_URL)
-
-    assert documents[0].name == "employees"
-    assert documents[0].id.endswith("_1")
-
-    content = documents[0].content
-    for field in ["EmployeeID", "FirstName", "LastName", "Department"]:
-        assert field in content
-
-
-@pytest.mark.asyncio
-async def test_async_read_url(csv_url_reader):
-    documents = await csv_url_reader.async_read(CSV_URL)
-
-    assert len(documents) == 1
-    assert documents[0].name == "employees"
-    assert documents[0].id.endswith("_1")
-
-    expected_first_row = "EmployeeID, FirstName, LastName, Department, Role, Age, Salary, StartDate"
-    expected_second_row = "101, John, Doe, Engineering, Software Engineer, 28, 75000, 2018-06-15"
-
-    assert expected_first_row in documents[0].content
-    assert expected_second_row in documents[0].content
