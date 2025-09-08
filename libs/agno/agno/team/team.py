@@ -735,7 +735,7 @@ class Team:
 
         if self.delegate_task_to_all_members and self.respond_directly:
             log_warning(
-                "Delegate to all members and respond directly are both enabled. Respond directly will be ignored."
+                "delegate_task_to_all_members and respond_directly are both enabled. The task will be delegated to all members."
             )
             self.respond_directly = False
 
