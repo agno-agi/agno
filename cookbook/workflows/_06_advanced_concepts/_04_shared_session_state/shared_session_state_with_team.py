@@ -146,7 +146,6 @@ management_team = Team(
         "Do NOT create fictional content or step lists.",
         "Execute only the requested add/delete actions using tools and report the result.",
     ],
-    mode="coordinate",
 )
 
 # === CREATE STEPS ===

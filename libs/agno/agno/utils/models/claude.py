@@ -307,14 +307,6 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
         required: List[str] = parameters.get("required", [])
         required_params: List[str] = required
 
-        if not required_params:
-            for param_name, param_info in properties.items():
-                param_type = param_info.get("type", "")
-                param_type_list: List[str] = [param_type] if isinstance(param_type, str) else param_type or []
-
-                if "null" not in param_type_list:
-                    required_params.append(param_name)
-
         input_properties: Dict[str, Any] = {}
         for param_name, param_info in properties.items():
             # Preserve the complete schema structure for complex types

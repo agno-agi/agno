@@ -60,7 +60,6 @@ article_reader = Agent(
 
 hn_team = Team(
     name="HackerNews Team",
-    mode="coordinate",
     model=OpenAIChat("o3"),
     members=[hn_researcher, web_searcher, article_reader],
     instructions=[
@@ -74,7 +73,6 @@ hn_team = Team(
     add_member_tools_to_context=False,
     markdown=True,
     show_members_responses=True,
-    enable_agentic_context=True,
 )
 
 

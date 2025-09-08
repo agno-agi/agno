@@ -18,7 +18,6 @@ def test_team_metrics_basic(shared_db):
 
     team = Team(
         name="Stock Research Team",
-        mode="route",
         model=OpenAIChat("gpt-4o"),
         members=[stock_agent],
         db=shared_db,
@@ -63,7 +62,6 @@ def test_team_metrics_streaming(shared_db):
 
     team = Team(
         name="Stock Research Team",
-        mode="route",
         model=OpenAIChat("gpt-4o"),
         members=[stock_agent],
         db=shared_db,
@@ -102,7 +100,6 @@ def test_team_metrics_multiple_runs(shared_db):
 
     team = Team(
         name="Stock Research Team",
-        mode="route",
         model=OpenAIChat("gpt-4o"),
         members=[stock_agent],
         db=shared_db,

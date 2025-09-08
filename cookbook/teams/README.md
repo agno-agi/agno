@@ -39,7 +39,6 @@ team = Team(
     name="Research Team",
     members=[researcher, writer],
     model=OpenAIChat(id="gpt-4o"),
-    mode="coordinate",
 )
 
 team.print_response("What are the latest trends in AI?")

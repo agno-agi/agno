@@ -79,7 +79,6 @@ shopping_mgmt_team = Team(
     name="Shopping Management Team",
     role="Execute shopping list operations",
     id="shopping_management",
-    mode="coordinate",
     model=OpenAIChat(id="o3-mini"),
     members=[shopping_list_agent],
     instructions=[
@@ -135,7 +134,6 @@ meal_planning_team = Team(
     name="Meal Planning Team",
     role="Plan meals based on shopping list items",
     id="meal_planning",
-    mode="coordinate",
     model=OpenAIChat(id="o3-mini"),
     members=[recipe_agent],
     instructions=[
@@ -185,7 +183,6 @@ shopping_team = Team(
     id="shopping_list_team",
     name="Shopping List Team",
     role="Orchestrate shopping list management and meal planning",
-    mode="coordinate",
     model=OpenAIChat(id="o3-mini"),
     session_state={"shopping_list": [], "chores": []},
     tools=[list_items, add_chore],

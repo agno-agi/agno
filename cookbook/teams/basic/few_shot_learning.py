@@ -90,7 +90,6 @@ if __name__ == "__main__":
     team = Team(
         name="Customer Support Team",
         members=[support_agent, escalation_agent],
-        mode="coordinate",
         model=OpenAIChat(id="o3-mini"),
         add_name_to_context=True,
         additional_input=support_examples,  # 🆕 Teaching examples

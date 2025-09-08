@@ -161,7 +161,6 @@ hackernews_agent = Agent(
 )
 
 agent_team = Team(
-    mode="coordinate",
     members=[web_agent, hackernews_agent],
     model=OpenAIChat(id="gpt-5-nano"),
     instructions=["Always include sources", "Use tables to display data"],

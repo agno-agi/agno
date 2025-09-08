@@ -32,7 +32,6 @@ finance_agent = Agent(
 
 team_leader = Team(
     name="Reasoning Finance Team Leader",
-    mode="coordinate",
     members=[
         web_agent,
         finance_agent,

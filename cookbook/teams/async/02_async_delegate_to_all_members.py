@@ -58,7 +58,6 @@ hackernews_researcher = Agent(
 
 agent_team = Team(
     name="Discussion Team",
-    mode="collaborate",
     model=OpenAIChat("o3-mini"),
     members=[
         reddit_researcher,
@@ -68,8 +67,8 @@ agent_team = Team(
         "You are a discussion master.",
         "You have to stop the discussion when you think the team has reached a consensus.",
     ],
-    enable_agentic_context=True,
     markdown=True,
+    delegate_task_to_all_members=True,
     show_members_responses=True,
 )
 

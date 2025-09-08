@@ -30,7 +30,6 @@ finance_agent = Agent(
 
 finance_reasoning_team = Team(
     name="Reasoning Team Leader",
-    mode="coordinate",
     model=Claude(id="claude-3-7-sonnet-latest"),
     db=PostgresDb(db_url=db_url, session_table="finance_reasoning_team_sessions"),
     members=[
@@ -40,5 +39,4 @@ finance_reasoning_team = Team(
     tools=[ReasoningTools(add_instructions=True)],
     markdown=True,
     show_members_responses=True,
-    enable_agentic_context=True,
 )

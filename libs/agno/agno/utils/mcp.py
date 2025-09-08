@@ -1,6 +1,6 @@
+import json
 from functools import partial
 from uuid import uuid4
-import json
 
 from agno.utils.log import log_debug, log_exception
 
@@ -45,28 +45,30 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
             for content_item in result.content:
                 if isinstance(content_item, TextContent):
                     text_content = content_item.text
-                    
+
                     # Parse as JSON to check for custom image format
                     try:
                         parsed_json = json.loads(text_content)
-                        if (isinstance(parsed_json, dict) and 
-                            parsed_json.get("type") == "image" and 
-                            "data" in parsed_json):
-                            
+                        if (
+                            isinstance(parsed_json, dict)
+                            and parsed_json.get("type") == "image"
+                            and "data" in parsed_json
+                        ):
                             log_debug("Found custom JSON image format in TextContent")
-                            
+
                             # Extract image data
                             image_data = parsed_json.get("data")
                             mime_type = parsed_json.get("mimeType", "image/png")
-                            
+
                             if image_data and isinstance(image_data, str):
                                 import base64
+
                                 try:
                                     image_bytes = base64.b64decode(image_data)
                                 except Exception as e:
                                     log_debug(f"Failed to decode base64 image data: {e}")
                                     image_bytes = None
-                                
+
                                 if image_bytes:
                                     img_artifact = ImageArtifact(
                                         id=str(uuid4()),
@@ -77,24 +79,25 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
                                     images.append(img_artifact)
                                     response_str += "Image has been generated and added to the response.\n"
                                     continue
-                    
+
                     except (json.JSONDecodeError, TypeError):
                         pass
-                    
+
                     response_str += text_content + "\n"
-                    
+
                 elif isinstance(content_item, ImageContent):
                     # Handle standard MCP ImageContent
                     image_data = getattr(content_item, "data", None)
-                    
+
                     if image_data and isinstance(image_data, str):
                         import base64
+
                         try:
                             image_data = base64.b64decode(image_data)
                         except Exception as e:
                             log_debug(f"Failed to decode base64 image data: {e}")
                             image_data = None
-                    
+
                     img_artifact = ImageArtifact(
                         id=str(uuid4()),
                         url=getattr(content_item, "url", None),

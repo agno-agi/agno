@@ -46,7 +46,6 @@ context_agent = Agent(
 
 team = Team(
     name="PersonalizationTeam",
-    mode="coordinate",  # Use coordinate mode for simpler team behavior
     model=OpenAIChat(id="gpt-4o-mini"),
     members=[profile_agent, context_agent],
     markdown=True,
