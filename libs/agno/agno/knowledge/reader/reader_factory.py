@@ -15,7 +15,11 @@ class ReaderFactory:
         """Get PDF reader instance."""
         from agno.knowledge.reader.pdf_reader import PDFReader
 
-        config: Dict[str, Any] = {"chunk": True, "chunk_size": 100, "description": "Reads pdf files"}
+        config: Dict[str, Any] = {
+            "chunk": True,
+            "chunk_size": 100,
+            "description": "Processes PDF documents with OCR support for images and text extraction",
+        }
         config.update(kwargs)
         return PDFReader(**config)
 
@@ -24,7 +28,10 @@ class ReaderFactory:
         """Get CSV reader instance."""
         from agno.knowledge.reader.csv_reader import CSVReader
 
-        config: Dict[str, Any] = {"name": "CSV Reader", "description": "Reads CSV files"}   
+        config: Dict[str, Any] = {
+            "name": "CSV Reader",
+            "description": "Parses CSV, XLSX, and XLS files with row-based chunking and custom delimiter support",
+        }
         config.update(kwargs)
         return CSVReader(**config)
 
@@ -33,7 +40,10 @@ class ReaderFactory:
         """Get Docx reader instance."""
         from agno.knowledge.reader.docx_reader import DocxReader
 
-        config: Dict[str, Any] = {"name": "Docx Reader", "description": "Reads Docx files"}
+        config: Dict[str, Any] = {
+            "name": "Docx Reader",
+            "description": "Extracts text content from Microsoft Word documents (.docx and .doc formats)",
+        }
         config.update(kwargs)
         return DocxReader(**config)
 
@@ -42,7 +52,10 @@ class ReaderFactory:
         """Get JSON reader instance."""
         from agno.knowledge.reader.json_reader import JSONReader
 
-        config: Dict[str, Any] = {"name": "JSON Reader", "description": "Reads JSON files"}
+        config: Dict[str, Any] = {
+            "name": "JSON Reader",
+            "description": "Processes JSON data structures and API responses with nested object handling",
+        }
         config.update(kwargs)
         return JSONReader(**config)
 
@@ -51,7 +64,10 @@ class ReaderFactory:
         """Get Markdown reader instance."""
         from agno.knowledge.reader.markdown_reader import MarkdownReader
 
-        config: Dict[str, Any] = {"name": "Markdown Reader", "description": "Reads Markdown files"}
+        config: Dict[str, Any] = {
+            "name": "Markdown Reader",
+            "description": "Processes Markdown documentation with header-aware chunking and formatting preservation",
+        }
         config.update(kwargs)
         return MarkdownReader(**config)
 
@@ -60,7 +76,10 @@ class ReaderFactory:
         """Get Text reader instance."""
         from agno.knowledge.reader.text_reader import TextReader
 
-        config: Dict[str, Any] = {"name": "Text Reader", "description": "Reads Text files"}
+        config: Dict[str, Any] = {
+            "name": "Text Reader",
+            "description": "Handles plain text files with customizable chunking strategies and encoding detection",
+        }
         config.update(kwargs)
         return TextReader(**config)
 
@@ -69,7 +88,10 @@ class ReaderFactory:
         """Get Website reader instance."""
         from agno.knowledge.reader.website_reader import WebsiteReader
 
-        config: Dict[str, Any] = {"name": "Website Reader", "description": "Reads Website files"}
+        config: Dict[str, Any] = {
+            "name": "Website Reader",
+            "description": "Scrapes and extracts content from web pages with HTML parsing and text cleaning",
+        }
         config.update(kwargs)
         return WebsiteReader(**config)
 
@@ -82,7 +104,7 @@ class ReaderFactory:
             "api_key": kwargs.get("api_key") or os.getenv("FIRECRAWL_API_KEY"),
             "mode": "crawl",
             "name": "Firecrawl Reader",
-            "description": "Crawls websites",
+            "description": "Advanced web scraping and crawling with JavaScript rendering and structured data extraction",
         }
         config.update(kwargs)
         return FirecrawlReader(**config)
@@ -92,15 +114,22 @@ class ReaderFactory:
         """Get YouTube reader instance."""
         from agno.knowledge.reader.youtube_reader import YouTubeReader
 
-        config: Dict[str, Any] = {"name": "YouTube Reader", "description": "Reads YouTube videos"}
+        config: Dict[str, Any] = {
+            "name": "YouTube Reader",
+            "description": "Extracts transcripts and metadata from YouTube videos and playlists",
+        }
         config.update(kwargs)
         return YouTubeReader(**config)
 
+    @classmethod
     def _get_arxiv_reader(cls, **kwargs) -> Reader:
         """Get Arxiv reader instance."""
         from agno.knowledge.reader.arxiv_reader import ArxivReader
 
-        config: Dict[str, Any] = {"name": "Arxiv Reader", "description": "Reads Arxiv papers"}
+        config: Dict[str, Any] = {
+            "name": "Arxiv Reader",
+            "description": "Downloads and processes academic papers from ArXiv with PDF parsing and metadata extraction",
+        }
         config.update(kwargs)
         return ArxivReader(**config)
 
@@ -109,7 +138,10 @@ class ReaderFactory:
         """Get Wikipedia reader instance."""
         from agno.knowledge.reader.wikipedia_reader import WikipediaReader
 
-        config: Dict[str, Any] = {"name": "Wikipedia Reader", "description": "Reads Wikipedia articles"}
+        config: Dict[str, Any] = {
+            "name": "Wikipedia Reader",
+            "description": "Fetches and processes Wikipedia articles with section-aware chunking and link resolution",
+        }
         config.update(kwargs)
         return WikipediaReader(**config)
 
@@ -118,7 +150,10 @@ class ReaderFactory:
         """Get Web Search reader instance."""
         from agno.knowledge.reader.web_search_reader import WebSearchReader
 
-        config: Dict[str, Any] = {"name": "Web Search Reader", "description": "Performs web searches"}
+        config: Dict[str, Any] = {
+            "name": "Web Search Reader",
+            "description": "Executes web searches and processes results with relevance ranking and content extraction",
+        }
         config.update(kwargs)
         return WebSearchReader(**config)
 
