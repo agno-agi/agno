@@ -484,6 +484,12 @@ class Knowledge:
                 reader = self.csv_reader
             elif file_extension == ".pdf":
                 reader = self.pdf_reader
+            elif file_extension == ".docx":
+                reader = self.docx_reader
+            elif file_extension == ".json":
+                reader = self.json_reader
+            elif file_extension == ".markdown":
+                reader = self.markdown_reader
             else:
                 reader = self.text_reader
 
@@ -751,6 +757,14 @@ class Knowledge:
             if reader is None:
                 if s3_object.uri.endswith(".pdf"):
                     reader = self.pdf_reader
+                elif s3_object.uri.endswith(".csv"):
+                    reader = self.csv_reader
+                elif s3_object.uri.endswith(".docx"):
+                    reader = self.docx_reader
+                elif s3_object.uri.endswith(".json"):
+                    reader = self.json_reader
+                elif s3_object.uri.endswith(".markdown"):
+                    reader = self.markdown_reader
                 else:
                     reader = self.text_reader
             reader = cast(Reader, reader)
@@ -762,7 +776,8 @@ class Knowledge:
                 readable_content = BytesIO(s3_object.get_resource().get()["Body"].read())
             else:
                 temporary_file = Path("storage").joinpath(obj_name)
-                readable_content = s3_object.download(temporary_file)
+                readable_content = temporary_file
+                s3_object.download(readable_content)
 
             # 6. Read the content
             read_documents = reader.read(readable_content, name=obj_name)
