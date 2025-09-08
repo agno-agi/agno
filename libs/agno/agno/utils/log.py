@@ -65,8 +65,9 @@ class AgnoLogger(logging.Logger):
 
 
 def build_logger(logger_name: str, source_type: Optional[str] = None) -> Any:
-    # If a logger with the name "agno.{source_type}" already exists, we want to use that one
-    if _logger := logging.getLogger(f"agno.{logger_name}"):
+    # If a logger with the name "agno.{source_type}" is already set, we want to use that one
+    _logger = logging.getLogger(f"agno.{logger_name}")
+    if _logger.handlers or _logger.level != logging.NOTSET:
         return _logger
 
     # Set the custom logger class as the default for this logger
