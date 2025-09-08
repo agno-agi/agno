@@ -279,7 +279,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         log_info("Deleting all content")
         knowledge.remove_all_content()
-        return "success"
 
     @router.get(
         "/knowledge/content/{content_id}/status",
