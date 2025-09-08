@@ -708,7 +708,7 @@ class Knowledge:
         7. Prepare and insert the content in the vector database
         8. Remove temporary file if needed
         """
-        from agno.aws.resource.s3.object import S3Object  # type: ignore
+        from agno.cloud.aws.s3.object import S3Object
 
         remote_content: S3Content = cast(S3Content, content.remote_content)
 
@@ -753,18 +753,17 @@ class Knowledge:
                     reader = self.pdf_reader
                 else:
                     reader = self.text_reader
-                    obj_name = s3_object.name.split("/")[-1]
             reader = cast(Reader, reader)
 
             # 5. Fetch and load the content
+            obj_name = content_name or s3_object.name.split("/")[-1]
             if s3_object.uri.endswith(".pdf"):
-                readable_content = s3_object.get_resource().get()["Body"]
+                readable_content = s3_object.get_resource().get()["Body"].read()
             else:
-                obj_name = s3_object.name.split("/")[-1]
                 readable_content = s3_object.download(Path("storage").joinpath(obj_name))
 
             # 6. Read the content
-            read_documents = reader.read(readable_content, s3_object)
+            read_documents = reader.read(readable_content, name=obj_name)
 
             # 7. Prepare and insert the content in the vector database
             for read_document in read_documents:
@@ -772,7 +771,7 @@ class Knowledge:
             await self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
             # 8. Remove temporary file if needed
-            if not s3_object.uri.endswith(".pdf"):
+            if readable_content and not s3_object.uri.endswith(".pdf"):
                 readable_content.unlink()
 
     async def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):

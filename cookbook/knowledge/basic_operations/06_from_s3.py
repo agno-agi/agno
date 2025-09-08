@@ -11,10 +11,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content.remote_content import S3Content
 from agno.vectordb.pgvector import PgVector
 
-contents_db = PostgresDb(
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    knowledge_table="knowledge_contents",
-)
+contents_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # Create Knowledge Instance
 knowledge = Knowledge(
