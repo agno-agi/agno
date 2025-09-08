@@ -560,10 +560,13 @@ class Gemini(Model):
 
         # Case 2: Audio is an url
         elif audio.url is not None:
-            audio_bytes = audio.get_content_bytes()  # Changed from audio.audio_url_content
+            audio_bytes = audio.get_content_bytes() # type: ignore
             if audio_bytes is not None:
                 mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
                 return Part.from_bytes(mime_type=mime_type, data=audio_bytes)
+            else:
+                log_warning(f"Failed to download audio from {audio}")
+                return None
 
         # Case 3: Audio is a local file path
         elif audio.filepath is not None:

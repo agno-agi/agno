@@ -5,7 +5,7 @@ from typing import Any, List, Optional
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import AudioArtifact
+from agno.media import Audio
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error
@@ -146,7 +146,7 @@ class GroqTools(Toolkit):
             base64_encoded_audio = base64.b64encode(audio_data).decode("utf-8")
 
             media_id = str(uuid4())
-            audio_artifact = AudioArtifact(
+            audio_artifact = Audio(
                 id=media_id,
                 base64_audio=base64_encoded_audio,
                 mime_type="audio/wav",

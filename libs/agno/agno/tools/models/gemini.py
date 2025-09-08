@@ -5,7 +5,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact, VideoArtifact
+from agno.media import Image, Video
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error, log_info
@@ -109,7 +109,7 @@ class GeminiTools(Toolkit):
                 media_id = str(uuid4())
 
                 # Create ImageArtifact with raw bytes (not base64 encoded)
-                image_artifact = ImageArtifact(
+                image_artifact = Image(
                     id=media_id,
                     content=image_bytes,
                     original_prompt=prompt,
@@ -181,7 +181,7 @@ class GeminiTools(Toolkit):
                 media_id = str(uuid4())
 
                 # Create VideoArtifact with base64 encoded content
-                video_artifact = VideoArtifact(
+                video_artifact = Video(
                     id=media_id,
                     content=base64.b64encode(generated_video.video_bytes).decode("utf-8"),
                     original_prompt=prompt,

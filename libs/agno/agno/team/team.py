@@ -3734,7 +3734,7 @@ class Team:
         session: Optional[TeamSession] = None,
     ) -> Optional[Sequence[Image]]:
         """Collect images from input, session history, and current run response."""
-        joint_images = []
+        joint_images: List[Image] = []
 
         # 1. Add images from current input
         if run_input and run_input.images:
@@ -3771,7 +3771,7 @@ class Team:
         session: Optional[TeamSession] = None,
     ) -> Optional[Sequence[Video]]:
         """Collect videos from input, session history, and current run response."""
-        joint_videos = []
+        joint_videos: List[Video] = []
 
         # 1. Add videos from current input
         if run_input and run_input.videos:
@@ -3808,7 +3808,7 @@ class Team:
         session: Optional[TeamSession] = None,
     ) -> Optional[Sequence[Audio]]:
         """Collect audios from input, session history, and current run response."""
-        joint_audios = []
+        joint_audios: List[Audio] = []
 
         # 1. Add audios from current input
         if run_input and run_input.audios:
@@ -5022,11 +5022,11 @@ class Team:
         if self.share_member_interactions:
             team_member_interactions_str = self._get_team_member_interactions_str(team_run_context=team_run_context)  # type: ignore
             if context_images := self._get_team_run_context_images(team_run_context=team_run_context):  # type: ignore
-                images.extend([Image.from_artifact(img) for img in context_images])
+                images.extend(context_images)   
             if context_videos := self._get_team_run_context_videos(team_run_context=team_run_context):  # type: ignore
-                videos.extend([Video.from_artifact(vid) for vid in context_videos])
+                videos.extend(context_videos)
             if context_audio := self._get_team_run_context_audio(team_run_context=team_run_context):  # type: ignore
-                audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+                audio.extend(context_audio)
         return team_member_interactions_str
 
     def _find_member_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:

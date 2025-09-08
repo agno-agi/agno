@@ -304,7 +304,7 @@ class Video(BaseModel):
         mime_type: Optional[str] = None,
         format: Optional[str] = None,
         **kwargs
-    ) -> "Image":
+    ) -> "Video":
         """Create Image from base64 content"""
         import base64
         

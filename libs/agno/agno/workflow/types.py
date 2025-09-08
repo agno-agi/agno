@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import WebSocket
 from pydantic import BaseModel
 
-from agno.media import AudioArtifact, File, ImageArtifact, VideoArtifact
+from agno.media import Audio, File, Image, Video
 from agno.models.metrics import Metrics
 from agno.utils.log import log_warning
 
@@ -19,9 +19,9 @@ class WorkflowExecutionInput:
     additional_data: Optional[Dict[str, Any]] = None
 
     # Media inputs
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audio: Optional[List[Audio]] = None
     files: Optional[List[File]] = None
 
     def get_input_as_string(self) -> Optional[str]:
@@ -72,9 +72,9 @@ class StepInput:
     additional_data: Optional[Dict[str, Any]] = None
 
     # Media inputs
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audio: Optional[List[Audio]] = None
     files: Optional[List[File]] = None
 
     def get_input_as_string(self) -> Optional[str]:
@@ -225,9 +225,9 @@ class StepOutput:
     step_run_id: Optional[str] = None
 
     # Media outputs
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audio: Optional[List[Audio]] = None
     files: Optional[List[File]] = None
 
     # Metrics for this step execution
@@ -282,15 +282,15 @@ class StepOutput:
         # Reconstruct media artifacts
         images = data.get("images")
         if images:
-            images = [ImageArtifact.model_validate(img) for img in images]
+            images = [Image.model_validate(img) for img in images]
 
         videos = data.get("videos")
         if videos:
-            videos = [VideoArtifact.model_validate(vid) for vid in videos]
+            videos = [Video.model_validate(vid) for vid in videos]
 
         audio = data.get("audio")
         if audio:
-            audio = [AudioArtifact.model_validate(aud) for aud in audio]
+            audio = [Audio.model_validate(aud) for aud in audio]
 
         files = data.get("files")
         if files:

@@ -3,7 +3,7 @@ from typing import Any, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import AudioArtifact, ImageArtifact
+from agno.media import Audio, Image
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
@@ -149,7 +149,7 @@ class OpenAITools(Toolkit):
                 image_bytes = base64.b64decode(image_base64)
 
                 # Create ImageArtifact and return in ToolResult
-                image_artifact = ImageArtifact(
+                image_artifact = Image(
                     id=media_id,
                     content=image_bytes,  # ← Store as bytes, not encoded string
                     mime_type="image/png",
@@ -193,7 +193,7 @@ class OpenAITools(Toolkit):
 
             # Create AudioArtifact and return in ToolResult
             media_id = str(uuid4())
-            audio_artifact = AudioArtifact(
+            audio_artifact = Audio(
                 id=media_id,
                 base64_audio=base64_encoded_audio,
                 mime_type=f"audio/{self.tts_format}",

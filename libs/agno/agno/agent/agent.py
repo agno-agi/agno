@@ -3772,7 +3772,7 @@ class Agent:
         session: Optional[AgentSession] = None,
     ) -> Optional[Sequence[Image]]:
         """Collect images from input, session history, and current run response."""
-        joint_images = []
+        joint_images: List[Image] = []
 
         # 1. Add images from current input
         if run_input and run_input.images:
@@ -3809,7 +3809,7 @@ class Agent:
         session: Optional[AgentSession] = None,
     ) -> Optional[Sequence[Video]]:
         """Collect videos from input, session history, and current run response."""
-        joint_videos = []
+        joint_videos: List[Video] = []
 
         # 1. Add videos from current input
         if run_input and run_input.videos:
@@ -3846,7 +3846,7 @@ class Agent:
         session: Optional[AgentSession] = None,
     ) -> Optional[Sequence[Audio]]:
         """Collect audios from input, session history, and current run response."""
-        joint_audios = []
+        joint_audios: List[Audio] = []
 
         # 1. Add audios from current input
         if run_input and run_input.audios:

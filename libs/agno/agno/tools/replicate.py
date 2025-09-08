@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact, VideoArtifact
+from agno.media import Image, Video
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
@@ -72,9 +72,9 @@ class ReplicateTools(Toolkit):
                 result_msg, media_artifact = self._parse_output(output)
                 results.append(result_msg)
 
-                if isinstance(media_artifact, ImageArtifact):
+                if isinstance(media_artifact, Image):
                     images.append(media_artifact)
-                elif isinstance(media_artifact, VideoArtifact):
+                elif isinstance(media_artifact, Video):
                     videos.append(media_artifact)
 
             content = "\n".join(results)
@@ -87,7 +87,7 @@ class ReplicateTools(Toolkit):
             logger.error(f"Failed to generate media: {e}")
             return ToolResult(content=f"Error: {e}")
 
-    def _parse_output(self, output: FileOutput) -> Tuple[str, Union[ImageArtifact, VideoArtifact]]:
+    def _parse_output(self, output: FileOutput) -> Tuple[str, Union[Image, Video]]:
         """
         Parse the outputs from the replicate model.
         """
@@ -101,14 +101,14 @@ class ReplicateTools(Toolkit):
         video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".flv", ".wmv", ".webm"}
 
         media_id = str(uuid4())
-        artifact: Union[ImageArtifact, VideoArtifact]
+        artifact: Union[Image, Video]
         media_type: str
 
         if ext in image_extensions:
-            artifact = ImageArtifact(id=media_id, url=output.url)
+            artifact = Image(id=media_id, url=output.url)
             media_type = "image"
         elif ext in video_extensions:
-            artifact = VideoArtifact(id=media_id, url=output.url)
+            artifact = Video(id=media_id, url=output.url)
             media_type = "video"
         else:
             logger.error(f"Unsupported media type with extension '{ext}' for URL: {output.url}")
