@@ -24,6 +24,4 @@ response = agent.run(
 
 # Save the generated audio
 if response.audio:
-    write_audio_to_file(
-        audio=response.audio[0].content, filename="tmp/greeting.mp3"
-    )
+    write_audio_to_file(audio=response.audio[0].content, filename="tmp/greeting.mp3")

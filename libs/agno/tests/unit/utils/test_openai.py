@@ -3,11 +3,11 @@
 import base64
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from agno.media import Audio, File, Image
-from unittest.mock import patch
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 
 
@@ -174,7 +174,7 @@ def test_audio_to_message_url(url, expected_format):
     """Test audio_to_message with various URL formats (mocking content fetch)."""
     mock_content = b"mocked_audio_content_for_" + url.encode()
     mock_audio = Audio(url=url)
-    
+
     # Mock the method that fetches URL content
     with patch.object(Audio, "get_content_bytes", return_value=mock_content):
         result = audio_to_message([mock_audio])
@@ -188,7 +188,7 @@ def test_audio_to_message_url(url, expected_format):
 def test_audio_to_message_url_no_fetch():
     """Test audio_to_message when URL fetch returns None."""
     mock_audio = Audio(url="http://example.com/bad_audio.wav")
-    
+
     with patch.object(Audio, "get_content_bytes", return_value=None):
         result = audio_to_message([mock_audio])
         assert result == []  # Should skip if content is None
@@ -197,7 +197,7 @@ def test_audio_to_message_url_no_fetch():
 def test_audio_to_message_mixed(tmp_wav_file, dummy_audio_bytes):
     """Test audio_to_message with a mix of valid and invalid inputs."""
     mock_content = b"more_mock_audio"
-    
+
     audios = [
         Audio(content=dummy_audio_bytes),  # Valid bytes
         Audio(filepath=str(tmp_wav_file)),  # Valid file
@@ -205,7 +205,7 @@ def test_audio_to_message_mixed(tmp_wav_file, dummy_audio_bytes):
         Audio(url="http://example.com/good.aac"),  # Valid URL (first call)
         Audio(url="http://example.com/fails.mp3"),  # Invalid URL (second call)
     ]
-    
+
     # Mock get_content_bytes to return content for first URL, None for second
     with patch.object(Audio, "get_content_bytes", side_effect=[mock_content, None]):
         result = audio_to_message(audios)
@@ -343,7 +343,7 @@ def test_format_file_url_inline():
     """Test _format_file_for_message with URL file."""
     f = File(url="http://example.com/doc.pdf")
     mock_data = (b"PDF_CONTENT", "application/pdf")
-    
+
     with patch.object(File, "file_url_content", new_callable=lambda: mock_data):
         msg = _format_file_for_message(f)
         assert msg["type"] == "file"

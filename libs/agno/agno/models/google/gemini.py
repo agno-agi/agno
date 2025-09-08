@@ -560,7 +560,7 @@ class Gemini(Model):
 
         # Case 2: Audio is an url
         elif audio.url is not None:
-            audio_bytes = audio.get_content_bytes() # type: ignore
+            audio_bytes = audio.get_content_bytes()  # type: ignore
             if audio_bytes is not None:
                 mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
                 return Part.from_bytes(mime_type=mime_type, data=audio_bytes)
@@ -820,9 +820,7 @@ class Gemini(Model):
                     if model_response.images is None:
                         model_response.images = []
                     model_response.images.append(
-                        Image(
-                            id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
-                        )
+                        Image(id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type)
                     )
 
                 # Extract function call if present
@@ -934,9 +932,7 @@ class Gemini(Model):
                         if model_response.images is None:
                             model_response.images = []
                         model_response.images.append(
-                            Image(
-                                id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
-                            )
+                            Image(id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type)
                         )
 
                     # Extract function call if present

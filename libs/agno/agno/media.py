@@ -78,24 +78,17 @@ class Image(BaseModel):
         id: Optional[str] = None,
         mime_type: Optional[str] = None,
         format: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> "Image":
         """Create Image from base64 content"""
         import base64
-        
+
         try:
             content_bytes = base64.b64decode(base64_content)
         except Exception:
             content_bytes = base64_content.encode("utf-8")
-        
-        return cls(
-            content=content_bytes,
-            id=id or str(uuid4()),
-            mime_type=mime_type,
-            format=format,
-            **kwargs
-        )
 
+        return cls(content=content_bytes, id=id or str(uuid4()), mime_type=mime_type, format=format, **kwargs)
 
     def to_dict(self, include_base64_content: bool = True) -> Dict[str, Any]:
         """Convert to dict, optionally including base64-encoded content"""
@@ -164,6 +157,7 @@ class Audio(BaseModel):
             return self.content
         elif self.url:
             import httpx
+
             return httpx.get(self.url).content
         elif self.filepath:
             with open(self.filepath, "rb") as f:
@@ -175,6 +169,7 @@ class Audio(BaseModel):
         content_bytes = self.get_content_bytes()
         if content_bytes:
             import base64
+
             return base64.b64encode(content_bytes).decode("utf-8")
         return None
 
@@ -188,17 +183,17 @@ class Audio(BaseModel):
         expires_at: Optional[int] = None,
         sample_rate: Optional[int] = 24000,
         channels: Optional[int] = 1,
-        **kwargs
+        **kwargs,
     ) -> "Audio":
         """Create Audio from base64 content (useful for API responses)"""
         import base64
-        
+
         try:
             content_bytes = base64.b64decode(base64_content)
         except Exception:
             # If not valid base64, encode as UTF-8 bytes
             content_bytes = base64_content.encode("utf-8")
-        
+
         return cls(
             content=content_bytes,
             id=id or str(uuid4()),
@@ -207,7 +202,7 @@ class Audio(BaseModel):
             expires_at=expires_at,
             sample_rate=sample_rate,
             channels=channels,
-            **kwargs
+            **kwargs,
         )
 
     def to_dict(self, include_base64_content: bool = True) -> Dict[str, Any]:
@@ -303,24 +298,17 @@ class Video(BaseModel):
         id: Optional[str] = None,
         mime_type: Optional[str] = None,
         format: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> "Video":
         """Create Image from base64 content"""
         import base64
-        
+
         try:
             content_bytes = base64.b64decode(base64_content)
         except Exception:
             content_bytes = base64_content.encode("utf-8")
-        
-        return cls(
-            content=content_bytes,
-            id=id or str(uuid4()),
-            mime_type=mime_type,
-            format=format,
-            **kwargs
-        )
 
+        return cls(content=content_bytes, id=id or str(uuid4()), mime_type=mime_type, format=format, **kwargs)
 
     def to_dict(self, include_base64_content: bool = True) -> Dict[str, Any]:
         """Convert to dict, optionally including base64-encoded content"""

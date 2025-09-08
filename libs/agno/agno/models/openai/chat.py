@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
+from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel
@@ -783,21 +784,39 @@ class OpenAIChat(Model):
                 # Add audio if present
                 if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
                     try:
+                        audio_data = None
+                        audio_id = None
+                        audio_expires_at = None
+                        audio_transcript = None
+
                         if isinstance(choice_delta.audio, dict):
+                            audio_data = choice_delta.audio.get("data")
+                            audio_id = choice_delta.audio.get("id")
+                            audio_expires_at = choice_delta.audio.get("expires_at")
+                            audio_transcript = choice_delta.audio.get("transcript")
+                        else:
+                            audio_data = choice_delta.audio.data
+                            audio_id = choice_delta.audio.id
+                            audio_expires_at = choice_delta.audio.expires_at
+                            audio_transcript = choice_delta.audio.transcript
+
+                        # Only create Audio object if there's actual content
+                        if audio_data is not None:
                             model_response.audio = Audio(
-                                id=choice_delta.audio.get("id"),
-                                content=choice_delta.audio.get("data"),
-                                expires_at=choice_delta.audio.get("expires_at"),
-                                transcript=choice_delta.audio.get("transcript"),
+                                id=audio_id,
+                                content=audio_data,
+                                expires_at=audio_expires_at,
+                                transcript=audio_transcript,
                                 sample_rate=24000,
                                 mime_type="pcm16",
                             )
-                        else:
+                        # If no content but there's transcript/metadata, create minimal Audio object
+                        elif audio_transcript is not None or audio_id is not None:
                             model_response.audio = Audio(
-                                id=choice_delta.audio.id,
-                                content=choice_delta.audio.data,
-                                expires_at=choice_delta.audio.expires_at,
-                                transcript=choice_delta.audio.transcript,
+                                id=audio_id or str(uuid4()),
+                                content=b"",
+                                expires_at=audio_expires_at,
+                                transcript=audio_transcript,
                                 sample_rate=24000,
                                 mime_type="pcm16",
                             )

@@ -41,7 +41,8 @@ with wave.open(str(filename), "wb") as wav_file:
                 print(response_audio.transcript, end="", flush=True)
             if response_audio.content:
                 try:
-                    pcm_bytes = base64.b64decode(response_audio.content)
+                    pcm_bytes = response_audio.content
+                    pcm_bytes = base64.b64decode(pcm_bytes)
                     wav_file.writeframes(pcm_bytes)
                 except Exception as e:
                     print(f"Error decoding audio: {e}")

@@ -1,6 +1,6 @@
 from typing import Any, List, Optional
 
-from agno.media import Image, Audio
+from agno.media import Audio, Image
 from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep

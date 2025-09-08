@@ -2152,13 +2152,14 @@ class Team:
 
                     if model_response_event.audio.id is not None:
                         full_model_response.audio.id = model_response_event.audio.id  # type: ignore
-                        
+
                     if model_response_event.audio.content is not None:
                         # Handle both base64 string and bytes content
                         if isinstance(model_response_event.audio.content, str):
                             # Decode base64 string to bytes
                             try:
                                 import base64
+
                                 decoded_content = base64.b64decode(model_response_event.audio.content)
                                 if full_model_response.audio.content is None:
                                     full_model_response.audio.content = b""
@@ -2173,7 +2174,7 @@ class Team:
                             if full_model_response.audio.content is None:
                                 full_model_response.audio.content = b""
                             full_model_response.audio.content += model_response_event.audio.content
-                            
+
                     if model_response_event.audio.transcript is not None:
                         if full_model_response.audio.transcript is None:
                             full_model_response.audio.transcript = ""
@@ -5022,7 +5023,7 @@ class Team:
         if self.share_member_interactions:
             team_member_interactions_str = self._get_team_member_interactions_str(team_run_context=team_run_context)  # type: ignore
             if context_images := self._get_team_run_context_images(team_run_context=team_run_context):  # type: ignore
-                images.extend(context_images)   
+                images.extend(context_images)
             if context_videos := self._get_team_run_context_videos(team_run_context=team_run_context):  # type: ignore
                 videos.extend(context_videos)
             if context_audio := self._get_team_run_context_audio(team_run_context=team_run_context):  # type: ignore

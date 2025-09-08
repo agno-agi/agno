@@ -3315,13 +3315,14 @@ class Agent:
 
                     if model_response_event.audio.id is not None:
                         model_response.audio.id = model_response_event.audio.id  # type: ignore
-                        
+
                     if model_response_event.audio.content is not None:
                         # Handle both base64 string and bytes content
                         if isinstance(model_response_event.audio.content, str):
                             # Decode base64 string to bytes
                             try:
                                 import base64
+
                                 decoded_content = base64.b64decode(model_response_event.audio.content)
                                 if model_response.audio.content is None:
                                     model_response.audio.content = b""
@@ -3336,12 +3337,10 @@ class Agent:
                             if model_response.audio.content is None:
                                 model_response.audio.content = b""
                             model_response.audio.content += model_response_event.audio.content
-                            
+
                     if model_response_event.audio.transcript is not None:
-                        if model_response.audio.transcript is None:
-                            model_response.audio.transcript = ""
                         model_response.audio.transcript += model_response_event.audio.transcript  # type: ignore
-                        
+
                     if model_response_event.audio.expires_at is not None:
                         model_response.audio.expires_at = model_response_event.audio.expires_at  # type: ignore
                     if model_response_event.audio.mime_type is not None:
@@ -3351,8 +3350,14 @@ class Agent:
                     if model_response_event.audio.channels is not None:
                         model_response.audio.channels = model_response_event.audio.channels
 
-                    # Store the LLM audio response in run_response.response_audio (single object)
-                    run_response.response_audio = model_response.audio
+                    # Yield the audio and transcript bit by bit
+                    run_response.response_audio = Audio(
+                        id=model_response_event.audio.id,
+                        content=model_response_event.audio.content,
+                        transcript=model_response_event.audio.transcript,
+                        sample_rate=model_response_event.audio.sample_rate,
+                        channels=model_response_event.audio.channels,
+                    )
                     run_response.created_at = model_response_event.created_at
 
                     yield self._handle_event(
