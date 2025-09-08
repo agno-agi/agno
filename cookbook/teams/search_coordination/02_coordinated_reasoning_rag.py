@@ -103,7 +103,6 @@ response_coordinator = Agent(
 # Create coordinated reasoning RAG team
 coordinated_reasoning_team = Team(
     name="Coordinated Reasoning RAG Team",
-    mode="coordinate",  # Sequential coordination for reasoning
     model=Claude(id="claude-sonnet-4-20250514"),
     members=[
         information_gatherer,

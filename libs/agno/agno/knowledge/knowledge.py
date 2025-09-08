@@ -470,6 +470,7 @@ class Knowledge:
 
             elif file_extension and file_extension is not None:
                 log_info(f"Detected file type: {file_extension} from URL: {content.url}")
+
                 if content.reader:
                     reader = content.reader
                 else:

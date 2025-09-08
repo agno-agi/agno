@@ -112,7 +112,6 @@ response_composer = Agent(
 # Create distributed PgVector RAG team
 distributed_pgvector_team = Team(
     name="Distributed PgVector RAG Team",
-    mode="coordinate",  # Sequential coordination for database operations
     model=OpenAIChat(id="o3-mini"),
     members=[vector_retriever, hybrid_searcher, data_validator, response_composer],
     instructions=[

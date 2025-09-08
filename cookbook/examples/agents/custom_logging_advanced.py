@@ -49,6 +49,6 @@ configure_agno_logging(
 # Logging coming from the Team will use our custom Team logger,
 # while logging coming from the Agent will use our custom Agent logger.
 agent = Agent()
-team = Team(mode="route", members=[agent])
+team = Team(members=[agent])
 
 team.run("What can I do to improve my diet?")

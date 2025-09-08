@@ -30,7 +30,6 @@ finance_agent = Agent(
 
 finance_reasoning_team = Team(
     name="Reasoning Team Leader",
-    mode="coordinate",
     model=Claude(id="claude-3-7-sonnet-latest"),
     db=PostgresDb(db_url=db_url, session_table="finance_reasoning_team_sessions"),
     members=[

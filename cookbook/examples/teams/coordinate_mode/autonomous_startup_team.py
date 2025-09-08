@@ -169,7 +169,6 @@ customer_support_agent = Agent(
 
 autonomous_startup_team = Team(
     name="CEO Agent",
-    mode="coordinate",
     model=OpenAIChat("gpt-4o"),
     instructions=[
         "You are the CEO of a startup, responsible for overall leadership and success.",

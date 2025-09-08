@@ -79,7 +79,6 @@ twitter_researcher = Agent(
 
 agent_team = Team(
     name="Discussion Team",
-    mode="collaborate",
     model=OpenAIChat("gpt-4o"),
     members=[
         reddit_researcher,
@@ -87,6 +86,7 @@ agent_team = Team(
         academic_paper_researcher,
         twitter_researcher,
     ],
+    delegate_task_to_all_members=True,
     instructions=[
         "You are a discussion master.",
         "You have to stop the discussion when you think the team has reached a consensus.",

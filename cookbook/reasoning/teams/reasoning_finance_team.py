@@ -33,7 +33,6 @@ finance_agent = Agent(
 
 team_leader = Team(
     name="Reasoning Finance Team Leader",
-    mode="coordinate",
     model=Claude(id="claude-3-7-sonnet-latest"),
     members=[
         web_agent,

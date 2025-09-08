@@ -33,7 +33,6 @@ company_info_agent = Agent(
 
 team = Team(
     name="Stock Research Team",
-    mode="route",
     model=OpenAIChat("o3-mini"),
     members=[stock_searcher, company_info_agent],
     markdown=True,

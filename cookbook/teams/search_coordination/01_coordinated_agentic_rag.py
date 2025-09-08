@@ -83,7 +83,6 @@ response_synthesizer = Agent(
 # Create coordinated RAG team
 coordinated_rag_team = Team(
     name="Coordinated RAG Team",
-    mode="coordinate",  # Agents work together in sequence
     model=Claude(id="claude-3-7-sonnet-latest"),
     members=[knowledge_searcher, content_analyzer, response_synthesizer],
     instructions=[
