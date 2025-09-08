@@ -1,6 +1,26 @@
 from agno.agent import Agent
 from agno.tools.scrapegraph import ScrapeGraphTools
 
+"""
+ScrapeGraphTools Examples
+
+This script demonstrates the various capabilities of ScrapeGraphTools:
+
+1. smartscraper: Extract structured data using natural language prompts
+2. markdownify: Convert web pages to markdown format
+3. searchscraper: Search the web and extract information
+4. crawl: Crawl websites with structured data extraction
+5. scrape: Get raw HTML content from websites (NEW!)
+
+The scrape method is particularly useful when you need:
+- Complete HTML source code
+- Raw content for further processing
+- HTML structure analysis
+- Content that needs to be parsed differently
+
+All methods support heavy JavaScript rendering when needed.
+"""
+
 # Example 1: Default behavior - only smartscraper enabled
 scrapegraph = ScrapeGraphTools(smartscraper=True)
 
@@ -44,4 +64,14 @@ agent_crawl = Agent(tools=[scrapegraph_crawl], show_tool_calls=True, markdown=Tr
 # Use crawl (schema must be provided as a dict in the tool call)
 agent_crawl.print_response(
     "Use crawl to extract what the company does and get text content from privacy and terms from https://scrapegraphai.com/ with a suitable schema."
+)
+
+# Example 5: Enable scrape method for raw HTML content
+scrapegraph_scrape = ScrapeGraphTools(scrape=True, smartscraper=False)
+
+agent_scrape = Agent(tools=[scrapegraph_scrape], show_tool_calls=True, markdown=True)
+
+# Use scrape to get raw HTML content
+agent_scrape.print_response(
+    "Use the scrape tool to get the complete raw HTML content from https://example.com"
 )
