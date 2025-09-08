@@ -65,7 +65,7 @@ class WebSearchReader(Reader):
 
     @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
-        return [ContentType.URL, ContentType.TEXT]
+        return [ContentType.TOPIC]
 
     def _respect_rate_limits(self):
         """Ensure we don't exceed rate limits"""

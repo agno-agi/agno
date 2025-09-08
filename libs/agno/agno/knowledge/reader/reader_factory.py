@@ -15,7 +15,7 @@ class ReaderFactory:
         """Get PDF reader instance."""
         from agno.knowledge.reader.pdf_reader import PDFReader
 
-        config: Dict[str, Any] = {"chunk": True, "chunk_size": 100}
+        config: Dict[str, Any] = {"chunk": True, "chunk_size": 100, "description": "Reads pdf files"}
         config.update(kwargs)
         return PDFReader(**config)
 
@@ -24,7 +24,7 @@ class ReaderFactory:
         """Get CSV reader instance."""
         from agno.knowledge.reader.csv_reader import CSVReader
 
-        config: Dict[str, Any] = {"name": "CSV Reader", "description": "Reads CSV files"}
+        config: Dict[str, Any] = {"name": "CSV Reader", "description": "Reads CSV files"}   
         config.update(kwargs)
         return CSVReader(**config)
 
