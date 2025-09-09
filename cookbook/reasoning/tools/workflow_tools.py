@@ -4,17 +4,17 @@
 3. Run: `python cookbook/reasoning/tools/knowledge_tools.py` to run the agent
 """
 
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.reasoning import WorkflowTools
 from textwrap import dedent
+
+from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.reasoning import WorkflowTools
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
-
 
 FEW_SHOT_EXAMPLES = dedent("""\
     You can refer to the examples below as guidance for how to use each tool.
@@ -71,7 +71,7 @@ def prepare_input_for_writer(step_input: StepInput) -> StepOutput:
     title = step_input.additional_data.get("title")
     topic = step_input.additional_data.get("topic")
     style = step_input.additional_data.get("style")
-    
+
     research_team_output = step_input.previous_step_content
 
     return StepOutput(
@@ -117,7 +117,7 @@ if __name__ == "__main__":
             writer_agent,
         ],
     )
-    
+
     workflow_tools = WorkflowTools(
         workflow=content_creation_workflow,
         add_few_shot=True,

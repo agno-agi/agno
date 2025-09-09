@@ -5,11 +5,12 @@
 """
 
 import asyncio
+
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.reasoning import MemoryTools
 from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.reasoning import MemoryTools
 
 db = SqliteDb(db_file="tmp/memory.db")
 
@@ -31,17 +32,20 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    asyncio.run(agent.aprint_response(
-        "My name is John Doe and I like to hike in the mountains on weekends. "
-        "I like to travel to new places and experience different cultures. "
-        "I am planning to travel to Africa in December. ",
-        stream=True,
-        user_id=john_doe_id,
-    ))
+    asyncio.run(
+        agent.aprint_response(
+            "My name is John Doe and I like to hike in the mountains on weekends. "
+            "I like to travel to new places and experience different cultures. "
+            "I am planning to travel to Africa in December. ",
+            stream=True,
+            user_id=john_doe_id,
+        )
+    )
 
-    asyncio.run(agent.aprint_response(
-        "Make me a travel itinerary for my trip, and propose where I should go, how much I should budget, etc.",
-        stream=True,
-        user_id=john_doe_id,
-    ))
-    
+    asyncio.run(
+        agent.aprint_response(
+            "Make me a travel itinerary for my trip, and propose where I should go, how much I should budget, etc.",
+            stream=True,
+            user_id=john_doe_id,
+        )
+    )

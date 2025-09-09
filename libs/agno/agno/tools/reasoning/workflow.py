@@ -2,11 +2,12 @@ import json
 from textwrap import dedent
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel
+
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
-from agno.workflow.workflow import Workflow
-from agno.workflow.workflow import WorkflowRunOutput
-from pydantic import BaseModel
+from agno.workflow.workflow import Workflow, WorkflowRunOutput
+
 
 class RunWorkflowInput(BaseModel):
     input_data: str
@@ -88,12 +89,12 @@ class WorkflowTools(Toolkit):
             return f"Error recording workflow thought: {e}"
 
     def run_workflow(
-        self, 
-        session_state: Dict[str, Any], 
+        self,
+        session_state: Dict[str, Any],
         input: RunWorkflowInput,
     ) -> str:
         """Use this tool to execute the workflow with the specified inputs and parameters.
-        
+
         After thinking through the requirements, use this tool to run the workflow with appropriate inputs.
 
         Args:
@@ -102,7 +103,7 @@ class WorkflowTools(Toolkit):
         """
         try:
             log_debug(f"Running workflow with input: {input.input_data}")
-            
+
             user_id = session_state.get("current_user_id")
             session_id = session_state.get("current_session_id")
 
@@ -117,11 +118,11 @@ class WorkflowTools(Toolkit):
 
             if "workflow_results" not in session_state:
                 session_state["workflow_results"] = []
-            
+
             session_state["workflow_results"].append(result.to_dict())
 
             return json.dumps(result.to_dict(), indent=2)
-        
+
         except Exception as e:
             log_error(f"Error running workflow: {e}")
             return f"Error running workflow: {e}"

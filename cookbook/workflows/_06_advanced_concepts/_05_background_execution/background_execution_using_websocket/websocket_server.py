@@ -54,7 +54,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     connection_id = f"conn_{len(active_connections)}"
     active_connections[connection_id] = websocket
-    
+
     print(f"🔌 Client connected: {connection_id}")
 
     try:
@@ -73,7 +73,7 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 data = await websocket.receive_text()
                 message_data = json.loads(data)
-                
+
                 # Handle incoming messages
                 if message_data.get("type") == "start_workflow":
                     await handle_start_workflow(websocket, message_data)
@@ -109,7 +109,7 @@ async def handle_start_workflow(websocket: WebSocket, message_data: dict):
     """Handle workflow start request via WebSocket"""
     message = message_data.get("message", "AI trends 2024")
     session_id = message_data.get("session_id", f"ws-session-{len(active_connections)}")
-    
+
     workflow = Workflow(
         name="Tech Research Pipeline",
         steps=[
@@ -125,13 +125,15 @@ async def handle_start_workflow(websocket: WebSocket, message_data: dict):
     try:
         # Send acknowledgment
         await websocket.send_text(
-            json.dumps({
-                "type": "workflow_starting",
-                "message": f"Starting workflow with message: {message}",
-                "session_id": session_id
-            })
+            json.dumps(
+                {
+                    "type": "workflow_starting",
+                    "message": f"Starting workflow with message: {message}",
+                    "session_id": session_id,
+                }
+            )
         )
-        
+
         # Execute workflow in background with streaming and WebSocket
         result = await workflow.arun(
             input=message,
@@ -144,21 +146,25 @@ async def handle_start_workflow(websocket: WebSocket, message_data: dict):
 
         # Send completion notification
         await websocket.send_text(
-            json.dumps({
-                "type": "workflow_initiated",
-                "run_id": result.run_id,
-                "session_id": result.session_id,
-                "message": "Background streaming workflow initiated successfully",
-            })
+            json.dumps(
+                {
+                    "type": "workflow_initiated",
+                    "run_id": result.run_id,
+                    "session_id": result.session_id,
+                    "message": "Background streaming workflow initiated successfully",
+                }
+            )
         )
 
     except Exception as e:
         await websocket.send_text(
-            json.dumps({
-                "type": "workflow_error", 
-                "error": str(e),
-                "message": "Failed to start workflow"
-            })
+            json.dumps(
+                {
+                    "type": "workflow_error",
+                    "error": str(e),
+                    "message": "Failed to start workflow",
+                }
+            )
         )
 
 
@@ -178,7 +184,7 @@ async def start_workflow_http(request: Dict[str, Any]):
             content={
                 "status": "error",
                 "message": "No WebSocket connection available for background streaming",
-            }
+            },
         )
 
     workflow = Workflow(
@@ -213,8 +219,7 @@ async def start_workflow_http(request: Dict[str, Any]):
 
     except Exception as e:
         return JSONResponse(
-            status_code=500,
-            content={"status": "error", "message": str(e)}
+            status_code=500, content={"status": "error", "message": str(e)}
         )
 
 

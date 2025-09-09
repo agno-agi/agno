@@ -3,10 +3,10 @@ from textwrap import dedent
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
 from agno.db.base import BaseDb
 from agno.db.schemas import UserMemory
+from agno.tools import Toolkit
+from agno.utils.log import log_debug, log_error
 
 
 class MemoryTools(Toolkit):
@@ -128,34 +128,26 @@ class MemoryTools(Toolkit):
             if "memory_operations" not in session_state:
                 session_state["memory_operations"] = []
 
+            memory_dict = created_memory.to_dict() if created_memory else None  # type: ignore
+
             operation_result = {
                 "operation": "add_memory",
                 "success": created_memory is not None,
-                "memory": created_memory.to_dict() if created_memory else None,
-                "error": None
+                "memory": memory_dict,
+                "error": None,
             }
             session_state["memory_operations"].append(operation_result)
 
             if created_memory:
-                return json.dumps({
-                    "success": True,
-                    "operation": "add_memory",
-                    "memory": created_memory.to_dict()
-                }, indent=2)
+                return json.dumps({"success": True, "operation": "add_memory", "memory": memory_dict}, indent=2)
             else:
-                return json.dumps({
-                    "success": False,
-                    "operation": "add_memory", 
-                    "error": "Failed to create memory"
-                }, indent=2)
+                return json.dumps(
+                    {"success": False, "operation": "add_memory", "error": "Failed to create memory"}, indent=2
+                )
 
         except Exception as e:
             log_error(f"Error adding memory: {e}")
-            return json.dumps({
-                "success": False,
-                "operation": "add_memory",
-                "error": str(e)
-            }, indent=2)
+            return json.dumps({"success": False, "operation": "add_memory", "error": str(e)}, indent=2)
 
     def update_memory(
         self,
@@ -180,18 +172,17 @@ class MemoryTools(Toolkit):
             # First get the existing memory
             existing_memory = self.db.get_user_memory(memory_id)
             if not existing_memory:
-                return json.dumps({
-                    "success": False,
-                    "operation": "update_memory",
-                    "error": f"Memory with ID {memory_id} not found"
-                }, indent=2)
+                return json.dumps(
+                    {"success": False, "operation": "update_memory", "error": f"Memory with ID {memory_id} not found"},
+                    indent=2,
+                )
 
             # Update fields if provided
             updated_memory = UserMemory(
-                memory=memory if memory is not None else existing_memory.memory,
+                memory=memory if memory is not None else existing_memory.memory,  # type: ignore
                 memory_id=memory_id,
-                topics=topics if topics is not None else existing_memory.topics,
-                user_id=existing_memory.user_id,
+                topics=topics if topics is not None else existing_memory.topics,  # type: ignore
+                user_id=existing_memory.user_id,  # type: ignore
             )
 
             # Update in database
@@ -203,34 +194,26 @@ class MemoryTools(Toolkit):
             if "memory_operations" not in session_state:
                 session_state["memory_operations"] = []
 
+            memory_dict = updated_result.to_dict() if updated_result else None  # type: ignore
+
             operation_result = {
                 "operation": "update_memory",
                 "success": updated_result is not None,
-                "memory": updated_result.to_dict() if updated_result else None,
-                "error": None
+                "memory": memory_dict,
+                "error": None,
             }
             session_state["memory_operations"].append(operation_result)
 
             if updated_result:
-                return json.dumps({
-                    "success": True,
-                    "operation": "update_memory",
-                    "memory": updated_result.to_dict()
-                }, indent=2)
+                return json.dumps({"success": True, "operation": "update_memory", "memory": memory_dict}, indent=2)
             else:
-                return json.dumps({
-                    "success": False,
-                    "operation": "update_memory",
-                    "error": "Failed to update memory"
-                }, indent=2)
+                return json.dumps(
+                    {"success": False, "operation": "update_memory", "error": "Failed to update memory"}, indent=2
+                )
 
         except Exception as e:
             log_error(f"Error updating memory: {e}")
-            return json.dumps({
-                "success": False,
-                "operation": "update_memory",
-                "error": str(e)
-            }, indent=2)
+            return json.dumps({"success": False, "operation": "update_memory", "error": str(e)}, indent=2)
 
     def delete_memory(
         self,
@@ -251,11 +234,10 @@ class MemoryTools(Toolkit):
             # Check if memory exists before deletion
             existing_memory = self.db.get_user_memory(memory_id)
             if not existing_memory:
-                return json.dumps({
-                    "success": False,
-                    "operation": "delete_memory",
-                    "error": f"Memory with ID {memory_id} not found"
-                }, indent=2)
+                return json.dumps(
+                    {"success": False, "operation": "delete_memory", "error": f"Memory with ID {memory_id} not found"},
+                    indent=2,
+                )
 
             # Delete from database
             self.db.delete_user_memory(memory_id)
@@ -266,29 +248,30 @@ class MemoryTools(Toolkit):
             if "memory_operations" not in session_state:
                 session_state["memory_operations"] = []
 
+            memory_dict = existing_memory.to_dict() if existing_memory else None  # type: ignore
+
             operation_result = {
                 "operation": "delete_memory",
                 "success": True,
                 "memory_id": memory_id,
-                "deleted_memory": existing_memory.to_dict(),
-                "error": None
+                "deleted_memory": memory_dict,
+                "error": None,
             }
             session_state["memory_operations"].append(operation_result)
 
-            return json.dumps({
-                "success": True,
-                "operation": "delete_memory",
-                "memory_id": memory_id,
-                "deleted_memory": existing_memory.to_dict()
-            }, indent=2)
+            return json.dumps(
+                {
+                    "success": True,
+                    "operation": "delete_memory",
+                    "memory_id": memory_id,
+                    "deleted_memory": memory_dict,
+                },
+                indent=2,
+            )
 
         except Exception as e:
             log_error(f"Error deleting memory: {e}")
-            return json.dumps({
-                "success": False,
-                "operation": "delete_memory",
-                "error": str(e)
-            }, indent=2)
+            return json.dumps({"success": False, "operation": "delete_memory", "error": str(e)}, indent=2)
 
     def analyze(self, session_state: Dict[str, Any], analysis: str) -> str:
         """Use this tool to evaluate whether the memory operations results are correct and sufficient.
