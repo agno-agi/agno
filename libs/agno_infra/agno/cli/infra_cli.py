@@ -150,6 +150,7 @@ def up(
 
     from agno.cli.config import AgnoCliConfig
     from agno.cli.operator import initialize_agno_cli
+    from agno.cli.utils import find_compose_files, run_docker_compose_up
     from agno.infra.helpers import get_infra_dir_path
     from agno.infra.operator import setup_infra_config_from_dir, start_infra
     from agno.utilities.resource_filter import parse_resource_filter
@@ -198,6 +199,28 @@ def up(
         avl_infra = agno_config.available_infra
         if avl_infra:
             print_available_infra(avl_infra)
+
+    # Check for docker compose files
+    current_dir = Path.cwd()
+    compose_files = find_compose_files(current_dir)
+    if infra_to_start is None and not compose_files:
+        return
+    elif compose_files:
+        from agno.cli.console import confirm_yes_no
+
+        logger.info(f"Found Docker Compose files: {[f.name for f in compose_files]}")
+
+        for compose_file in compose_files:
+            if not dry_run:
+                if not auto_confirm:
+                    confirm = confirm_yes_no(f"Run docker compose up for {compose_file.name}?")
+                    if not confirm:
+                        continue
+
+                # TODO: Use the -f flag logic to force build
+                run_docker_compose_up(compose_file, build=True, detached=True)
+            else:
+                print(f"Would run: docker compose -f {compose_file} up -d --build")
         return
 
     target_env: Optional[str] = None
@@ -315,6 +338,7 @@ def down(
 
     from agno.cli.config import AgnoCliConfig
     from agno.cli.operator import initialize_agno_cli
+    from agno.cli.utils import find_compose_files, run_docker_compose_down
     from agno.infra.helpers import get_infra_dir_path
     from agno.infra.operator import setup_infra_config_from_dir, stop_infra
     from agno.utilities.resource_filter import parse_resource_filter
@@ -362,6 +386,27 @@ def down(
         avl_infra = agno_config.available_infra
         if avl_infra:
             print_available_infra(avl_infra)
+
+    # Check for docker compose files
+    current_dir = Path.cwd()
+    compose_files = find_compose_files(current_dir)
+    if infra_to_stop is None and not compose_files:
+        return
+    elif compose_files:
+        from agno.cli.console import confirm_yes_no
+
+        logger.info(f"Found Docker Compose files: {[f.name for f in compose_files]}")
+
+        for compose_file in compose_files:
+            if not dry_run:
+                if not auto_confirm:
+                    confirm = confirm_yes_no(f"Run docker compose down for {compose_file.name}?")
+                    if not confirm:
+                        continue
+
+                run_docker_compose_down(compose_file, remove_volumes=False)
+            else:
+                print(f"Would run: docker compose -f {compose_file} down")
         return
 
     target_env: Optional[str] = None

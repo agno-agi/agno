@@ -1,5 +1,6 @@
-from pydantic import Field, PrivateAttr
 from typing import List, Optional, Tuple
+
+from pydantic import Field, PrivateAttr
 
 from agno.aws.api_client import AwsApiClient
 from agno.aws.app.base import AwsApp

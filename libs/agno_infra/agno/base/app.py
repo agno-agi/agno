@@ -1,5 +1,6 @@
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
+
+from pydantic import Field, ValidationInfo, field_validator
 
 from agno.base.base import InfraBase
 from agno.base.context import ContainerContext
@@ -7,7 +8,6 @@ from agno.base.resource import InfraResource
 from agno.utilities.logging import logger
 
 
-@dataclass(init=False)
 class InfraApp(InfraBase):
     """Base class for Infrastructure Apps."""
 
@@ -49,12 +49,12 @@ class InfraApp(InfraBase):
     port_number: int = 80
     # Port number on the Container to open
     # Preferred over port_number if both are set
-    container_port: Optional[int] = None
+    container_port: Optional[int] = Field(None, validate_default=True)
     # Port name for the opened port
     container_port_name: str = "http"
     # Port number on the Host to map to the Container port
     # Preferred over port_number if both are set
-    host_port: Optional[int] = None
+    host_port: Optional[int] = Field(None, validate_default=True)
 
     # -*- Extra Resources created "before" the App resources
     resources: Optional[List[InfraResource]] = None
@@ -74,12 +74,19 @@ class InfraApp(InfraBase):
     # -*- Cached Data
     cached_resources: Optional[List[Any]] = None
 
-    def __post_init__(self):
-        """Post-initialization to set default values for ports."""
-        if self.container_port is None and self.port_number is not None:
-            self.container_port = self.port_number
-        if self.host_port is None and self.port_number is not None:
-            self.host_port = self.port_number
+    @field_validator("container_port", mode="before")
+    def set_container_port(cls, v, info: ValidationInfo):
+        port_number = info.data.get("port_number")
+        if v is None and port_number is not None:
+            v = port_number
+        return v
+
+    @field_validator("host_port", mode="before")
+    def set_host_port(cls, v, info: ValidationInfo):
+        port_number = info.data.get("port_number")
+        if v is None and port_number is not None:
+            v = port_number
+        return v
 
     def get_app_name(self) -> str:
         return self.name

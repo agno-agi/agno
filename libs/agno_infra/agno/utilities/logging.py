@@ -5,7 +5,7 @@ from typing import Any, Optional
 from rich.logging import RichHandler
 from rich.text import Text
 
-LOGGER_NAME = "agno"
+LOGGER_NAME = "agno_infra"
 
 # Define custom styles for different log sources
 LOG_STYLES = {
