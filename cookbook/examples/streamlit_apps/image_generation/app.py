@@ -11,12 +11,12 @@ from agno.utils.streamlit import (
     about_section,
     add_message,
     display_chat_messages,
+    display_tool_calls,
     export_chat_history,
     initialize_agent,
     knowledge_base_info_widget,
     reset_session_state,
     session_selector_widget,
-    display_tool_calls,
 )
 from PIL import Image
 
@@ -67,7 +67,9 @@ def main():
     ####################################################################
     # App header
     ####################################################################
-    st.markdown("<h1 class='main-title'>Recipe Image Generator</h1>", unsafe_allow_html=True)
+    st.markdown(
+        "<h1 class='main-title'>Recipe Image Generator</h1>", unsafe_allow_html=True
+    )
     st.markdown(
         "<p class='subtitle'>Your AI cooking companion - Upload recipes or use defaults, then get visual step-by-step cooking guides!</p>",
         unsafe_allow_html=True,
@@ -198,7 +200,7 @@ def main():
     )
     if last_message and last_message.get("role") == "user":
         question = last_message["content"]
-        
+
         with st.chat_message("assistant"):
             tool_calls_container = st.empty()
             resp_container = st.empty()
@@ -211,35 +213,57 @@ def main():
                         try:
                             # Display tool calls if available
                             if hasattr(resp_chunk, "tool") and resp_chunk.tool:
-                                display_tool_calls(tool_calls_container, [resp_chunk.tool])
+                                display_tool_calls(
+                                    tool_calls_container, [resp_chunk.tool]
+                                )
                         except Exception:
                             pass
 
                         if resp_chunk.content is not None:
                             content = str(resp_chunk.content)
-                            if not (content.strip().endswith("completed in") or "completed in" in content and "s." in content):
+                            if not (
+                                content.strip().endswith("completed in")
+                                or "completed in" in content
+                                and "s." in content
+                            ):
                                 response += content
                                 resp_container.markdown(response)
 
-                        if hasattr(resp_chunk, 'images') and getattr(resp_chunk, 'images', None):
+                        if hasattr(resp_chunk, "images") and getattr(
+                            resp_chunk, "images", None
+                        ):
                             captured_run_output = resp_chunk
 
                     # Display generated images
-                    if captured_run_output and hasattr(captured_run_output, 'images'):
+                    if captured_run_output and hasattr(captured_run_output, "images"):
                         for i, img in enumerate(captured_run_output.images or []):
                             try:
                                 if hasattr(img, "content") and img.content:
                                     image = Image.open(io.BytesIO(img.content))
-                                    st.image(image, caption=f"Step-by-step cooking guide {i+1}", use_container_width=True)
+                                    st.image(
+                                        image,
+                                        caption=f"Step-by-step cooking guide {i + 1}",
+                                        use_container_width=True,
+                                    )
                                 elif hasattr(img, "url") and img.url:
-                                    st.image(img.url, caption=f"Step-by-step cooking guide {i+1}", use_container_width=True)
+                                    st.image(
+                                        img.url,
+                                        caption=f"Step-by-step cooking guide {i + 1}",
+                                        use_container_width=True,
+                                    )
                             except Exception as img_error:
-                                st.warning(f"Could not display image {i+1}: {str(img_error)}")
+                                st.warning(
+                                    f"Could not display image {i + 1}: {str(img_error)}"
+                                )
 
                     # Add message with tools
                     try:
-                        if captured_run_output and hasattr(captured_run_output, "tools"):
-                            add_message("assistant", response, captured_run_output.tools)
+                        if captured_run_output and hasattr(
+                            captured_run_output, "tools"
+                        ):
+                            add_message(
+                                "assistant", response, captured_run_output.tools
+                            )
                         else:
                             add_message("assistant", response)
                     except Exception:

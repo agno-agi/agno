@@ -20,7 +20,7 @@ class MCPServerConfig(BaseModel):
 
 class MCPClient:
     """Client for connecting to MCP servers."""
-    
+
     def __init__(self):
         # Initialize session and client objects
         self.session = None

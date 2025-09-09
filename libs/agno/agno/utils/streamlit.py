@@ -404,27 +404,27 @@ def get_model_from_id(model_id: str):
 
 def get_model_with_provider(model_name: str):
     """Get a model instance by inferring the correct provider from the model name.
-    
+
     Args:
         model_name: Model name (e.g., "gpt-4o", "claude-4-sonnet", "gemini-2.5-pro")
-        
+
     Returns:
         Model instance with correct provider
     """
     if ":" in model_name:
         return get_model_from_id(model_name)
-    
+
     model_lower = model_name.lower()
-    
+
     if any(pattern in model_lower for pattern in ["gpt", "o1", "o3"]):
         return get_model_from_id(f"openai:{model_name}")
-    
+
     elif "claude" in model_lower:
         return get_model_from_id(f"anthropic:{model_name}")
-    
+
     elif "gemini" in model_lower:
         return get_model_from_id(f"google:{model_name}")
-    
+
     else:
         return get_model_from_id(f"openai:{model_name}")
 

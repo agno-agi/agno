@@ -1,6 +1,6 @@
 import nest_asyncio
 import streamlit as st
-from agents import get_gemini_tutor_agent, EDUCATION_LEVELS, GEMINI_MODELS
+from agents import EDUCATION_LEVELS, GEMINI_MODELS, get_gemini_tutor_agent
 from agno.utils.streamlit import (
     COMMON_CSS,
     about_section,
@@ -25,7 +25,8 @@ st.set_page_config(
 st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
 # Educational-specific CSS
-st.markdown("""
+st.markdown(
+    """
 <style>
     .education-level {
         background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
@@ -59,20 +60,24 @@ st.markdown("""
         border-radius: 5px;
     }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 
 def restart_tutor(model_id: str = None, education_level: str = None):
     """Restart the tutor with new settings."""
     target_model = model_id or st.session_state.get("current_model", GEMINI_MODELS[0])
-    target_level = education_level or st.session_state.get("education_level", EDUCATION_LEVELS[1])
-    
+    target_level = education_level or st.session_state.get(
+        "education_level", EDUCATION_LEVELS[1]
+    )
+
     new_agent = get_gemini_tutor_agent(
         model_id=target_model,
         education_level=target_level,
         session_id=None,
     )
-    
+
     st.session_state["agent"] = new_agent
     st.session_state["session_id"] = new_agent.session_id
     st.session_state["messages"] = []
@@ -130,11 +135,14 @@ def main():
 
     if google_api_key:
         import os
+
         os.environ["GOOGLE_API_KEY"] = google_api_key
         st.sidebar.success("✅ Google API key configured")
     else:
         st.sidebar.warning("⚠️ Google API key required for Gemini models")
-        st.sidebar.info("💡 Get your free API key from [Google AI Studio](https://makersuite.google.com)")
+        st.sidebar.info(
+            "💡 Get your free API key from [Google AI Studio](https://makersuite.google.com)"
+        )
 
     ####################################################################
     # Model and Education Level selectors
@@ -147,7 +155,7 @@ def main():
         key="model_selector",
         on_change=on_model_change,
     )
-    
+
     selected_education_level = st.sidebar.selectbox(
         "Select Education Level",
         options=EDUCATION_LEVELS,
@@ -160,17 +168,20 @@ def main():
     # Initialize Tutor Agent and Session
     ####################################################################
     gemini_tutor_agent = initialize_agent(
-        selected_model, 
+        selected_model,
         lambda model_id, session_id: get_gemini_tutor_agent(
             model_id=model_id,
             education_level=selected_education_level,
             session_id=session_id,
-        )
+        ),
     )
     reset_session_state(gemini_tutor_agent)
 
     # Display current education level
-    st.sidebar.markdown(f"**Current Level:** <span class='education-level'>{selected_education_level}</span>", unsafe_allow_html=True)
+    st.sidebar.markdown(
+        f"**Current Level:** <span class='education-level'>{selected_education_level}</span>",
+        unsafe_allow_html=True,
+    )
 
     if prompt := st.chat_input("🎓 What would you like to learn about today?"):
         add_message("user", prompt)
@@ -179,25 +190,25 @@ def main():
     # Learning Templates
     ####################################################################
     st.sidebar.markdown("#### 📚 Learning Templates")
-    
+
     if st.sidebar.button("🔬 Science Concepts"):
         add_message(
             "user",
             f"Explain a fundamental science concept appropriate for {selected_education_level} level with interactive examples and practice questions.",
         )
-    
+
     if st.sidebar.button("📊 Math Problem Solving"):
         add_message(
-            "user", 
+            "user",
             f"Teach me a math concept with step-by-step problem solving examples suitable for {selected_education_level} students.",
         )
-        
+
     if st.sidebar.button("🌍 History & Culture"):
         add_message(
             "user",
             f"Create a learning module about a historical event or cultural topic, adapted for {selected_education_level} level.",
         )
-        
+
     if st.sidebar.button("💻 Technology & Programming"):
         add_message(
             "user",
@@ -208,19 +219,19 @@ def main():
     # Sample Learning Questions
     ####################################################################
     st.sidebar.markdown("#### ❓ Sample Questions")
-    
+
     if st.sidebar.button("🧬 How does DNA work?"):
         add_message(
             "user",
             "How does DNA work? Please explain with examples and create an interactive learning experience.",
         )
-        
+
     if st.sidebar.button("🚀 Physics of Space Travel"):
         add_message(
             "user",
             "Explain the physics behind space travel with practical examples and thought experiments.",
         )
-        
+
     if st.sidebar.button("🎨 Art History Overview"):
         add_message(
             "user",
@@ -231,19 +242,19 @@ def main():
     # Study Tools
     ####################################################################
     st.sidebar.markdown("#### 🛠️ Study Tools")
-    
+
     if st.sidebar.button("📝 Create Study Guide"):
         add_message(
             "user",
             "Create a comprehensive study guide for my last learning topic with key points, practice questions, and review materials.",
         )
-        
+
     if st.sidebar.button("🧪 Practice Quiz"):
         add_message(
             "user",
             "Generate a practice quiz based on our recent learning session with different question types and detailed explanations.",
         )
-        
+
     if st.sidebar.button("🔍 Deep Dive Analysis"):
         add_message(
             "user",
@@ -255,7 +266,7 @@ def main():
     ####################################################################
     st.sidebar.markdown("#### 🛠️ Utilities")
     col1, col2 = st.sidebar.columns([1, 1])
-    
+
     with col1:
         if st.sidebar.button("🔄 New Learning Session", use_container_width=True):
             restart_tutor()
@@ -269,7 +280,9 @@ def main():
         if has_messages:
             session_id = st.session_state.get("session_id")
             if session_id and gemini_tutor_agent.get_session_name():
-                filename = f"gemini_tutor_session_{gemini_tutor_agent.get_session_name()}.md"
+                filename = (
+                    f"gemini_tutor_session_{gemini_tutor_agent.get_session_name()}.md"
+                )
             elif session_id:
                 filename = f"gemini_tutor_session_{session_id}.md"
             else:
@@ -311,13 +324,13 @@ def main():
     # Session management widgets
     ####################################################################
     session_selector_widget(
-        gemini_tutor_agent, 
-        selected_model, 
+        gemini_tutor_agent,
+        selected_model,
         lambda model_id, session_id: get_gemini_tutor_agent(
             model_id=model_id,
             education_level=selected_education_level,
             session_id=session_id,
-        )
+        ),
     )
 
     ####################################################################

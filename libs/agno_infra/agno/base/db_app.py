@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Optional
 
 from agno.base.app import InfraApp

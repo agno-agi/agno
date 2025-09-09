@@ -254,13 +254,13 @@ def up(
         target_type = type_filter
 
     # derive env:infra:name:type:group from defaults
-    if target_env is None:
+    if target_env is None and infra_to_start and infra_to_start.infra_settings:
         target_env = infra_to_start.infra_settings.default_env if infra_to_start.infra_settings else None
-    if target_infra is None:
+    if target_infra is None and infra_to_start and infra_to_start.infra_settings:
         target_infra = infra_to_start.infra_settings.default_infra if infra_to_start.infra_settings else None
 
     start_infra(
-        infra_config=infra_to_start,
+        infra_config=infra_to_start,  # type: ignore
         target_env=target_env,
         target_infra=target_infra,
         target_group=target_group,
@@ -440,13 +440,13 @@ def down(
         target_type = type_filter
 
     # derive env:infra:name:type:group from defaults
-    if target_env is None:
+    if target_env is None and infra_to_stop and infra_to_stop.infra_settings:
         target_env = infra_to_stop.infra_settings.default_env if infra_to_stop.infra_settings else None
-    if target_infra is None:
+    if target_infra is None and infra_to_stop and infra_to_stop.infra_settings:
         target_infra = infra_to_stop.infra_settings.default_infra if infra_to_stop.infra_settings else None
 
     stop_infra(
-        infra_config=infra_to_stop,
+        infra_config=infra_to_stop,  # type: ignore
         target_env=target_env,
         target_infra=target_infra,
         target_group=target_group,

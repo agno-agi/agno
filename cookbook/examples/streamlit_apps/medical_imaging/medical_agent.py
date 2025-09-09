@@ -8,6 +8,7 @@ from agno.utils.streamlit import get_model_with_provider
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
+
 def get_medical_imaging_agent(
     model_id: str = "gemini-2.0-flash-exp",
     user_id: Optional[str] = None,

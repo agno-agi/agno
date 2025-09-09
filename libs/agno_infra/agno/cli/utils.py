@@ -34,7 +34,7 @@ def run_docker_compose_up(compose_file: Path, build: bool = True, detached: bool
 
     try:
         logger.info(f"Running: {' '.join(cmd)}")
-        result = subprocess.run(
+        _ = subprocess.run(
             cmd,
             check=True,
             cwd=compose_file.parent,
@@ -69,7 +69,7 @@ def run_docker_compose_down(compose_file: Path, remove_volumes: bool = False, re
 
     try:
         logger.info(f"Running: {' '.join(cmd)}")
-        result = subprocess.run(
+        _ = subprocess.run(
             cmd, check=True, cwd=compose_file.parent, env=environ.copy(), stdin=stdin, stdout=stdout, stderr=stderr
         )
 

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
+
 # Data Models for structured outputs
 class SearchTerms(BaseModel):
     terms: List[str] = Field(
@@ -54,12 +55,14 @@ def get_paperpal_agents(
     arxiv_download_dir: Optional[Path] = None,
 ):
     """Get Paperpal research agents with tools"""
-    
+
     # Set up ArXiv download directory
     if not arxiv_download_dir:
-        arxiv_download_dir = Path(__file__).parent.parent.parent.parent.joinpath("tmp", "arxiv_pdfs")
+        arxiv_download_dir = Path(__file__).parent.parent.parent.parent.joinpath(
+            "tmp", "arxiv_pdfs"
+        )
         arxiv_download_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Initialize tools
     arxiv_toolkit = ArxivTools(download_dir=arxiv_download_dir)
     exa_tools = ExaTools()
@@ -69,7 +72,7 @@ def get_paperpal_agents(
         session_table="sessions",
         db_schema="ai",
     )
-    
+
     # Search Term Generator Agent
     search_term_generator = Agent(
         name="Search Term Generator",
@@ -99,7 +102,7 @@ def get_paperpal_agents(
         markdown=True,
         debug_mode=True,
     )
-    
+
     # ArXiv Search Agent
     arxiv_search_agent = Agent(
         name="ArXiv Research Agent",
@@ -134,7 +137,7 @@ def get_paperpal_agents(
         markdown=True,
         debug_mode=True,
     )
-    
+
     # Web Search Agent
     exa_search_agent = Agent(
         name="Web Research Agent",
@@ -165,7 +168,7 @@ def get_paperpal_agents(
         markdown=True,
         debug_mode=True,
     )
-    
+
     # Research Editor Agent
     research_editor = Agent(
         name="Research Editor",
@@ -189,7 +192,7 @@ def get_paperpal_agents(
         markdown=True,
         debug_mode=True,
     )
-    
+
     return {
         "search_term_generator": search_term_generator,
         "arxiv_search_agent": arxiv_search_agent,
