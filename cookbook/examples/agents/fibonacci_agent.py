@@ -21,7 +21,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[
         get_fibonacci_series,
-        CalculatorTools(add=True, subtract=True, exponentiate=True, is_prime=True),
+        CalculatorTools(),
     ],
     markdown=True,
 )
