@@ -3379,6 +3379,14 @@ class Agent:
                         workflow_context=workflow_context,
                     )
 
+                    if model_response.images is None:
+                        model_response.images = []
+                    model_response.images.extend(model_response_event.images)
+                    # Store media in run_response if store_media is enabled
+                    if self.store_media:
+                        for image in model_response_event.images:
+                            self._add_image(image, run_response)
+
             # Handle tool interruption events
             elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
                 # Add tool calls to the run_response
