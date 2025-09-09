@@ -70,16 +70,6 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
         response_usage: Usage data from model provider
     """
 
-    """
-    response_usage = ResponseUsage(
-        input_tokens=3049,
-        input_tokens_details=InputTokensDetails(cached_tokens=1792),
-        output_tokens=43,
-        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
-        total_tokens=3092
-    )
-    """
-
     # Standard token metrics
     if isinstance(response_usage, dict):
         if "input_tokens" in response_usage and response_usage.get("input_tokens") is not None:
