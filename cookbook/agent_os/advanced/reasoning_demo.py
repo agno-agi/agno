@@ -114,7 +114,6 @@ knowledge_agent = Agent(
 
 reasoning_finance_team = Team(
     name="Reasoning Finance Team",
-    mode="coordinate",
     model=OpenAIChat(id="gpt-4o"),
     members=[
         web_agent,
@@ -131,7 +130,6 @@ reasoning_finance_team = Team(
     ],
     markdown=True,
     show_members_responses=True,
-    enable_agentic_context=True,
     add_datetime_to_context=True,
     db=db,
 )

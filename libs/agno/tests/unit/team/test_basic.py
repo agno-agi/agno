@@ -26,7 +26,7 @@ def team():
         tools=[YFinanceTools(include_tools=["get_current_stock_price"])],
     )
 
-    team = Team(name="Router Team", mode="route", model=OpenAIChat("gpt-4o"), members=[web_agent, finance_agent])
+    team = Team(name="Router Team", model=OpenAIChat("gpt-4o"), members=[web_agent, finance_agent])
     return team
 
 
@@ -65,18 +65,6 @@ def test_delegate_to_wrong_member(team):
     assert "Member with ID wrong-agent not found in the team or any subteams" in response[0]
 
 
-def test_forward_to_wrong_member(team):
-    function = team._get_forward_task_function(
-        input="Hello, world!",
-        session=TeamSession(session_id="test-session"),
-        run_response=TeamRunOutput(content="Hello, world!"),
-        session_state={},
-        team_run_context={},
-    )
-    response = list(function.entrypoint(member_id="wrong-agent", expected_output=""))
-    assert "Member with ID wrong-agent not found in the team or any subteams" in response[0]
-
-
 def test_set_id():
     team = Team(
         id="test_id",
@@ -95,7 +83,7 @@ def test_set_id_from_name():
     team_id = team.id
 
     assert team_id is not None
-    assert is_valid_uuid(team_id)
+    assert team_id == "test-name"
 
     team.id = None
     team.set_id()

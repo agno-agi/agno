@@ -15,11 +15,14 @@ def test_set_id_from_name():
         name="Test Name",
     )
     agent.set_id()
-    agent_id = agent.id
-    assert is_valid_uuid(agent_id)
 
+    # Asserting the set_id method uses the name to generate the id
+    agent_id = agent.id
+    expected_id = "test-name"
+    assert expected_id == agent_id
+
+    # Asserting the set_id method is deterministic
     agent.set_id()
-    # It is deterministic, so it should be the same
     assert agent.id == agent_id
 
 

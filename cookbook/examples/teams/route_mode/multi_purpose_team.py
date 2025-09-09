@@ -22,9 +22,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
-    ],
+    tools=[YFinanceTools()],
     instructions=["Use tables to display data"],
 )
 
@@ -77,25 +75,13 @@ calculator_agent = Agent(
     name="Calculator Agent",
     model=OpenAIChat(id="gpt-4o"),
     role="Calculate",
-    tools=[
-        CalculatorTools(
-            add=True,
-            subtract=True,
-            multiply=True,
-            divide=True,
-            exponentiate=True,
-            factorial=True,
-            is_prime=True,
-            square_root=True,
-        )
-    ],
+    tools=[CalculatorTools()],
     markdown=True,
 )
 
 calculator_writer_team = Team(
     name="Calculator Writer Team",
-    mode="coordinate",
-    model=OpenAIChat("gpt-4.5-preview"),
+    model=OpenAIChat("gpt-4o"),
     members=[calculator_agent, writer_agent],
     instructions=[
         "You are a team of two agents. The calculator agent and the writer agent.",
@@ -137,7 +123,6 @@ code_execution_agent = Agent(
 
 agent_team = Team(
     name="Agent Team",
-    mode="route",
     model=Claude(id="claude-3-5-sonnet-latest"),
     members=[
         web_agent,
@@ -155,6 +140,7 @@ agent_team = Team(
         "if you are asked about a file, use the file analysis agent to analyze the file.",
         "You can also answer directly, you don't HAVE to forward the question to a member agent.",
     ],
+    respond_directly=True,
     markdown=True,
     show_members_responses=True,
 )

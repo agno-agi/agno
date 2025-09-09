@@ -28,7 +28,6 @@ finance_agent = Agent(
 
 team_leader = Team(
     name="Reasoning Finance Team Leader",
-    mode="coordinate",
     model=Claude(id="claude-3-7-sonnet-latest"),
     members=[web_agent, finance_agent],
     tools=[ReasoningTools(add_instructions=True)],
@@ -38,7 +37,6 @@ team_leader = Team(
     ],
     markdown=True,
     show_members_responses=True,
-    enable_agentic_context=True,
     add_datetime_to_context=True,
 )
 

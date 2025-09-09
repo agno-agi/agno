@@ -36,12 +36,12 @@ from agno.os.routers.session import get_session_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import generate_id
 from agno.team.team import Team
-from agno.tools.mcp import MCPTools
+from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.workflow.workflow import Workflow
 
 
 @asynccontextmanager
-async def mcp_lifespan(app, mcp_tools: List[MCPTools]):
+async def mcp_lifespan(app, mcp_tools: List[Union[MCPTools, MultiMCPTools]]):
     """Manage MCP connection lifecycle inside a FastAPI app"""
     # Startup logic: connect to all contextual MCP servers
     for tool in mcp_tools:
@@ -83,7 +83,12 @@ class AgentOS:
         self.interfaces = interfaces or []
 
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
-        self.fastapi_app: Optional[FastAPI] = fastapi_app
+
+        self._app_set = False
+        self.fastapi_app: Optional[FastAPI] = None
+        if fastapi_app:
+            self.fastapi_app = fastapi_app
+            self._app_set = True
 
         self.interfaces = interfaces or []
 
@@ -98,14 +103,14 @@ class AgentOS:
         self.lifespan = lifespan
 
         # List of all MCP tools used inside the AgentOS
-        self.mcp_tools: List[MCPTools] = []
+        self.mcp_tools: List[Union[MCPTools, MultiMCPTools]] = []
 
         if self.agents:
             for agent in self.agents:
                 # Track all MCP tools to later handle their connection
                 if agent.tools:
                     for tool in agent.tools:
-                        if isinstance(tool, MCPTools):
+                        if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
                             self.mcp_tools.append(tool)
 
                 agent.initialize_agent()
@@ -118,7 +123,7 @@ class AgentOS:
                 # Track all MCP tools to later handle their connection
                 if team.tools:
                     for tool in team.tools:
-                        if isinstance(tool, MCPTools):
+                        if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
                             self.mcp_tools.append(tool)
 
                 team.initialize_team()
@@ -148,6 +153,7 @@ class AgentOS:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
         app_lifespan = lifespan
         if self.mcp_tools is not None:
+            mcp_tools_lifespan = partial(mcp_lifespan, mcp_tools=self.mcp_tools)
             # If there is already a lifespan, combine it with the MCP lifespan
             if lifespan is not None:
                 # Combine both lifespans
@@ -155,11 +161,12 @@ class AgentOS:
                 async def combined_lifespan(app: FastAPI):
                     # Run both lifespans
                     async with lifespan(app):  # type: ignore
-                        mcp_tools_lifespan = partial(mcp_lifespan, mcp_tools=self.mcp_tools)
                         async with mcp_tools_lifespan(app):  # type: ignore
                             yield
 
                 app_lifespan = combined_lifespan  # type: ignore
+            else:
+                app_lifespan = mcp_tools_lifespan
 
         return FastAPI(
             title=self.name or "Agno AgentOS",
@@ -211,33 +218,35 @@ class AgentOS:
         if self.enable_mcp and self.mcp_app:
             self.fastapi_app.mount("/", self.mcp_app)
 
-        # Add middleware
-        @self.fastapi_app.exception_handler(HTTPException)
-        async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": str(exc.detail)},
-            )
+        # Add middleware (only if app is not set)
+        if not self._app_set:
 
-        async def general_exception_handler(request: Request, call_next):
-            try:
-                return await call_next(request)
-            except Exception as e:
+            @self.fastapi_app.exception_handler(HTTPException)
+            async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
                 return JSONResponse(
-                    status_code=e.status_code if hasattr(e, "status_code") else 500,  # type: ignore
-                    content={"detail": str(e)},
+                    status_code=exc.status_code,
+                    content={"detail": str(exc.detail)},
                 )
 
-        self.fastapi_app.middleware("http")(general_exception_handler)
+            async def general_exception_handler(request: Request, call_next):
+                try:
+                    return await call_next(request)
+                except Exception as e:
+                    return JSONResponse(
+                        status_code=e.status_code if hasattr(e, "status_code") else 500,  # type: ignore
+                        content={"detail": str(e)},
+                    )
 
-        self.fastapi_app.add_middleware(
-            CORSMiddleware,
-            allow_origins=self.settings.cors_origin_list,  # type: ignore
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-            expose_headers=["*"],
-        )
+            self.fastapi_app.middleware("http")(general_exception_handler)
+
+            self.fastapi_app.add_middleware(
+                CORSMiddleware,
+                allow_origins=self.settings.cors_origin_list,  # type: ignore
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+                expose_headers=["*"],
+            )
 
         return self.fastapi_app
 
@@ -456,6 +465,7 @@ class AgentOS:
         host: str = "localhost",
         port: int = 7777,
         reload: bool = False,
+        workers: Optional[int] = None,
         **kwargs,
     ):
         import uvicorn
@@ -484,4 +494,4 @@ class AgentOS:
             )
         )
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
+        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, **kwargs)

@@ -23,7 +23,7 @@ from typing import (
     get_args,
     overload,
 )
-from uuid import NAMESPACE_DNS, uuid4, uuid5
+from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -129,10 +129,10 @@ class Agent:
     session_id: Optional[str] = None
     # Default session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
-    # If True, the agent can update the session state
-    enable_agentic_state: bool = False
-    # If True, add the session state to the user prompt
+    # Set to True to add the session_state to the context
     add_session_state_to_context: bool = False
+    # Set to True to give the agent tools to update the session_state dynamically
+    enable_agentic_state: bool = False
     # If True, cache the current Agent session in memory for faster access
     cache_session: bool = False
 
@@ -321,8 +321,6 @@ class Agent:
     # --- If this Agent is part of a workflow ---
     # Optional workflow ID. Indicates this agent is part of a workflow.
     workflow_id: Optional[str] = None
-    # Set when this agent is part of a workflow.
-    workflow_session_id: Optional[str] = None
 
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
@@ -345,7 +343,6 @@ class Agent:
         id: Optional[str] = None,
         introduction: Optional[str] = None,
         user_id: Optional[str] = None,
-        app_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         add_session_state_to_context: bool = False,
@@ -429,7 +426,6 @@ class Agent:
         self.id = id
         self.introduction = introduction
         self.user_id = user_id
-        self.app_id = app_id
 
         self.session_id = session_id
         self.session_state = session_state
@@ -548,7 +544,7 @@ class Agent:
     def set_id(self) -> None:
         if self.id is None:
             if self.name is not None:
-                self.id = str(uuid5(NAMESPACE_DNS, self.name))
+                self.id = self.name.lower().replace(" ", "-")
             else:
                 self.id = str(uuid4())
 
@@ -3231,6 +3227,12 @@ class Agent:
         if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunOutputEvent))
         ):
+            if model_response_event.event == RunEvent.custom_event:  # type: ignore
+                model_response_event.agent_id = self.id  # type: ignore
+                model_response_event.agent_name = self.name  # type: ignore
+                model_response_event.session_id = session.session_id  # type: ignore
+                model_response_event.run_id = run_response.run_id  # type: ignore
+
             # We just bubble the event up
             yield self._handle_event(model_response_event, run_response)  # type: ignore
         else:
@@ -4365,7 +4367,7 @@ class Agent:
 
             return agent_session
 
-        log_warning(f"AgentSession {session_id_to_load} not found in db")
+        log_debug(f"AgentSession {session_id_to_load} not found in db")
         return None
 
     def save_session(self, session: AgentSession) -> None:
@@ -6841,6 +6843,7 @@ class Agent:
 
         if self.output_schema is not None:
             markdown = False
+            markdown = False
 
         if stream is None:
             stream = self.stream or False
@@ -7172,10 +7175,12 @@ class Agent:
             image_artifacts = []
             for img in images:
                 try:
+                    artifact_id = img.id if hasattr(img, "id") and img.id else str(uuid4())
+
                     if img.url:
-                        image_artifacts.append(ImageArtifact(id=str(uuid4()), url=img.url))
+                        image_artifacts.append(ImageArtifact(id=artifact_id, url=img.url))
                     elif img.content:
-                        image_artifacts.append(ImageArtifact(id=str(uuid4()), content=img.content))
+                        image_artifacts.append(ImageArtifact(id=artifact_id, content=img.content))
                 except Exception as e:
                     log_warning(f"Error creating ImageArtifact: {e}")
                     continue
@@ -7185,10 +7190,12 @@ class Agent:
             video_artifacts = []
             for vid in videos:
                 try:
+                    artifact_id = vid.id if hasattr(vid, "id") and vid.id else str(uuid4())
+
                     if vid.url:
-                        video_artifacts.append(VideoArtifact(id=str(uuid4()), url=vid.url))
+                        video_artifacts.append(VideoArtifact(id=artifact_id, url=vid.url))
                     elif vid.content:
-                        video_artifacts.append(VideoArtifact(id=str(uuid4()), content=vid.content))
+                        video_artifacts.append(VideoArtifact(id=artifact_id, content=vid.content))
                 except Exception as e:
                     log_warning(f"Error creating VideoArtifact: {e}")
                     continue
@@ -7198,10 +7205,12 @@ class Agent:
             audio_artifacts = []
             for aud in audios:
                 try:
+                    artifact_id = aud.id if hasattr(aud, "id") and aud.id else str(uuid4())
+
                     if aud.url:
-                        audio_artifacts.append(AudioArtifact(id=str(uuid4()), url=aud.url))
+                        audio_artifacts.append(AudioArtifact(id=artifact_id, url=aud.url))
                     elif aud.content:
-                        audio_artifacts.append(AudioArtifact(id=str(uuid4()), content=aud.content))
+                        audio_artifacts.append(AudioArtifact(id=artifact_id, content=aud.content))
                 except Exception as e:
                     log_warning(f"Error creating AudioArtifact: {e}")
                     continue

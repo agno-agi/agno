@@ -63,14 +63,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
     model=Claude(id="claude-3-5-sonnet-latest"),
-    tools=[
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        )
-    ],
+    tools=[YFinanceTools()],
     instructions=["Use tables to display data"],
 )
 
@@ -107,18 +100,7 @@ calculator_agent = Agent(
     name="Calculator Agent",
     model=Claude(id="claude-3-5-sonnet-latest"),
     role="Calculate",
-    tools=[
-        CalculatorTools(
-            add=True,
-            subtract=True,
-            multiply=True,
-            divide=True,
-            exponentiate=True,
-            factorial=True,
-            is_prime=True,
-            square_root=True,
-        )
-    ],
+    tools=[CalculatorTools()],
 )
 
 agno_assist_knowledge = Knowledge(
@@ -181,7 +163,6 @@ local_python_agent = Agent(
 
 agent_team = Team(
     name="Multi-Purpose Team",
-    mode="coordinate",
     model=Claude(id="claude-3-7-sonnet-latest"),
     tools=[
         ReasoningTools(add_instructions=True, add_few_shot=True),
@@ -204,7 +185,6 @@ agent_team = Team(
     ],
     markdown=True,
     show_members_responses=True,
-    enable_agentic_context=True,
     share_member_interactions=True,
 )
 

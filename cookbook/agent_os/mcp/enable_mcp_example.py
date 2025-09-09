@@ -23,6 +23,7 @@ web_research_agent = Agent(
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,
+    enable_session_summaries=True,
     markdown=True,
 )
 
@@ -43,4 +44,4 @@ if __name__ == "__main__":
     http://localhost:7777/mcp
 
     """
-    agent_os.serve(app="enable_mcp_example:app", reload=True)
+    agent_os.serve(app="enable_mcp_example:app")

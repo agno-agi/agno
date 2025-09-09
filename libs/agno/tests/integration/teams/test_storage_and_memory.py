@@ -9,11 +9,9 @@ from agno.team.team import Team
 
 
 @pytest.fixture
-def route_team(shared_db):
+def team(shared_db):
     """Create a route team with db and memory for testing."""
     return Team(
-        name="Route Team",
-        mode="route",
         model=OpenAIChat(id="gpt-4o"),
         members=[],
         db=shared_db,
@@ -22,7 +20,7 @@ def route_team(shared_db):
 
 
 @pytest.fixture
-def route_team_with_members(shared_db):
+def team_with_members(shared_db):
     """Create a route team with db and memory for testing."""
 
     def get_weather(city: str) -> str:
@@ -40,8 +38,6 @@ def route_team_with_members(shared_db):
         tools=[get_weather, get_open_restaurants],
     )
     return Team(
-        name="Route Team",
-        mode="route",
         model=OpenAIChat(id="gpt-4o"),
         members=[travel_agent],
         db=shared_db,
@@ -51,7 +47,7 @@ def route_team_with_members(shared_db):
 
 
 @pytest.mark.asyncio
-async def test_run_history_persistence(route_team, shared_db):
+async def test_run_history_persistence(team, shared_db):
     """Test that all runs within a session are persisted in db."""
     user_id = "john@example.com"
     session_id = "session_123"
@@ -71,45 +67,125 @@ async def test_run_history_persistence(route_team, shared_db):
     assert len(conversation_messages) == num_turns
 
     for msg in conversation_messages:
-        await route_team.arun(msg, user_id=user_id, session_id=session_id)
+        await team.arun(msg, user_id=user_id, session_id=session_id)
 
     # Verify the stored session data after all turns
-    team_session = route_team.get_session(session_id=session_id)
+    team_session = team.get_session(session_id=session_id)
 
     first_user_message_content = team_session.runs[0].messages[1].content
     assert first_user_message_content == conversation_messages[0]
 
 
 @pytest.mark.asyncio
-async def test_run_session_summary(route_team, shared_db):
+async def test_store_member_responses_true(team_with_members, shared_db):
+    """Test that all runs within a session are persisted in db."""
+    team_with_members.store_member_responses = True
+    user_id = "john@example.com"
+    session_id = "session_123"
+
+    shared_db.clear_memories()
+
+    await team_with_members.arun("What's the weather like today in Tokyo?", user_id=user_id, session_id=session_id)
+
+    # Verify the stored session data after all turns
+    team_session = team_with_members.get_session(session_id=session_id)
+
+    assert team_session.runs[-1].member_responses is not None
+    assert len(team_session.runs[-1].member_responses) == 1
+    assert team_session.runs[-1].member_responses[0].content is not None
+
+
+@pytest.mark.asyncio
+async def test_store_member_responses_false(team_with_members, shared_db):
+    """Test that all runs within a session are persisted in db."""
+    team_with_members.store_member_responses = False
+    user_id = "john@example.com"
+    session_id = "session_123"
+
+    shared_db.clear_memories()
+
+    await team_with_members.arun("What's the weather like today in Tokyo?", user_id=user_id, session_id=session_id)
+
+    # Verify the stored session data after all turns
+    team_session = team_with_members.get_session(session_id=session_id)
+
+    assert team_session.runs[-1].member_responses == []
+
+
+@pytest.mark.asyncio
+async def test_store_member_responses_stream_true(team_with_members, shared_db):
+    """Test that all runs within a session are persisted in db."""
+    team_with_members.store_member_responses = True
+    user_id = "john@example.com"
+    session_id = "session_123"
+
+    shared_db.clear_memories()
+
+    response_iterator = team_with_members.arun(
+        "What's the weather like today in Tokyo?", stream=True, user_id=user_id, session_id=session_id
+    )
+    async for _ in response_iterator:
+        pass
+
+    # Verify the stored session data after all turns
+    team_session = team_with_members.get_session(session_id=session_id)
+
+    assert team_session.runs[-1].member_responses is not None
+    assert len(team_session.runs[-1].member_responses) == 1
+    assert team_session.runs[-1].member_responses[0].content is not None
+
+
+@pytest.mark.asyncio
+async def test_store_member_responses_stream_false(team_with_members, shared_db):
+    """Test that all runs within a session are persisted in db."""
+    team_with_members.store_member_responses = False
+    user_id = "john@example.com"
+    session_id = "session_123"
+
+    shared_db.clear_memories()
+
+    response_iterator = team_with_members.arun(
+        "What's the weather like today in Tokyo?", stream=True, user_id=user_id, session_id=session_id
+    )
+    async for _ in response_iterator:
+        pass
+
+    # Verify the stored session data after all turns
+    team_session = team_with_members.get_session(session_id=session_id)
+
+    assert team_session.runs[-1].member_responses == []
+
+
+@pytest.mark.asyncio
+async def test_run_session_summary(team, shared_db):
     """Test that the session summary is persisted in db."""
     session_id = "session_123"
     user_id = "john@example.com"
 
     # Enable session summaries
-    route_team.enable_user_memories = False
-    route_team.enable_session_summaries = True
+    team.enable_user_memories = False
+    team.enable_session_summaries = True
 
     # Clear memory for this specific test case
     shared_db.clear_memories()
 
-    await route_team.arun("Where is New York?", user_id=user_id, session_id=session_id)
+    await team.arun("Where is New York?", user_id=user_id, session_id=session_id)
 
-    assert route_team.get_session_summary(session_id=session_id).summary is not None
+    assert team.get_session_summary(session_id=session_id).summary is not None
 
-    team_session = route_team.get_session(session_id=session_id)
+    team_session = team.get_session(session_id=session_id)
     assert team_session.summary is not None
 
-    await route_team.arun("Where is Tokyo?", user_id=user_id, session_id=session_id)
+    await team.arun("Where is Tokyo?", user_id=user_id, session_id=session_id)
 
-    assert route_team.get_session_summary(session_id=session_id).summary is not None
+    assert team.get_session_summary(session_id=session_id).summary is not None
 
-    team_session = route_team.get_session(session_id=session_id)
+    team_session = team.get_session(session_id=session_id)
     assert team_session.summary is not None
 
 
 @pytest.mark.asyncio
-async def test_member_run_history_persistence(route_team_with_members, shared_db):
+async def test_member_run_history_persistence(team_with_members, shared_db):
     """Test that all runs within a member's session are persisted in db."""
     user_id = "john@example.com"
     session_id = "session_123"
@@ -118,11 +194,11 @@ async def test_member_run_history_persistence(route_team_with_members, shared_db
     shared_db.clear_memories()
 
     # First request
-    await route_team_with_members.arun(
+    await team_with_members.arun(
         "I'm traveling to Tokyo, what is the weather and open restaurants?", user_id=user_id, session_id=session_id
     )
 
-    session = route_team_with_members.get_session(session_id=session_id)
+    session = team_with_members.get_session(session_id=session_id)
     assert len(session.runs) >= 2, "Team leader run and atleast 1 member run"
     assert len(session.runs[-1].messages) == 4, "Only system message, user message, tool call, and response"
 
@@ -130,29 +206,29 @@ async def test_member_run_history_persistence(route_team_with_members, shared_db
     assert "I'm traveling to Tokyo, what is the weather and open restaurants?" in first_user_message_content
 
     # Second request
-    await route_team_with_members.arun(
+    await team_with_members.arun(
         "I'm traveling to Munich, what is the weather and open restaurants?", user_id=user_id, session_id=session_id
     )
 
-    session = route_team_with_members.get_session(session_id=session_id)
+    session = team_with_members.get_session(session_id=session_id)
     assert len(session.runs) >= 4, "2 team leader runs and atleast 2 member runs"
     assert len(session.runs[0].messages) == 3, "Messages relevant to the team leader"
     assert len(session.runs[2].messages) >= 8, "Messages relevant to Agent with the relevant tool"
 
     # Third request (to the member directly)
-    await route_team_with_members.members[0].arun(
+    await team_with_members.members[0].arun(
         "Write me a report about all the places I have requested information about",
         user_id=user_id,
         session_id=session_id,
     )
 
-    session = route_team_with_members.get_session(session_id=session_id)
+    session = team_with_members.get_session(session_id=session_id)
     assert len(session.runs) >= 4, "3 team leader runs and atleast a member run"
     assert len(session.runs[-1].messages) >= 4, "Messages relevant to Agent with the relevant tool"
 
 
 @pytest.mark.asyncio
-async def test_multi_user_multi_session_route_team(route_team, shared_db):
+async def test_multi_user_multi_session_team(team, shared_db):
     """Test multi-user multi-session route team with db and memory."""
     # Define user and session IDs
     user_1_id = "user_1@example.com"
@@ -168,30 +244,26 @@ async def test_multi_user_multi_session_route_team(route_team, shared_db):
     shared_db.clear_memories()
 
     # Team interaction with user 1 - Session 1
-    await route_team.arun("What is the current stock price of AAPL?", user_id=user_1_id, session_id=user_1_session_1_id)
-    await route_team.arun("What are the latest news about Apple?", user_id=user_1_id, session_id=user_1_session_1_id)
+    await team.arun("What is the current stock price of AAPL?", user_id=user_1_id, session_id=user_1_session_1_id)
+    await team.arun("What are the latest news about Apple?", user_id=user_1_id, session_id=user_1_session_1_id)
 
     # Team interaction with user 1 - Session 2
-    await route_team.arun(
+    await team.arun(
         "Compare the stock performance of AAPL with recent tech industry news",
         user_id=user_1_id,
         session_id=user_1_session_2_id,
     )
 
     # Team interaction with user 2
-    await route_team.arun("What is the current stock price of MSFT?", user_id=user_2_id, session_id=user_2_session_1_id)
-    await route_team.arun(
-        "What are the latest news about Microsoft?", user_id=user_2_id, session_id=user_2_session_1_id
-    )
+    await team.arun("What is the current stock price of MSFT?", user_id=user_2_id, session_id=user_2_session_1_id)
+    await team.arun("What are the latest news about Microsoft?", user_id=user_2_id, session_id=user_2_session_1_id)
 
     # Team interaction with user 3
-    await route_team.arun(
-        "What is the current stock price of GOOGL?", user_id=user_3_id, session_id=user_3_session_1_id
-    )
-    await route_team.arun("What are the latest news about Google?", user_id=user_3_id, session_id=user_3_session_1_id)
+    await team.arun("What is the current stock price of GOOGL?", user_id=user_3_id, session_id=user_3_session_1_id)
+    await team.arun("What are the latest news about Google?", user_id=user_3_id, session_id=user_3_session_1_id)
 
     # Continue the conversation with user 1
-    await route_team.arun(
+    await team.arun(
         "Based on the information you have, what stock would you recommend investing in?",
         user_id=user_1_id,
         session_id=user_1_session_1_id,

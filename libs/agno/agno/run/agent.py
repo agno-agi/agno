@@ -43,6 +43,8 @@ class RunEvent(str, Enum):
     output_model_response_started = "OutputModelResponseStarted"
     output_model_response_completed = "OutputModelResponseCompleted"
 
+    custom_event = "CustomEvent"
+
 
 @dataclass
 class BaseAgentRunEvent(BaseRunOutputEvent):
@@ -226,6 +228,11 @@ class OutputModelResponseCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.output_model_response_completed.value
 
 
+@dataclass
+class CustomEvent(BaseAgentRunEvent):
+    event: str = RunEvent.custom_event.value
+
+
 RunOutputEvent = Union[
     RunStartedEvent,
     RunContentEvent,
@@ -246,6 +253,7 @@ RunOutputEvent = Union[
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    CustomEvent,
 ]
 
 
@@ -270,6 +278,7 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     RunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     RunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    RunEvent.custom_event.value: CustomEvent,
 }
 
 

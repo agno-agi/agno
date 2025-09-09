@@ -25,7 +25,7 @@ from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.agent import RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
@@ -1223,6 +1223,9 @@ class Model(ABC):
                         if function_call.function.show_result:
                             yield ModelResponse(content=item.content)
 
+                        if isinstance(item, CustomEvent):
+                            function_call_output += str(item)
+
                     # Yield the event itself to bubble it up
                     yield item
 
@@ -1389,7 +1392,7 @@ class Model(ABC):
     async def arun_function_call(
         self,
         function_call: FunctionCall,
-    ) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall, Optional[Dict[str, Any]]]:
+    ) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall, FunctionExecutionResult]:
         """Run a single function call and return its success status, timer, and the FunctionCall object."""
         from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction
 
@@ -1423,7 +1426,7 @@ class Model(ABC):
             raise e
 
         function_call_timer.stop()
-        return success, function_call_timer, function_call, result.updated_session_state
+        return success, function_call_timer, function_call, result
 
     async def arun_function_calls(
         self,
@@ -1569,7 +1572,9 @@ class Model(ABC):
                 raise result
 
             # Unpack result
-            function_call_success, function_call_timer, function_call, updated_session_state = result
+            function_call_success, function_call_timer, function_call, function_execution_result = result
+
+            updated_session_state = function_execution_result.updated_session_state
 
             # Handle AgentRunException
             if isinstance(function_call_success, AgentRunException):
@@ -1623,20 +1628,43 @@ class Model(ABC):
                                 yield ModelResponse(content=item.content)
                                 continue
 
+                            if isinstance(item, CustomEvent):
+                                function_call_output += str(item)
+
                         # Yield the event itself to bubble it up
                         yield item
+
+                    # Yield custom events emitted by the tool
                     else:
                         function_call_output += str(item)
                         if function_call.function.show_result:
                             yield ModelResponse(content=str(item))
             else:
-                function_call_output = str(function_call.result)
+                from agno.tools.function import ToolResult
+
+                if isinstance(function_execution_result.result, ToolResult):
+                    tool_result = function_execution_result.result
+                    function_call_output = tool_result.content
+
+                    if tool_result.images:
+                        function_execution_result.images = tool_result.images
+                    if tool_result.videos:
+                        function_execution_result.videos = tool_result.videos
+                    if tool_result.audios:
+                        function_execution_result.audios = tool_result.audios
+                else:
+                    function_call_output = str(function_call.result)
+
                 if function_call.function.show_result:
                     yield ModelResponse(content=function_call_output)
 
             # Create and yield function call result
             function_call_result = self.create_function_call_result(
-                function_call, success=function_call_success, output=function_call_output, timer=function_call_timer
+                function_call,
+                success=function_call_success,
+                output=function_call_output,
+                timer=function_call_timer,
+                function_execution_result=function_execution_result,
             )
             yield ModelResponse(
                 content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
@@ -1653,6 +1681,9 @@ class Model(ABC):
                 ],
                 event=ModelResponseEvent.tool_call_completed.value,
                 updated_session_state=updated_session_state,
+                images=function_execution_result.images,
+                videos=function_execution_result.videos,
+                audios=function_execution_result.audios,
             )
 
             # Add function call result to function call results

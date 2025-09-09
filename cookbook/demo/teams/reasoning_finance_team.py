@@ -63,7 +63,6 @@ finance_agent = Agent(
 def get_reasoning_finance_team():
     return Team(
         name="Reasoning Finance Team",
-        mode="coordinate",
         id="reasoning_finance_team",
         model=Claude(id="claude-sonnet-4-20250514"),
         members=[
@@ -85,7 +84,6 @@ def get_reasoning_finance_team():
         enable_user_memories=True,
         markdown=True,
         show_members_responses=True,
-        enable_agentic_context=True,
         add_datetime_to_context=True,
     )
 

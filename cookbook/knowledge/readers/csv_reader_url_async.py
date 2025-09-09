@@ -1,6 +1,7 @@
 import asyncio
 
 from agno.agent import Agent
+from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
@@ -12,6 +13,7 @@ knowledge = Knowledge(
         table_name="csv_documents",
         db_url=db_url,
     ),
+    contents_db=PostgresDb(db_url=db_url),
 )
 
 # Initialize the Agent with the knowledge

@@ -20,18 +20,11 @@ Teams support three coordination modes:
 ```python
 from agno.team import Team
 
-# Route: Direct tasks to the best agent
-team = Team(members=[agent1, agent2], mode="route")
-
-# Coordinate: Agents work sequentially 
-team = Team(members=[agent1, agent2], mode="coordinate")
-
-# Collaborate: Agents work together to reach consensus
-team = Team(members=[agent1, agent2], mode="collaborate")
+team = Team(members=[agent1, agent2])
 ```
 
 ## Examples
 
-- **[01_async_collaborate.py](./01_async_collaborate.py)** - Asynchronous collaborative mode
-- **[02_async_coordinate.py](./02_async_coordinate.py)** - Asynchronous coordination mode
-- **[03_async_route.py](./03_async_route.py)** - Asynchronous routing mode
+- **[01_async_coordinated_team.py](./01_async_coordinated_team.py)** - Asynchronous coordinated team example
+- **[02_async_delegate_to_all_members.py](./02_async_delegate_to_all_members.py)** - Asynchronous delegation to all members example
+- **[03_async_respond_directly.py](./03_async_respond_directly.py)** - Asynchronous direct-member routing example

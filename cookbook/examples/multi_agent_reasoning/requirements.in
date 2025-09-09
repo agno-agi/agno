@@ -1,9 +1,0 @@
-agno
-anthropic
-ddgs
-fastapi[standard]
-openai
-pgvector
-psycopg[binary]
-sqlalchemy
-yfinance

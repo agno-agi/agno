@@ -208,6 +208,13 @@ class Workflow:
 
         self._workflow_session: Optional[WorkflowSession] = None
 
+    def set_id(self) -> None:
+        if self.id is None:
+            if self.name is not None:
+                self.id = self.name.lower().replace(" ", "-")
+            else:
+                self.id = str(uuid4())
+
     def _validate_input(
         self, input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]]
     ) -> Optional[BaseModel]:
@@ -293,7 +300,7 @@ class Workflow:
 
     def initialize_workflow(self):
         if self.id is None:
-            self.id = str(uuid4())
+            self.set_id()
             log_debug(f"Generated new workflow_id: {self.id}")
 
     def _initialize_session(

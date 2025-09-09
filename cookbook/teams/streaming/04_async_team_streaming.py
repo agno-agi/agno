@@ -43,7 +43,6 @@ company_info_agent = Agent(
 # Create team with async streaming capabilities
 team = Team(
     name="Stock Research Team",
-    mode="route",
     model=OpenAIChat("o3-mini"),
     members=[stock_searcher, company_info_agent],
     markdown=True,
