@@ -589,6 +589,15 @@ class Agent:
         if isinstance(input, Message):
             input = input.content  # type: ignore
 
+        # If input is a string, convert it to a dict
+        if isinstance(input, str):
+            import json
+
+            try:
+                input = json.loads(input)
+            except Exception as e:
+                raise ValueError(f"Failed to parse input. Is it a valid JSON string?: {e}")
+
         # Case 1: Message is already a BaseModel instance
         if isinstance(input, BaseModel):
             if isinstance(input, self.input_schema):
