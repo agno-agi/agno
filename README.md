@@ -19,7 +19,7 @@
 
 Agno gives you the fastest framework for building agents with out of the box session management, memory, knowledge, human in the loop and MCP support. You can also build autonomous multi-agent teams, or step-based agentic workflows for full control over complex multi-step agentic processes.
 
-For example, in 10 lines of code, we can build an Agent that will fetch the top stories from HackerNews and summarize them.
+In 10 lines of code, we can build an Agent that will fetch the top stories from HackerNews and summarize them.
 
 ```python hackernews_agent.py
 from agno.agent import Agent
