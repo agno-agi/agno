@@ -3,9 +3,9 @@ import base64
 from io import BytesIO
 
 from agno.agent import Agent, RunOutput  # noqa
+from agno.db.in_memory import InMemoryDb
 from agno.models.google import Gemini
 from PIL import Image
-from agno.db.in_memory import InMemoryDb    
 
 # No system message should be provided
 agent = Agent(
@@ -29,7 +29,7 @@ async def generate_image():
             if image_bytes:
                 if isinstance(image_bytes, bytes):
                     image_bytes = base64.b64decode(image_bytes)
-                
+
                 image = Image.open(BytesIO(image_bytes))
                 image.show()
                 # Save the image to a file

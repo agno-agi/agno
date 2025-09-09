@@ -46,7 +46,5 @@ response = agent.run(
 print("\nChecking for Audio Artifacts on Agent...")
 if response.audio:
     base64_audio = base64.b64encode(response.audio[0].content).decode("utf-8")
-    save_base64_data(
-        base64_data=base64_audio, output_path="tmp/greeting.mp3"
-    )
+    save_base64_data(base64_data=base64_audio, output_path="tmp/greeting.mp3")
     print("Saved audio to tmp/greeting.mp3")
