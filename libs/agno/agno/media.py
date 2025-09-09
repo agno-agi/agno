@@ -174,39 +174,6 @@ class Audio(BaseModel):
         return None
 
     @classmethod
-    def from_artifact(cls, artifact: AudioArtifact) -> "Audio":
-        return cls(url=artifact.url, content=artifact.base64_audio, format=artifact.mime_type)
-
-
-class AudioResponse(BaseModel):
-    id: Optional[str] = None
-    content: Optional[bytes] = None  # Raw binary audio data
-    expires_at: Optional[int] = None
-    transcript: Optional[str] = None
-
-    mime_type: Optional[str] = None
-    sample_rate: Optional[int] = 24000
-    channels: Optional[int] = 1
-
-    @property
-    def binary_data(self) -> bytes:
-        """Get audio data as binary bytes."""
-        return self.content or b""
-
-    def to_dict(self) -> Dict[str, Any]:
-        import base64
-
-        # Serialize audio content
-        content_value = None
-        if self.content:
-            content_value = base64.b64encode(self.content).decode("utf-8")
-
-        response_dict = {
-            "id": self.id,
-            "content": content_value,
-            "expires_at": self.expires_at,
-            "transcript": self.transcript,
-          
     def from_base64(
         cls,
         base64_content: str,

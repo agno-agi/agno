@@ -12,9 +12,9 @@ agent = Agent(
     )
 )
 
-agent.run("Say cheerfully: Have a wonderful day!")
+run_output = agent.run("Say cheerfully: Have a wonderful day!")
 
-if agent.run_response.response_audio is not None:
-    audio_data = agent.run_response.response_audio.binary_data
-    output_file = "tmp/generated_speech.wav"
+if run_output.response_audio is not None:
+    audio_data = run_output.response_audio.content
+    output_file = "tmp/cheerful_greeting.wav"
     write_wav_audio_to_file(output_file, audio_data)
