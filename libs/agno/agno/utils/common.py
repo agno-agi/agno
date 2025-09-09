@@ -10,24 +10,6 @@ def isinstanceany(obj: Any, class_list: List[Type]) -> bool:
     return False
 
 
-def str_to_int(inp: Optional[str]) -> Optional[int]:
-    """
-    Safely converts a string value to integer.
-    Args:
-        inp: input string
-
-    Returns: input string as int if possible, None if not
-    """
-    if inp is None:
-        return None
-
-    try:
-        val = int(inp)
-        return val
-    except Exception:
-        return None
-
-
 def is_empty(val: Any) -> bool:
     """Returns True if val is None or empty"""
     if val is None or len(val) == 0 or val == "":
@@ -43,7 +25,7 @@ def dataclass_to_dict(dataclass_object, exclude: Optional[set[str]] = None, excl
     final_dict = asdict(dataclass_object)
     if exclude:
         for key in exclude:
-            final_dict.pop(key)
+            final_dict.pop(key, None)
     if exclude_none:
         final_dict = {k: v for k, v in final_dict.items() if v is not None}
     return final_dict

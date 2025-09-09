@@ -16,26 +16,41 @@ from agno.agent import Agent
 from agno.models.google.gemini import Gemini
 from agno.tools.todoist import TodoistTools
 
-todoist_agent = Agent(
-    name="Todoist Agent",
-    role="Manage your todoist tasks",
+# Example 1: All functions available (default behavior)
+todoist_agent_all = Agent(
+    name="Todoist Agent - All Functions",
+    role="Manage your todoist tasks with full capabilities",
     instructions=[
-        "When given a task, create a todoist task for it.",
-        "When given a list of tasks, create a todoist task for each one.",
-        "When given a task to update, update the todoist task.",
-        "When given a task to delete, delete the todoist task.",
-        "When given a task to get, get the todoist task.",
+        "You have access to all Todoist operations.",
+        "You can create, read, update, delete tasks and manage projects.",
     ],
-    agent_id="todoist-agent",
+    id="todoist-agent-all",
     model=Gemini("gemini-2.0-flash-exp"),
     tools=[TodoistTools()],
     markdown=True,
-    show_tool_calls=True,
 )
+
+
+# Example 3: Exclude dangerous functions
+todoist_agent = Agent(
+    name="Todoist Agent - Safe Mode",
+    role="Manage your todoist tasks safely",
+    instructions=[
+        "You can create and update tasks but cannot delete anything.",
+        "You have read access to all tasks and projects.",
+    ],
+    id="todoist-agent-safe",
+    model=Gemini("gemini-2.0-flash-exp"),
+    tools=[TodoistTools(exclude_tools=["delete_task"])],
+    markdown=True,
+)
+
 
 # Example 1: Create a task
 print("\n=== Create a task ===")
-todoist_agent.print_response("Create a todoist task to buy groceries tomorrow at 10am")
+todoist_agent_all.print_response(
+    "Create a todoist task to buy groceries tomorrow at 10am"
+)
 
 
 # Example 2: Delete a task
@@ -43,8 +58,3 @@ print("\n=== Delete a task ===")
 todoist_agent.print_response(
     "Delete the todoist task to buy groceries tomorrow at 10am"
 )
-
-
-# Example 3: Get all tasks
-print("\n=== Get all tasks ===")
-todoist_agent.print_response("Get all the todoist tasks")

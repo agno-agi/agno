@@ -10,7 +10,6 @@ agent = Agent(
         name="LiteLLM",
     ),
     tools=[DuckDuckGoTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 

@@ -3,8 +3,8 @@ from unittest.mock import MagicMock
 import pytest
 from ag_ui.core import EventType
 
-from agno.app.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events
-from agno.run.response import RunResponseContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
+from agno.os.interfaces.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events
+from agno.run.agent import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 
 def test_event_buffer_initial_state():
@@ -156,14 +156,14 @@ def test_event_buffer_blocking_behavior_edge_cases():
 @pytest.mark.asyncio
 async def test_stream_basic():
     """Test the async_stream_agno_response_as_agui_events function emits all expected events in a basic case."""
-    from agno.run.response import RunEvent
+    from agno.run.agent import RunEvent
 
     async def mock_stream():
-        text_response = RunResponseContentEvent()
-        text_response.event = RunEvent.run_response_content
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
         text_response.content = "Hello world"
         yield text_response
-        completed_response = RunResponseContentEvent()
+        completed_response = RunContentEvent()
         completed_response.event = RunEvent.run_completed
         completed_response.content = ""
         yield completed_response
@@ -183,12 +183,12 @@ async def test_stream_basic():
 @pytest.mark.asyncio
 async def test_stream_with_tool_call_blocking():
     """Test that events are properly buffered during tool calls"""
-    from agno.run.response import RunEvent
+    from agno.run.agent import RunEvent
 
     async def mock_stream_with_tool_calls():
         # Start with a text response
-        text_response = RunResponseContentEvent()
-        text_response.event = RunEvent.run_response_content
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
         text_response.content = "I'll help you"
         yield text_response
 
@@ -203,8 +203,8 @@ async def test_stream_with_tool_call_blocking():
         tool_start_response.tool = tool_call
         yield tool_start_response
 
-        buffered_text_response = RunResponseContentEvent()
-        buffered_text_response.event = RunEvent.run_response_content
+        buffered_text_response = RunContentEvent()
+        buffered_text_response.event = RunEvent.run_content
         buffered_text_response.content = "Searching..."
         yield buffered_text_response
         tool_end_response = ToolCallCompletedEvent()
@@ -212,7 +212,7 @@ async def test_stream_with_tool_call_blocking():
         tool_end_response.content = ""
         tool_end_response.tool = tool_call
         yield tool_end_response
-        completed_response = RunResponseContentEvent()
+        completed_response = RunContentEvent()
         completed_response.event = RunEvent.run_completed
         completed_response.content = ""
         yield completed_response

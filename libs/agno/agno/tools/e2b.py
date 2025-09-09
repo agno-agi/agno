@@ -8,9 +8,10 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.code_execution import prepare_python_code
 from agno.utils.log import logger
 
@@ -24,27 +25,14 @@ class E2BTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        run_code: bool = True,
-        upload_file: bool = True,
-        download_result: bool = True,
-        filesystem: bool = False,
-        internet_access: bool = False,
-        sandbox_management: bool = False,
         timeout: int = 300,  # 5 minutes default timeout
         sandbox_options: Optional[Dict[str, Any]] = None,
-        command_execution: bool = False,
         **kwargs,
     ):
         """Initialize E2B toolkit for code interpretation and running Python code in a sandbox.
 
         Args:
             api_key: E2B API key (defaults to E2B_API_KEY environment variable)
-            run_code: Whether to register the run_code function
-            upload_file: Whether to register the upload_file function
-            download_result: Whether to register the download_result function
-            filesystem: Whether to register filesystem operations
-            internet_access: Whether to register internet access functions
-            sandbox_management: Whether to register sandbox management functions
             timeout: Timeout in seconds for the sandbox (default: 5 minutes)
             sandbox_options: Additional options to pass to the Sandbox constructor
         """
@@ -67,26 +55,33 @@ class E2BTools(Toolkit):
         self.last_execution = None
         self.downloaded_files: Dict[int, str] = {}
 
-        tools: List[Any] = []
-
-        if run_code:
-            tools.append(self.run_python_code)
-        if upload_file:
-            tools.append(self.upload_file)
-        if download_result:
-            tools.extend([self.download_png_result, self.download_chart_data, self.download_file_from_sandbox])
-        if filesystem:
-            tools.extend([self.list_files, self.read_file_content, self.write_file_content, self.watch_directory])
-        if internet_access:
-            tools.extend([self.get_public_url, self.run_server])
-        if sandbox_management:
-            tools.extend(
-                [self.set_sandbox_timeout, self.get_sandbox_status, self.shutdown_sandbox, self.list_running_sandboxes]
-            )
-        if command_execution:
-            tools.extend(
-                [self.run_command, self.stream_command, self.run_background_command, self.kill_background_command]
-            )
+        tools: List[Any] = [
+            # Code execution
+            self.run_python_code,
+            # File operations
+            self.upload_file,
+            self.download_png_result,
+            self.download_chart_data,
+            self.download_file_from_sandbox,
+            # Filesystem operations
+            self.list_files,
+            self.read_file_content,
+            self.write_file_content,
+            self.watch_directory,
+            # Internet access
+            self.get_public_url,
+            self.run_server,
+            # Sandbox management
+            self.set_sandbox_timeout,
+            self.get_sandbox_status,
+            self.shutdown_sandbox,
+            self.list_running_sandboxes,
+            # Command execution
+            self.run_command,
+            self.stream_command,
+            self.run_background_command,
+            self.kill_background_command,
+        ]
 
         super().__init__(name="e2b_tools", tools=tools, **kwargs)
 
@@ -164,9 +159,9 @@ class E2BTools(Toolkit):
 
     def download_png_result(
         self, agent: Union[Agent, Team], result_index: int = 0, output_path: Optional[str] = None
-    ) -> str:
+    ) -> ToolResult:
         """
-        Add a PNG image result from the last code execution as an ImageArtifact to the agent.
+        Add a PNG image result from the last code execution as an Image object.
 
         Args:
             agent: The agent to add the image artifact to
@@ -174,21 +169,23 @@ class E2BTools(Toolkit):
             output_path (str, optional): Optional path to also save the PNG file. If not provided, image is only added as artifact.
 
         Returns:
-            str: Success message or error message
+            ToolResult: Contains the PNG image or error message.
         """
         if not self.last_execution:
-            return "No code has been executed yet"
+            return ToolResult(content="No code has been executed yet")
 
         try:
             # Check if the result exists
             if result_index >= len(self.last_execution.results):
-                return f"Result index {result_index} is out of range. Only {len(self.last_execution.results)} results available."
+                return ToolResult(
+                    content=f"Result index {result_index} is out of range. Only {len(self.last_execution.results)} results available."
+                )
 
             result = self.last_execution.results[result_index]
 
             # Check if the result has a PNG
             if not result.png:
-                return f"Result at index {result_index} is not a PNG image"
+                return ToolResult(content=f"Result at index {result_index} is not a PNG image")
 
             # Decode PNG data from base64
             png_data = base64.b64decode(result.png)
@@ -200,7 +197,6 @@ class E2BTools(Toolkit):
                 self.downloaded_files[result_index] = output_path
 
             # Create a temporary file to store the image for URL access
-
             # Create a temp file with .png extension
             fd, temp_path = tempfile.mkstemp(suffix=".png")
             with fdopen(fd, "wb") as tmp:
@@ -209,28 +205,28 @@ class E2BTools(Toolkit):
             # Generate a file:// URL for the temp file
             file_url = f"file://{temp_path}"
 
-            # Add image artifact to the agent
+            # Create Image object
             image_id = str(uuid4())
-            agent.add_image(
-                ImageArtifact(
-                    id=image_id, url=file_url, original_prompt=f"Generated from code execution result {result_index}"
-                )
+            image_artifact = Image(
+                id=image_id, url=file_url, original_prompt=f"Generated from code execution result {result_index}"
             )
 
             if output_path:
-                return f"Image added as artifact with ID {image_id} and saved to {output_path}"
+                content_msg = f"Image added as artifact with ID {image_id} and saved to {output_path}"
             else:
-                return f"Image added as artifact with ID {image_id}"
+                content_msg = f"Image added as artifact with ID {image_id}"
+
+            return ToolResult(content=content_msg, images=[image_artifact])
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error processing PNG: {str(e)}"})
+            return ToolResult(content=f"Error processing PNG: {str(e)}")
 
     def download_chart_data(
         self, agent: Agent, result_index: int = 0, output_path: Optional[str] = None, add_as_artifact: bool = True
-    ) -> str:
+    ) -> ToolResult:
         """
         Extract chart data from an interactive chart in the execution results.
-        Optionally add the chart as an image artifact to the agent.
+        Optionally add the chart as an image artifact.
 
         Args:
             agent: The agent to add the chart artifact to
@@ -239,21 +235,23 @@ class E2BTools(Toolkit):
             add_as_artifact (bool): Whether to add the chart as an image artifact (default: True)
 
         Returns:
-            str: Information about the extracted chart data or error message
+            ToolResult: Contains chart information and optionally the chart image.
         """
         if not self.last_execution:
-            return "No code has been executed yet"
+            return ToolResult(content="No code has been executed yet")
 
         try:
             # Check if the result exists
             if result_index >= len(self.last_execution.results):
-                return f"Result index {result_index} is out of range. Only {len(self.last_execution.results)} results available."
+                return ToolResult(
+                    content=f"Result index {result_index} is out of range. Only {len(self.last_execution.results)} results available."
+                )
 
             result = self.last_execution.results[result_index]
 
             # Check if the result has chart data
             if not result.chart:
-                return f"Result at index {result_index} does not contain interactive chart data"
+                return ToolResult(content=f"Result at index {result_index} does not contain interactive chart data")
 
             # Format chart data
             chart_data = result.chart
@@ -276,6 +274,7 @@ class E2BTools(Toolkit):
             if "y_label" in chart_data:
                 summary += f"Y-axis: {chart_data['y_label']}\n"
 
+            image_artifact = None
             # Add as an image artifact if requested
             if add_as_artifact and result.png:
                 # Decode PNG data from base64
@@ -293,20 +292,21 @@ class E2BTools(Toolkit):
                 # Generate a file:// URL for the temp file
                 file_url = f"file://{temp_path}"
 
-                # Add image artifact to the agent
+                # Create Image object
                 image_id = str(uuid4())
-                agent.add_image(
-                    ImageArtifact(
-                        id=image_id, url=file_url, original_prompt=f"Interactive {chart_type} chart from code execution"
-                    )
+                image_artifact = Image(
+                    id=image_id, url=file_url, original_prompt=f"Interactive {chart_type} chart from code execution"
                 )
 
                 summary += f"\nChart image added as artifact with ID {image_id}"
 
-            return summary
+            if image_artifact:
+                return ToolResult(content=summary, images=[image_artifact])
+            else:
+                return ToolResult(content=summary)
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error extracting chart data: {str(e)}"})
+            return ToolResult(content=f"Error extracting chart data: {str(e)}")
 
     def download_file_from_sandbox(self, sandbox_path: str, local_path: Optional[str] = None) -> str:
         """

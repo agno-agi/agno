@@ -1,18 +1,12 @@
-from textwrap import dedent
-
 from agno.agent import Agent
-from agno.knowledge.url import UrlKnowledge
-from agno.models.anthropic import Claude
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.knowledge import KnowledgeTools
-from agno.tools.reasoning import ReasoningTools
-from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-agno_docs = UrlKnowledge(
-    urls=["https://www.paulgraham.com/read.html"],
+agno_docs = Knowledge(
     # Use LanceDB as the vector database and store embeddings in the `agno_docs` table
     vector_db=LanceDb(
         uri="tmp/lancedb",
@@ -20,6 +14,8 @@ agno_docs = UrlKnowledge(
         search_type=SearchType.hybrid,
     ),
 )
+# Add content to the knowledge
+agno_docs.add_content(url="https://www.paulgraham.com/read.html")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,
@@ -35,22 +31,19 @@ web_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
-    ],
-    add_datetime_to_instructions=True,
+    tools=[DuckDuckGoTools(search=True)],
+    add_datetime_to_context=True,
 )
 
 team_leader = Team(
     name="Reasoning Finance Team",
-    mode="coordinate",
     model=OpenAIChat(id="gpt-4o"),
     members=[
         web_agent,
@@ -63,15 +56,11 @@ team_leader = Team(
     ],
     markdown=True,
     show_members_responses=True,
-    enable_agentic_context=True,
-    add_datetime_to_instructions=True,
-    success_criteria="The team has successfully completed the task.",
+    add_datetime_to_context=True,
 )
 
 
 def run_team(task: str):
-    # Comment out after first run
-    agno_docs.load(recreate=True)
     team_leader.print_response(
         task,
         stream=True,

@@ -3,6 +3,7 @@
 This example demonstrates how to use NebiusTools for text-to-image generation with Nebius AI Studio.
 """
 
+import base64
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -23,7 +24,6 @@ agent = Agent(
         )
     ],
     name="Nebius Image Generator",
-    show_tool_calls=True,
     markdown=True,
 )
 
@@ -35,7 +35,11 @@ response = agent.run(
 if response.images:
     image_path = Path("tmp") / f"nebius_futuristic_city_{uuid4()}.png"
     Path("tmp").mkdir(exist_ok=True)
-    save_base64_data(response.images[0].content, image_path)
+    image_base64 = base64.b64encode(response.images[0].content).decode("utf-8")
+    save_base64_data(
+        base64_data=image_base64,
+        output_path=str(image_path),
+    )
     print(f"Image saved to {image_path}")
 
 # Example 2: Generate an image with the higher quality model
@@ -49,7 +53,6 @@ high_quality_agent = Agent(
         )
     ],
     name="Nebius High-Quality Image Generator",
-    show_tool_calls=True,
     markdown=True,
 )
 
@@ -61,7 +64,11 @@ response = high_quality_agent.run(
 if response.images:
     image_path = Path("tmp") / f"nebius_cyberpunk_character_{uuid4()}.png"
     Path("tmp").mkdir(exist_ok=True)
-    save_base64_data(response.images[0].content, image_path)
+    image_base64 = base64.b64encode(response.images[0].content).decode("utf-8")
+    save_base64_data(
+        base64_data=image_base64,
+        output_path=str(image_path),
+    )
     print(f"High-quality image saved to {image_path}")
 
 # Example 3: Generate an image with the SDXL (Stability Diffusion XL model) model
@@ -74,7 +81,6 @@ sdxl_agent = Agent(
         )
     ],
     name="Nebius SDXL Image Generator",
-    show_tool_calls=True,
     markdown=True,
 )
 
@@ -86,5 +92,9 @@ response = sdxl_agent.run(
 if response.images:
     image_path = Path("tmp") / f"nebius_fantasy_landscape_{uuid4()}.png"
     Path("tmp").mkdir(exist_ok=True)
-    save_base64_data(response.images[0].content, image_path)
+    image_base64 = base64.b64encode(response.images[0].content).decode("utf-8")
+    save_base64_data(
+        base64_data=image_base64,
+        output_path=str(image_path),
+    )
     print(f"SDXL image saved to {image_path}")
