@@ -32,6 +32,8 @@ The server will start on `http://localhost:8000` with WebSocket endpoint at `ws:
 python websocket_client.py -i
 ```
 
+Then enter you message like `start <input message>`
+
 **Single Command Mode**:
 ```bash
 python websocket_client.py -m "Research the latest AI developments in 2024"
