@@ -441,6 +441,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         log_info("Deleting all content")
         knowledge.remove_all_content()
 
+        return "success"
+
     @router.get(
         "/knowledge/content/{content_id}/status",
         status_code=200,
