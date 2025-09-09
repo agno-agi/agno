@@ -140,6 +140,29 @@ class LanceDb(VectorDb):
 
         log_debug(f"Initialized LanceDb with table: '{self.table_name}'")
 
+    def _prepare_vector(self, embedding) -> List[float]:
+        """Prepare vector embedding for insertion, ensuring correct dimensions and type."""
+        if embedding is not None:
+            # Convert to list of floats
+            vector = [float(x) for x in embedding]
+
+            # Ensure vector has correct dimensions if specified
+            if self.dimensions:
+                if len(vector) != self.dimensions:
+                    if len(vector) > self.dimensions:
+                        # Truncate if too long
+                        vector = vector[: self.dimensions]
+                        log_debug(f"Truncated vector from {len(embedding)} to {self.dimensions} dimensions")
+                    else:
+                        # Pad with zeros if too short
+                        vector.extend([0.0] * (self.dimensions - len(vector)))
+                        log_debug(f"Padded vector from {len(embedding)} to {self.dimensions} dimensions")
+
+            return vector
+        else:
+            # Fallback if embedding is None
+            return [0.0] * (self.dimensions or 1536)
+
     async def _get_async_connection(self) -> lancedb.AsyncConnection:
         """Get or create an async connection to LanceDB."""
         if self.async_connection is None:
@@ -195,9 +218,16 @@ class LanceDb(VectorDb):
                     raise
 
     def _base_schema(self) -> pa.Schema:
+        # Use fixed-size list for vector field as required by LanceDB
+        if self.dimensions:
+            vector_field = pa.field(self._vector_col, pa.list_(pa.float32(), self.dimensions))
+        else:
+            # Fallback to dynamic list if dimensions not known (should be rare)
+            vector_field = pa.field(self._vector_col, pa.list_(pa.float32()))
+
         return pa.schema(
             [
-                pa.field(self._vector_col, pa.list_(pa.float32())),
+                vector_field,
                 pa.field(self._id, pa.string()),
                 pa.field("payload", pa.string()),
             ]
@@ -286,9 +316,7 @@ class LanceDb(VectorDb):
             data.append(
                 {
                     "id": doc_id,
-                    "vector": [float(x) for x in document.embedding]
-                    if document.embedding
-                    else [0.0] * (self.dimensions or 1536),
+                    "vector": self._prepare_vector(document.embedding),
                     "payload": json.dumps(payload),
                 }
             )
@@ -353,9 +381,7 @@ class LanceDb(VectorDb):
             data.append(
                 {
                     "id": doc_id,
-                    "vector": [float(x) for x in document.embedding]
-                    if document.embedding
-                    else [0.0] * (self.dimensions or 1536),
+                    "vector": self._prepare_vector(document.embedding),
                     "payload": json.dumps(payload),
                 }
             )
@@ -670,26 +696,25 @@ class LanceDb(VectorDb):
             return await self.async_table.count_rows()
         return 0
 
-    def _async_get_count_sync(self) -> int:
-        """Helper method to run async_get_count in a new thread with its own event loop"""
-        import asyncio
-
-        return asyncio.run(self.async_get_count())
-
     def get_count(self) -> int:
         # If we have data in the async table but sync table isn't available, try to get count from async table
         if self.async_table is not None:
             try:
                 import asyncio
 
-                # Check if we're already in an async context
+                # Check if we're already in an event loop
                 try:
-                    return self._async_get_count_sync()
+                    asyncio.get_running_loop()
+                    # We're in an async context, can't use asyncio.run
+                    log_debug("Already in async context, falling back to sync table for count")
                 except RuntimeError:
                     # No event loop running, safe to use asyncio.run
-                    return asyncio.run(self.async_get_count())
-            except Exception:
-                pass
+                    try:
+                        return asyncio.run(self.async_get_count())
+                    except Exception as e:
+                        log_debug(f"Failed to get async count: {e}")
+            except Exception as e:
+                log_debug(f"Error in async count logic: {e}")
 
         if self.exists() and self.table:
             return self.table.count_rows()
