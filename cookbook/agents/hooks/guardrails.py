@@ -6,14 +6,15 @@ This example shows how to:
 2. An output validation hook that checks for professionalism from the main agent's output
 """
 
-from pydantic import BaseModel
 from typing import Any
+
 from agno.agent import Agent
 from agno.exceptions import InputValidationError, OutputValidationError
 from agno.guardrails import GuardrailTrigger
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunOutput
 from agno.utils.pprint import pprint_run_response
+from pydantic import BaseModel
 
 
 def prompt_injection_check(
@@ -27,22 +28,25 @@ def prompt_injection_check(
         "forget everything above",
         "developer mode",
         "override safety",
-        "disregard guidelines"
+        "disregard guidelines",
     ]
 
     if any(keyword in input.lower() for keyword in injection_patterns):
-        raise InputValidationError("Potential jailbreaking or prompt injection detected.", guardrail_trigger=GuardrailTrigger.INJECTION_DETECTED)  # Reference built-in Guardrail trigger enum
+        raise InputValidationError(
+            "Potential jailbreaking or prompt injection detected.",
+            guardrail_trigger=GuardrailTrigger.INJECTION_DETECTED,
+        )  # Reference built-in Guardrail trigger enum
 
 
 def output_validation(
     run_output: RunOutput,
 ) -> None:
     """Synchronous post-hook function."""
-    
+
     class ResponseValidatorOutput(BaseModel):
         is_casual: bool
         reason: str
-    
+
     response_validator = Agent(
         name="Response Validator",
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -55,35 +59,38 @@ def output_validation(
         ],
         output_schema=ResponseValidatorOutput,
     )
-    
+
     response = response_validator.run(
         input=f"Evaluate the tone of the following response: {run_output.content}",
     )
-    
+
     if not response.content.is_casual:
-        raise OutputValidationError(f"Output is not professional enough.", guardrail_trigger=GuardrailTrigger.OUTPUT_NOT_ALLOWED)
+        raise OutputValidationError(
+            f"Output is not professional enough.",
+            guardrail_trigger=GuardrailTrigger.OUTPUT_NOT_ALLOWED,
+        )
 
 
 def main():
     """Demonstrate the hooks functionality."""
     print("🚀 Agent Hooks Example")
     print("=" * 50)
-    
+
     # Create an agent with hooks
     agent = Agent(
         name="Hook Demo Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        pre_hook=prompt_injection_check,
-        post_hook=output_validation,
+        pre_hooks=prompt_injection_check,
+        post_hooks=output_validation,
         description="An agent that tells jokes.",
         instructions="Use a formal tone for your responses, unless instructed otherwise.",  # We add this to allow the agent to make casual responses, so our output validation hook can be triggered.
     )
-    
+
     print("This shouldn't trigger any guardrails")
     agent.print_response(
         input="Hello! Can you tell me a short joke?",
     )
-    
+
     try:
         print("This should trigger a guardrail validation for input")
         response = agent.run(
@@ -91,9 +98,10 @@ def main():
         )
         pprint_run_response(response)
     except InputValidationError as e:
-        print(f"❌ Input validation failed. The following guardrail trigger was used: {e.guardrail_trigger}")
-        
-    
+        print(
+            f"❌ Input validation failed. The following guardrail trigger was used: {e.guardrail_trigger}"
+        )
+
     try:
         print("This should trigger a guardrail validation for output")
         response = agent.run(
@@ -101,7 +109,9 @@ def main():
         )
         pprint_run_response(response)
     except OutputValidationError as e:
-        print(f"❌ Input validation failed. The following guardrail trigger was used: {e.guardrail_trigger}")
+        print(
+            f"❌ Input validation failed. The following guardrail trigger was used: {e.guardrail_trigger}"
+        )
 
 
 if __name__ == "__main__":
