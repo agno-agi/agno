@@ -15,19 +15,11 @@
 
 ## What is Agno?
 
-[Agno](https://docs.agno.com) is a high-performance runtime for multi-agent systems. Use it to build, run and manage secure agent systems in your cloud.
+[Agno](https://docs.agno.com) is a high-performance runtime for multi-agent systems. Use it to build, run and manage secure multi-agent systems in your cloud.
 
-**Agno gives you:**
+Agno gives you the fastest framework for building agents with out of the box session management, memory, knowledge, human in the loop and MCP support. You can also build autonomous multi-agent teams, or step-based agentic workflows for full control over complex multi-step agentic processes.
 
-1. The fastest framework for building agents and multi-agent workflows.
-2. A high-performance runtime for your multi-agent systems called the AgentOS.
-3. Built-in session management, memory, knowledge, human in the loop and MCP support.
-4. SSE compatible API endpoints for building your agentic product.
-5. A powerful platform for monitoring and managing your AgentOS.
-
-### Example
-
-In 10 lines of code, we can build an Agent that will fetch the top stories from HackerNews and summarize them.
+For example, in 10 lines of code, we can build an Agent that will fetch the top stories from HackerNews and summarize them.
 
 ```python hackernews_agent.py
 from agno.agent import Agent
@@ -42,11 +34,28 @@ agent = Agent(
 agent.print_response("Summarize the top 5 stories on hackernews", stream=True)
 ```
 
-## Get Started
+But the real advantage of Agno is the AgentOS runtime:
+
+1. You get a pre-built FastAPI app for running your agentic system, meaning you start building your product on day one. This is a remarkable advantage over other solutions or rolling your own.
+2. You also get a control plane which connects directly to your AgentOS for testing, monitoring and managing your system. This gives you unmatched visibility and control over your system.
+3. Your AgentOS runs in your cloud and you get complete data privacy because no data ever leaves your system. This is incredible for security conscious enterprises that can't send traces to external services.
+
+For organizations building agents, Agno provides the complete solution. You get the fastest framework for building agents (speed of development and execution), a pre-built FastAPI app that lets you build your product on day one, and a control plane for managing your system.
+
+We bring a novel architecture that no other framework provides, your AgentOS runs securely in your cloud, and the control plane connects directly to it. You don't need to send traces to external services or pay retention costs, you get complete data privacy and control.
+
+## Getting started
 
 If you're new to Agno, start by [building your first Agent](/introduction/first-agent) and run it using the AgentOS.
 
-After that, checkout the [Examples Gallery](https://docs.agno.com/examples) and build real-world applications with Agno.
+After that, checkout the [examples gallery](/examples/introduction) and build real-world applications with Agno.
+
+## Documentation, Community & More examples
+
+- Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
+- Cookbook: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
+- Community forum: <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">community.agno.com</a>
+- Discord: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
 
 ## Setup your coding agent to use Agno
 
@@ -64,35 +73,6 @@ When building Agno agents, using Agno documentation as a source in Cursor is a g
 4. Save the changes.
 
 Now, Cursor will have access to the Agno documentation.
-
-### Agno MCP Server
-
-You can also also add the Agno MCP server to your Agent to query and search the Agno documentation. Add [http://docs.agno.com/mcp](http://docs.agno.com/mcp) to your Agent's tools.
-
-## Documentation, Community & More examples
-
-- Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
-- Cookbook: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
-- Community forum: <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">community.agno.com</a>
-- Discord: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
-
-## Why Agno?
-
-AI engineering is a systems problem (infrastructure, software, context, security) and Agno is the only framework that delivers a complete solution with a delightful developer experience.
-
-You get the fastest framework for building agents with out of the box session management, memory, knowledge, human in the loop and MCP support, this helps you build and iterate quickly.
-
-But to be honest, you can probably get there using other frameworks or rolling your own, it'll take extra effort and your code won't be as performant, but you'll get there.
-
-The real advantage of Agno is the AgentOS runtime:
-
-1. You get a FastAPI app with pre-built API endpoints, meaning you get started with building your product on day one. This is a remarkable advantage over other solutions.
-2. You get a control plane which connects directly to the FastAPI app for testing, monitoring and managing your agentic system. This gives you unmatched control over your system.
-3. Your AgentOS runs in your cloud and you get complete data control because no data ever leaves your system. This is incredible for security conscious enterprises.
-
-With Agno, you can build your agents, ship them to production with a pre-built FastAPI app, scale it horizontally and keep your data private and secure. If your goal is to build your product as quickly as possible, Agno get's you there while delivering the best developer experience.
-
-If you're an enterprise that's worried about data privacy and security, Agno is the only framework that gives you complete control over your data. Your AgentOS runs securely in your cloud, what could be more private than that?
 
 ## Performance
 
