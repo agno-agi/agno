@@ -135,7 +135,7 @@ class Team:
     # If True, the team leader will delegate the task to all members, instead of deciding for a subset
     delegate_task_to_all_members: bool = False
     # Set to false if you want to send the run input directly to the member agents
-    determine_input_for_member: bool = True
+    determine_input_for_members: bool = True
 
     # --- If this Team is part of a workflow ---
     # Optional workflow ID. Indicates this team is part of a workflow.
@@ -355,7 +355,7 @@ class Team:
         name: Optional[str] = None,
         role: Optional[str] = None,
         respond_directly: bool = False,
-        determine_input_for_member: bool = True,
+        determine_input_for_members: bool = True,
         delegate_task_to_all_members: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -442,7 +442,7 @@ class Team:
         self.role = role
 
         self.respond_directly = respond_directly
-        self.determine_input_for_member = determine_input_for_member
+        self.determine_input_for_members = determine_input_for_members
         self.delegate_task_to_all_members = delegate_task_to_all_members
 
         self.user_id = user_id
@@ -4020,7 +4020,7 @@ class Team:
 
         # Get the user message if we are using the input directly
         user_message = None
-        if self.determine_input_for_member is False:
+        if self.determine_input_for_members is False:
             user_message = self._get_user_message(
                 run_response=run_response,
                 session_state=session_state,
@@ -5158,7 +5158,7 @@ class Team:
         stream: bool = False,
         stream_intermediate_steps: bool = False,
         async_mode: bool = False,
-        input: Optional[Message] = None,  # Used for determine_input_for_members=False
+        input: Optional[Message] = None,  # Used for determine_input_for_memberss=False
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         audio: Optional[List[Audio]] = None,
@@ -5191,7 +5191,7 @@ class Team:
             member_agent_task: Union[str, Message]
 
             # 3. Create the member agent task or use the input directly
-            if self.determine_input_for_member is False:
+            if self.determine_input_for_members is False:
                 member_agent_task = input  # type: ignore
             else:
                 # Don't override the expected output of a member agent

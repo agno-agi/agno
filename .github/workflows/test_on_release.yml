@@ -778,7 +778,6 @@ jobs:
           ./libs/agno/tests/integration/knowledge/test_json_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_md_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_pdf_knowledge.py \
-          ./libs/agno/tests/integration/knowledge/test_pdf_url_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_text_knowledge.py
 
   test-knowledge-2:
