@@ -61,24 +61,30 @@ class BaseWorkflowRunResponseEvent:
     def to_dict(self) -> Dict[str, Any]:
         _dict = {k: v for k, v in asdict(self).items() if v is not None}
 
-        if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
-            _dict["content"] = self.content.model_dump(exclude_none=True)
+        content_value = getattr(self, "content", None)
+        if content_value is not None and isinstance(content_value, BaseModel):
+            _dict["content"] = content_value.model_dump(exclude_none=True)
 
         # Handle StepOutput fields that contain Message objects
-        if hasattr(self, "step_responses") and self.step_responses is not None:
-            _dict["step_responses"] = [step.to_dict() for step in self.step_responses]
+        step_responses_value = getattr(self, "step_responses", None)
+        if step_responses_value is not None:
+            _dict["step_responses"] = [step.to_dict() for step in step_responses_value]
 
-        if hasattr(self, "step_response") and self.step_response is not None:
-            _dict["step_response"] = self.step_response.to_dict()
+        step_response_value = getattr(self, "step_response", None)
+        if step_response_value is not None:
+            _dict["step_response"] = step_response_value.to_dict()
 
-        if hasattr(self, "iteration_results") and self.iteration_results is not None:
-            _dict["iteration_results"] = [step.to_dict() for step in self.iteration_results]
+        iteration_results_value = getattr(self, "iteration_results", None)
+        if iteration_results_value is not None:
+            _dict["iteration_results"] = [step.to_dict() for step in iteration_results_value]
 
-        if hasattr(self, "all_results") and self.all_results is not None:
-            _dict["all_results"] = [[step.to_dict() for step in iteration] for iteration in self.all_results]
+        all_results_value = getattr(self, "all_results", None)
+        if all_results_value is not None:
+            _dict["all_results"] = [[step.to_dict() for step in iteration] for iteration in all_results_value]
 
-        if hasattr(self, "step_results") and self.step_results is not None:
-            _dict["step_results"] = [step.to_dict() for step in self.step_results]
+        step_results_value = getattr(self, "step_results", None)
+        if step_results_value is not None:
+            _dict["step_results"] = [step.to_dict() for step in step_results_value]
 
         return _dict
 
@@ -537,6 +543,84 @@ class WorkflowRunResponse:
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
         events = data.pop("events", [])
+        # Parse events into concrete dataclass instances when possible
+        parsed_events: Optional[List[WorkflowRunResponseEvent]] = None
+        if isinstance(events, list) and events:
+            name_to_cls = {
+                WorkflowRunEvent.workflow_started.value: WorkflowStartedEvent,
+                WorkflowRunEvent.workflow_completed.value: WorkflowCompletedEvent,
+                WorkflowRunEvent.workflow_cancelled.value: WorkflowCancelledEvent,
+                WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
+                WorkflowRunEvent.step_started.value: StepStartedEvent,
+                WorkflowRunEvent.step_completed.value: StepCompletedEvent,
+                WorkflowRunEvent.step_error.value: StepErrorEvent,
+                WorkflowRunEvent.loop_execution_started.value: LoopExecutionStartedEvent,
+                WorkflowRunEvent.loop_iteration_started.value: LoopIterationStartedEvent,
+                WorkflowRunEvent.loop_iteration_completed.value: LoopIterationCompletedEvent,
+                WorkflowRunEvent.loop_execution_completed.value: LoopExecutionCompletedEvent,
+                WorkflowRunEvent.parallel_execution_started.value: ParallelExecutionStartedEvent,
+                WorkflowRunEvent.parallel_execution_completed.value: ParallelExecutionCompletedEvent,
+                WorkflowRunEvent.condition_execution_started.value: ConditionExecutionStartedEvent,
+                WorkflowRunEvent.condition_execution_completed.value: ConditionExecutionCompletedEvent,
+                WorkflowRunEvent.router_execution_started.value: RouterExecutionStartedEvent,
+                WorkflowRunEvent.router_execution_completed.value: RouterExecutionCompletedEvent,
+                WorkflowRunEvent.steps_execution_started.value: StepsExecutionStartedEvent,
+                WorkflowRunEvent.steps_execution_completed.value: StepsExecutionCompletedEvent,
+                "StepOutput": StepOutputEvent,
+            }
+
+            def _to_step_output(obj: Any):
+                return StepOutput.from_dict(obj) if isinstance(obj, dict) else obj
+
+            def _to_step_output_list(lst: Any):
+                if not isinstance(lst, list):
+                    return lst
+                return [_to_step_output(x) for x in lst]
+
+            converted: List[WorkflowRunResponseEvent] = []
+            for evt in events:
+                if not isinstance(evt, dict):
+                    continue
+                evt_name = evt.get("event")
+                evt_cls = name_to_cls.get(evt_name) if isinstance(evt_name, str) else None
+                if evt_cls is None:
+                    continue
+
+                # Shallow copy and normalize nested fields
+                evd = dict(evt)
+
+                if isinstance(evd.get("images"), list):
+                    evd["images"] = [ImageArtifact.model_validate(x) for x in evd["images"]]
+                if isinstance(evd.get("videos"), list):
+                    evd["videos"] = [VideoArtifact.model_validate(x) for x in evd["videos"]]
+                if isinstance(evd.get("audio"), list):
+                    evd["audio"] = [AudioArtifact.model_validate(x) for x in evd["audio"]]
+                if evd.get("response_audio") is not None:
+                    evd["response_audio"] = AudioResponse.model_validate(evd["response_audio"])
+
+                if evd.get("step_response") is not None:
+                    evd["step_response"] = _to_step_output(evd["step_response"])
+                if evd.get("step_output") is not None:
+                    evd["step_output"] = _to_step_output(evd["step_output"])
+                if evd.get("iteration_results") is not None:
+                    evd["iteration_results"] = _to_step_output_list(evd["iteration_results"])
+                all_results_obj = evd.get("all_results")
+                if isinstance(all_results_obj, list):
+                    evd["all_results"] = [
+                        _to_step_output_list(row) if isinstance(row, list) else row for row in all_results_obj
+                    ]
+                if evd.get("step_results") is not None:
+                    evd["step_results"] = _to_step_output_list(evd["step_results"])
+                if evd.get("step_responses") is not None:
+                    evd["step_responses"] = _to_step_output_list(evd["step_responses"])
+
+                try:
+                    converted.append(evt_cls(**evd))
+                except Exception:
+                    # Skip if the structure does not match the dataclass init
+                    continue
+
+            parsed_events = converted or None
 
         return cls(
             step_responses=parsed_step_responses,
@@ -545,7 +629,7 @@ class WorkflowRunResponse:
             videos=videos,
             audio=audio,
             response_audio=response_audio,
-            events=events,
+            events=parsed_events,
             workflow_metrics=workflow_metrics,
             **data,
         )
