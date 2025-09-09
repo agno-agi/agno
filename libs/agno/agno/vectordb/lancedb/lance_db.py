@@ -177,9 +177,11 @@ class LanceDb(VectorDb):
             try:
                 conn = await self._get_async_connection()
                 schema = self._base_schema()
-                
+
                 log_debug(f"Creating table asynchronously: {self.table_name}")
-                self.async_table = await conn.create_table(self.table_name, schema=schema, mode="overwrite", exist_ok=True)
+                self.async_table = await conn.create_table(
+                    self.table_name, schema=schema, mode="overwrite", exist_ok=True
+                )
                 log_debug(f"Successfully created async table: {self.table_name}")
             except Exception as e:
                 logger.error(f"Error creating async table: {e}")
@@ -284,7 +286,9 @@ class LanceDb(VectorDb):
             data.append(
                 {
                     "id": doc_id,
-                    "vector": [float(x) for x in document.embedding] if document.embedding else [0.0] * (self.dimensions or 1536),
+                    "vector": [float(x) for x in document.embedding]
+                    if document.embedding
+                    else [0.0] * (self.dimensions or 1536),
                     "payload": json.dumps(payload),
                 }
             )
@@ -349,7 +353,9 @@ class LanceDb(VectorDb):
             data.append(
                 {
                     "id": doc_id,
-                    "vector": [float(x) for x in document.embedding] if document.embedding else [0.0] * (self.dimensions or 1536),
+                    "vector": [float(x) for x in document.embedding]
+                    if document.embedding
+                    else [0.0] * (self.dimensions or 1536),
                     "payload": json.dumps(payload),
                 }
             )
@@ -361,11 +367,11 @@ class LanceDb(VectorDb):
 
         try:
             await self._get_async_connection()
-            
+
             # Ensure the async table is created before inserting
             if self.async_table is None:
                 await self.async_create()
-            
+
             if self.async_table is None:
                 # Fall back to sync insertion if async table creation failed
                 logger.warning("Async table not available, falling back to sync insertion")
