@@ -557,6 +557,15 @@ def get_base_router(
         base64_videos: List[Video] = []
         input_files: List[FileMedia] = []
 
+        # Convert input to dict if the agent has an input schema
+        if agent.input_schema and isinstance(message, str):
+            try:
+                message = json.loads(message)
+            except Exception as e:
+                log_error(
+                    f"There was a problem converting the message to a dict. Input schema validation may fail: {e}"
+                )
+
         if files:
             for file in files:
                 if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
@@ -902,6 +911,15 @@ def get_base_router(
         base64_audios: List[Audio] = []
         base64_videos: List[Video] = []
         document_files: List[FileMedia] = []
+
+        # Convert input to dict if the team has an input schema
+        if team.input_schema and isinstance(message, str):
+            try:
+                message = json.loads(message)
+            except Exception as e:
+                log_error(
+                    f"There was a problem converting the message to a dict. Input schema validation may fail: {e}"
+                )
 
         if files:
             for file in files:
@@ -1344,6 +1362,15 @@ def get_base_router(
         else:
             logger.debug("Creating new session")
             session_id = str(uuid4())
+
+        # Convert input to dict if the workflow has an input schema
+        if workflow.input_schema and isinstance(message, str):
+            try:
+                message = json.loads(message)
+            except Exception as e:
+                log_error(
+                    f"There was a problem converting the message to a dict. Input schema validation may fail: {e}"
+                )
 
         # Return based on stream parameter
         try:
