@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.tools.function import ToolResult
 from agno.tools.models.azure_openai import AzureOpenAITools
 
@@ -118,7 +118,7 @@ def test_generate_image_success(mock_post, azure_openai_tools, mock_agent):
     assert "https://test-image-url.com/image.png" in result.content
     assert result.images is not None
     assert len(result.images) == 1
-    assert isinstance(result.images[0], ImageArtifact)
+    assert isinstance(result.images[0], Image)
     assert result.images[0].url == "https://test-image-url.com/image.png"
     assert result.images[0].original_prompt == "A test prompt"
     assert result.images[0].revised_prompt == "A revised prompt for the image"

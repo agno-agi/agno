@@ -3,7 +3,7 @@ import pytest
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.db.in_memory.in_memory_db import InMemoryDb
-from agno.media import AudioArtifact, ImageArtifact
+from agno.media import Audio, Image
 from agno.models.openai.chat import OpenAIChat
 from agno.tools.dalle import DalleTools
 
@@ -24,7 +24,7 @@ def test_dalle_image_generation_in_run_output(openai_agent):
     assert response.content is not None
     assert response.images is not None
     assert len(response.images) >= 1
-    assert isinstance(response.images[0], ImageArtifact)
+    assert isinstance(response.images[0], Image)
     assert response.images[0].url is not None or response.images[0].content is not None
 
     # Verify image is accessible via get_last_run_output
@@ -55,7 +55,7 @@ def test_dalle_image_generation_persistence(openai_agent):
     run_output = session_in_db.runs[-1]  # Get the last run
     assert run_output.images is not None
     assert len(run_output.images) >= 1
-    assert isinstance(run_output.images[0], ImageArtifact)
+    assert isinstance(run_output.images[0], Image)
 
 
 def test_multiple_images_generation(openai_agent):
@@ -72,7 +72,7 @@ def test_multiple_images_generation(openai_agent):
     if response.images:
         assert len(response.images) >= 1
         for image in response.images:
-            assert isinstance(image, ImageArtifact)
+            assert isinstance(image, Image)
             assert image.url is not None or image.content is not None
 
 
@@ -95,7 +95,7 @@ def test_image_generation_with_streaming(openai_agent):
     assert run_completed_event is not None
     assert run_completed_event.images is not None
     assert len(run_completed_event.images) >= 1
-    assert isinstance(run_completed_event.images[0], ImageArtifact)
+    assert isinstance(run_completed_event.images[0], Image)
 
     # Also verify that the agent's last run output contains the image
     last_output = openai_agent.get_last_run_output()
@@ -133,8 +133,8 @@ def test_openai_speech_generation_in_run_output(openai_agent):
 
     if response.audio:  # Audio generation might not always trigger
         assert len(response.audio) >= 1
-        assert isinstance(response.audio[0], AudioArtifact)
-        assert response.audio[0].base64_audio is not None
+        assert isinstance(response.audio[0], Audio)
+        assert response.audio[0].content is not None
 
 
 def test_media_persistence_across_runs(shared_db):

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 
 from agno.agent import Agent
-from agno.media import AudioArtifact
+from agno.media import Audio
 from agno.tools.function import ToolResult
 from agno.tools.models.groq import GroqTools
 
@@ -255,7 +255,7 @@ def test_generate_speech_success(mock_toolkit_init, mock_groq_client):
     assert "Speech generated successfully with ID:" in result.content
     assert result.audios is not None
     assert len(result.audios) == 1
-    assert isinstance(result.audios[0], AudioArtifact)
+    assert isinstance(result.audios[0], Audio)
     assert result.audios[0].mime_type == "audio/wav"
 
     mock_groq_client.audio.speech.create.assert_called_once_with(

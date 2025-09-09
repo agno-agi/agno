@@ -8,7 +8,7 @@ import pytest
 import requests
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.tools.brightdata import BrightDataTools
 from agno.tools.function import ToolResult
 
@@ -193,7 +193,7 @@ def test_get_screenshot_success(brightdata_tools, mock_requests, mock_agent):
 
     # Verify ImageArtifact creation
     image_artifact = result.images[0]
-    assert isinstance(image_artifact, ImageArtifact)
+    assert isinstance(image_artifact, Image)
     assert image_artifact.id == "test-uuid-123"
     assert image_artifact.mime_type == "image/png"
     assert image_artifact.original_prompt == "Screenshot of https://example.com"

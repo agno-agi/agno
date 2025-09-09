@@ -1,11 +1,10 @@
 import json
-from base64 import b64encode
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import AudioArtifact
+from agno.media import Audio
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
@@ -170,12 +169,11 @@ class CartesiaTools(Toolkit):
 
             audio_iterator = self.client.tts.bytes(**params)
             audio_data = b"".join(chunk for chunk in audio_iterator)
-            base64_audio = b64encode(audio_data).decode("utf-8")
 
             # Create AudioArtifact
-            audio_artifact = AudioArtifact(
+            audio_artifact = Audio(
                 id=str(uuid4()),
-                base64_audio=base64_audio,
+                content=audio_data,
                 mime_type=mime_type,  # Hardcoded to audio/mpeg
             )
 

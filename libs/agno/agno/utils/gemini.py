@@ -19,7 +19,7 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     # Case 1: Image is a URL
     # Download the image from the URL and add it as base64 encoded data
     if image.url is not None:
-        content_bytes = image.image_url_content
+        content_bytes = image.get_content_bytes()  # type: ignore
         if content_bytes is not None:
             try:
                 import base64

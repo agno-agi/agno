@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.models.nebius import Nebius
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
@@ -108,7 +108,7 @@ class NebiusTools(Toolkit):
                 media_id = str(uuid4())
 
                 # Create ImageArtifact with raw bytes
-                image_artifact = ImageArtifact(
+                image_artifact = Image(
                     id=media_id, content=image_content_bytes, mime_type="image/png", original_prompt=prompt
                 )
 

@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 
 from agno.agent import Agent
@@ -14,11 +15,10 @@ agent = Agent(
     cache_session=True,
 )
 
-agent.print_response(
+response = agent.run(
     f"Let's transcribe the audio file located at '{path}' and translate it to English. After that generate a new music audio file using the translated text."
 )
 
-response = agent.get_last_run_output()
-
 if response and response.audio:
-    save_base64_data(response.audio[0].base64_audio, Path("tmp/sample-en.mp3"))  # type: ignore
+    base64_audio = base64.b64encode(response.audio[0].content).decode("utf-8")
+    save_base64_data(base64_audio, Path("tmp/sample-en.mp3"))  # type: ignore

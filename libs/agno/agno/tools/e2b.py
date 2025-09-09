@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
@@ -161,7 +161,7 @@ class E2BTools(Toolkit):
         self, agent: Union[Agent, Team], result_index: int = 0, output_path: Optional[str] = None
     ) -> ToolResult:
         """
-        Add a PNG image result from the last code execution as an ImageArtifact.
+        Add a PNG image result from the last code execution as an Image object.
 
         Args:
             agent: The agent to add the image artifact to
@@ -205,9 +205,9 @@ class E2BTools(Toolkit):
             # Generate a file:// URL for the temp file
             file_url = f"file://{temp_path}"
 
-            # Create ImageArtifact
+            # Create Image object
             image_id = str(uuid4())
-            image_artifact = ImageArtifact(
+            image_artifact = Image(
                 id=image_id, url=file_url, original_prompt=f"Generated from code execution result {result_index}"
             )
 
@@ -292,9 +292,9 @@ class E2BTools(Toolkit):
                 # Generate a file:// URL for the temp file
                 file_url = f"file://{temp_path}"
 
-                # Create ImageArtifact
+                # Create Image object
                 image_id = str(uuid4())
-                image_artifact = ImageArtifact(
+                image_artifact = Image(
                     id=image_id, url=file_url, original_prompt=f"Interactive {chart_type} chart from code execution"
                 )
 

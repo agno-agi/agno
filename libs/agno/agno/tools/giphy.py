@@ -5,7 +5,7 @@ from typing import Any, List, Optional, Union
 import httpx
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
@@ -77,7 +77,7 @@ class GiphyTools(Toolkit):
                 gif_urls.append(gif_url)
 
                 # Create ImageArtifact for the GIF
-                image_artifact = ImageArtifact(id=media_id, url=gif_url, alt_text=alt_text, revised_prompt=query)
+                image_artifact = Image(id=media_id, url=gif_url, alt_text=alt_text, revised_prompt=query)
                 image_artifacts.append(image_artifact)
 
             if image_artifacts:
