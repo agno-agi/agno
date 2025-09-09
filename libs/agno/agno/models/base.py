@@ -70,6 +70,16 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
         response_usage: Usage data from model provider
     """
 
+    """
+    response_usage = ResponseUsage(
+        input_tokens=3049,
+        input_tokens_details=InputTokensDetails(cached_tokens=1792),
+        output_tokens=43,
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+        total_tokens=3092
+    )
+    """
+
     # Standard token metrics
     if isinstance(response_usage, dict):
         if "input_tokens" in response_usage and response_usage.get("input_tokens") is not None:
@@ -152,6 +162,15 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
             ):
                 assistant_message.metrics.cached_tokens = response_usage.prompt_tokens_details.cached_tokens
 
+    # Handle input_tokens_details field (openai Responses API format)
+    if hasattr(response_usage, "input_tokens_details"):
+        if hasattr(response_usage.input_tokens_details, "model_dump"):
+            if (
+                hasattr(response_usage.input_tokens_details, "cached_tokens")
+                and response_usage.input_tokens_details.cached_tokens is not None
+            ):
+                assistant_message.metrics.cached_tokens = response_usage.input_tokens_details.cached_tokens
+
     if hasattr(response_usage, "completion_tokens_details"):
         if isinstance(response_usage.completion_tokens_details, dict):
             assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details
@@ -181,6 +200,15 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
                 and response_usage.completion_tokens_details.reasoning_tokens is not None
             ):
                 assistant_message.metrics.reasoning_tokens = response_usage.completion_tokens_details.reasoning_tokens
+
+    # Handle output_tokens_details field (openai Responses API format)
+    if hasattr(response_usage, "output_tokens_details"):
+        if hasattr(response_usage.output_tokens_details, "model_dump"):
+            if (
+                hasattr(response_usage.output_tokens_details, "reasoning_tokens")
+                and response_usage.output_tokens_details.reasoning_tokens is not None
+            ):
+                assistant_message.metrics.reasoning_tokens = response_usage.output_tokens_details.reasoning_tokens
 
     assistant_message.metrics.audio_tokens = (
         assistant_message.metrics.input_audio_tokens + assistant_message.metrics.output_audio_tokens
