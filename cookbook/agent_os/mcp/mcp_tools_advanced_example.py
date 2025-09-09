@@ -17,15 +17,13 @@ mastra_mcp_tools = MCPTools(
     command="npx -y @mastra/mcp-docs-server", timeout_seconds=60
 )
 
-agno_mcp_tools = MCPTools(
-    transport="streamable-http", url="https://docs-v2.agno.com/mcp"
-)
+agno_mcp_tools = MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")
 
 # You can also use MultiMCPTools to connect to multiple MCP servers at once:
 #
 # mcp_tools = MultiMCPTools(
 #     commands=["npx -y @mastra/mcp-docs-server"],
-#     urls=["https://docs-v2.agno.com/mcp"],
+#     urls=["https://docs.agno.com/mcp"],
 # )
 
 # Setup basic agents, teams and workflows

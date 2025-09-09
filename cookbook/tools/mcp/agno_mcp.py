@@ -7,7 +7,7 @@ from agno.tools.mcp import MCPTools
 
 async def run_agent(message: str) -> None:
     async with MCPTools(
-        transport="streamable-http", url="https://docs-v2.agno.com/mcp"
+        transport="streamable-http", url="https://docs.agno.com/mcp"
     ) as agno_mcp_server:
         agent = Agent(
             model=Claude(id="claude-sonnet-4-0"),

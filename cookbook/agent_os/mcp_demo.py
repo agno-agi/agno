@@ -3,7 +3,7 @@ from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
 
-mcp_tools = MCPTools(transport="streamable-http", url="https://docs-v2.agno.com/mcp")
+mcp_tools = MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")
 
 agent = Agent(
     name="Agno Agent",

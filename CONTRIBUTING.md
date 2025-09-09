@@ -124,4 +124,4 @@ Message us on [Discord](https://discord.gg/4MtYHHrgA8) or post on [Discourse](ht
 
 ## 📝 License
 
-This project is licensed under the terms of the [MPL-2.0 license](/LICENSE)
+This project is licensed under the terms of the [Apache-2.0 license](/LICENSE)

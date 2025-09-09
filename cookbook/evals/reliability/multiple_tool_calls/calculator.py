@@ -10,7 +10,7 @@ from agno.tools.calculator import CalculatorTools
 def multiply_and_exponentiate():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[CalculatorTools(add=True, multiply=True, exponentiate=True)],
+        tools=[CalculatorTools()],
     )
     response: RunOutput = agent.run(
         "What is 10*5 then to the power of 2? do it step by step"

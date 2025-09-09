@@ -1,4 +1,4 @@
 streamlit
-agno==2.0.0rc1
+agno==2.0.0
 nest_asyncio
 scrapegraph-py
