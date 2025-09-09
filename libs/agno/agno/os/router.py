@@ -21,11 +21,17 @@ from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentResponse,
     AgentSummaryResponse,
+    BadRequestResponse,
     ConfigResponse,
+    HealthResponse,
     InterfaceResponse,
+    InternalServerErrorResponse,
     Model,
+    NotFoundResponse,
     TeamResponse,
     TeamSummaryResponse,
+    UnauthenticatedResponse,
+    ValidationErrorResponse,
     WorkflowResponse,
     WorkflowSummaryResponse,
 )
@@ -307,13 +313,47 @@ def get_base_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
 ) -> APIRouter:
-    router = APIRouter(dependencies=[Depends(get_authentication_dependency(settings))])
+    """
+    Create the base FastAPI router with comprehensive OpenAPI documentation.
+
+    This router provides endpoints for:
+    - Core system operations (health, config, models)
+    - Agent management and execution
+    - Team collaboration and coordination
+    - Workflow automation and orchestration
+    - Real-time WebSocket communications
+
+    All endpoints include detailed documentation, examples, and proper error handling.
+    """
+    router = APIRouter(
+        dependencies=[Depends(get_authentication_dependency(settings))],
+        responses={
+            400: {"description": "Bad Request", "model": BadRequestResponse},
+            401: {"description": "Unauthorized", "model": UnauthenticatedResponse},
+            404: {"description": "Not Found", "model": NotFoundResponse},
+            422: {"description": "Validation Error", "model": ValidationErrorResponse},
+            500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
+        },
+    )
 
     # -- Main Routes ---
 
-    @router.get("/health", tags=["Core"], operation_id="health_check")
-    async def health_check():
-        return JSONResponse(content={"status": "ok"})
+    @router.get(
+        "/health",
+        tags=["Core"],
+        operation_id="health_check",
+        summary="Health Check",
+        description="Check the health status of the AgentOS API. Returns a simple status indicator.",
+        response_model=HealthResponse,
+        responses={
+            200: {
+                "description": "API is healthy and operational",
+                "content": {"application/json": {"example": {"status": "ok"}}},
+            }
+        },
+    )
+    async def health_check() -> HealthResponse:
+        return HealthResponse(status="ok")
 
     @router.get(
         "/config",
@@ -321,6 +361,79 @@ def get_base_router(
         response_model_exclude_none=True,
         tags=["Core"],
         operation_id="get_config",
+        summary="Get OS Configuration",
+        description=(
+            "Retrieve the complete configuration of the AgentOS instance, including:\n\n"
+            "- Available models and databases\n"
+            "- Registered agents, teams, and workflows\n"
+            "- Chat, session, memory, knowledge, and evaluation configurations\n"
+            "- Available interfaces and their routes"
+        ),
+        responses={
+            200: {
+                "description": "OS configuration retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "os_id": "demo",
+                            "description": "Example AgentOS configuration",
+                            "available_models": [],
+                            "databases": ["9c884dc4-9066-448c-9074-ef49ec7eb73c"],
+                            "session": {
+                                "dbs": [
+                                    {
+                                        "db_id": "9c884dc4-9066-448c-9074-ef49ec7eb73c",
+                                        "domain_config": {"display_name": "Sessions"},
+                                    }
+                                ]
+                            },
+                            "metrics": {
+                                "dbs": [
+                                    {
+                                        "db_id": "9c884dc4-9066-448c-9074-ef49ec7eb73c",
+                                        "domain_config": {"display_name": "Metrics"},
+                                    }
+                                ]
+                            },
+                            "memory": {
+                                "dbs": [
+                                    {
+                                        "db_id": "9c884dc4-9066-448c-9074-ef49ec7eb73c",
+                                        "domain_config": {"display_name": "Memory"},
+                                    }
+                                ]
+                            },
+                            "knowledge": {
+                                "dbs": [
+                                    {
+                                        "db_id": "9c884dc4-9066-448c-9074-ef49ec7eb73c",
+                                        "domain_config": {"display_name": "Knowledge"},
+                                    }
+                                ]
+                            },
+                            "evals": {
+                                "dbs": [
+                                    {
+                                        "db_id": "9c884dc4-9066-448c-9074-ef49ec7eb73c",
+                                        "domain_config": {"display_name": "Evals"},
+                                    }
+                                ]
+                            },
+                            "agents": [
+                                {
+                                    "id": "main-agent",
+                                    "name": "Main Agent",
+                                    "db_id": "9c884dc4-9066-448c-9074-ef49ec7eb73c",
+                                }
+                            ],
+                            "teams": [],
+                            "workflows": [],
+                            "interfaces": [],
+                        }
+                    }
+                },
+            }
+        },
     )
     async def config() -> ConfigResponse:
         return ConfigResponse(
@@ -349,8 +462,26 @@ def get_base_router(
         response_model_exclude_none=True,
         tags=["Core"],
         operation_id="get_models",
+        summary="Get Available Models",
+        description=(
+            "Retrieve a list of all unique models currently used by agents and teams in this OS instance. "
+            "This includes the model ID and provider information for each model."
+        ),
+        responses={
+            200: {
+                "description": "List of models retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            {"id": "gpt-4", "provider": "openai"},
+                            {"id": "claude-3-sonnet", "provider": "anthropic"},
+                        ]
+                    }
+                },
+            }
+        },
     )
-    async def get_models():
+    async def get_models() -> List[Model]:
         """Return the list of all models used by agents and teams in the contextual OS"""
         all_components: List[Union[Agent, Team]] = []
         if os.agents:
@@ -371,7 +502,39 @@ def get_base_router(
     # -- Agent routes ---
 
     @router.post(
-        "/agents/{agent_id}/runs", tags=["Agents"], operation_id="create_agent_run", response_model_exclude_none=True
+        "/agents/{agent_id}/runs",
+        tags=["Agents"],
+        operation_id="create_agent_run",
+        response_model_exclude_none=True,
+        summary="Create Agent Run",
+        description=(
+            "Execute an agent with a message and optional media files. Supports both streaming and non-streaming responses.\n\n"
+            "**Features:**\n"
+            "- Text message input with optional session management\n"
+            "- Multi-media support: images (PNG, JPEG, WebP), audio (WAV, MP3), video (MP4, WebM, etc.)\n"
+            "- Document processing: PDF, CSV, DOCX, TXT, JSON\n"
+            "- Real-time streaming responses with Server-Sent Events (SSE)\n"
+            "- User and session context preservation\n\n"
+            "**Streaming Response:**\n"
+            "When `stream=true`, returns SSE events with `event` and `data` fields."
+        ),
+        responses={
+            200: {
+                "description": "Agent run executed successfully",
+                "content": {
+                    "text/event-stream": {
+                        "examples": {
+                            "event_strea": {
+                                "summary": "Example event stream response",
+                                "value": 'event: RunStarted\ndata: {"content": "Hello!", "run_id": "123..."}\n\n',
+                            }
+                        }
+                    },
+                },
+            },
+            400: {"description": "Invalid request or unsupported file type", "model": BadRequestResponse},
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
     )
     async def create_agent_run(
         agent_id: str,
@@ -481,6 +644,16 @@ def get_base_router(
         tags=["Agents"],
         operation_id="cancel_agent_run",
         response_model_exclude_none=True,
+        summary="Cancel Agent Run",
+        description=(
+            "Cancel a currently executing agent run. This will attempt to stop the agent's execution gracefully.\n\n"
+            "**Note:** Cancellation may not be immediate for all operations."
+        ),
+        responses={
+            200: {},
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+            500: {"description": "Failed to cancel run", "model": InternalServerErrorResponse},
+        },
     )
     async def cancel_agent_run(
         agent_id: str,
@@ -500,6 +673,27 @@ def get_base_router(
         tags=["Agents"],
         operation_id="continue_agent_run",
         response_model_exclude_none=True,
+        summary="Continue Agent Run",
+        description=(
+            "Continue a paused or incomplete agent run with updated tool results.\n\n"
+            "**Use Cases:**\n"
+            "- Resume execution after tool approval/rejection\n"
+            "- Provide manual tool execution results\n\n"
+            "**Tools Parameter:**\n"
+            "JSON string containing array of tool execution objects with results."
+        ),
+        responses={
+            200: {
+                "description": "Agent run continued successfully",
+                "content": {
+                    "text/event-stream": {
+                        "example": 'event: RunContent\ndata: {"created_at": 1757348314, "run_id": "123..."}\n\n'
+                    },
+                },
+            },
+            400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
     )
     async def continue_agent_run(
         agent_id: str,
@@ -564,8 +758,39 @@ def get_base_router(
         response_model_exclude_none=True,
         tags=["Agents"],
         operation_id="get_agents",
+        summary="List All Agents",
+        description=(
+            "Retrieve a comprehensive list of all agents configured in this OS instance.\n\n"
+            "**Returns:**\n"
+            "- Agent metadata (ID, name, description)\n"
+            "- Model configuration and capabilities\n"
+            "- Available tools and their configurations\n"
+            "- Session, knowledge, memory, and reasoning settings\n"
+            "- Only meaningful (non-default) configurations are included"
+        ),
+        responses={
+            200: {
+                "description": "List of agents retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            {
+                                "id": "main-agent",
+                                "name": "Main Agent",
+                                "db_id": "c6bf0644-feb8-4930-a305-380dae5ad6aa",
+                                "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                "tools": None,
+                                "sessions": {"session_table": "agno_sessions"},
+                                "knowledge": {"knowledge_table": "main_knowledge"},
+                                "system_message": {"markdown": True, "add_datetime_to_context": True},
+                            }
+                        ]
+                    }
+                },
+            }
+        },
     )
-    async def get_agents():
+    async def get_agents() -> List[AgentResponse]:
         """Return the list of all Agents present in the contextual OS"""
         if os.agents is None:
             return []
@@ -582,8 +807,39 @@ def get_base_router(
         response_model_exclude_none=True,
         tags=["Agents"],
         operation_id="get_agent",
+        summary="Get Agent Details",
+        description=(
+            "Retrieve detailed configuration and capabilities of a specific agent.\n\n"
+            "**Returns comprehensive agent information including:**\n"
+            "- Model configuration and provider details\n"
+            "- Complete tool inventory and configurations\n"
+            "- Session management settings\n"
+            "- Knowledge base and memory configurations\n"
+            "- Reasoning capabilities and settings\n"
+            "- System prompts and response formatting options"
+        ),
+        responses={
+            200: {
+                "description": "Agent details retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "main-agent",
+                            "name": "Main Agent",
+                            "db_id": "9e064c70-6821-4840-a333-ce6230908a70",
+                            "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                            "tools": None,
+                            "sessions": {"session_table": "agno_sessions"},
+                            "knowledge": {"knowledge_table": "main_knowledge"},
+                            "system_message": {"markdown": True, "add_datetime_to_context": True},
+                        }
+                    }
+                },
+            },
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
     )
-    async def get_agent(agent_id: str):
+    async def get_agent(agent_id: str) -> AgentResponse:
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -593,7 +849,34 @@ def get_base_router(
     # -- Team routes ---
 
     @router.post(
-        "/teams/{team_id}/runs", tags=["Teams"], operation_id="create_team_run", response_model_exclude_none=True
+        "/teams/{team_id}/runs",
+        tags=["Teams"],
+        operation_id="create_team_run",
+        response_model_exclude_none=True,
+        summary="Create Team Run",
+        description=(
+            "Execute a team collaboration with multiple agents working together on a task.\n\n"
+            "**Features:**\n"
+            "- Text message input with optional session management\n"
+            "- Multi-media support: images (PNG, JPEG, WebP), audio (WAV, MP3), video (MP4, WebM, etc.)\n"
+            "- Document processing: PDF, CSV, DOCX, TXT, JSON\n"
+            "- Real-time streaming responses with Server-Sent Events (SSE)\n"
+            "- User and session context preservation\n\n"
+            "**Streaming Response:**\n"
+            "When `stream=true`, returns SSE events with `event` and `data` fields."
+        ),
+        responses={
+            200: {
+                "description": "Team run executed successfully",
+                "content": {
+                    "text/event-stream": {
+                        "example": 'event: RunStarted\ndata: {"content": "Hello!", "run_id": "123..."}\n\n'
+                    },
+                },
+            },
+            400: {"description": "Invalid request or unsupported file type", "model": BadRequestResponse},
+            404: {"description": "Team not found", "model": NotFoundResponse},
+        },
     )
     async def create_team_run(
         team_id: str,
@@ -700,6 +983,16 @@ def get_base_router(
         tags=["Teams"],
         operation_id="cancel_team_run",
         response_model_exclude_none=True,
+        summary="Cancel Team Run",
+        description=(
+            "Cancel a currently executing team run. This will attempt to stop the team's execution gracefully.\n\n"
+            "**Note:** Cancellation may not be immediate for all operations."
+        ),
+        responses={
+            200: {},
+            404: {"description": "Team not found", "model": NotFoundResponse},
+            500: {"description": "Failed to cancel team run", "model": InternalServerErrorResponse},
+        },
     )
     async def cancel_team_run(
         team_id: str,
@@ -720,8 +1013,82 @@ def get_base_router(
         response_model_exclude_none=True,
         tags=["Teams"],
         operation_id="get_teams",
+        summary="List All Teams",
+        description=(
+            "Retrieve a comprehensive list of all teams configured in this OS instance.\n\n"
+            "**Returns team information including:**\n"
+            "- Team metadata (ID, name, description, execution mode)\n"
+            "- Model configuration for team coordination\n"
+            "- Team member roster with roles and capabilities\n"
+            "- Knowledge sharing and memory configurations"
+        ),
+        responses={
+            200: {
+                "description": "List of teams retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            {
+                                "team_id": "basic-team",
+                                "name": "Basic Team",
+                                "mode": "coordinate",
+                                "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                "tools": [
+                                    {
+                                        "name": "transfer_task_to_member",
+                                        "description": "Use this function to transfer a task to the selected team member.\nYou must provide a clear and concise description of the task the member should achieve AND the expected output.",
+                                        "parameters": {
+                                            "type": "object",
+                                            "properties": {
+                                                "member_id": {
+                                                    "type": "string",
+                                                    "description": "(str) The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.",
+                                                },
+                                                "task_description": {
+                                                    "type": "string",
+                                                    "description": "(str) A clear and concise description of the task the member should achieve.",
+                                                },
+                                                "expected_output": {
+                                                    "type": "string",
+                                                    "description": "(str) The expected output from the member (optional).",
+                                                },
+                                            },
+                                            "additionalProperties": False,
+                                            "required": ["member_id", "task_description"],
+                                        },
+                                    }
+                                ],
+                                "members": [
+                                    {
+                                        "agent_id": "basic-agent",
+                                        "name": "Basic Agent",
+                                        "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI gpt-4o"},
+                                        "memory": {
+                                            "app_name": "Memory",
+                                            "app_url": None,
+                                            "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                        },
+                                        "session_table": "agno_sessions",
+                                        "memory_table": "agno_memories",
+                                    }
+                                ],
+                                "enable_agentic_context": False,
+                                "memory": {
+                                    "app_name": "agno_memories",
+                                    "app_url": "/memory/1",
+                                    "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                },
+                                "async_mode": False,
+                                "session_table": "agno_sessions",
+                                "memory_table": "agno_memories",
+                            }
+                        ]
+                    }
+                },
+            }
+        },
     )
-    async def get_teams():
+    async def get_teams() -> List[TeamResponse]:
         """Return the list of all Teams present in the contextual OS"""
         if os.teams is None:
             return []
@@ -738,8 +1105,85 @@ def get_base_router(
         response_model_exclude_none=True,
         tags=["Teams"],
         operation_id="get_team",
+        summary="Get Team Details",
+        description=("Retrieve detailed configuration and member information for a specific team."),
+        responses={
+            200: {
+                "description": "Team details retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "team_id": "basic-team",
+                            "name": "Basic Team",
+                            "description": None,
+                            "mode": "coordinate",
+                            "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                            "tools": [
+                                {
+                                    "name": "transfer_task_to_member",
+                                    "description": "Use this function to transfer a task to the selected team member.\nYou must provide a clear and concise description of the task the member should achieve AND the expected output.",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {
+                                            "member_id": {
+                                                "type": "string",
+                                                "description": "(str) The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.",
+                                            },
+                                            "task_description": {
+                                                "type": "string",
+                                                "description": "(str) A clear and concise description of the task the member should achieve.",
+                                            },
+                                            "expected_output": {
+                                                "type": "string",
+                                                "description": "(str) The expected output from the member (optional).",
+                                            },
+                                        },
+                                        "additionalProperties": False,
+                                        "required": ["member_id", "task_description"],
+                                    },
+                                }
+                            ],
+                            "instructions": None,
+                            "members": [
+                                {
+                                    "agent_id": "basic-agent",
+                                    "name": "Basic Agent",
+                                    "description": None,
+                                    "instructions": None,
+                                    "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI gpt-4o"},
+                                    "tools": None,
+                                    "memory": {
+                                        "app_name": "Memory",
+                                        "app_url": None,
+                                        "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                    },
+                                    "knowledge": None,
+                                    "session_table": "agno_sessions",
+                                    "memory_table": "agno_memories",
+                                    "knowledge_table": None,
+                                }
+                            ],
+                            "expected_output": None,
+                            "dependencies": None,
+                            "enable_agentic_context": False,
+                            "memory": {
+                                "app_name": "Memory",
+                                "app_url": None,
+                                "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                            },
+                            "knowledge": None,
+                            "async_mode": False,
+                            "session_table": "agno_sessions",
+                            "memory_table": "agno_memories",
+                            "knowledge_table": None,
+                        }
+                    }
+                },
+            },
+            404: {"description": "Team not found", "model": NotFoundResponse},
+        },
     )
-    async def get_team(team_id: str):
+    async def get_team(team_id: str) -> TeamResponse:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -748,7 +1192,10 @@ def get_base_router(
 
     # -- Workflow routes ---
 
-    @router.websocket("/workflows/ws")
+    @router.websocket(
+        "/workflows/ws",
+        name="workflow_websocket",
+    )
     async def workflow_websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for receiving real-time workflow events"""
         await websocket_manager.connect(websocket)
@@ -776,12 +1223,38 @@ def get_base_router(
 
     @router.get(
         "/workflows",
-        response_model=List[WorkflowResponse],
+        response_model=List[WorkflowSummaryResponse],
         response_model_exclude_none=True,
         tags=["Workflows"],
         operation_id="get_workflows",
+        summary="List All Workflows",
+        description=(
+            "Retrieve a comprehensive list of all workflows configured in this OS instance.\n\n"
+            "**Return Information:**\n"
+            "- Workflow metadata (ID, name, description)\n"
+            "- Input schema requirements\n"
+            "- Step sequence and execution flow\n"
+            "- Associated agents and teams"
+        ),
+        responses={
+            200: {
+                "description": "List of workflows retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            {
+                                "id": "content-creation-workflow",
+                                "name": "Content Creation Workflow",
+                                "description": "Automated content creation from blog posts to social media",
+                                "db_id": "123",
+                            }
+                        ]
+                    }
+                },
+            }
+        },
     )
-    async def get_workflows():
+    async def get_workflows() -> List[WorkflowSummaryResponse]:
         if os.workflows is None:
             return []
 
@@ -793,8 +1266,26 @@ def get_base_router(
         response_model_exclude_none=True,
         tags=["Workflows"],
         operation_id="get_workflow",
+        summary="Get Workflow Details",
+        description=("Retrieve detailed configuration and step information for a specific workflow."),
+        responses={
+            200: {
+                "description": "Workflow details retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "content-creation-workflow",
+                            "name": "Content Creation Workflow",
+                            "description": "Automated content creation from blog posts to social media",
+                            "db_id": "123",
+                        }
+                    }
+                },
+            },
+            404: {"description": "Workflow not found", "model": NotFoundResponse},
+        },
     )
-    async def get_workflow(workflow_id: str):
+    async def get_workflow(workflow_id: str) -> WorkflowResponse:
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -806,6 +1297,34 @@ def get_base_router(
         tags=["Workflows"],
         operation_id="create_workflow_run",
         response_model_exclude_none=True,
+        summary="Execute Workflow",
+        description=(
+            "Execute a workflow with the provided input data. Workflows can run in streaming or batch mode.\n\n"
+            "**Execution Modes:**\n"
+            "- **Streaming (`stream=true`)**: Real-time step-by-step execution updates via SSE\n"
+            "- **Non-Streaming (`stream=false`)**: Complete workflow execution with final result\n\n"
+            "**Workflow Execution Process:**\n"
+            "1. Input validation against workflow schema\n"
+            "2. Sequential or parallel step execution based on workflow design\n"
+            "3. Data flow between steps with transformation\n"
+            "4. Error handling and automatic retries where configured\n"
+            "5. Final result compilation and response\n\n"
+            "**Session Management:**\n"
+            "Workflows support session continuity for stateful execution across multiple runs."
+        ),
+        responses={
+            200: {
+                "description": "Workflow executed successfully",
+                "content": {
+                    "text/event-stream": {
+                        "example": 'event: RunStarted\ndata: {"content": "Hello!", "run_id": "123..."}\n\n'
+                    },
+                },
+            },
+            400: {"description": "Invalid input data or workflow configuration", "model": BadRequestResponse},
+            404: {"description": "Workflow not found", "model": NotFoundResponse},
+            500: {"description": "Workflow execution error", "model": InternalServerErrorResponse},
+        },
     )
     async def create_workflow_run(
         workflow_id: str,
@@ -853,7 +1372,19 @@ def get_base_router(
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
     @router.post(
-        "/workflows/{workflow_id}/runs/{run_id}/cancel", tags=["Workflows"], operation_id="cancel_workflow_run"
+        "/workflows/{workflow_id}/runs/{run_id}/cancel",
+        tags=["Workflows"],
+        operation_id="cancel_workflow_run",
+        summary="Cancel Workflow Run",
+        description=(
+            "Cancel a currently executing workflow run, stopping all active steps and cleanup.\n"
+            "**Note:** Complex workflows with multiple parallel steps may take time to fully cancel."
+        ),
+        responses={
+            200: {},
+            404: {"description": "Workflow or run not found", "model": NotFoundResponse},
+            500: {"description": "Failed to cancel workflow run", "model": InternalServerErrorResponse},
+        },
     )
     async def cancel_workflow_run(workflow_id: str, run_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)

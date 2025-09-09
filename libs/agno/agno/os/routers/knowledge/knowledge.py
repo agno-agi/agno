@@ -21,7 +21,16 @@ from agno.os.routers.knowledge.schemas import (
     ContentUpdateSchema,
     ReaderSchema,
 )
-from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.schema import (
+    BadRequestResponse,
+    InternalServerErrorResponse,
+    NotFoundResponse,
+    PaginatedResponse,
+    PaginationInfo,
+    SortOrder,
+    UnauthenticatedResponse,
+    ValidationErrorResponse,
+)
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.utils.log import log_debug, log_info
@@ -32,25 +41,65 @@ logger = logging.getLogger(__name__)
 def get_knowledge_router(
     knowledge_instances: List[Knowledge], settings: AgnoAPISettings = AgnoAPISettings()
 ) -> APIRouter:
-    router = APIRouter(dependencies=[Depends(get_authentication_dependency(settings))], tags=["Knowledge"])
+    """Create knowledge router with comprehensive OpenAPI documentation for content management endpoints."""
+    router = APIRouter(
+        dependencies=[Depends(get_authentication_dependency(settings))],
+        tags=["Knowledge"],
+        responses={
+            400: {"description": "Bad Request", "model": BadRequestResponse},
+            401: {"description": "Unauthorized", "model": UnauthenticatedResponse},
+            404: {"description": "Not Found", "model": NotFoundResponse},
+            422: {"description": "Validation Error", "model": ValidationErrorResponse},
+            500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
+        },
+    )
     return attach_routes(router=router, knowledge_instances=knowledge_instances)
 
 
 def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> APIRouter:
     @router.post(
-        "/knowledge/content", response_model=ContentResponseSchema, status_code=202, operation_id="upload_content"
+        "/knowledge/content",
+        response_model=ContentResponseSchema,
+        status_code=202,
+        operation_id="upload_content",
+        summary="Upload Content",
+        description=(
+            "Upload content to the knowledge base. Supports file uploads, text content, or URLs. "
+            "Content is processed asynchronously in the background. Supports custom readers and chunking strategies."
+        ),
+        responses={
+            202: {
+                "description": "Content upload accepted for processing",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "content-123",
+                            "name": "example-document.pdf",
+                            "description": "Sample document for processing",
+                            "metadata": {"category": "documentation", "priority": "high"},
+                            "status": "processing",
+                        }
+                    }
+                },
+            },
+            400: {
+                "description": "Invalid request - malformed metadata or missing content",
+                "model": BadRequestResponse,
+            },
+            422: {"description": "Validation error in form data", "model": ValidationErrorResponse},
+        },
     )
     async def upload_content(
         background_tasks: BackgroundTasks,
-        name: Optional[str] = Form(None),
-        description: Optional[str] = Form(None),
-        url: Optional[str] = Form(None),
-        metadata: Optional[str] = Form(None, description="JSON metadata"),
-        file: Optional[UploadFile] = File(None),
-        text_content: Optional[str] = Form(None),
-        reader_id: Optional[str] = Form(None),
-        chunker: Optional[str] = Form(None),
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        name: Optional[str] = Form(None, description="Content name (auto-generated from file/URL if not provided)"),
+        description: Optional[str] = Form(None, description="Content description for context"),
+        url: Optional[str] = Form(None, description="URL to fetch content from (JSON array or single URL string)"),
+        metadata: Optional[str] = Form(None, description="JSON metadata object for additional content properties"),
+        file: Optional[UploadFile] = File(None, description="File to upload for processing"),
+        text_content: Optional[str] = Form(None, description="Raw text content to process"),
+        reader_id: Optional[str] = Form(None, description="ID of the reader to use for content processing"),
+        chunker: Optional[str] = Form(None, description="Chunking strategy to apply during processing"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
     ):
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         content_id = str(uuid4())
@@ -133,6 +182,39 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         response_model=ContentResponseSchema,
         status_code=200,
         operation_id="update_content",
+        summary="Update Content",
+        description=(
+            "Update content properties such as name, description, metadata, or processing configuration. "
+            "Allows modification of existing content without re-uploading."
+        ),
+        responses={
+            200: {
+                "description": "Content updated successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "3c2fc685-d451-4d47-b0c0-b9a544c672b7",
+                            "name": "example.pdf",
+                            "description": "",
+                            "type": "application/pdf",
+                            "size": "251261",
+                            "linked_to": None,
+                            "metadata": {},
+                            "access_count": 1,
+                            "status": "completed",
+                            "status_message": "",
+                            "created_at": "2025-09-08T15:22:53Z",
+                            "updated_at": "2025-09-08T15:22:54Z",
+                        }
+                    }
+                },
+            },
+            400: {
+                "description": "Invalid request - malformed metadata or invalid reader_id",
+                "model": BadRequestResponse,
+            },
+            404: {"description": "Content not found", "model": NotFoundResponse},
+        },
     )
     async def update_content(
         content_id: str = Path(..., description="Content ID"),
@@ -184,6 +266,39 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         response_model=PaginatedResponse[ContentResponseSchema],
         status_code=200,
         operation_id="get_content",
+        summary="List Content",
+        description=(
+            "Retrieve paginated list of all content in the knowledge base with filtering and sorting options. "
+            "Filter by status, content type, or metadata properties."
+        ),
+        responses={
+            200: {
+                "description": "Content list retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "data": [
+                                {
+                                    "id": "3c2fc685-d451-4d47-b0c0-b9a544c672b7",
+                                    "name": "example.pdf",
+                                    "description": "",
+                                    "type": "application/pdf",
+                                    "size": "251261",
+                                    "linked_to": None,
+                                    "metadata": {},
+                                    "access_count": 1,
+                                    "status": "completed",
+                                    "status_message": "",
+                                    "created_at": "2025-09-08T15:22:53Z",
+                                    "updated_at": "2025-09-08T15:22:54Z",
+                                },
+                            ],
+                            "meta": {"page": 1, "limit": 20, "total_pages": 1, "total_count": 2},
+                        }
+                    }
+                },
+            }
+        },
     )
     def get_content(
         limit: Optional[int] = Query(default=20, description="Number of content entries to return"),
@@ -226,6 +341,32 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         response_model=ContentResponseSchema,
         status_code=200,
         operation_id="get_content_by_id",
+        summary="Get Content by ID",
+        description="Retrieve detailed information about a specific content item including processing status and metadata.",
+        responses={
+            200: {
+                "description": "Content details retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "3c2fc685-d451-4d47-b0c0-b9a544c672b7",
+                            "name": "example.pdf",
+                            "description": "",
+                            "type": "application/pdf",
+                            "size": "251261",
+                            "linked_to": None,
+                            "metadata": {},
+                            "access_count": 1,
+                            "status": "completed",
+                            "status_message": "",
+                            "created_at": "2025-09-08T15:22:53Z",
+                            "updated_at": "2025-09-08T15:22:54Z",
+                        }
+                    }
+                },
+            },
+            404: {"description": "Content not found", "model": NotFoundResponse},
+        },
     )
     def get_content_by_id(
         content_id: str,
@@ -259,6 +400,13 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         status_code=200,
         response_model_exclude_none=True,
         operation_id="delete_content_by_id",
+        summary="Delete Content by ID",
+        description="Permanently remove a specific content item from the knowledge base. This action cannot be undone.",
+        responses={
+            200: {},
+            404: {"description": "Content not found", "model": NotFoundResponse},
+            500: {"description": "Failed to delete content", "model": InternalServerErrorResponse},
+        },
     )
     def delete_content_by_id(
         content_id: str,
@@ -272,7 +420,20 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             id=content_id,
         )
 
-    @router.delete("/knowledge/content", status_code=200, operation_id="delete_all_content")
+    @router.delete(
+        "/knowledge/content",
+        status_code=200,
+        operation_id="delete_all_content",
+        summary="Delete All Content",
+        description=(
+            "Permanently remove all content from the knowledge base. This is a destructive operation that "
+            "cannot be undone. Use with extreme caution."
+        ),
+        responses={
+            200: {},
+            500: {"description": "Failed to delete all content", "model": InternalServerErrorResponse},
+        },
+    )
     def delete_all_content(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ):
@@ -285,6 +446,30 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         status_code=200,
         response_model=ContentStatusResponse,
         operation_id="get_content_status",
+        summary="Get Content Status",
+        description=(
+            "Retrieve the current processing status of a content item. Useful for monitoring "
+            "asynchronous content processing progress and identifying any processing errors."
+        ),
+        responses={
+            200: {
+                "description": "Content status retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "completed": {
+                                "summary": "Example completed content status",
+                                "value": {
+                                    "status": "completed",
+                                    "status_message": "",
+                                },
+                            }
+                        }
+                    }
+                },
+            },
+            404: {"description": "Content not found", "model": NotFoundResponse},
+        },
     )
     def get_content_status(
         content_id: str,
@@ -323,7 +508,235 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
 
         return ContentStatusResponse(status=status, status_message=status_message or "")
 
-    @router.get("/knowledge/config", status_code=200, operation_id="get_knowledge_config")
+    @router.get(
+        "/knowledge/config",
+        status_code=200,
+        operation_id="get_knowledge_config",
+        summary="Get Knowledge Configuration",
+        description=(
+            "Retrieve available readers, chunkers, and configuration options for content processing. "
+            "This endpoint provides metadata about supported file types, processing strategies, and filters."
+        ),
+        responses={
+            200: {
+                "description": "Knowledge configuration retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "readers": {
+                                "website": {
+                                    "id": "website",
+                                    "name": "WebsiteReader",
+                                    "description": "Reads website files",
+                                    "chunkers": [
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                        "FixedSizeChunker",
+                                    ],
+                                },
+                                "firecrawl": {
+                                    "id": "firecrawl",
+                                    "name": "FirecrawlReader",
+                                    "description": "Reads firecrawl files",
+                                    "chunkers": [
+                                        "SemanticChunker",
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                    ],
+                                },
+                                "youtube": {
+                                    "id": "youtube",
+                                    "name": "YoutubeReader",
+                                    "description": "Reads youtube files",
+                                    "chunkers": [
+                                        "RecursiveChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "SemanticChunker",
+                                        "FixedSizeChunker",
+                                    ],
+                                },
+                                "web_search": {
+                                    "id": "web_search",
+                                    "name": "WebSearchReader",
+                                    "description": "Reads web_search files",
+                                    "chunkers": [
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                        "FixedSizeChunker",
+                                    ],
+                                },
+                                "arxiv": {
+                                    "id": "arxiv",
+                                    "name": "ArxivReader",
+                                    "description": "Reads arxiv files",
+                                    "chunkers": [
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                    ],
+                                },
+                                "csv": {
+                                    "id": "csv",
+                                    "name": "CsvReader",
+                                    "description": "Reads csv files",
+                                    "chunkers": [
+                                        "RowChunker",
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                    ],
+                                },
+                                "docx": {
+                                    "id": "docx",
+                                    "name": "DocxReader",
+                                    "description": "Reads docx files",
+                                    "chunkers": [
+                                        "DocumentChunker",
+                                        "FixedSizeChunker",
+                                        "SemanticChunker",
+                                        "AgenticChunker",
+                                        "RecursiveChunker",
+                                    ],
+                                },
+                                "gcs": {
+                                    "id": "gcs",
+                                    "name": "GcsReader",
+                                    "description": "Reads gcs files",
+                                    "chunkers": [
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                    ],
+                                },
+                                "json": {
+                                    "id": "json",
+                                    "name": "JsonReader",
+                                    "description": "Reads json files",
+                                    "chunkers": [
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                    ],
+                                },
+                                "markdown": {
+                                    "id": "markdown",
+                                    "name": "MarkdownReader",
+                                    "description": "Reads markdown files",
+                                    "chunkers": [
+                                        "MarkdownChunker",
+                                        "DocumentChunker",
+                                        "AgenticChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                        "FixedSizeChunker",
+                                    ],
+                                },
+                                "pdf": {
+                                    "id": "pdf",
+                                    "name": "PdfReader",
+                                    "description": "Reads pdf files",
+                                    "chunkers": [
+                                        "DocumentChunker",
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "SemanticChunker",
+                                        "RecursiveChunker",
+                                    ],
+                                },
+                                "text": {
+                                    "id": "text",
+                                    "name": "TextReader",
+                                    "description": "Reads text files",
+                                    "chunkers": [
+                                        "FixedSizeChunker",
+                                        "AgenticChunker",
+                                        "DocumentChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                    ],
+                                },
+                            },
+                            "readersForType": {
+                                "url": [
+                                    "url",
+                                    "website",
+                                    "firecrawl",
+                                    "youtube",
+                                    "web_search",
+                                    "gcs",
+                                ],
+                                "youtube": ["youtube"],
+                                "text": ["web_search"],
+                                "topic": ["arxiv"],
+                                "file": ["csv", "gcs"],
+                                ".csv": ["csv"],
+                                ".xlsx": ["csv"],
+                                ".xls": ["csv"],
+                                ".docx": ["docx"],
+                                ".doc": ["docx"],
+                                ".json": ["json"],
+                                ".md": ["markdown"],
+                                ".pdf": ["pdf"],
+                                ".txt": ["text"],
+                            },
+                            "chunkers": {
+                                "AgenticChunker": {
+                                    "key": "AgenticChunker",
+                                    "name": "AgenticChunker",
+                                    "description": "Chunking strategy that uses an LLM to determine natural breakpoints in the text",
+                                },
+                                "DocumentChunker": {
+                                    "key": "DocumentChunker",
+                                    "name": "DocumentChunker",
+                                    "description": "A chunking strategy that splits text based on document structure like paragraphs and sections",
+                                },
+                                "RecursiveChunker": {
+                                    "key": "RecursiveChunker",
+                                    "name": "RecursiveChunker",
+                                    "description": "Chunking strategy that recursively splits text into chunks by finding natural break points",
+                                },
+                                "SemanticChunker": {
+                                    "key": "SemanticChunker",
+                                    "name": "SemanticChunker",
+                                    "description": "Chunking strategy that splits text into semantic chunks using chonkie",
+                                },
+                                "FixedSizeChunker": {
+                                    "key": "FixedSizeChunker",
+                                    "name": "FixedSizeChunker",
+                                    "description": "Chunking strategy that splits text into fixed-size chunks with optional overlap",
+                                },
+                                "RowChunker": {
+                                    "key": "RowChunker",
+                                    "name": "RowChunker",
+                                    "description": "RowChunking chunking strategy",
+                                },
+                                "MarkdownChunker": {
+                                    "key": "MarkdownChunker",
+                                    "name": "MarkdownChunker",
+                                    "description": "A chunking strategy that splits markdown based on structure like headers, paragraphs and sections",
+                                },
+                            },
+                            "filters": ["filter_tag_1", "filter_tag2"],
+                        }
+                    }
+                },
+            }
+        },
+    )
     def get_config(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> ConfigResponseSchema:
