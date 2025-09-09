@@ -174,22 +174,30 @@ class LanceDb(VectorDb):
     async def async_create(self) -> None:
         """Create the table asynchronously if it does not exist."""
         if not await self.async_exists():
-            conn = await self._get_async_connection()
-            schema = self._base_schema()
+            try:
+                conn = await self._get_async_connection()
+                schema = self._base_schema()
 
-            log_debug(f"Creating table asynchronously: {self.table_name}")
-            self.async_table = await conn.create_table(self.table_name, schema=schema, mode="overwrite", exist_ok=True)
+                log_debug(f"Creating table asynchronously: {self.table_name}")
+                self.async_table = await conn.create_table(
+                    self.table_name, schema=schema, mode="overwrite", exist_ok=True
+                )
+                log_debug(f"Successfully created async table: {self.table_name}")
+            except Exception as e:
+                logger.error(f"Error creating async table: {e}")
+                # Try to fall back to sync table creation
+                try:
+                    log_debug("Falling back to sync table creation")
+                    self.table = self._init_table()
+                    log_debug("Sync table created successfully")
+                except Exception as sync_e:
+                    logger.error(f"Sync table creation also failed: {sync_e}")
+                    raise
 
     def _base_schema(self) -> pa.Schema:
         return pa.schema(
             [
-                pa.field(
-                    self._vector_col,
-                    pa.list_(
-                        pa.float32(),
-                        len(self.embedder.get_embedding("test")),  # type: ignore
-                    ),
-                ),
+                pa.field(self._vector_col, pa.list_(pa.float32())),
                 pa.field(self._id, pa.string()),
                 pa.field("payload", pa.string()),
             ]
@@ -278,7 +286,9 @@ class LanceDb(VectorDb):
             data.append(
                 {
                     "id": doc_id,
-                    "vector": document.embedding,
+                    "vector": [float(x) for x in document.embedding]
+                    if document.embedding
+                    else [0.0] * (self.dimensions or 1536),
                     "payload": json.dumps(payload),
                 }
             )
@@ -343,7 +353,9 @@ class LanceDb(VectorDb):
             data.append(
                 {
                     "id": doc_id,
-                    "vector": document.embedding,
+                    "vector": [float(x) for x in document.embedding]
+                    if document.embedding
+                    else [0.0] * (self.dimensions or 1536),
                     "payload": json.dumps(payload),
                 }
             )
@@ -356,6 +368,19 @@ class LanceDb(VectorDb):
         try:
             await self._get_async_connection()
 
+            # Ensure the async table is created before inserting
+            if self.async_table is None:
+                try:
+                    await self.async_create()
+                except Exception as create_e:
+                    logger.error(f"Failed to create async table: {create_e}")
+                    # Continue to fallback logic below
+
+            if self.async_table is None:
+                # Fall back to sync insertion if async table creation failed
+                logger.warning("Async table not available, falling back to sync insertion")
+                return self.insert(content_hash, documents, filters)
+
             if self.on_bad_vectors is not None:
                 await self.async_table.add(data, on_bad_vectors=self.on_bad_vectors, fill_value=self.fill_value)  # type: ignore
             else:
@@ -367,7 +392,14 @@ class LanceDb(VectorDb):
             self._refresh_sync_connection()
         except Exception as e:
             logger.error(f"Error during async document insertion: {e}")
-            raise
+            # Try falling back to sync insertion as a last resort
+            try:
+                logger.warning("Async insertion failed, attempting sync fallback")
+                self.insert(content_hash, documents, filters)
+                logger.info("Sync fallback successful")
+            except Exception as sync_e:
+                logger.error(f"Sync fallback also failed: {sync_e}")
+                raise e from sync_e
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in LanceDB."""

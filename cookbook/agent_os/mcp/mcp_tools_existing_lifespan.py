@@ -18,7 +18,7 @@ from agno.utils.log import log_info
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
-mcp_tools = MCPTools(transport="streamable-http", url="https://docs-v2.agno.com/mcp")
+mcp_tools = MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")
 
 # Setup basic agents, teams and workflows
 agno_support_agent = Agent(
