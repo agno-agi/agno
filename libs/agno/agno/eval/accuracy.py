@@ -97,11 +97,18 @@ class AccuracyResult:
             title_justify="center",
         )
         summary_table.add_row("Number of Runs", f"{len(self.results)}")
-        summary_table.add_row("Average Score", f"{self.avg_score:.2f}")
-        summary_table.add_row("Mean Score", f"{self.mean_score:.2f}")
-        summary_table.add_row("Minimum Score", f"{self.min_score:.2f}")
-        summary_table.add_row("Maximum Score", f"{self.max_score:.2f}")
-        summary_table.add_row("Standard Deviation", f"{self.std_dev_score:.2f}")
+
+        if self.avg_score is not None:
+            summary_table.add_row("Average Score", f"{self.avg_score:.2f}")
+        if self.mean_score is not None:
+            summary_table.add_row("Mean Score", f"{self.mean_score:.2f}")
+        if self.min_score is not None:
+            summary_table.add_row("Minimum Score", f"{self.min_score:.2f}")
+        if self.max_score is not None:
+            summary_table.add_row("Maximum Score", f"{self.max_score:.2f}")
+        if self.std_dev_score is not None:
+            summary_table.add_row("Standard Deviation", f"{self.std_dev_score:.2f}")
+
         console.print(summary_table)
 
     def print_results(self, console: Optional["Console"] = None):

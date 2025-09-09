@@ -1,9 +1,10 @@
+import base64
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.google import Gemini
 from agno.tools.cartesia import CartesiaTools
-from agno.utils.media import save_audio
+from agno.utils.media import save_base64_data
 
 agent_instructions = dedent(
     """Follow these steps SEQUENTIALLY to translate text and generate a localized voice note:
@@ -34,17 +35,16 @@ agent = Agent(
     name="Emotion-Aware Translator Agent",
     description="Translates text, analyzes emotion, selects a suitable voice,creates a localized voice, and generates a voice note (audio file) using Cartesia TTStools.",
     instructions=agent_instructions,
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[CartesiaTools(voice_localize_enabled=True)],
+    model=Gemini(id="gemini-2.5-pro"),
+    tools=[CartesiaTools()],
 )
 
-agent.print_response(
+response = agent.run(
     "Convert this phrase 'hello! how are you? Tell me more about the weather in Paris?' to French and create a voice note"
 )
-response = agent.get_last_run_output()
 
 print("\nChecking for Audio Artifacts on Agent...")
 if response.audio:
-    save_audio(
-        base64_data=response.audio[0].base64_audio, output_path="tmp/greeting.mp3"
-    )
+    base64_audio = base64.b64encode(response.audio[0].content).decode("utf-8")
+    save_base64_data(base64_data=base64_audio, output_path="tmp/greeting.mp3")
+    print("Saved audio to tmp/greeting.mp3")

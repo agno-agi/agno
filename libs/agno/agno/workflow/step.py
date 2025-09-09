@@ -7,7 +7,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, Image, Video
 from agno.models.metrics import Metrics
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
@@ -931,20 +931,20 @@ class Step:
             # Convert any other type to string
             return RunOutput(content=str(result))
 
-    def _convert_audio_artifacts_to_audio(self, audio_artifacts: List[AudioArtifact]) -> List[Audio]:
+    def _convert_audio_artifacts_to_audio(self, audio_artifacts: List[Audio]) -> List[Audio]:
         """Convert AudioArtifact objects to Audio objects"""
         audios = []
         for audio_artifact in audio_artifacts:
             if audio_artifact.url:
                 audios.append(Audio(url=audio_artifact.url))
-            elif audio_artifact.base64_audio:  # use base64_audio instead of content
-                audios.append(Audio(content=audio_artifact.base64_audio))
+            elif audio_artifact.content:
+                audios.append(Audio(content=audio_artifact.content))
             else:
-                logger.warning(f"Skipping AudioArtifact with no URL or base64_audio: {audio_artifact}")
+                logger.warning(f"Skipping AudioArtifact with no URL or content: {audio_artifact}")
                 continue
         return audios
 
-    def _convert_image_artifacts_to_images(self, image_artifacts: List[ImageArtifact]) -> List[Image]:
+    def _convert_image_artifacts_to_images(self, image_artifacts: List[Image]) -> List[Image]:
         """
         Convert ImageArtifact objects to Image objects with proper content handling.
 
@@ -996,7 +996,7 @@ class Step:
 
         return images
 
-    def _convert_video_artifacts_to_videos(self, video_artifacts: List[VideoArtifact]) -> List[Video]:
+    def _convert_video_artifacts_to_videos(self, video_artifacts: List[Video]) -> List[Video]:
         """
         Convert VideoArtifact objects to Video objects with proper content handling.
 
