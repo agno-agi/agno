@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 
 from agno.agent import Agent
-from agno.media import ImageArtifact, VideoArtifact
+from agno.media import Image, Video
 from agno.tools.function import ToolResult
 from agno.tools.models.gemini import GeminiTools
 
@@ -155,7 +155,7 @@ def test_generate_image_success(mock_gemini_tools, mock_agent, mock_successful_r
 
         # Verify the ImageArtifact properties
         image_artifact = result.images[0]
-        assert isinstance(image_artifact, ImageArtifact)
+        assert isinstance(image_artifact, Image)
         assert image_artifact.id == expected_media_id
         assert image_artifact.original_prompt == prompt
         assert image_artifact.mime_type == "image/png"
@@ -251,14 +251,15 @@ def test_generate_video_success(mock_gemini_tools, mock_agent, mock_video_operat
 
         # Verify the VideoArtifact properties
         video_artifact = result.videos[0]
-        assert isinstance(video_artifact, VideoArtifact)
+        assert isinstance(video_artifact, Video)
         assert video_artifact.id == expected_id
         assert video_artifact.original_prompt == prompt
         assert video_artifact.mime_type == "video/mp4"
 
         import base64
 
-        expected_content = base64.b64encode(b"fake_video_bytes").decode("utf-8")
+        expected_base64_string = base64.b64encode(b"fake_video_bytes").decode("utf-8")
+        expected_content = expected_base64_string.encode("utf-8")  # Convert string to UTF-8 bytes
         assert video_artifact.content == expected_content
 
         assert mock_gemini_tools.client.models.generate_videos.called

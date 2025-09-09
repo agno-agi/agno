@@ -5,7 +5,7 @@ from uuid import UUID
 import pytest
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.tools.function import ToolResult
 from agno.tools.models.nebius import NebiusTools
 
@@ -149,7 +149,7 @@ def test_generate_image_success(mock_nebius_tools, mock_agent, mock_successful_r
 
         # Verify the ImageArtifact properties
         image_artifact = result.images[0]
-        assert isinstance(image_artifact, ImageArtifact)
+        assert isinstance(image_artifact, Image)
         assert image_artifact.id == "12345678-1234-5678-1234-567812345678"
         assert image_artifact.original_prompt == prompt
         assert image_artifact.mime_type == "image/png"

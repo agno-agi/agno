@@ -5,6 +5,7 @@ This script demonstrates how to use an agent to generate speech from a given tex
 Run `pip install openai agno` to install the necessary dependencies.
 """
 
+import base64
 from pathlib import Path
 
 from agno.agent import Agent
@@ -27,6 +28,7 @@ response = agent.run(
 
 print(f"Agent response: {response.get_content_as_string()}")
 
-if response.audio and response.audio[0].base64_audio:
-    save_base64_data(response.audio[0].base64_audio, output_file)
+if response.audio:
+    base64_audio = base64.b64encode(response.audio[0].content).decode("utf-8")
+    save_base64_data(base64_audio, output_file)
     print(f"Successfully saved generated speech to{output_file}")

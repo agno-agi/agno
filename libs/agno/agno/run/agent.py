@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel
 
-from agno.media import AudioArtifact, AudioResponse, File, ImageArtifact, VideoArtifact
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
@@ -97,8 +97,8 @@ class RunContentEvent(BaseAgentRunEvent):
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
-    response_audio: Optional[AudioResponse] = None  # Model audio response
-    image: Optional[ImageArtifact] = None  # Image attached to the response
+    response_audio: Optional[Audio] = None  # Model audio response
+    image: Optional[Image] = None  # Image attached to the response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
@@ -119,10 +119,10 @@ class RunCompletedEvent(BaseAgentRunEvent):
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
-    images: Optional[List[ImageArtifact]] = None  # Images attached to the response
-    videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
-    audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
-    response_audio: Optional[AudioResponse] = None  # Model audio response
+    images: Optional[List[Image]] = None  # Images attached to the response
+    videos: Optional[List[Video]] = None  # Videos attached to the response
+    audio: Optional[List[Audio]] = None  # Audio attached to the response
+    response_audio: Optional[Audio] = None  # Model audio response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
@@ -203,9 +203,9 @@ class ToolCallCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.tool_call_completed.value
     tool: Optional[ToolExecution] = None
     content: Optional[Any] = None
-    images: Optional[List[ImageArtifact]] = None  # Images produced by the tool call
-    videos: Optional[List[VideoArtifact]] = None  # Videos produced by the tool call
-    audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
+    images: Optional[List[Image]] = None  # Images produced by the tool call
+    videos: Optional[List[Video]] = None  # Videos produced by the tool call
+    audio: Optional[List[Audio]] = None  # Audio produced by the tool call
 
 
 @dataclass
@@ -306,9 +306,9 @@ class RunInput:
     """
 
     input_content: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None
-    images: Optional[Sequence[ImageArtifact]] = None
-    videos: Optional[Sequence[VideoArtifact]] = None
-    audios: Optional[Sequence[AudioArtifact]] = None
+    images: Optional[Sequence[Image]] = None
+    videos: Optional[Sequence[Video]] = None
+    audios: Optional[Sequence[Audio]] = None
     files: Optional[Sequence[File]] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -345,15 +345,15 @@ class RunInput:
         """Create RunInput from dictionary"""
         images = None
         if data.get("images"):
-            images = [ImageArtifact.model_validate(img_data) for img_data in data["images"]]
+            images = [Image.model_validate(img_data) for img_data in data["images"]]
 
         videos = None
         if data.get("videos"):
-            videos = [VideoArtifact.model_validate(vid_data) for vid_data in data["videos"]]
+            videos = [Video.model_validate(vid_data) for vid_data in data["videos"]]
 
         audios = None
         if data.get("audios"):
-            audios = [AudioArtifact.model_validate(aud_data) for aud_data in data["audios"]]
+            audios = [Audio.model_validate(aud_data) for aud_data in data["audios"]]
 
         files = None
         if data.get("files"):
@@ -389,10 +389,10 @@ class RunOutput:
 
     tools: Optional[List[ToolExecution]] = None
 
-    images: Optional[List[ImageArtifact]] = None  # Images attached to the response
-    videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
-    audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
-    response_audio: Optional[AudioResponse] = None  # Model audio response
+    images: Optional[List[Image]] = None  # Images attached to the response
+    videos: Optional[List[Video]] = None  # Videos attached to the response
+    audio: Optional[List[Audio]] = None  # Audio attached to the response
+    response_audio: Optional[Audio] = None  # Model audio response
 
     # Input media and messages from user
     input: Optional[RunInput] = None
@@ -487,7 +487,7 @@ class RunOutput:
         if self.images is not None:
             _dict["images"] = []
             for img in self.images:
-                if isinstance(img, ImageArtifact):
+                if isinstance(img, Image):
                     _dict["images"].append(img.to_dict())
                 else:
                     _dict["images"].append(img)
@@ -495,7 +495,7 @@ class RunOutput:
         if self.videos is not None:
             _dict["videos"] = []
             for vid in self.videos:
-                if isinstance(vid, VideoArtifact):
+                if isinstance(vid, Video):
                     _dict["videos"].append(vid.to_dict())
                 else:
                     _dict["videos"].append(vid)
@@ -503,13 +503,13 @@ class RunOutput:
         if self.audio is not None:
             _dict["audio"] = []
             for aud in self.audio:
-                if isinstance(aud, AudioArtifact):
+                if isinstance(aud, Audio):
                     _dict["audio"].append(aud.to_dict())
                 else:
                     _dict["audio"].append(aud)
 
         if self.response_audio is not None:
-            if isinstance(self.response_audio, AudioResponse):
+            if isinstance(self.response_audio, Audio):
                 _dict["response_audio"] = self.response_audio.to_dict()
             else:
                 _dict["response_audio"] = self.response_audio
@@ -565,16 +565,16 @@ class RunOutput:
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
         images = data.pop("images", [])
-        images = [ImageArtifact.model_validate(image) for image in images] if images else None
+        images = [Image.model_validate(image) for image in images] if images else None
 
         videos = data.pop("videos", [])
-        videos = [VideoArtifact.model_validate(video) for video in videos] if videos else None
+        videos = [Video.model_validate(video) for video in videos] if videos else None
 
         audio = data.pop("audio", [])
-        audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
+        audio = [Audio.model_validate(audio) for audio in audio] if audio else None
 
         response_audio = data.pop("response_audio", None)
-        response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
+        response_audio = Audio.model_validate(response_audio) if response_audio else None
 
         input_data = data.pop("input", None)
         input_obj = None

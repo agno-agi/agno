@@ -3,7 +3,7 @@ from typing import Any, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import AudioArtifact, ImageArtifact
+from agno.media import Audio, Image
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
@@ -149,7 +149,7 @@ class OpenAITools(Toolkit):
                 image_bytes = base64.b64decode(image_base64)
 
                 # Create ImageArtifact and return in ToolResult
-                image_artifact = ImageArtifact(
+                image_artifact = Image(
                     id=media_id,
                     content=image_bytes,  # ← Store as bytes, not encoded string
                     mime_type="image/png",
@@ -176,8 +176,6 @@ class OpenAITools(Toolkit):
             text_input (str): The text to synthesize into speech.
         """
         try:
-            import base64
-
             response = OpenAIClient(api_key=self.api_key).audio.speech.create(
                 model=self.tts_model,
                 voice=self.tts_voice,
@@ -188,14 +186,11 @@ class OpenAITools(Toolkit):
             # Get raw audio data for artifact creation before potentially saving
             audio_data: bytes = response.content
 
-            # Base64 encode the audio data
-            base64_encoded_audio = base64.b64encode(audio_data).decode("utf-8")
-
             # Create AudioArtifact and return in ToolResult
             media_id = str(uuid4())
-            audio_artifact = AudioArtifact(
+            audio_artifact = Audio(
                 id=media_id,
-                base64_audio=base64_encoded_audio,
+                content=audio_data,
                 mime_type=f"audio/{self.tts_format}",
             )
 

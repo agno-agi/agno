@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, SessionType
 from agno.exceptions import RunCancelledException
-from agno.media import Audio, AudioArtifact, File, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.run.agent import RunEvent
@@ -745,9 +745,9 @@ class Workflow:
         self,
         execution_input: WorkflowExecutionInput,
         previous_step_outputs: Optional[Dict[str, StepOutput]] = None,
-        shared_images: Optional[List[ImageArtifact]] = None,
-        shared_videos: Optional[List[VideoArtifact]] = None,
-        shared_audio: Optional[List[AudioArtifact]] = None,
+        shared_images: Optional[List[Image]] = None,
+        shared_videos: Optional[List[Video]] = None,
+        shared_audio: Optional[List[Audio]] = None,
         shared_files: Optional[List[File]] = None,
     ) -> StepInput:
         """Helper method to create StepInput with enhanced data flow support"""
@@ -890,12 +890,12 @@ class Workflow:
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
-                shared_images: List[ImageArtifact] = execution_input.images or []
-                output_images: List[ImageArtifact] = (execution_input.images or []).copy()  # Start with input images
-                shared_videos: List[VideoArtifact] = execution_input.videos or []
-                output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
-                shared_audio: List[AudioArtifact] = execution_input.audio or []
-                output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
+                shared_images: List[Image] = execution_input.images or []
+                output_images: List[Image] = (execution_input.images or []).copy()  # Start with input images
+                shared_videos: List[Video] = execution_input.videos or []
+                output_videos: List[Video] = (execution_input.videos or []).copy()  # Start with input videos
+                shared_audio: List[Audio] = execution_input.audio or []
+                output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
@@ -1050,12 +1050,12 @@ class Workflow:
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
-                shared_images: List[ImageArtifact] = execution_input.images or []
-                output_images: List[ImageArtifact] = (execution_input.images or []).copy()  # Start with input images
-                shared_videos: List[VideoArtifact] = execution_input.videos or []
-                output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
-                shared_audio: List[AudioArtifact] = execution_input.audio or []
-                output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
+                shared_images: List[Image] = execution_input.images or []
+                output_images: List[Image] = (execution_input.images or []).copy()  # Start with input images
+                shared_videos: List[Video] = execution_input.videos or []
+                output_videos: List[Video] = (execution_input.videos or []).copy()  # Start with input videos
+                shared_audio: List[Audio] = execution_input.audio or []
+                output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
@@ -1326,12 +1326,12 @@ class Workflow:
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
-                shared_images: List[ImageArtifact] = execution_input.images or []
-                output_images: List[ImageArtifact] = (execution_input.images or []).copy()  # Start with input images
-                shared_videos: List[VideoArtifact] = execution_input.videos or []
-                output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
-                shared_audio: List[AudioArtifact] = execution_input.audio or []
-                output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
+                shared_images: List[Image] = execution_input.images or []
+                output_images: List[Image] = (execution_input.images or []).copy()  # Start with input images
+                shared_videos: List[Video] = execution_input.videos or []
+                output_videos: List[Video] = (execution_input.videos or []).copy()  # Start with input videos
+                shared_audio: List[Audio] = execution_input.audio or []
+                output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
@@ -1484,12 +1484,12 @@ class Workflow:
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
-                shared_images: List[ImageArtifact] = execution_input.images or []
-                output_images: List[ImageArtifact] = (execution_input.images or []).copy()  # Start with input images
-                shared_videos: List[VideoArtifact] = execution_input.videos or []
-                output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
-                shared_audio: List[AudioArtifact] = execution_input.audio or []
-                output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
+                shared_images: List[Image] = execution_input.images or []
+                output_images: List[Image] = (execution_input.images or []).copy()  # Start with input images
+                shared_videos: List[Video] = execution_input.videos or []
+                output_videos: List[Video] = (execution_input.videos or []).copy()  # Start with input videos
+                shared_audio: List[Audio] = execution_input.audio or []
+                output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 

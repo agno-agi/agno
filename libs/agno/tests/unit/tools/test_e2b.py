@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.tools.function import ToolResult
 
 # Mock the e2b_code_interpreter module before importing E2BTools
@@ -56,7 +56,7 @@ def mock_e2b_tools():
 
             # Mock ToolResult returns for updated methods
             mock_image_result = ToolResult(
-                content="Image added as artifact with ID test-image-id", images=[Mock(spec=ImageArtifact)]
+                content="Image added as artifact with ID test-image-id", images=[Mock(spec=Image)]
             )
             tools.download_png_result = Mock(return_value=mock_image_result)
 
