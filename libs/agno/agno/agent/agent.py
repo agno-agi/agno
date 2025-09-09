@@ -8056,6 +8056,10 @@ class Agent:
                 from agno.run.response import RunResponseExtraData
 
                 self.run_response.extra_data = RunResponseExtraData()
+            elif isinstance(self.run_response.extra_data, dict):
+                from agno.run.response import RunResponseExtraData
+
+                self.run_response.extra_data = RunResponseExtraData.from_dict(self.run_response.extra_data)
 
             if self.run_response.extra_data.reasoning_steps is None:
                 self.run_response.extra_data.reasoning_steps = []
@@ -8069,6 +8073,10 @@ class Agent:
                     from agno.run.response import RunResponseExtraData
 
                     self.run_response.extra_data = RunResponseExtraData()
+                elif isinstance(self.run_response.extra_data, dict):
+                    from agno.run.response import RunResponseExtraData
+
+                    self.run_response.extra_data = RunResponseExtraData.from_dict(self.run_response.extra_data)
 
                 # Initialize reasoning_messages if it doesn't exist
                 if self.run_response.extra_data.reasoning_messages is None:
