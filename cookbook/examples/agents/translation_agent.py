@@ -49,4 +49,4 @@ if response.audio:
     save_base64_data(
         base64_data=base64_audio, output_path="tmp/greeting.mp3"
     )
-    print(f"Saved audio to tmp/greeting.mp3")
+    print("Saved audio to tmp/greeting.mp3")
