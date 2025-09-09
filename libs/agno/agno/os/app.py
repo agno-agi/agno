@@ -36,12 +36,11 @@ from agno.os.routers.session import get_session_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import generate_id
 from agno.team.team import Team
-from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.workflow.workflow import Workflow
 
 
 @asynccontextmanager
-async def mcp_lifespan(app, mcp_tools: List[Union[MCPTools, MultiMCPTools]]):
+async def mcp_lifespan(app, mcp_tools):
     """Manage MCP connection lifecycle inside a FastAPI app"""
     # Startup logic: connect to all contextual MCP servers
     for tool in mcp_tools:
@@ -103,14 +102,16 @@ class AgentOS:
         self.lifespan = lifespan
 
         # List of all MCP tools used inside the AgentOS
-        self.mcp_tools: List[Union[MCPTools, MultiMCPTools]] = []
+        self.mcp_tools = []
 
         if self.agents:
             for agent in self.agents:
                 # Track all MCP tools to later handle their connection
                 if agent.tools:
                     for tool in agent.tools:
-                        if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                        # Checking if the tool is a MCPTools or MultiMCPTools instance
+                        type_name = type(tool).__name__
+                        if type_name in ("MCPTools", "MultiMCPTools"):
                             self.mcp_tools.append(tool)
 
                 agent.initialize_agent()
@@ -123,7 +124,9 @@ class AgentOS:
                 # Track all MCP tools to later handle their connection
                 if team.tools:
                     for tool in team.tools:
-                        if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                        # Checking if the tool is a MCPTools or MultiMCPTools instance
+                        type_name = type(tool).__name__
+                        if type_name in ("MCPTools", "MultiMCPTools"):
                             self.mcp_tools.append(tool)
 
                 team.initialize_team()
