@@ -109,7 +109,9 @@ class AgentOS:
                 # Track all MCP tools to later handle their connection
                 if agent.tools:
                     for tool in agent.tools:
-                        if tool.__class__.__name__ in ("MCPTools", "MultiMCPTools"):
+                        # Checking if the tool is a MCPTools or MultiMCPTools instance
+                        type_name = type(tool).__name__
+                        if type_name in ("MCPTools", "MultiMCPTools"):
                             self.mcp_tools.append(tool)
 
                 agent.initialize_agent()
@@ -122,7 +124,9 @@ class AgentOS:
                 # Track all MCP tools to later handle their connection
                 if team.tools:
                     for tool in team.tools:
-                        if tool.__class__.__name__ in ("MCPTools", "MultiMCPTools"):
+                        # Checking if the tool is a MCPTools or MultiMCPTools instance
+                        type_name = type(tool).__name__
+                        if type_name in ("MCPTools", "MultiMCPTools"):
                             self.mcp_tools.append(tool)
 
                 team.initialize_team()
