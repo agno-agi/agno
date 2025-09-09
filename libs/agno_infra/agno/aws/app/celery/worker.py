@@ -1,10 +1,8 @@
-from dataclasses import dataclass
 from typing import List, Optional, Union
 
 from agno.aws.app.base import AwsApp, AwsBuildContext, ContainerContext  # noqa: F401
 
 
-@dataclass
 class CeleryWorker(AwsApp):
     # -*- App Name
     name: str = "celery-worker"
