@@ -47,3 +47,4 @@ with wave.open(str(filename), "wb") as wav_file:
                 except Exception as e:
                     print(f"Error decoding audio: {e}")
 print()
+print(f"Saved audio to {filename}")
