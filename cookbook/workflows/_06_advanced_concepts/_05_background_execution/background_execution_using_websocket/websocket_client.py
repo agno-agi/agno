@@ -3,15 +3,12 @@ import json
 import sys
 from datetime import datetime
 from typing import Optional
-import re
 
 import websockets
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 from rich.align import Align
-from rich.live import Live
-from rich.table import Table
 
 
 class WorkflowWebSocketClient:
