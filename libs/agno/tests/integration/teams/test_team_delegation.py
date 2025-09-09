@@ -42,21 +42,22 @@ def test_team_delegation():
 def test_respond_directly():
     """Test basic functionality of a coordinator team."""
 
-    english_agent = Agent(name="English Agent", model=OpenAIChat("gpt-4o"), role="Write content based on research")
-    spanish_agent = Agent(name="Spanish Agent", model=OpenAIChat("gpt-4o"), role="Write content based on research")
+    english_agent = Agent(name="English Agent", model=OpenAIChat("gpt-5-mini"), role="Answer in English")
+    spanish_agent = Agent(name="Spanish Agent", model=OpenAIChat("gpt-5-mini"), role="Answer in Spanish")
 
     team = Team(
-        name="Content Team",
-        model=OpenAIChat("gpt-4o"),
+        name="Translation Team",
+        model=OpenAIChat("gpt-5-mini"),
         determine_input_for_members=False,
         respond_directly=True,
         members=[english_agent, spanish_agent],
         instructions=[
             "If the user asks in English, respond in English. If the user asks in Spanish, respond in Spanish.",
+            "Never answer directly, you must delegate the task to the appropriate agent.",
         ],
     )
 
-    response = team.run("Hello, how are you?")
+    response = team.run("¿Cuéntame algo interesante sobre Madrid?")
 
     assert response.content is not None
     assert isinstance(response.content, str)
@@ -64,7 +65,7 @@ def test_respond_directly():
     assert response.member_responses[0].content == response.content
     # Check the user message is the same as the input
     assert response.member_responses[0].messages[1].role == "user"
-    assert response.member_responses[0].messages[1].content == "Hello, how are you?"
+    assert response.member_responses[0].messages[1].content == "¿Cuéntame algo interesante sobre Madrid?"
 
 
 def test_use_input_directly_structured_input():
