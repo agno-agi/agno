@@ -10,7 +10,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 team_member = Agent(
     name="Stock Searcher",
     model=OpenAIChat("gpt-4o"),
-    role="Searches the web for information on a stock.",    
+    role="Searches the web for information on a stock.",
     tools=[DuckDuckGoTools(enable_news=True)],
 )
 
@@ -28,7 +28,7 @@ expected_tool_calls = [
 ]
 
 
-def evaluate_team_reliability():    
+def evaluate_team_reliability():
     response: TeamRunOutput = team.run("What is the latest news on AI?")
     evaluation = ReliabilityEval(
         name="Team Reliability Evaluation",

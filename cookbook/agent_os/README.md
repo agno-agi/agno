@@ -133,5 +133,5 @@ This directory contains comprehensive examples demonstrating different aspects o
 
 ## Documentation
 
-For detailed documentation, visit the [Agno Documentation](https://docs-v2.agno.com).
+For detailed documentation, visit the [Agno Documentation](https://docs.agno.com).
 
