@@ -69,7 +69,9 @@ def main():
     ####################################################################
     # App header
     ####################################################################
-    st.markdown("<h1 class='main-title'>Medical Imaging Analysis</h1>", unsafe_allow_html=True)
+    st.markdown(
+        "<h1 class='main-title'>Medical Imaging Analysis</h1>", unsafe_allow_html=True
+    )
     st.markdown(
         "<p class='subtitle'>AI-powered medical imaging analysis with professional insights</p>",
         unsafe_allow_html=True,
@@ -134,26 +136,32 @@ def main():
             # Read image for AgnoImage
             with open(tmp_path, "rb") as f:
                 image_bytes = f.read()
-            
-            agno_image = AgnoImage(content=image_bytes, format=uploaded_file.name.split('.')[-1])
+
+            agno_image = AgnoImage(
+                content=image_bytes, format=uploaded_file.name.split(".")[-1]
+            )
 
             # Create analysis prompt
-            base_prompt = "Please analyze this medical image and provide comprehensive findings."
+            base_prompt = (
+                "Please analyze this medical image and provide comprehensive findings."
+            )
             if additional_context.strip():
-                analysis_prompt = f"{base_prompt}\n\nAdditional context: {additional_context.strip()}"
+                analysis_prompt = (
+                    f"{base_prompt}\n\nAdditional context: {additional_context.strip()}"
+                )
             else:
                 analysis_prompt = base_prompt
 
             # Add message and trigger analysis
             add_message("user", f"🖼️ Medical Image Analysis: {uploaded_file.name}")
-            
+
             # Store image for analysis
             st.session_state["pending_image"] = agno_image
             st.session_state["pending_prompt"] = analysis_prompt
 
             unlink(tmp_path)
             st.sidebar.success(f"Image {uploaded_file.name} ready for analysis")
-            
+
         except Exception as e:
             st.sidebar.error(f"Error processing image: {str(e)}")
         finally:
@@ -209,7 +217,7 @@ def main():
                     else:
                         filename = f"medical_imaging_chat_{session_id}.md"
                 except Exception:
-                    filename = f"medical_imaging_chat_{session_id}.md" 
+                    filename = f"medical_imaging_chat_{session_id}.md"
             else:
                 filename = "medical_imaging_chat_new.md"
 
@@ -243,18 +251,20 @@ def main():
     )
     if last_message and last_message.get("role") == "user":
         question = last_message["content"]
-        
+
         # Check if we have a pending image to analyze
         pending_image = st.session_state.get("pending_image")
         pending_prompt = st.session_state.get("pending_prompt")
-        
+
         if pending_image and pending_prompt:
             # Display image analysis response
             with st.chat_message("assistant"):
                 with st.spinner("🔄 Analyzing medical image... Please wait."):
                     try:
-                        response = medical_agent.run(pending_prompt, images=[pending_image])
-                        
+                        response = medical_agent.run(
+                            pending_prompt, images=[pending_image]
+                        )
+
                         if hasattr(response, "content"):
                             content = response.content
                         elif isinstance(response, str):
@@ -263,19 +273,19 @@ def main():
                             content = response["content"]
                         else:
                             content = str(response)
-                        
+
                         st.markdown(content)
                         add_message("assistant", content)
-                        
+
                     except Exception as e:
                         error_msg = f"Error analyzing image: {str(e)}"
                         st.error(error_msg)
                         add_message("assistant", error_msg)
-            
+
             # Clear pending image data
             st.session_state.pop("pending_image", None)
             st.session_state.pop("pending_prompt", None)
-            
+
         else:
             # Regular text response
             display_response(medical_agent, question)

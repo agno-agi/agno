@@ -20,7 +20,7 @@ def get_mcp_agent(
     mcp_server_ids: Optional[List[str]] = None,
 ) -> Agent:
     """Get a Universal MCP Agent."""
-    
+
     # Database for sessions
     db = PostgresDb(
         db_url=db_url,

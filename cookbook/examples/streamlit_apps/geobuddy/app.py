@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 
 import streamlit as st
-from agents import get_geobuddy_agent, analyze_image_location
+from agents import analyze_image_location, get_geobuddy_agent
 from agno.utils.streamlit import (
     COMMON_CSS,
     MODELS,
@@ -27,15 +27,16 @@ st.set_page_config(
 # Add custom CSS
 st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
+
 def restart_geobuddy(model_id: str = None):
     """Restart GeoBuddy with new settings."""
     target_model = model_id or st.session_state.get("current_model", MODELS[0])
-    
+
     new_agent = get_geobuddy_agent(
         model_id=target_model,
         session_id=None,
     )
-    
+
     st.session_state["agent"] = new_agent
     st.session_state["session_id"] = new_agent.session_id
     st.session_state["messages"] = []
@@ -84,10 +85,10 @@ def main():
     ####################################################################
     st.sidebar.markdown("---")
     st.sidebar.header("🔑 Authentication")
-    
+
     if "api_keys" not in st.session_state:
         st.session_state["api_keys"] = {}
-    
+
     if "gpt" in selected_model.lower() or "openai" in selected_model.lower():
         api_key_label = "OpenAI API Key"
         api_key_env = "OPENAI_API_KEY"
@@ -100,9 +101,9 @@ def main():
         api_key_label = "OpenAI API Key"  # Default to OpenAI
         api_key_env = "OPENAI_API_KEY"
         api_key_help = "Set your OpenAI API key"
-    
+
     current_api_key = st.session_state["api_keys"].get(api_key_env, "")
-    
+
     api_key = st.sidebar.text_input(
         api_key_label,
         value=current_api_key,
@@ -121,22 +122,24 @@ def main():
     # Initialize GeoBuddy Agent and Session
     ####################################################################
     geobuddy_agent = initialize_agent(
-        selected_model, 
+        selected_model,
         lambda model_id, session_id: get_geobuddy_agent(
             model_id=model_id,
             session_id=session_id,
-        )
+        ),
     )
     reset_session_state(geobuddy_agent)
 
-    if prompt := st.chat_input("🗺️ Ask me anything about geography or location analysis!"):
+    if prompt := st.chat_input(
+        "🗺️ Ask me anything about geography or location analysis!"
+    ):
         add_message("user", prompt)
 
     ####################################################################
     # Image Upload Section
     ####################################################################
     st.markdown("### 📷 Image Analysis")
-    
+
     # Create a clean upload area
     with st.container():
         uploaded_file = st.file_uploader(
@@ -144,79 +147,93 @@ def main():
             type=["jpg", "jpeg", "png", "webp"],
             help="Upload a clear image with visible landmarks, architecture, or geographical features",
         )
-    
+
     if uploaded_file is not None:
         col1, col2 = st.columns([3, 2], gap="large")
-        
+
         with col1:
             st.markdown("#### 🖼️ Uploaded Image")
-            st.image(uploaded_file, caption="Image for Analysis", use_container_width=True)
-            
+            st.image(
+                uploaded_file, caption="Image for Analysis", use_container_width=True
+            )
+
         with col2:
             st.markdown("#### 🔍 Controls")
-            
+
             st.markdown("")
             analyze_button = st.button(
-                "🌍 Analyze Location", 
-                type="primary", 
+                "🌍 Analyze Location",
+                type="primary",
                 use_container_width=True,
-                help="Click to analyze the geographical location of this image"
+                help="Click to analyze the geographical location of this image",
             )
-            
+
             if analyze_button:
                 if not api_key:
-                    st.error(f"❌ Please provide your {api_key_label} in the sidebar first!")
+                    st.error(
+                        f"❌ Please provide your {api_key_label} in the sidebar first!"
+                    )
                 else:
                     with st.spinner("🔍 Analyzing image for geographical clues..."):
                         try:
                             # Save uploaded file temporarily
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
+                            with tempfile.NamedTemporaryFile(
+                                delete=False,
+                                suffix=f".{uploaded_file.name.split('.')[-1]}",
+                            ) as tmp_file:
                                 tmp_file.write(uploaded_file.getvalue())
                                 tmp_path = Path(tmp_file.name)
-                            
+
                             # Analyze the image
                             result = analyze_image_location(geobuddy_agent, tmp_path)
-                            
+
                             # Clean up temporary file
                             tmp_path.unlink()
-                            
+
                             if result:
-                                add_message("user", "Please analyze this uploaded image for geographical location identification.")
+                                add_message(
+                                    "user",
+                                    "Please analyze this uploaded image for geographical location identification.",
+                                )
                                 add_message("assistant", result)
-                                st.success("✅ Analysis complete! Check the results below.")
+                                st.success(
+                                    "✅ Analysis complete! Check the results below."
+                                )
                                 st.rerun()
                             else:
-                                st.warning("⚠️ Could not analyze the image. Please try a different image.")
-                                
+                                st.warning(
+                                    "⚠️ Could not analyze the image. Please try a different image."
+                                )
+
                         except Exception as e:
                             st.error(f"❌ Error during analysis: {str(e)}")
                             # Clean up on error
-                            if 'tmp_path' in locals() and tmp_path.exists():
+                            if "tmp_path" in locals() and tmp_path.exists():
                                 tmp_path.unlink()
 
     ####################################################################
     # Sample Analysis Options
     ####################################################################
     st.sidebar.markdown("#### 🌍 Sample Locations")
-    
+
     if st.sidebar.button("🗽 Famous Landmarks"):
         add_message(
             "user",
             "I'd like to test GeoBuddy with famous landmarks. Can you provide tips for analyzing landmark photos?",
         )
-        
+
     if st.sidebar.button("🏛️ Architectural Styles"):
         add_message(
             "user",
             "How can GeoBuddy identify locations based on architectural styles? What should I look for in buildings?",
         )
-        
+
     if st.sidebar.button("🏔️ Natural Features"):
         add_message(
             "user",
             "What natural geographical features help GeoBuddy identify locations? How do you analyze landscapes?",
         )
-        
+
     if st.sidebar.button("🌆 Urban Analysis"):
         add_message(
             "user",
@@ -228,7 +245,7 @@ def main():
     ####################################################################
     st.sidebar.markdown("#### 🛠️ Utilities")
     col1, col2 = st.sidebar.columns([1, 1])
-    
+
     with col1:
         if st.sidebar.button("🔄 New Analysis Session", use_container_width=True):
             restart_geobuddy()
@@ -289,12 +306,12 @@ def main():
     # Session management widgets
     ####################################################################
     session_selector_widget(
-        geobuddy_agent, 
-        selected_model, 
+        geobuddy_agent,
+        selected_model,
         lambda model_id, session_id: get_geobuddy_agent(
             model_id=model_id,
             session_id=session_id,
-        )
+        ),
     )
 
     ####################################################################

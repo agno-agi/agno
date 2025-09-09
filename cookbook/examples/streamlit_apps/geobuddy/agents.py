@@ -13,16 +13,16 @@ def get_geobuddy_agent(
     session_id: Optional[str] = None,
 ) -> Agent:
     """Get a GeoBuddy Agent for geographical image analysis.
-    
+
     Args:
         model_id: Model ID to use for analysis
         user_id: Optional user ID for session tracking
         session_id: Optional session ID for conversation continuity
-        
+
     Returns:
         Agent instance configured for geographical analysis
     """
-    
+
     model = get_model_from_id(model_id)
 
     # Create the geography analysis agent
@@ -68,11 +68,11 @@ def get_geobuddy_agent(
 
 def analyze_image_location(agent: Agent, image_path: Path) -> Optional[str]:
     """Analyze an image to predict its geographical location.
-    
+
     Args:
         agent: The GeoBuddy agent instance
         image_path: Path to the image file
-        
+
     Returns:
         Analysis result or None if failed
     """
@@ -84,7 +84,7 @@ def analyze_image_location(agent: Agent, image_path: Path) -> Optional[str]:
         Provide a detailed analysis following your structured response format with location prediction,
         visual analysis, reasoning process, and alternative possibilities.
         """
-        
+
         response = agent.run(prompt, images=[Image(filepath=image_path)])
         return response.content
     except Exception as e:

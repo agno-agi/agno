@@ -1,11 +1,11 @@
 """♟️ Chess Team Battle
 
-This example demonstrates how to build a sophisticated multi-agent chess game where different AI models 
+This example demonstrates how to build a sophisticated multi-agent chess game where different AI models
 compete against each other. The system coordinates multiple specialized agents working together to play chess.
 
 The Chess Team includes:
 - White Player Agent: Strategizes and makes moves for white pieces
-- Black Player Agent: Strategizes and makes moves for black pieces  
+- Black Player Agent: Strategizes and makes moves for black pieces
 - Game Master Agent: Coordinates gameplay and provides position analysis
 
 Example Gameplay Flow:
@@ -36,24 +36,24 @@ db_url = "postgresql+psycopg://db_user:wc6%40YU8evhm1234@localhost:5433/ai"
 
 def get_chess_team(
     white_model: str = "gpt-4o",
-    black_model: str = "claude-4-sonnet", 
+    black_model: str = "claude-4-sonnet",
     master_model: str = "gpt-4o",
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
 ) -> Team:
     """Get a Chess Team with specialized player agents.
-    
+
     Args:
         white_model: Model ID for the white player agent
-        black_model: Model ID for the black player agent  
+        black_model: Model ID for the black player agent
         master_model: Model ID for the game master agent
         user_id: Optional user ID for session tracking
         session_id: Optional session ID for game continuity
-        
+
     Returns:
         Team instance configured for chess gameplay
     """
-    
+
     # Get model instances with correct provider auto-detection
     white_model_instance = get_model_with_provider(white_model)
     black_model_instance = get_model_with_provider(black_model)
@@ -101,7 +101,7 @@ def get_chess_team(
     )
 
     black_player_agent = Agent(
-        name="Black Player", 
+        name="Black Player",
         model=black_model_instance,
         db=db,
         id="black-chess-player",

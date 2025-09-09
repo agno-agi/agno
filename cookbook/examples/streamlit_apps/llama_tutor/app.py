@@ -35,12 +35,12 @@ TUTOR_MODELS = MODELS + [
 
 def restart_agent(model_id: str = None, education_level: str = None):
     target_model = model_id or st.session_state.get("current_model", TUTOR_MODELS[0])
-    target_education_level = education_level or st.session_state.get("education_level", "High School")
+    target_education_level = education_level or st.session_state.get(
+        "education_level", "High School"
+    )
 
     new_agent = get_llama_tutor_agent(
-        model_id=target_model, 
-        education_level=target_education_level,
-        session_id=None
+        model_id=target_model, education_level=target_education_level, session_id=None
     )
 
     st.session_state["agent"] = new_agent
@@ -73,7 +73,7 @@ def on_model_change():
 def on_education_level_change():
     selected_level = st.session_state.get("education_level_selector")
     current_level = st.session_state.get("education_level", "High School")
-    
+
     if selected_level and selected_level != current_level:
         try:
             # Start new chat with new education level
@@ -131,12 +131,12 @@ def main():
         st.session_state["education_level"] = selected_education_level
 
     llama_tutor_agent = initialize_agent(
-        selected_model, 
+        selected_model,
         lambda model_id, session_id: get_llama_tutor_agent(
             model_id=model_id,
             education_level=st.session_state.get("education_level", "High School"),
-            session_id=session_id
-        )
+            session_id=session_id,
+        ),
     )
     reset_session_state(llama_tutor_agent)
 
@@ -233,13 +233,13 @@ def main():
     # Session management widgets
     ####################################################################
     session_selector_widget(
-        llama_tutor_agent, 
-        selected_model, 
+        llama_tutor_agent,
+        selected_model,
         lambda model_id, session_id: get_llama_tutor_agent(
             model_id=model_id,
             education_level=st.session_state.get("education_level", "High School"),
-            session_id=session_id
-        )
+            session_id=session_id,
+        ),
     )
 
     ####################################################################

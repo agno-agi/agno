@@ -20,7 +20,7 @@ def get_recipe_image_agent(
     local_pdf_path: Optional[str] = None,
 ) -> Agent:
     """Get a Recipe Image Generation Agent with Knowledge Base"""
-    
+
     # Choose the appropriate knowledge base
     if local_pdf_path:
         knowledge = Knowledge(
@@ -41,7 +41,7 @@ def get_recipe_image_agent(
         )
     else:
         knowledge = Knowledge(
-            name="Recipe Knowledge Base", 
+            name="Recipe Knowledge Base",
             description="Thai recipe collection with step-by-step instructions",
             vector_db=PgVector(
                 db_url=db_url,

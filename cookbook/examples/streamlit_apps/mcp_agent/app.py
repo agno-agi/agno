@@ -2,20 +2,21 @@ import asyncio
 
 import nest_asyncio
 import streamlit as st
-from mcp_agent import get_mcp_agent
-from mcp_client import MCPClient, MCPServerConfig
 from agno.utils.streamlit import (
     COMMON_CSS,
     MODELS,
     about_section,
     add_message,
     display_chat_messages,
+    display_tool_calls,
     export_chat_history,
     initialize_agent,
     reset_session_state,
     session_selector_widget,
-    display_tool_calls,
 )
+from mcp_client import MCPClient, MCPServerConfig
+
+from mcp_agent import get_mcp_agent
 
 nest_asyncio.apply()
 st.set_page_config(
@@ -31,9 +32,7 @@ st.markdown(COMMON_CSS, unsafe_allow_html=True)
 # MCP Server configurations
 MCP_SERVERS = {
     "GitHub": MCPServerConfig(
-        id="github",
-        command="npx",
-        args=["-y", "@modelcontextprotocol/server-github"]
+        id="github", command="npx", args=["-y", "@modelcontextprotocol/server-github"]
     ),
 }
 
@@ -44,7 +43,8 @@ async def initialize_mcp_client(server_config: MCPServerConfig):
         if (
             "mcp_client" not in st.session_state
             or st.session_state.get("mcp_server_id") != server_config.id
-            or getattr(st.session_state.get("mcp_client", None), "session", None) is None
+            or getattr(st.session_state.get("mcp_client", None), "session", None)
+            is None
         ):
             # Initialize new MCP client
             st.session_state["mcp_client"] = MCPClient()
@@ -52,7 +52,7 @@ async def initialize_mcp_client(server_config: MCPServerConfig):
         mcp_client = st.session_state["mcp_client"]
         mcp_tools = await mcp_client.connect_to_server(server_config)
         st.session_state["mcp_server_id"] = server_config.id
-        
+
         return mcp_tools
     except Exception as e:
         st.error(f"Failed to connect to MCP server {server_config.id}: {str(e)}")
@@ -63,11 +63,11 @@ def restart_agent(model_id: str = None, mcp_server: str = None):
     """Restart agent with new configuration."""
     target_model = model_id or st.session_state.get("current_model", MODELS[0])
     target_server = mcp_server or st.session_state.get("current_mcp_server", "GitHub")
-    
+
     # Clear MCP client to force reconnection
     if "mcp_client" in st.session_state:
         del st.session_state["mcp_client"]
-    
+
     st.session_state["current_model"] = target_model
     st.session_state["current_mcp_server"] = target_server
     st.session_state["messages"] = []
@@ -105,7 +105,9 @@ async def main():
     ####################################################################
     # App header
     ####################################################################
-    st.markdown("<h1 class='main-title'>Universal MCP Agent</h1>", unsafe_allow_html=True)
+    st.markdown(
+        "<h1 class='main-title'>Universal MCP Agent</h1>", unsafe_allow_html=True
+    )
     st.markdown(
         "<p class='subtitle'>Your intelligent interface to MCP servers powered by Agno</p>",
         unsafe_allow_html=True,
@@ -157,11 +159,11 @@ async def main():
         )
 
     mcp_agent = initialize_agent(selected_model, create_agent)
-    
+
     # Update agent tools if they've changed
-    if hasattr(mcp_agent, 'tools'):
+    if hasattr(mcp_agent, "tools"):
         mcp_agent.tools = [mcp_tools]
-    
+
     reset_session_state(mcp_agent)
 
     if prompt := st.chat_input("✨ How can I help you with MCP?"):
@@ -180,7 +182,7 @@ async def main():
     # Sample Questions
     ####################################################################
     st.sidebar.markdown("#### ❓ Sample Questions")
-    
+
     if current_server == "GitHub":
         if st.sidebar.button("🔍 Search repositories"):
             add_message("user", "Search for repositories related to machine learning")
@@ -188,7 +190,7 @@ async def main():
             add_message("user", "Tell me about a popular Python repository")
         if st.sidebar.button("🗂️ List issues"):
             add_message("user", "Show me recent issues in a repository")
-    
+
     elif current_server == "Filesystem":
         if st.sidebar.button("📁 List files"):
             add_message("user", "List files in the current directory")
@@ -205,7 +207,7 @@ async def main():
     ####################################################################
     st.sidebar.markdown("#### 🛠️ Utilities")
     col1, col2 = st.sidebar.columns([1, 1])
-    
+
     with col1:
         if st.sidebar.button("🔄 New Chat", use_container_width=True):
             restart_agent()
@@ -255,7 +257,7 @@ async def main():
     )
     if last_message and last_message.get("role") == "user":
         question = last_message["content"]
-        
+
         # Custom response handling for MCP agent (async)
         with st.chat_message("assistant"):
             tool_calls_container = st.empty()
@@ -268,19 +270,21 @@ async def main():
                         try:
                             # Display tool calls if available
                             if hasattr(resp_chunk, "tool") and resp_chunk.tool:
-                                display_tool_calls(tool_calls_container, [resp_chunk.tool])
+                                display_tool_calls(
+                                    tool_calls_container, [resp_chunk.tool]
+                                )
                         except Exception:
                             pass  # Continue even if tool display fails
 
                         if resp_chunk.content is not None:
                             content = str(resp_chunk.content)
                             if not (
-                                content.strip().endswith("completed in") or 
-                                "completed in" in content and "s." in content
+                                content.strip().endswith("completed in")
+                                or "completed in" in content
+                                and "s." in content
                             ):
                                 response += content
                                 resp_container.markdown(response)
-                        
 
                     if resp_chunk and hasattr(resp_chunk, "tools") and resp_chunk.tools:
                         add_message("assistant", response, resp_chunk.tools)
