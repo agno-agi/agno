@@ -205,6 +205,12 @@ class Agent:
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
 
+    # --- Agent Hooks ---
+    # A function called right after agent-session is loaded, before processing starts
+    pre_hook: Optional[Callable[..., Any]] = None
+    # A function called after output is generated but before the response is returned
+    post_hook: Optional[Callable[..., Any]] = None
+
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
     reasoning: bool = False
@@ -374,6 +380,8 @@ class Agent:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
+        pre_hook: Optional[Callable[..., Any]] = None,
+        post_hook: Optional[Callable[..., Any]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -468,6 +476,8 @@ class Agent:
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
+        self.pre_hook = pre_hook
+        self.post_hook = post_hook
 
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
@@ -794,6 +804,14 @@ class Agent:
         # Stop the timer for the Run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
+        
+        # Execute post-hook after output is generated but before response is returned
+        if self.post_hook is not None:
+            
+            self._execute_post_hook(
+                hook=self.post_hook,
+                run_response=run_response
+            )
 
         # 6. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
@@ -808,6 +826,7 @@ class Agent:
 
         # Log Agent Telemetry
         self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1084,6 +1103,19 @@ class Agent:
 
         # Update session state from DB
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
+
+        # Execute pre-hook after session is loaded
+        if self.pre_hook is not None:
+            self._execute_pre_hook(
+                hook=self.pre_hook,
+                input=validated_input,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                session=agent_session,
+                user_id=user_id,
+            )
 
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -2615,6 +2647,104 @@ class Agent:
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
+    def _execute_pre_hook(
+        self,
+        hook: Optional[Callable[..., Any]],
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+        **kwargs: Any,
+    ) -> None:
+        """Execute a hook function, handling both sync and async callables."""
+        if hook is None:
+            return
+
+        try:
+            if asyncio.iscoroutinefunction(hook):
+                raise ValueError("Cannot use an async hook with `run()`. Use `arun()` instead.")
+            else:
+                # Synchronous function
+                hook(
+                    input=input,
+                    **kwargs,
+                )
+        except Exception as e:
+            log_error(f"Hook execution failed: {str(e)}")
+            log_exception(e)
+
+    async def _aexecute_pre_hook(
+        self,
+        hook: Optional[Callable[..., Any]],
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+        **kwargs: Any,
+    ) -> None:
+        """Execute a hook function, handling both sync and async callables."""
+        if hook is None:
+            return
+
+        try:
+            if asyncio.iscoroutinefunction(hook):
+                await hook(
+                    input=input,
+                    **kwargs,
+                )
+            else:
+                # Synchronous function
+                hook(
+                    input=input,
+                    **kwargs,
+                )
+        except Exception as e:
+            log_error(f"Hook execution failed: {str(e)}")
+            log_exception(e)
+            
+    def _execute_post_hook(
+        self,
+        hook: Optional[Callable[..., Any]],
+        run_response: RunOutput,
+        **kwargs: Any,
+    ) -> None:
+        """Execute a hook function, handling both sync and async callables."""
+        if hook is None:
+            return
+
+        try:
+            if asyncio.iscoroutinefunction(hook):
+                raise ValueError("Cannot use an async hook with `run()`. Use `arun()` instead.")
+            else:
+                # Synchronous function
+                hook(
+                    run_response=run_response,
+                    **kwargs,
+                )
+        except Exception as e:
+            log_error(f"Hook execution failed: {str(e)}")
+            log_exception(e)
+
+    async def _aexecute_post_hook(
+        self,
+        hook: Optional[Callable[..., Any]],
+        run_response: RunOutput,
+        **kwargs: Any,
+    ) -> None:
+        """Execute a hook function, handling both sync and async callables."""
+        if hook is None:
+            return
+
+        try:
+            if asyncio.iscoroutinefunction(hook):
+                await hook(
+                    run_response=run_response,
+                    **kwargs,
+                )
+            else:
+                # Synchronous function
+                hook(
+                    run_response=run_response,
+                    **kwargs,
+                )
+        except Exception as e:
+            log_error(f"Hook execution failed: {str(e)}")
+            log_exception(e)
+            
     def _handle_agent_run_paused(
         self,
         run_response: RunOutput,
