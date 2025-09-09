@@ -4,7 +4,6 @@
 
 [![PyPI version](https://badge.fury.io/py/agno-infra.svg)](https://badge.fury.io/py/agno-infra)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
-[![License: MPL 2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
 
 ## Overview
 
@@ -117,7 +116,7 @@ agno/
 
 ## 📚 Documentation
 
-- **Main Documentation**: [docs.agno.com](https://docs-v2.agno.com)
+- **Main Documentation**: [docs.agno.com](https://docs.agno.com)
 
 ## 🏘 Community
 
@@ -131,7 +130,7 @@ This project is licensed under the Mozilla Public License 2.0 - see the [LICENSE
 
 ## 🙋‍♀️ Support
 
-- **Documentation**: Check our comprehensive docs at [docs.agno.com](https://docs-v2.agno.com)
+- **Documentation**: Check our comprehensive docs at [docs.agno.com](https://docs.agno.com)
 - **Community**: Join our Discord or post on Discourse
 - **Issues**: Open an issue on GitHub for bugs or feature requests
 - **Commercial Support**: Contact us at [agno.com](https://agno.com)
