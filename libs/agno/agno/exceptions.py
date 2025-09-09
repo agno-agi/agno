@@ -1,6 +1,7 @@
 from typing import List, Optional, Union
 
 from agno.models.message import Message
+from agno.guardrails import GuardrailTrigger
 
 
 class AgentRunException(Exception):
@@ -92,3 +93,20 @@ class EvalError(Exception):
     """Exception raised when an evaluation fails."""
 
     pass
+
+
+class InputValidationError(Exception):
+    """Exception raised when an input validation fails."""
+    
+    def __init__(self, message: str, guardrail_trigger: GuardrailTrigger = GuardrailTrigger.VALIDATION_FAILED):
+        super().__init__(message)
+        self.message = message
+        self.guardrail_trigger = guardrail_trigger
+
+class OutputValidationError(Exception):
+    """Exception raised when an output validation fails."""
+
+    def __init__(self, message: str, guardrail_trigger: GuardrailTrigger = GuardrailTrigger.VALIDATION_FAILED):
+        super().__init__(message)
+        self.message = message
+        self.guardrail_trigger = guardrail_trigger

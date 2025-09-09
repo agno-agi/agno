@@ -28,7 +28,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.db.base import BaseDb, SessionType, UserMemory
-from agno.exceptions import ModelProviderError, RunCancelledException, StopAgentRun
+from agno.exceptions import InputValidationError, ModelProviderError, OutputValidationError, RunCancelledException, StopAgentRun
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
@@ -819,7 +819,7 @@ class Agent:
             
             self._execute_post_hook(
                 hook=self.post_hook,
-                run_response=run_response
+                run_output=run_response
             )
 
         # 6. Optional: Save output to file if save_response_to_file is set
@@ -1113,19 +1113,6 @@ class Agent:
         # Update session state from DB
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
 
-        # Execute pre-hook after session is loaded
-        if self.pre_hook is not None:
-            self._execute_pre_hook(
-                hook=self.pre_hook,
-                input=validated_input,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                session=agent_session,
-                user_id=user_id,
-            )
-
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
@@ -1216,6 +1203,20 @@ class Agent:
 
         for attempt in range(num_attempts):
             try:
+                
+                if self.pre_hook is not None:
+                    self._execute_pre_hook(
+                        hook=self.pre_hook,
+                        input=validated_input,
+                        audio=audio,
+                        images=images,
+                        videos=videos,
+                        files=files,
+                        session=agent_session,
+                        user_id=user_id,
+                    )
+
+
                 # Prepare run messages
                 run_messages: RunMessages = self._get_run_messages(
                     run_response=run_response,
@@ -1258,6 +1259,9 @@ class Agent:
                         response_format=response_format,
                     )
                     return response
+            except (InputValidationError, OutputValidationError) as e:
+                log_error(f"Validation failed: {str(e)} | Guardrail trigger: {e.guardrail_trigger}")
+                raise e
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -1828,6 +1832,10 @@ class Agent:
                         response_format=response_format,
                         dependencies=run_dependencies,
                     )
+                    
+            except (InputValidationError, OutputValidationError) as e:
+                log_error(f"Validation failed: {str(e)} | Guardrail trigger: {e.guardrail_trigger}")
+                raise e
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -2656,6 +2664,35 @@ class Agent:
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
+    def _filter_hook_args(self, hook: Callable[..., Any], all_args: Dict[str, Any]) -> Dict[str, Any]:
+        """Filter arguments to only include those that the hook function accepts."""
+        import inspect
+        try:
+            sig = inspect.signature(hook)
+            accepted_params = set(sig.parameters.keys())
+            
+            has_var_keyword = any(
+                param.kind == inspect.Parameter.VAR_KEYWORD 
+                for param in sig.parameters.values()
+            )
+            
+            # If the function has **kwargs, pass all arguments
+            if has_var_keyword:
+                return all_args
+            
+            # Otherwise, filter to only include accepted parameters
+            filtered_args = {
+                key: value for key, value in all_args.items()
+                if key in accepted_params
+            }
+            
+            return filtered_args
+            
+        except Exception as e:
+            log_warning(f"Could not inspect hook signature, passing all arguments: {e}")
+            # If signature inspection fails, pass all arguments as fallback
+            return all_args
+
     def _execute_pre_hook(
         self,
         hook: Optional[Callable[..., Any]],
@@ -2670,11 +2707,16 @@ class Agent:
             if asyncio.iscoroutinefunction(hook):
                 raise ValueError("Cannot use an async hook with `run()`. Use `arun()` instead.")
             else:
-                # Synchronous function
-                hook(
-                    input=input,
-                    **kwargs,
-                )
+                # Prepare all possible arguments
+                all_args = {"input": input, "agent": self}
+                all_args.update(kwargs)
+                
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = self._filter_hook_args(hook, all_args)
+                
+                hook(**filtered_args)
+        except (InputValidationError, OutputValidationError) as e:
+            raise e
         except Exception as e:
             log_error(f"Hook execution failed: {str(e)}")
             log_exception(e)
@@ -2688,19 +2730,22 @@ class Agent:
         """Execute a hook function, handling both sync and async callables."""
         if hook is None:
             return
+        
+        # Prepare all possible arguments
+        all_args = {"input": input, "agent": self}
+        all_args.update(kwargs)
 
         try:
+            # Filter arguments to only include those that the hook accepts
+            filtered_args = self._filter_hook_args(hook, all_args)
+            
             if asyncio.iscoroutinefunction(hook):
-                await hook(
-                    input=input,
-                    **kwargs,
-                )
+                await hook(**filtered_args)
             else:
                 # Synchronous function
-                hook(
-                    input=input,
-                    **kwargs,
-                )
+                hook(**filtered_args)
+        except (InputValidationError, OutputValidationError) as e:
+            raise e
         except Exception as e:
             log_error(f"Hook execution failed: {str(e)}")
             log_exception(e)
@@ -2708,7 +2753,7 @@ class Agent:
     def _execute_post_hook(
         self,
         hook: Optional[Callable[..., Any]],
-        run_response: RunOutput,
+        run_output: RunOutput,
         **kwargs: Any,
     ) -> None:
         """Execute a hook function, handling both sync and async callables."""
@@ -2719,11 +2764,16 @@ class Agent:
             if asyncio.iscoroutinefunction(hook):
                 raise ValueError("Cannot use an async hook with `run()`. Use `arun()` instead.")
             else:
-                # Synchronous function
-                hook(
-                    run_response=run_response,
-                    **kwargs,
-                )
+                # Prepare all possible arguments
+                all_args = {"run_output": run_output, "agent": self}
+                all_args.update(kwargs)
+                
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = self._filter_hook_args(hook, all_args)
+                
+                hook(**filtered_args)
+        except (InputValidationError, OutputValidationError) as e:
+            raise e
         except Exception as e:
             log_error(f"Hook execution failed: {str(e)}")
             log_exception(e)
@@ -2731,25 +2781,27 @@ class Agent:
     async def _aexecute_post_hook(
         self,
         hook: Optional[Callable[..., Any]],
-        run_response: RunOutput,
+        run_output: RunOutput,
         **kwargs: Any,
     ) -> None:
         """Execute a hook function, handling both sync and async callables."""
         if hook is None:
             return
+        
+        # Prepare all possible arguments
+        all_args = {"run_output": run_output, "agent": self}
+        all_args.update(kwargs)
 
         try:
+            # Filter arguments to only include those that the hook accepts
+            filtered_args = self._filter_hook_args(hook, all_args)
+            
             if asyncio.iscoroutinefunction(hook):
-                await hook(
-                    run_response=run_response,
-                    **kwargs,
-                )
+                await hook(**filtered_args)
             else:
-                # Synchronous function
-                hook(
-                    run_response=run_response,
-                    **kwargs,
-                )
+                hook(**filtered_args)
+        except (InputValidationError, OutputValidationError) as e:
+            raise e
         except Exception as e:
             log_error(f"Hook execution failed: {str(e)}")
             log_exception(e)
