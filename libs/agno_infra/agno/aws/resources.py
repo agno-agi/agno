@@ -1,5 +1,6 @@
-from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
+
+from pydantic import Field, PrivateAttr
 
 from agno.aws.api_client import AwsApiClient
 from agno.aws.app.base import AwsApp
@@ -9,9 +10,8 @@ from agno.base.resources import InfraResources
 from agno.utilities.logging import logger
 
 
-@dataclass
 class AwsResources(InfraResources):
-    infra: str = field(default="aws", init=False)
+    infra: str = Field(default="aws", init=False)
 
     apps: Optional[List[AwsApp]] = None
     resources: Optional[List[AwsResource]] = None
@@ -20,7 +20,7 @@ class AwsResources(InfraResources):
     aws_profile: Optional[str] = None
 
     # -*- Cached Data
-    _api_client: Optional[AwsApiClient] = field(default=None, init=False, repr=False)
+    _api_client: Optional[AwsApiClient] = PrivateAttr(default_factory=lambda: None)
 
     def get_aws_region(self) -> Optional[str]:
         # Priority 1: Use aws_region from ResourceGroup (or cached value)

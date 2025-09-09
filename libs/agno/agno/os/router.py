@@ -523,7 +523,12 @@ def get_base_router(
                 "description": "Agent run executed successfully",
                 "content": {
                     "text/event-stream": {
-                        "example": 'event: RunStarted\ndata: {"content": "Hello!", "run_id": "123..."}\n\n'
+                        "examples": {
+                            "event_strea": {
+                                "summary": "Example event stream response",
+                                "value": 'event: RunStarted\ndata: {"content": "Hello!", "run_id": "123..."}\n\n',
+                            }
+                        }
                     },
                 },
             },

@@ -63,15 +63,20 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                 "content": {
                     "application/json": {
                         "example": {
-                            "data": [
-                                {
-                                    "session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
-                                    "session_name": "What tools do you have?",
-                                    "session_state": {},
-                                    "created_at": "2025-09-05T16:02:09Z",
-                                    "updated_at": "2025-09-05T16:02:09Z",
-                                }
-                            ]
+                            "session_example": {
+                                "summary": "Example session response",
+                                "value": {
+                                    "data": [
+                                        {
+                                            "session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
+                                            "session_name": "What tools do you have?",
+                                            "session_state": {},
+                                            "created_at": "2025-09-05T16:02:09Z",
+                                            "updated_at": "2025-09-05T16:02:09Z",
+                                        }
+                                    ]
+                                },
+                            }
                         }
                     }
                 },
@@ -136,64 +141,69 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                 "content": {
                     "application/json": {
                         "examples": {
-                            "user_id": "123",
-                            "agent_session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
-                            "session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
-                            "session_name": "What tools do you have?",
-                            "session_summary": {
-                                "summary": "The user and assistant engaged in a conversation about the tools the agent has available.",
-                                "updated_at": "2025-09-05T18:02:12.269392",
-                            },
-                            "session_state": {},
-                            "agent_id": "basic-agent",
-                            "total_tokens": 160,
-                            "agent_data": {
-                                "name": "Basic Agent",
-                                "agent_id": "basic-agent",
-                                "model": {"provider": "OpenAI", "name": "OpenAIChat", "id": "gpt-4o"},
-                            },
-                            "metrics": {
-                                "input_tokens": 134,
-                                "output_tokens": 26,
-                                "total_tokens": 160,
-                                "audio_input_tokens": 0,
-                                "audio_output_tokens": 0,
-                                "audio_total_tokens": 0,
-                                "cache_read_tokens": 0,
-                                "cache_write_tokens": 0,
-                                "reasoning_tokens": 0,
-                                "timer": None,
-                                "time_to_first_token": None,
-                                "duration": None,
-                                "provider_metrics": None,
-                                "additional_metrics": None,
-                            },
-                            "chat_history": [
-                                {
-                                    "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-05 18:02:09.171627.\n</additional_information>\n\nYou have access to memories from previous interactions with the user that you can use:\n\n<memories_from_previous_interactions>\n- User really likes Digimon and Japan.\n- User really likes Japan.\n- User likes coffee.\n</memories_from_previous_interactions>\n\nNote: this information is from previous interactions and may be updated in this conversation. You should always prefer information from this conversation over the past memories.",
-                                    "from_history": False,
-                                    "stop_after_tool_call": False,
-                                    "role": "system",
-                                    "created_at": 1757088129,
+                            "agent_session_example": {
+                                "summary": "Example agent session response",
+                                "value": {
+                                    "user_id": "123",
+                                    "agent_session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
+                                    "session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
+                                    "session_name": "What tools do you have?",
+                                    "session_summary": {
+                                        "summary": "The user and assistant engaged in a conversation about the tools the agent has available.",
+                                        "updated_at": "2025-09-05T18:02:12.269392",
+                                    },
+                                    "session_state": {},
+                                    "agent_id": "basic-agent",
+                                    "total_tokens": 160,
+                                    "agent_data": {
+                                        "name": "Basic Agent",
+                                        "agent_id": "basic-agent",
+                                        "model": {"provider": "OpenAI", "name": "OpenAIChat", "id": "gpt-4o"},
+                                    },
+                                    "metrics": {
+                                        "input_tokens": 134,
+                                        "output_tokens": 26,
+                                        "total_tokens": 160,
+                                        "audio_input_tokens": 0,
+                                        "audio_output_tokens": 0,
+                                        "audio_total_tokens": 0,
+                                        "cache_read_tokens": 0,
+                                        "cache_write_tokens": 0,
+                                        "reasoning_tokens": 0,
+                                        "timer": None,
+                                        "time_to_first_token": None,
+                                        "duration": None,
+                                        "provider_metrics": None,
+                                        "additional_metrics": None,
+                                    },
+                                    "chat_history": [
+                                        {
+                                            "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-05 18:02:09.171627.\n</additional_information>\n\nYou have access to memories from previous interactions with the user that you can use:\n\n<memories_from_previous_interactions>\n- User really likes Digimon and Japan.\n- User really likes Japan.\n- User likes coffee.\n</memories_from_previous_interactions>\n\nNote: this information is from previous interactions and may be updated in this conversation. You should always prefer information from this conversation over the past memories.",
+                                            "from_history": False,
+                                            "stop_after_tool_call": False,
+                                            "role": "system",
+                                            "created_at": 1757088129,
+                                        },
+                                        {
+                                            "content": "What tools do you have?",
+                                            "from_history": False,
+                                            "stop_after_tool_call": False,
+                                            "role": "user",
+                                            "created_at": 1757088129,
+                                        },
+                                        {
+                                            "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                            "from_history": False,
+                                            "stop_after_tool_call": False,
+                                            "role": "assistant",
+                                            "metrics": {"input_tokens": 134, "output_tokens": 26, "total_tokens": 160},
+                                            "created_at": 1757088129,
+                                        },
+                                    ],
+                                    "created_at": "2025-09-05T16:02:09Z",
+                                    "updated_at": "2025-09-05T16:02:09Z",
                                 },
-                                {
-                                    "content": "What tools do you have?",
-                                    "from_history": False,
-                                    "stop_after_tool_call": False,
-                                    "role": "user",
-                                    "created_at": 1757088129,
-                                },
-                                {
-                                    "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                    "from_history": False,
-                                    "stop_after_tool_call": False,
-                                    "role": "assistant",
-                                    "metrics": {"input_tokens": 134, "output_tokens": 26, "total_tokens": 160},
-                                    "created_at": 1757088129,
-                                },
-                            ],
-                            "created_at": "2025-09-05T16:02:09Z",
-                            "updated_at": "2025-09-05T16:02:09Z",
+                            }
                         }
                     }
                 },
@@ -236,95 +246,98 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                 "description": "Session runs retrieved successfully",
                 "content": {
                     "application/json": {
-                        "examples": [
-                            {
-                                "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                "agent_session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                "user_id": "",
-                                "run_input": "Which tools do you have access to?",
-                                "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                "run_response_format": "text",
-                                "reasoning_content": "",
-                                "metrics": {
-                                    "input_tokens": 82,
-                                    "output_tokens": 56,
-                                    "total_tokens": 138,
-                                    "time_to_first_token": 0.047505500027909875,
-                                    "duration": 4.840060166025069,
-                                },
-                                "messages": [
-                                    {
-                                        "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-08 17:52:10.101003.\n</additional_information>\n\nYou have the capability to retain memories from previous interactions with the user, but have not had any interactions with the user yet.",
-                                        "from_history": False,
-                                        "stop_after_tool_call": False,
-                                        "role": "system",
-                                        "created_at": 1757346730,
+                        "examples": {
+                            "completed_run": {
+                                "summary": "Example completed run",
+                                "value": {
+                                    "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                    "agent_session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                    "user_id": "",
+                                    "run_input": "Which tools do you have access to?",
+                                    "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                    "run_response_format": "text",
+                                    "reasoning_content": "",
+                                    "metrics": {
+                                        "input_tokens": 82,
+                                        "output_tokens": 56,
+                                        "total_tokens": 138,
+                                        "time_to_first_token": 0.047505500027909875,
+                                        "duration": 4.840060166025069,
                                     },
-                                    {
-                                        "content": "Which tools do you have access to?",
-                                        "from_history": False,
-                                        "stop_after_tool_call": False,
-                                        "role": "user",
-                                        "created_at": 1757346730,
-                                    },
-                                    {
-                                        "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                        "from_history": False,
-                                        "stop_after_tool_call": False,
-                                        "role": "assistant",
-                                        "metrics": {"input_tokens": 82, "output_tokens": 56, "total_tokens": 138},
-                                        "created_at": 1757346730,
-                                    },
-                                ],
-                                "tools": None,
-                                "events": [
-                                    {
-                                        "created_at": 1757346730,
-                                        "event": "RunStarted",
-                                        "agent_id": "basic-agent",
-                                        "agent_name": "Basic Agent",
-                                        "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                        "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                        "model": "gpt-4o",
-                                        "model_provider": "OpenAI",
-                                    },
-                                    {
-                                        "created_at": 1757346733,
-                                        "event": "MemoryUpdateStarted",
-                                        "agent_id": "basic-agent",
-                                        "agent_name": "Basic Agent",
-                                        "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                        "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                    },
-                                    {
-                                        "created_at": 1757346734,
-                                        "event": "MemoryUpdateCompleted",
-                                        "agent_id": "basic-agent",
-                                        "agent_name": "Basic Agent",
-                                        "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                        "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                    },
-                                    {
-                                        "created_at": 1757346734,
-                                        "event": "RunCompleted",
-                                        "agent_id": "basic-agent",
-                                        "agent_name": "Basic Agent",
-                                        "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                        "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                        "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                        "content_type": "str",
-                                        "metrics": {
-                                            "input_tokens": 82,
-                                            "output_tokens": 56,
-                                            "total_tokens": 138,
-                                            "time_to_first_token": 0.047505500027909875,
-                                            "duration": 4.840060166025069,
+                                    "messages": [
+                                        {
+                                            "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-08 17:52:10.101003.\n</additional_information>\n\nYou have the capability to retain memories from previous interactions with the user, but have not had any interactions with the user yet.",
+                                            "from_history": False,
+                                            "stop_after_tool_call": False,
+                                            "role": "system",
+                                            "created_at": 1757346730,
                                         },
-                                    },
-                                ],
-                                "created_at": "2025-09-08T15:52:10Z",
+                                        {
+                                            "content": "Which tools do you have access to?",
+                                            "from_history": False,
+                                            "stop_after_tool_call": False,
+                                            "role": "user",
+                                            "created_at": 1757346730,
+                                        },
+                                        {
+                                            "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                            "from_history": False,
+                                            "stop_after_tool_call": False,
+                                            "role": "assistant",
+                                            "metrics": {"input_tokens": 82, "output_tokens": 56, "total_tokens": 138},
+                                            "created_at": 1757346730,
+                                        },
+                                    ],
+                                    "tools": None,
+                                    "events": [
+                                        {
+                                            "created_at": 1757346730,
+                                            "event": "RunStarted",
+                                            "agent_id": "basic-agent",
+                                            "agent_name": "Basic Agent",
+                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                            "model": "gpt-4o",
+                                            "model_provider": "OpenAI",
+                                        },
+                                        {
+                                            "created_at": 1757346733,
+                                            "event": "MemoryUpdateStarted",
+                                            "agent_id": "basic-agent",
+                                            "agent_name": "Basic Agent",
+                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                        },
+                                        {
+                                            "created_at": 1757346734,
+                                            "event": "MemoryUpdateCompleted",
+                                            "agent_id": "basic-agent",
+                                            "agent_name": "Basic Agent",
+                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                        },
+                                        {
+                                            "created_at": 1757346734,
+                                            "event": "RunCompleted",
+                                            "agent_id": "basic-agent",
+                                            "agent_name": "Basic Agent",
+                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                            "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                            "content_type": "str",
+                                            "metrics": {
+                                                "input_tokens": 82,
+                                                "output_tokens": 56,
+                                                "total_tokens": 138,
+                                                "time_to_first_token": 0.047505500027909875,
+                                                "duration": 4.840060166025069,
+                                            },
+                                        },
+                                    ],
+                                    "created_at": "2025-09-08T15:52:10Z",
+                                },
                             }
-                        ]
+                        }
                     }
                 },
             },
@@ -428,64 +441,69 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                 "content": {
                     "application/json": {
                         "examples": {
-                            "user_id": "123",
-                            "agent_session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
-                            "session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
-                            "session_name": "What tools do you have?",
-                            "session_summary": {
-                                "summary": "The user and assistant engaged in a conversation about the tools the agent has available.",
-                                "updated_at": "2025-09-05T18:02:12.269392",
-                            },
-                            "session_state": {},
-                            "agent_id": "basic-agent",
-                            "total_tokens": 160,
-                            "agent_data": {
-                                "name": "Basic Agent",
-                                "agent_id": "basic-agent",
-                                "model": {"provider": "OpenAI", "name": "OpenAIChat", "id": "gpt-4o"},
-                            },
-                            "metrics": {
-                                "input_tokens": 134,
-                                "output_tokens": 26,
-                                "total_tokens": 160,
-                                "audio_input_tokens": 0,
-                                "audio_output_tokens": 0,
-                                "audio_total_tokens": 0,
-                                "cache_read_tokens": 0,
-                                "cache_write_tokens": 0,
-                                "reasoning_tokens": 0,
-                                "timer": None,
-                                "time_to_first_token": None,
-                                "duration": None,
-                                "provider_metrics": None,
-                                "additional_metrics": None,
-                            },
-                            "chat_history": [
-                                {
-                                    "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-05 18:02:09.171627.\n</additional_information>\n\nYou have access to memories from previous interactions with the user that you can use:\n\n<memories_from_previous_interactions>\n- User really likes Digimon and Japan.\n- User really likes Japan.\n- User likes coffee.\n</memories_from_previous_interactions>\n\nNote: this information is from previous interactions and may be updated in this conversation. You should always prefer information from this conversation over the past memories.",
-                                    "from_history": False,
-                                    "stop_after_tool_call": False,
-                                    "role": "system",
-                                    "created_at": 1757088129,
+                            "agent_session_example": {
+                                "summary": "Example agent session response",
+                                "value": {
+                                    "user_id": "123",
+                                    "agent_session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
+                                    "session_id": "6f6cfbfd-9643-479a-ae47-b8f32eb4d710",
+                                    "session_name": "What tools do you have?",
+                                    "session_summary": {
+                                        "summary": "The user and assistant engaged in a conversation about the tools the agent has available.",
+                                        "updated_at": "2025-09-05T18:02:12.269392",
+                                    },
+                                    "session_state": {},
+                                    "agent_id": "basic-agent",
+                                    "total_tokens": 160,
+                                    "agent_data": {
+                                        "name": "Basic Agent",
+                                        "agent_id": "basic-agent",
+                                        "model": {"provider": "OpenAI", "name": "OpenAIChat", "id": "gpt-4o"},
+                                    },
+                                    "metrics": {
+                                        "input_tokens": 134,
+                                        "output_tokens": 26,
+                                        "total_tokens": 160,
+                                        "audio_input_tokens": 0,
+                                        "audio_output_tokens": 0,
+                                        "audio_total_tokens": 0,
+                                        "cache_read_tokens": 0,
+                                        "cache_write_tokens": 0,
+                                        "reasoning_tokens": 0,
+                                        "timer": None,
+                                        "time_to_first_token": None,
+                                        "duration": None,
+                                        "provider_metrics": None,
+                                        "additional_metrics": None,
+                                    },
+                                    "chat_history": [
+                                        {
+                                            "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-05 18:02:09.171627.\n</additional_information>\n\nYou have access to memories from previous interactions with the user that you can use:\n\n<memories_from_previous_interactions>\n- User really likes Digimon and Japan.\n- User really likes Japan.\n- User likes coffee.\n</memories_from_previous_interactions>\n\nNote: this information is from previous interactions and may be updated in this conversation. You should always prefer information from this conversation over the past memories.",
+                                            "from_history": False,
+                                            "stop_after_tool_call": False,
+                                            "role": "system",
+                                            "created_at": 1757088129,
+                                        },
+                                        {
+                                            "content": "What tools do you have?",
+                                            "from_history": False,
+                                            "stop_after_tool_call": False,
+                                            "role": "user",
+                                            "created_at": 1757088129,
+                                        },
+                                        {
+                                            "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                            "from_history": False,
+                                            "stop_after_tool_call": False,
+                                            "role": "assistant",
+                                            "metrics": {"input_tokens": 134, "output_tokens": 26, "total_tokens": 160},
+                                            "created_at": 1757088129,
+                                        },
+                                    ],
+                                    "created_at": "2025-09-05T16:02:09Z",
+                                    "updated_at": "2025-09-05T16:02:09Z",
                                 },
-                                {
-                                    "content": "What tools do you have?",
-                                    "from_history": False,
-                                    "stop_after_tool_call": False,
-                                    "role": "user",
-                                    "created_at": 1757088129,
-                                },
-                                {
-                                    "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                    "from_history": False,
-                                    "stop_after_tool_call": False,
-                                    "role": "assistant",
-                                    "metrics": {"input_tokens": 134, "output_tokens": 26, "total_tokens": 160},
-                                    "created_at": 1757088129,
-                                },
-                            ],
-                            "created_at": "2025-09-05T16:02:09Z",
-                            "updated_at": "2025-09-05T16:02:09Z",
+                            }
                         }
                     }
                 },

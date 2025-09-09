@@ -43,10 +43,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         response_model=MetricsResponse,
         status_code=200,
         operation_id="get_metrics",
-        summary="Get System Metrics",
+        summary="Get AgentOS Metrics",
         description=(
-            "Retrieve system metrics and analytics data for a specified date range. "
-            "Provides insights into system usage, performance, and user activity patterns. "
+            "Retrieve AgentOS metrics and analytics data for a specified date range. "
             "If no date range is specified, returns all available metrics."
         ),
         responses={

@@ -5207,7 +5207,7 @@ class Team:
             member_session_state_copy = copy(session_state)
             if stream:
                 member_agent_run_response_stream = member_agent.run(
-                    input=member_agent_task if history is None else history,
+                    input=member_agent_task if not history else history,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
@@ -5242,7 +5242,7 @@ class Team:
                     yield member_agent_run_output_event
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
-                    input=member_agent_task if history is None else history,
+                    input=member_agent_task if not history else history,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
@@ -5326,7 +5326,7 @@ class Team:
             member_session_state_copy = copy(session_state)
             if stream:
                 member_agent_run_response_stream = member_agent.arun(  # type: ignore
-                    input=member_agent_task if history is None else history,
+                    input=member_agent_task if not history else history,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
@@ -5361,7 +5361,7 @@ class Team:
                     yield member_agent_run_response_event
             else:
                 member_agent_run_response = await member_agent.arun(  # type: ignore
-                    input=member_agent_task if history is None else history,
+                    input=member_agent_task if not history else history,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
@@ -5435,7 +5435,7 @@ class Team:
                 member_session_state_copy = copy(session_state)
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
-                        input=member_agent_task if history is None else history,
+                        input=member_agent_task if not history else history,
                         user_id=user_id,
                         # All members have the same session_id
                         session_id=session.session_id,
@@ -5471,7 +5471,7 @@ class Team:
 
                 else:
                     member_agent_run_response = member_agent.run(  # type: ignore
-                        input=member_agent_task if history is None else history,
+                        input=member_agent_task if not history else history,
                         user_id=user_id,
                         # All members have the same session_id
                         session_id=session.session_id,
@@ -5545,7 +5545,7 @@ class Team:
                     member_session_state_copy = copy(session_state)
 
                     member_stream = agent.arun(  # type: ignore
-                        input=member_agent_task if history is None else history,
+                        input=member_agent_task if not history else history,
                         user_id=user_id,
                         session_id=session.session_id,
                         session_state=member_session_state_copy,  # Send a copy to the agent
@@ -5618,7 +5618,7 @@ class Team:
                     async def run_member_agent(agent=current_agent) -> str:
                         member_session_state_copy = copy(session_state)
                         member_agent_run_response = await agent.arun(
-                            input=member_agent_task if history is None else history,
+                            input=member_agent_task if not history else history,
                             user_id=user_id,
                             # All members have the same session_id
                             session_id=session.session_id,

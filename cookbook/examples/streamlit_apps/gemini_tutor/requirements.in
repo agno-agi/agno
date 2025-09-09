@@ -1,0 +1,5 @@
+agno==2.0.0a1
+nest-asyncio
+streamlit
+google-genai
+googlesearch-python

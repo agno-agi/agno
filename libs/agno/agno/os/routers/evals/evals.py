@@ -276,7 +276,7 @@ def attach_routes(
                 "description": "Evaluation executed successfully",
                 "content": {
                     "application/json": {
-                        "examples": {
+                        "example": {
                             "id": "f2b2d72f-e9e2-4f0e-8810-0a7e1ff58614",
                             "agent_id": "basic-agent",
                             "model_id": "gpt-4o",
