@@ -34,6 +34,7 @@ from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
+from agno.models.utils import create_model
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -113,7 +114,7 @@ from agno.utils.timer import Timer
 @dataclass(init=False)
 class Agent:
     # --- Agent settings ---
-    # Model for this Agent
+    # Model for this Agent (can be a Model instance or a string like "openai:gpt-4o")
     model: Optional[Model] = None
     # Agent name
     name: Optional[str] = None
@@ -338,7 +339,7 @@ class Agent:
     def __init__(
         self,
         *,
-        model: Optional[Model] = None,
+        model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
         id: Optional[str] = None,
         introduction: Optional[str] = None,
@@ -375,7 +376,7 @@ class Agent:
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
         reasoning: bool = False,
-        reasoning_model: Optional[Model] = None,
+        reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
@@ -402,12 +403,12 @@ class Agent:
         retries: int = 0,
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
-        parser_model: Optional[Model] = None,
+        parser_model: Optional[Union[Model, str]] = None,
         parser_model_prompt: Optional[str] = None,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
-        output_model: Optional[Model] = None,
+        output_model: Optional[Union[Model, str]] = None,
         output_model_prompt: Optional[str] = None,
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
@@ -421,7 +422,8 @@ class Agent:
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
     ):
-        self.model = model
+        # Process model parameter - accept both Model objects and model strings
+        self.model = create_model(model) if model is not None else None
         self.name = name
         self.id = id
         self.introduction = introduction
@@ -470,7 +472,7 @@ class Agent:
         self.tool_hooks = tool_hooks
 
         self.reasoning = reasoning
-        self.reasoning_model = reasoning_model
+        self.reasoning_model = create_model(reasoning_model) if reasoning_model is not None else None
         self.reasoning_agent = reasoning_agent
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
@@ -501,12 +503,12 @@ class Agent:
         self.retries = retries
         self.delay_between_retries = delay_between_retries
         self.exponential_backoff = exponential_backoff
-        self.parser_model = parser_model
+        self.parser_model = create_model(parser_model) if parser_model is not None else None
         self.parser_model_prompt = parser_model_prompt
         self.input_schema = input_schema
         self.output_schema = output_schema
         self.parse_response = parse_response
-        self.output_model = output_model
+        self.output_model = create_model(output_model) if output_model is not None else None
         self.output_model_prompt = output_model_prompt
 
         self.structured_outputs = structured_outputs
@@ -1160,7 +1162,7 @@ class Agent:
         )
 
         run_response.model = self.model.id if self.model is not None else None
-        run_response.model_provider = self.model.provider if self.model is not None else None
+        run_response.model_provider = self.model.model_string.split(":")[0] if self.model is not None and ":" in self.model.model_string else None
 
         # Start the run metrics timer, to calculate the run duration
         run_response.metrics = Metrics()
@@ -1726,7 +1728,7 @@ class Agent:
         )
 
         run_response.model = self.model.id if self.model is not None else None
-        run_response.model_provider = self.model.provider if self.model is not None else None
+        run_response.model_provider = self.model.model_string.split(":")[0] if self.model is not None and ":" in self.model.model_string else None
 
         # Start the run metrics timer, to calculate the run duration
         run_response.metrics = Metrics()
@@ -7252,8 +7254,7 @@ class Agent:
         return {
             "agent_id": self.id,
             "db_type": self.db.__class__.__name__ if self.db else None,
-            "model_provider": self.model.provider if self.model else None,
-            "model_name": self.model.name if self.model else None,
+            "model_string": self.model.model_string if self.model else None,
             "model_id": self.model.id if self.model else None,
             "parser_model": self.parser_model.to_dict() if self.parser_model else None,
             "output_model": self.output_model.to_dict() if self.output_model else None,

@@ -253,17 +253,19 @@ class AgentResponse(BaseModel):
         if additional_input and isinstance(additional_input[0], Message):
             additional_input = [message.to_dict() for message in additional_input]  # type: ignore
 
-        # Build model only if it has at least one non-null field
-        model_name = agent.model.name if (agent.model and agent.model.name) else None
-        model_provider = agent.model.provider if (agent.model and agent.model.provider) else None
-        model_id = agent.model.id if (agent.model and agent.model.id) else None
+        # Build model data using model_string as the canonical representation
+        model_string = agent.model.model_string if agent.model else None
+        model_id = agent.model.id if agent.model else None
         _agent_model_data: Dict[str, Any] = {}
-        if model_name is not None:
-            _agent_model_data["name"] = model_name
+        if model_string is not None:
+            _agent_model_data["name"] = model_string
         if model_id is not None:
             _agent_model_data["model"] = model_id
-        if model_provider is not None:
-            _agent_model_data["provider"] = model_provider
+        if model_string is not None:
+            # Parse provider from model string for backward compatibility
+            provider = model_string.split(":")[0] if ":" in model_string else None
+            if provider:
+                _agent_model_data["provider"] = provider
 
         session_table = agent.db.session_table_name if agent.db else None
         knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
@@ -301,10 +303,12 @@ class AgentResponse(BaseModel):
             }
 
             if agent.memory_manager.model is not None:
+                model_string = agent.memory_manager.model.model_string
+                provider = model_string.split(":")[0] if ":" in model_string else None
                 memory_info["model"] = ModelResponse(
-                    name=agent.memory_manager.model.name,
+                    name=model_string,
                     model=agent.memory_manager.model.id,
-                    provider=agent.memory_manager.model.provider,
+                    provider=provider,
                 ).model_dump()
 
         reasoning_info: Dict[str, Any] = {
@@ -315,10 +319,12 @@ class AgentResponse(BaseModel):
         }
 
         if agent.reasoning_model:
+            model_string = agent.reasoning_model.model_string
+            provider = model_string.split(":")[0] if ":" in model_string else None
             reasoning_info["reasoning_model"] = ModelResponse(
-                name=agent.reasoning_model.name,
+                name=model_string,
                 model=agent.reasoning_model.id,
-                provider=agent.reasoning_model.provider,
+                provider=provider,
             ).model_dump()
 
         default_tools_info = {
@@ -363,10 +369,12 @@ class AgentResponse(BaseModel):
         }
 
         if agent.parser_model:
+            model_string = agent.parser_model.model_string
+            provider = model_string.split(":")[0] if ":" in model_string else None
             response_settings_info["parser_model"] = ModelResponse(
-                name=agent.parser_model.name,
+                name=model_string,
                 model=agent.parser_model.id,
-                provider=agent.parser_model.provider,
+                provider=provider,
             ).model_dump()
 
         streaming_info = {
@@ -475,16 +483,11 @@ class TeamResponse(BaseModel):
         team_tools = list(team._functions_for_model.values()) if team._functions_for_model else []
         formatted_tools = format_team_tools(team_tools) if team_tools else None
 
-        model_name = team.model.name or team.model.__class__.__name__ if team.model else None
-        model_provider = team.model.provider or team.model.__class__.__name__ if team.model else ""
+        model_string = team.model.model_string if team.model else None
         model_id = team.model.id if team.model else None
 
-        if model_provider and model_id:
-            model_provider = f"{model_provider} {model_id}"
-        elif model_name and model_id:
-            model_provider = f"{model_name} {model_id}"
-        elif model_id:
-            model_provider = model_id
+        # Use model_string as the canonical representation
+        model_provider = model_string if model_string else (model_id if model_id else "")
 
         session_table = team.db.session_table_name if team.db else None
         knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None
@@ -520,10 +523,12 @@ class TeamResponse(BaseModel):
             }
 
             if team.memory_manager.model is not None:
+                model_string = team.memory_manager.model.model_string
+                provider = model_string.split(":")[0] if ":" in model_string else None
                 memory_info["model"] = ModelResponse(
-                    name=team.memory_manager.model.name,
+                    name=model_string,
                     model=team.memory_manager.model.id,
-                    provider=team.memory_manager.model.provider,
+                    provider=provider,
                 ).model_dump()
 
         reasoning_info: Dict[str, Any] = {
@@ -534,10 +539,12 @@ class TeamResponse(BaseModel):
         }
 
         if team.reasoning_model:
+            model_string = team.reasoning_model.model_string
+            provider = model_string.split(":")[0] if ":" in model_string else None
             reasoning_info["reasoning_model"] = ModelResponse(
-                name=team.reasoning_model.name,
+                name=model_string,
                 model=team.reasoning_model.id,
-                provider=team.reasoning_model.provider,
+                provider=provider,
             ).model_dump()
 
         default_tools_info = {
@@ -571,10 +578,12 @@ class TeamResponse(BaseModel):
         }
 
         if team.parser_model:
+            model_string = team.parser_model.model_string
+            provider = model_string.split(":")[0] if ":" in model_string else None
             response_settings_info["parser_model"] = ModelResponse(
-                name=team.parser_model.name,
+                name=model_string,
                 model=team.parser_model.id,
-                provider=team.parser_model.provider,
+                provider=provider,
             ).model_dump()
 
         streaming_info = {
@@ -583,14 +592,18 @@ class TeamResponse(BaseModel):
             "stream_member_events": team.stream_member_events,
         }
 
-        # Build team model only if it has at least one non-null field
+        # Build team model data using model_string as the canonical representation
         _team_model_data: Dict[str, Any] = {}
-        if team.model and team.model.name is not None:
-            _team_model_data["name"] = team.model.name
-        if team.model and team.model.id is not None:
-            _team_model_data["model"] = team.model.id
-        if team.model and team.model.provider is not None:
-            _team_model_data["provider"] = team.model.provider
+        if team.model:
+            model_string = team.model.model_string
+            if model_string:
+                _team_model_data["name"] = model_string
+                # Parse provider from model string for backward compatibility
+                provider = model_string.split(":")[0] if ":" in model_string else None
+                if provider:
+                    _team_model_data["provider"] = provider
+            if team.model.id is not None:
+                _team_model_data["model"] = team.model.id
 
         return TeamResponse(
             id=team.id,
