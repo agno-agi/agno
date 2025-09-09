@@ -1,13 +1,14 @@
 from dataclasses import dataclass
 from functools import partial
 from importlib.metadata import version
-from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar, get_type_hints
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
 from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
 
 from agno.exceptions import AgentRunException
+from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_debug, log_error, log_exception, log_warning
 
 T = TypeVar("T")
@@ -84,8 +85,6 @@ class Function(BaseModel):
     entrypoint: Optional[Callable] = None
     # If True, the entrypoint processing is skipped and the Function is used as is.
     skip_entrypoint_processing: bool = False
-    # If True, the arguments are sanitized before being passed to the function. (Deprecated)
-    sanitize_arguments: bool = False
     # If True, the function call will show the result along with sending it to the model.
     show_result: bool = False
     # If True, the agent will stop after the function call.
@@ -123,6 +122,14 @@ class Function(BaseModel):
     _agent: Optional[Any] = None
     # The team that the function is associated with
     _team: Optional[Any] = None
+    # The session state that the function is associated with
+    _session_state: Optional[Dict[str, Any]] = None
+
+    # Media context that the function is associated with
+    _images: Optional[Sequence[Image]] = None
+    _videos: Optional[Sequence[Video]] = None
+    _audios: Optional[Sequence[Audio]] = None
+    _files: Optional[Sequence[File]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(
@@ -143,17 +150,29 @@ class Function(BaseModel):
             type_hints = get_type_hints(c)
 
             # If function has an the agent argument, remove the agent parameter from the type hints
-            if "agent" in sig.parameters:
+            if "agent" in sig.parameters and "agent" in type_hints:
                 del type_hints["agent"]
-            if "team" in sig.parameters:
+            if "team" in sig.parameters and "team" in type_hints:
                 del type_hints["team"]
+            if "session_state" in sig.parameters and "session_state" in type_hints:
+                del type_hints["session_state"]
+            # Remove media parameters from type hints as they are injected automatically
+            if "images" in sig.parameters and "images" in type_hints:
+                del type_hints["images"]
+            if "videos" in sig.parameters and "videos" in type_hints:
+                del type_hints["videos"]
+            if "audios" in sig.parameters and "audios" in type_hints:
+                del type_hints["audios"]
+            if "files" in sig.parameters and "files" in type_hints:
+                del type_hints["files"]
             # log_info(f"Type hints for {function_name}: {type_hints}")
 
             # Filter out return type and only process parameters
             param_type_hints = {
                 name: type_hints.get(name)
                 for name in sig.parameters
-                if name != "return" and name not in ["agent", "team", "self"]
+                if name != "return"
+                and name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
             }
 
             # Parse docstring for parameters
@@ -180,14 +199,17 @@ class Function(BaseModel):
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
                 parameters["required"] = [
-                    name for name in parameters["properties"] if name not in ["agent", "team", "self"]
+                    name
+                    for name in parameters["properties"]
+                    if name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
                 ]
             else:
                 # Mark a field as required if it has no default value (this would include optional fields)
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name not in ["agent", "team"]
+                    if param.default == param.empty
+                    and name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
@@ -232,14 +254,34 @@ class Function(BaseModel):
             type_hints = get_type_hints(self.entrypoint)
 
             # If function has an the agent argument, remove the agent parameter from the type hints
-            if "agent" in sig.parameters:
+            if "agent" in sig.parameters and "agent" in type_hints:
                 del type_hints["agent"]
-            if "team" in sig.parameters:
+            if "team" in sig.parameters and "team" in type_hints:
                 del type_hints["team"]
+            if "session_state" in sig.parameters and "session_state" in type_hints:
+                del type_hints["session_state"]
+            if "images" in sig.parameters and "images" in type_hints:
+                del type_hints["images"]
+            if "videos" in sig.parameters and "videos" in type_hints:
+                del type_hints["videos"]
+            if "audios" in sig.parameters and "audios" in type_hints:
+                del type_hints["audios"]
+            if "files" in sig.parameters and "files" in type_hints:
+                del type_hints["files"]
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
-            excluded_params = ["return", "agent", "team", "self"]
+            excluded_params = [
+                "return",
+                "agent",
+                "team",
+                "session_state",
+                "self",
+                "images",
+                "videos",
+                "audios",
+                "files",
+            ]
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -352,7 +394,9 @@ class Function(BaseModel):
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
         self.parameters["required"] = [
-            name for name in self.parameters["properties"] if name not in ["agent", "team", "self"]
+            name
+            for name in self.parameters["properties"]
+            if name not in ["agent", "team", "session_state", "images", "videos", "audios", "files", "self"]
         ]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
@@ -365,6 +409,16 @@ class Function(BaseModel):
             del copy_entrypoint_args["agent"]
         if "team" in copy_entrypoint_args:
             del copy_entrypoint_args["team"]
+        if "session_state" in copy_entrypoint_args:
+            del copy_entrypoint_args["session_state"]
+        if "images" in copy_entrypoint_args:
+            del copy_entrypoint_args["images"]
+        if "videos" in copy_entrypoint_args:
+            del copy_entrypoint_args["videos"]
+        if "audios" in copy_entrypoint_args:
+            del copy_entrypoint_args["audios"]
+        if "files" in copy_entrypoint_args:
+            del copy_entrypoint_args["files"]
         args_str = str(copy_entrypoint_args)
 
         kwargs_str = str(sorted((call_args or {}).items()))
@@ -425,6 +479,13 @@ class FunctionExecutionResult(BaseModel):
     result: Optional[Any] = None
     error: Optional[str] = None
 
+    updated_session_state: Optional[Dict[str, Any]] = None
+
+    # New fields for media artifacts
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audios: Optional[List[Audio]] = None
+
 
 class FunctionCall(BaseModel):
     """Model for Function Calls"""
@@ -480,6 +541,9 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an team argument
                 if "team" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["team"] = self.function._team
+                # Check if the pre-hook has an session_state argument
+                if "session_state" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["session_state"] = self.function._session_state
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -505,6 +569,9 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an team argument
                 if "team" in signature(self.function.post_hook).parameters:
                     post_hook_args["team"] = self.function._team
+                # Check if the post-hook has an session_state argument
+                if "session_state" in signature(self.function.post_hook).parameters:
+                    post_hook_args["session_state"] = self.function._session_state
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
@@ -528,9 +595,23 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an team argument
         if "team" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["team"] = self.function._team
+        # Check if the entrypoint has an session_state argument
+        if "session_state" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["session_state"] = self.function._session_state
         # Check if the entrypoint has an fc argument
         if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["fc"] = self
+
+        # Check if the entrypoint has media arguments
+        if "images" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["images"] = self.function._images
+        if "videos" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["videos"] = self.function._videos
+        if "audios" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["audios"] = self.function._audios
+        if "files" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["files"] = self.function._files
+
         return entrypoint_args
 
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -544,6 +625,9 @@ class FunctionCall(BaseModel):
         # Check if the hook has an team argument
         if "team" in signature(hook).parameters:
             hook_args["team"] = self.function._team
+        # Check if the hook has an session_state argument
+        if "session_state" in signature(hook).parameters:
+            hook_args["session_state"] = self.function._session_state
 
         if "name" in signature(hook).parameters:
             hook_args["name"] = name
@@ -641,10 +725,11 @@ class FunctionCall(BaseModel):
                 execution_chain = self._build_nested_execution_chain(entrypoint_args=entrypoint_args)
                 result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
-                arguments = entrypoint_args
-                if self.arguments is not None:
-                    arguments.update(self.arguments)
-                result = self.function.entrypoint(**arguments)
+                result = self.function.entrypoint(**entrypoint_args, **self.arguments)  # type: ignore
+
+            updated_session_state = None
+            if entrypoint_args.get("session_state") is not None:
+                updated_session_state = entrypoint_args.get("session_state")
 
             # Handle generator case
             if isgenerator(result):
@@ -670,7 +755,9 @@ class FunctionCall(BaseModel):
         # Execute post-hook if it exists
         self._handle_post_hook()
 
-        return FunctionExecutionResult(status="success", result=self.result)
+        return FunctionExecutionResult(
+            status="success", result=self.result, updated_session_state=updated_session_state
+        )
 
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
@@ -685,6 +772,9 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an team argument
                 if "team" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["team"] = self.function._team
+                # Check if the pre-hook has an session_state argument
+                if "session_state" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["session_state"] = self.function._session_state
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -711,6 +801,10 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an team argument
                 if "team" in signature(self.function.post_hook).parameters:
                     post_hook_args["team"] = self.function._team
+                # Check if the post-hook has an session_state argument
+                if "session_state" in signature(self.function.post_hook).parameters:
+                    post_hook_args["session_state"] = self.function._session_state
+
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
@@ -839,6 +933,10 @@ class FunctionCall(BaseModel):
                 cache_file = self.function._get_cache_file_path(cache_key)
                 self.function._save_to_cache(cache_file, self.result)
 
+            updated_session_state = None
+            if entrypoint_args.get("session_state") is not None:
+                updated_session_state = entrypoint_args.get("session_state")
+
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
@@ -855,4 +953,15 @@ class FunctionCall(BaseModel):
         else:
             self._handle_post_hook()
 
-        return FunctionExecutionResult(status="success", result=self.result)
+        return FunctionExecutionResult(
+            status="success", result=self.result, updated_session_state=updated_session_state
+        )
+
+
+class ToolResult(BaseModel):
+    """Result from a tool that can include media artifacts."""
+
+    content: str
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audios: Optional[List[Audio]] = None

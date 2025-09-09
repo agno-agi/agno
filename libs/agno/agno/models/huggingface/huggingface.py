@@ -5,12 +5,15 @@ from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 import httpx
+from huggingface_hub import ChatCompletionInputStreamOptions
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
+from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -228,19 +231,29 @@ class HuggingFace(Model):
     def invoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Union[ChatCompletionOutput]:
+        run_response: Optional[RunOutput] = None,
+    ) -> ModelResponse:
         """
         Send a chat completion request to the HuggingFace Hub.
         """
         try:
-            return self.get_client().chat.completions.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+            provider_response = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],
                 **self.get_request_params(tools=tools, tool_choice=tool_choice),
             )
+            assistant_message.metrics.stop_timer()
+
+            return self._parse_provider_response(provider_response, response_format=response_format)
+
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -251,20 +264,29 @@ class HuggingFace(Model):
     async def ainvoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Union[ChatCompletionOutput]:
+        run_response: Optional[RunOutput] = None,
+    ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the HuggingFace Hub Inference.
         """
         try:
-            async with self.get_async_client() as client:
-                return await client.chat.completions.create(
-                    model=self.id,
-                    messages=[self._format_message(m) for m in messages],
-                    **self.get_request_params(tools=tools, tool_choice=tool_choice),
-                )
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+            provider_response = await self.get_async_client().chat.completions.create(
+                model=self.id,
+                messages=[self._format_message(m) for m in messages],
+                **self.get_request_params(tools=tools, tool_choice=tool_choice),
+            )
+            assistant_message.metrics.stop_timer()
+
+            return self._parse_provider_response(provider_response, response_format=response_format)
+
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -275,21 +297,34 @@ class HuggingFace(Model):
     def invoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Iterator[ChatCompletionStreamOutput]:
+        run_response: Optional[RunOutput] = None,
+    ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the HuggingFace API.
         """
         try:
-            yield from self.get_client().chat.completions.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
+            stream = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],
                 stream=True,
-                stream_options={"include_usage": True},
+                stream_options=ChatCompletionInputStreamOptions(include_usage=True),  # type: ignore
                 **self.get_request_params(tools=tools, tool_choice=tool_choice),
-            )  # type: ignore
+            )
+
+            for chunk in stream:
+                yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
+
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -300,24 +335,33 @@ class HuggingFace(Model):
     async def ainvoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> AsyncIterator[Any]:
         """
         Sends an asynchronous streaming chat completion request to the HuggingFace API.
         """
         try:
-            async with self.get_async_client() as client:
-                stream = await client.chat.completions.create(
-                    model=self.id,
-                    messages=[self._format_message(m) for m in messages],
-                    stream=True,
-                    stream_options={"include_usage": True},
-                    **self.get_request_params(tools=tools, tool_choice=tool_choice),
-                )
-                async for chunk in stream:
-                    yield chunk
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+            provider_response = await self.get_async_client().chat.completions.create(
+                model=self.id,
+                messages=[self._format_message(m) for m in messages],
+                stream=True,
+                stream_options=ChatCompletionInputStreamOptions(include_usage=True),  # type: ignore
+                **self.get_request_params(tools=tools, tool_choice=tool_choice),
+            )
+
+            async for chunk in provider_response:
+                yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
+
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -366,7 +410,7 @@ class HuggingFace(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(
+    def _parse_provider_response(
         self,
         response: ChatCompletionOutput,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -401,11 +445,11 @@ class HuggingFace(Model):
             log_warning(f"Error retrieving structured outputs: {e}")
 
         if response.usage is not None:
-            model_response.response_usage = response.usage
+            model_response.response_usage = self._get_metrics(response)
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: ChatCompletionStreamOutput) -> ModelResponse:
+    def _parse_provider_response_delta(self, response_delta: ChatCompletionStreamOutput) -> ModelResponse:
         """
         Parse the provider response delta into a ModelResponse.
         """
@@ -420,6 +464,27 @@ class HuggingFace(Model):
             if response_delta_message.tool_calls is not None and len(response_delta_message.tool_calls) > 0:
                 model_response.tool_calls = [response_delta_message.tool_calls]  # type: ignore
         if response_delta.usage is not None:
-            model_response.response_usage = response_delta.usage
+            model_response.response_usage = self._get_metrics(response_delta)
 
         return model_response
+
+    def _get_metrics(self, response: Union[ChatCompletionOutput, ChatCompletionStreamOutput]) -> Metrics:
+        """
+        Parse the given HuggingFace-specific usage into an Agno Metrics object.
+
+        Args:
+            response: The HuggingFace response to parse.
+
+        Returns:
+            Metrics: Parsed metrics data
+        """
+        metrics = Metrics()
+
+        if not response.usage:
+            return metrics
+
+        metrics.input_tokens = response.usage.prompt_tokens or 0
+        metrics.output_tokens = response.usage.completion_tokens or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        return metrics

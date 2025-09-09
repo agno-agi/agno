@@ -2,28 +2,27 @@ from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
-from agno.memory.v2.db.postgres import PostgresMemoryDb
-from agno.memory.v2.memory import Memory
+from agno.db.postgres import PostgresDb
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
-from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.tools.dalle import DalleTools
 from agno.tools.eleven_labs import ElevenLabsTools
 from agno.vectordb.pgvector import PgVector, SearchType
 
-# ************* Database Connection *************
+# ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url)
 # *******************************
+
 
 # ************* Paths *************
 cwd = Path(__file__).parent
 knowledge_dir = cwd.joinpath("knowledge")
 output_dir = cwd.joinpath("output")
-
-# Create the output directory if it does not exist
 output_dir.mkdir(parents=True, exist_ok=True)
 # *******************************
+
 
 # ************* Description & Instructions *************
 description = dedent("""\
@@ -96,36 +95,31 @@ instructions = dedent("""\
     - Best practices and common patterns""")
 # *******************************
 
-# Create the agent
+
+knowledge = Knowledge(
+    vector_db=PgVector(
+        db_url=db_url,
+        table_name="agno_assist_knowledge",
+        search_type=SearchType.hybrid,
+        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    ),
+)
+knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
+
+# Setup our Agno Agent
 agno_assist = Agent(
     name="Agno Assist",
-    agent_id="agno-assist",
+    id="agno-assist",
     model=OpenAIChat(id="gpt-4o"),
     description=description,
     instructions=instructions,
-    memory=Memory(
-        model=OpenAIChat(id="gpt-4.1"),
-        db=PostgresMemoryDb(table_name="user_memories", db_url=db_url),
-        delete_memories=True,
-        clear_memories=True,
-    ),
+    db=db,
+    enable_user_memories=True,
     enable_agentic_memory=True,
-    knowledge=UrlKnowledge(
-        urls=["https://docs.agno.com/llms-full.txt"],
-        vector_db=PgVector(
-            db_url=db_url,
-            table_name="agno_assist_knowledge",
-            search_type=SearchType.hybrid,
-            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-        ),
-    ),
+    knowledge=knowledge,
     search_knowledge=True,
-    storage=PostgresAgentStorage(
-        db_url=db_url,
-        table_name="agno_assist_sessions",
-    ),
-    add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_history_to_context=True,
+    add_datetime_to_context=True,
     markdown=True,
     tools=[
         ElevenLabsTools(
