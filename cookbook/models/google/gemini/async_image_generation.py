@@ -1,16 +1,19 @@
 import asyncio
+import base64
 from io import BytesIO
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.google import Gemini
 from PIL import Image
+from agno.db.in_memory import InMemoryDb    
 
 # No system message should be provided
 agent = Agent(
     model=Gemini(
         id="gemini-2.0-flash-exp-image-generation",
         response_modalities=["Text", "Image"],
-    )
+    ),
+    db=InMemoryDb(),
 )
 
 
@@ -24,6 +27,9 @@ async def generate_image():
         for image_response in run_response.images:
             image_bytes = image_response.content
             if image_bytes:
+                if isinstance(image_bytes, bytes):
+                    image_bytes = base64.b64decode(image_bytes)
+                
                 image = Image.open(BytesIO(image_bytes))
                 image.show()
                 # Save the image to a file
