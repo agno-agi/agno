@@ -4,7 +4,7 @@ from typing import Callable, List
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact, VideoArtifact
+from agno.media import Image, Video
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error, log_info
@@ -120,7 +120,7 @@ class OpenCVTools(Toolkit):
                 media_id = str(uuid4())
 
                 # Create ImageArtifact with raw bytes (not base64 encoded)
-                image_artifact = ImageArtifact(
+                image_artifact = Image(
                     id=media_id,
                     content=image_bytes,  # Store as raw bytes
                     original_prompt=prompt,
@@ -292,7 +292,7 @@ class OpenCVTools(Toolkit):
                 media_id = str(uuid4())
 
                 # Create VideoArtifact with base64 encoded content
-                video_artifact = VideoArtifact(
+                video_artifact = Video(
                     id=media_id,
                     content=video_bytes,
                     original_prompt=prompt,

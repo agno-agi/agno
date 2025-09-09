@@ -1,11 +1,10 @@
-import base64
 from os import getenv
 from pathlib import Path
 from typing import Any, List, Optional
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import AudioArtifact
+from agno.media import Audio
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error
@@ -143,12 +142,11 @@ class GroqTools(Toolkit):
             log_debug(f"Groq TTS Response: {response}")
 
             audio_data: bytes = response.read()
-            base64_encoded_audio = base64.b64encode(audio_data).decode("utf-8")
 
             media_id = str(uuid4())
-            audio_artifact = AudioArtifact(
+            audio_artifact = Audio(
                 id=media_id,
-                base64_audio=base64_encoded_audio,
+                content=audio_data,
                 mime_type="audio/wav",
             )
 

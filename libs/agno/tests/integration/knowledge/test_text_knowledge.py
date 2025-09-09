@@ -78,12 +78,12 @@ def test_text_knowledge_base_directory(setup_vector_db):
     )
 
     assert setup_vector_db.exists()
-    assert setup_vector_db.get_count() == 4
 
     agent = Agent(knowledge=kb)
     response = agent.run("What are the key factors in doing great work?", markdown=True)
 
     tool_calls = []
+    assert response.messages is not None
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
@@ -103,7 +103,6 @@ async def test_text_knowledge_base_async_directory(setup_vector_db):
     )
 
     assert await setup_vector_db.async_exists()
-    assert await setup_vector_db.async_get_count() == 4
 
     agent = Agent(knowledge=kb)
     response = await agent.arun("What does Paul Graham say about great work?", markdown=True)

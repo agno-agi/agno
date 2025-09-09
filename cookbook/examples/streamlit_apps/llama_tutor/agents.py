@@ -22,6 +22,7 @@ def get_tutor_model(model_id: str):
     else:
         return get_model_from_id(model_id)
 
+
 # Set up paths
 current_dir = Path(__file__).parent
 output_dir = current_dir / "output"
@@ -37,7 +38,7 @@ def get_llama_tutor_agent(
     session_id: Optional[str] = None,
 ) -> Agent:
     """Get a Llama Tutor Agent with education level customization"""
-    
+
     db = PostgresDb(
         db_url=db_url,
         session_table="sessions",

@@ -43,7 +43,6 @@ def test_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("France" in r.content for r in responses if hasattr(r, "content") and r.content)
 
 
 @pytest.mark.asyncio

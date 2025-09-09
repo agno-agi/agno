@@ -5,7 +5,7 @@ from uuid import uuid4
 from requests import post
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, logger
@@ -170,7 +170,7 @@ class AzureOpenAITools(Toolkit):
                 revised_prompt = img.get("revised_prompt")
 
                 # Create ImageArtifact with URL
-                image_artifact = ImageArtifact(
+                image_artifact = Image(
                     id=str(uuid4()), url=image_url, original_prompt=prompt, revised_prompt=revised_prompt
                 )
                 generated_images.append(image_artifact)

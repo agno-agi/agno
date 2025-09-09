@@ -6,7 +6,6 @@ from agno.tools.scrapegraph import ScrapeGraphTools
 from agno.utils.log import logger
 from agno.workflow import Workflow
 
-
 # --- Agents Definition ---
 searcher_agent = Agent(
     name="Research Searcher",
@@ -81,12 +80,12 @@ def deep_research_execution(
 ) -> str:
     """
     Deep research workflow execution function.
-    
+
     Args:
         session_state: The shared session state
         topic: Research topic
     """
-    
+
     if not topic:
         return "❌ No research topic provided. Please specify a topic."
 
@@ -95,21 +94,21 @@ def deep_research_execution(
     # Step 1: Research
     logger.info("Starting research phase")
     research_content = searcher_agent.run(topic)
-    
+
     if not research_content or not research_content.content:
         return f"❌ Failed to gather research information for topic: {topic}"
 
     # Step 2: Analysis
     logger.info("Starting analysis phase")
     analysis = analyst_agent.run(research_content.content)
-    
+
     if not analysis or not analysis.content:
         return f"❌ Failed to analyze research findings for topic: {topic}"
 
     # Step 3: Report Writing
     logger.info("Starting report writing phase")
     report = writer_agent.run(analysis.content)
-    
+
     if not report or not report.content:
         return f"❌ Failed to generate final report for topic: {topic}"
 
@@ -124,7 +123,7 @@ def get_deep_researcher_workflow(
     session_id: Optional[str] = None,
 ) -> Workflow:
     """Get a Deep Researcher Workflow with multi-agent pipeline"""
-    
+
     return Workflow(
         name="Deep Researcher",
         description="AI-powered research assistant with multi-agent workflow for comprehensive research, analysis, and report generation",

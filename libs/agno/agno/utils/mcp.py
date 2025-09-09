@@ -12,7 +12,7 @@ except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
 
 
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.tools.function import ToolResult
 
 
@@ -70,7 +70,7 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
                                     image_bytes = None
 
                                 if image_bytes:
-                                    img_artifact = ImageArtifact(
+                                    img_artifact = Image(
                                         id=str(uuid4()),
                                         url=None,
                                         content=image_bytes,
@@ -98,7 +98,7 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
                             log_debug(f"Failed to decode base64 image data: {e}")
                             image_data = None
 
-                    img_artifact = ImageArtifact(
+                    img_artifact = Image(
                         id=str(uuid4()),
                         url=getattr(content_item, "url", None),
                         content=image_data,

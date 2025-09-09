@@ -3,11 +3,10 @@ from typing import Optional
 from agno.agent import Agent
 from agno.utils.streamlit import get_model_from_id
 
-
 # Education level configurations
 EDUCATION_LEVELS = [
     "Elementary School",
-    "High School", 
+    "High School",
     "College",
     "Graduate",
     "PhD",
@@ -28,33 +27,33 @@ def get_gemini_tutor_agent(
     session_id: Optional[str] = None,
 ) -> Agent:
     """Get a Gemini Tutor Agent for educational assistance.
-    
+
     Args:
         model_id: Gemini model ID to use
         education_level: Target education level for content adaptation
         user_id: Optional user ID for session tracking
         session_id: Optional session ID for learning continuity
-        
+
     Returns:
         Agent instance configured for educational tutoring
     """
-    
+
     # Get the appropriate Gemini model
     if not model_id.startswith("google:"):
         model_id = f"google:{model_id}"
-    
+
     gemini_model = get_model_from_id(model_id)
-    
+
     # Configure advanced Gemini settings for education
-    if hasattr(gemini_model, 'temperature'):
+    if hasattr(gemini_model, "temperature"):
         gemini_model.temperature = 0.7  # Balanced creativity for education
-    if hasattr(gemini_model, 'top_p'):
+    if hasattr(gemini_model, "top_p"):
         gemini_model.top_p = 0.9
-    if hasattr(gemini_model, 'top_k'):
+    if hasattr(gemini_model, "top_k"):
         gemini_model.top_k = 40
-        
+
     # Enable grounding for research capabilities
-    if hasattr(gemini_model, 'grounding'):
+    if hasattr(gemini_model, "grounding"):
         gemini_model.grounding = True
 
     # Create the educational agent

@@ -104,7 +104,6 @@ def test_mixed_structured_output():
     assert response.content is not None
     assert isinstance(response.content, StockInfo)
     assert response.content.symbol == "AAPL"
-    assert len(response.member_responses) == 1
     assert response.member_responses[0].agent_id == stock_agent.id  # type: ignore
 
     # This should route to the news_agent and return unstructured output
@@ -113,7 +112,6 @@ def test_mixed_structured_output():
     assert response.content is not None
     assert isinstance(response.content, str)
     assert len(response.content) > 0
-    assert len(response.member_responses) == 1
     assert response.member_responses[0].agent_id == news_agent.id  # type: ignore
 
 

@@ -3,14 +3,14 @@ import streamlit as st
 from agents import get_github_agent
 from agno.utils.streamlit import (
     COMMON_CSS,
+    MODELS,
+    about_section,
     add_message,
     display_chat_messages,
     display_response,
     export_chat_history,
     initialize_agent,
     reset_session_state,
-    about_section,
-    MODELS
 )
 
 nest_asyncio.apply()
@@ -60,7 +60,9 @@ def main():
     ####################################################################
     # App header
     ####################################################################
-    st.markdown("<h1 class='main-title'>GitHub Repository Analyzer</h1>", unsafe_allow_html=True)
+    st.markdown(
+        "<h1 class='main-title'>GitHub Repository Analyzer</h1>", unsafe_allow_html=True
+    )
     st.markdown(
         "<p class='subtitle'>Your intelligent GitHub analysis assistant powered by Agno</p>",
         unsafe_allow_html=True,
@@ -90,14 +92,14 @@ def main():
     # GitHub Configuration
     ####################################################################
     st.sidebar.markdown("#### 🔑 Configuration")
-    
+
     github_token = st.sidebar.text_input(
         "GitHub Personal Access Token",
         type="password",
         help="Optional: Provides access to private repositories and higher rate limits",
-        placeholder="ghp_xxxxxxxxxxxx"
+        placeholder="ghp_xxxxxxxxxxxx",
     )
-    
+
     if github_token:
         st.sidebar.success("✅ GitHub token configured")
     else:
@@ -111,25 +113,25 @@ def main():
     # Sample Questions
     ###############################################################
     st.sidebar.markdown("#### ❓ Sample Questions")
-    
+
     if st.sidebar.button("📊 Analyze agno-agi/agno"):
         add_message(
             "user",
             "Analyze the repository 'agno-agi/agno' - show me the structure, main languages, and recent activity",
         )
-    
+
     if st.sidebar.button("🔍 Latest Issues"):
         add_message(
             "user",
             "Show me the latest issues in 'microsoft/vscode'",
         )
-    
+
     if st.sidebar.button("📝 Review Latest PR"):
         add_message(
             "user",
             "Find and review the latest pull request in 'facebook/react'",
         )
-    
+
     if st.sidebar.button("📚 Repository Stats"):
         add_message(
             "user",
@@ -197,11 +199,12 @@ def main():
         question = last_message["content"]
         display_response(github_analyzer_agent, question)
 
-
     ####################################################################
     # About section
     ####################################################################
-    about_section("This GitHub Repository Analyzer helps you analyze code repositories, review pull requests, and understand project structures using natural language queries.")
+    about_section(
+        "This GitHub Repository Analyzer helps you analyze code repositories, review pull requests, and understand project structures using natural language queries."
+    )
 
 
 if __name__ == "__main__":
