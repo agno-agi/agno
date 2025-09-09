@@ -5,7 +5,7 @@ from uuid import uuid4
 import requests
 
 from agno.agent import Agent
-from agno.media import AudioArtifact
+from agno.media import Audio
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
@@ -97,7 +97,7 @@ class DesiVocalTools(Toolkit):
             response_json = response.json()
             audio_url = response_json["s3_path"]
 
-            audio_artifact = AudioArtifact(id=str(uuid4()), url=audio_url)
+            audio_artifact = Audio(id=str(uuid4()), url=audio_url)
 
             return ToolResult(
                 content=f"Audio generated successfully: {audio_url}",

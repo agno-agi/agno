@@ -20,7 +20,7 @@ def _format_images_for_message(message: Message, images: Sequence[Image]) -> Lis
             if image.content is not None:
                 image_content = image.content
             elif image.url is not None:
-                image_content = image.image_url_content
+                image_content = image.get_content_bytes()  # type: ignore
             elif image.filepath is not None:
                 if isinstance(image.filepath, Path):
                     image_content = image.filepath.read_bytes()

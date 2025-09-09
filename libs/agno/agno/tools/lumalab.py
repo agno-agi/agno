@@ -4,7 +4,7 @@ from os import getenv
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 from agno.agent import Agent
-from agno.media import VideoArtifact
+from agno.media import Video
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_info, logger
@@ -109,7 +109,7 @@ class LumaLabTools(Toolkit):
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video
                     if video_url:
-                        video_artifact = VideoArtifact(id=video_id, url=video_url, eta="completed")
+                        video_artifact = Video(id=video_id, url=video_url, eta="completed")
                         return ToolResult(
                             content=f"Video generated successfully: {video_url}",
                             videos=[video_artifact],
@@ -164,7 +164,7 @@ class LumaLabTools(Toolkit):
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video
                     if video_url:
-                        video_artifact = VideoArtifact(id=video_id, url=video_url, state="completed")
+                        video_artifact = Video(id=video_id, url=video_url, state="completed")
                         return ToolResult(
                             content=f"Video generated successfully: {video_url}",
                             videos=[video_artifact],

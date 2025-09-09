@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error, log_info
@@ -158,8 +158,8 @@ class BrightDataTools(Toolkit):
 
             media_id = str(uuid4())
 
-            # Create ImageArtifact for the screenshot
-            image_artifact = ImageArtifact(
+            # Create Image for the screenshot
+            image_artifact = Image(
                 id=media_id,
                 content=base64_encoded_image.encode("utf-8"),
                 mime_type="image/png",

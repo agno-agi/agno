@@ -30,7 +30,7 @@ from pydantic import BaseModel
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import ModelProviderError, RunCancelledException, StopAgentRun
 from agno.knowledge.knowledge import Knowledge
-from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
@@ -589,6 +589,15 @@ class Agent:
         if isinstance(input, Message):
             input = input.content  # type: ignore
 
+        # If input is a string, convert it to a dict
+        if isinstance(input, str):
+            import json
+
+            try:
+                input = json.loads(input)
+            except Exception as e:
+                raise ValueError(f"Failed to parse input. Is it a valid JSON string?: {e}")
+
         # Case 1: Message is already a BaseModel instance
         if isinstance(input, BaseModel):
             if isinstance(input, self.input_schema):
@@ -1069,7 +1078,7 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
+        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
             images=images, videos=videos, audios=audio
         )
 
@@ -1638,7 +1647,7 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
+        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
             images=images, videos=videos, audios=audio
         )
 
@@ -3311,23 +3320,47 @@ class Agent:
                 # Process audio
                 if model_response_event.audio is not None:
                     if model_response.audio is None:
-                        model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
+                        model_response.audio = Audio(id=str(uuid4()), content=b"", transcript="")
 
                     if model_response_event.audio.id is not None:
                         model_response.audio.id = model_response_event.audio.id  # type: ignore
+
                     if model_response_event.audio.content is not None:
-                        model_response.audio.content += model_response_event.audio.content  # type: ignore
+                        # Handle both base64 string and bytes content
+                        if isinstance(model_response_event.audio.content, str):
+                            # Decode base64 string to bytes
+                            try:
+                                import base64
+
+                                decoded_content = base64.b64decode(model_response_event.audio.content)
+                                if model_response.audio.content is None:
+                                    model_response.audio.content = b""
+                                model_response.audio.content += decoded_content
+                            except Exception:
+                                # If decode fails, encode string as bytes
+                                if model_response.audio.content is None:
+                                    model_response.audio.content = b""
+                                model_response.audio.content += model_response_event.audio.content.encode("utf-8")
+                        elif isinstance(model_response_event.audio.content, bytes):
+                            # Content is already bytes
+                            if model_response.audio.content is None:
+                                model_response.audio.content = b""
+                            model_response.audio.content += model_response_event.audio.content
+
                     if model_response_event.audio.transcript is not None:
                         model_response.audio.transcript += model_response_event.audio.transcript  # type: ignore
+
                     if model_response_event.audio.expires_at is not None:
                         model_response.audio.expires_at = model_response_event.audio.expires_at  # type: ignore
                     if model_response_event.audio.mime_type is not None:
                         model_response.audio.mime_type = model_response_event.audio.mime_type  # type: ignore
-                    model_response.audio.sample_rate = model_response_event.audio.sample_rate
-                    model_response.audio.channels = model_response_event.audio.channels
+                    if model_response_event.audio.sample_rate is not None:
+                        model_response.audio.sample_rate = model_response_event.audio.sample_rate
+                    if model_response_event.audio.channels is not None:
+                        model_response.audio.channels = model_response_event.audio.channels
 
                     # Yield the audio and transcript bit by bit
-                    run_response.response_audio = AudioResponse(
+                    run_response.response_audio = Audio(
                         id=model_response_event.audio.id,
                         content=model_response_event.audio.content,
                         transcript=model_response_event.audio.transcript,
@@ -3354,6 +3387,14 @@ class Agent:
                         run_response,
                         workflow_context=workflow_context,
                     )
+
+                    if model_response.images is None:
+                        model_response.images = []
+                    model_response.images.extend(model_response_event.images)
+                    # Store media in run_response if store_media is enabled
+                    if self.store_media:
+                        for image in model_response_event.images:
+                            self._add_image(image, run_response)
 
             # Handle tool interruption events
             elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
@@ -3753,19 +3794,11 @@ class Agent:
         session: Optional[AgentSession] = None,
     ) -> Optional[Sequence[Image]]:
         """Collect images from input, session history, and current run response."""
-        joint_images = []
+        joint_images: List[Image] = []
 
         # 1. Add images from current input
         if run_input and run_input.images:
-            for artifact in run_input.images:
-                try:
-                    if artifact.url:
-                        joint_images.append(Image(url=artifact.url))
-                    elif artifact.content:
-                        joint_images.append(Image(content=artifact.content))
-                except Exception as e:
-                    log_warning(f"Error converting ImageArtifact to Image: {e}")
-                    continue
+            joint_images.extend(run_input.images)
             log_debug(f"Added {len(run_input.images)} input images to joint list")
 
         # 2. Add images from session history (from both input and generated sources)
@@ -3774,30 +3807,14 @@ class Agent:
                 for historical_run in session.runs:
                     # Add generated images from previous runs
                     if historical_run.images:
-                        for artifact in historical_run.images:
-                            try:
-                                if artifact.url:
-                                    joint_images.append(Image(url=artifact.url))
-                                elif artifact.content:
-                                    joint_images.append(Image(content=artifact.content))
-                            except Exception as e:
-                                log_warning(f"Error converting historical ImageArtifact to Image: {e}")
-                                continue
+                        joint_images.extend(historical_run.images)
                         log_debug(
                             f"Added {len(historical_run.images)} generated images from historical run {historical_run.run_id}"
                         )
 
                     # Add input images from previous runs
                     if historical_run.input and historical_run.input.images:
-                        for artifact in historical_run.input.images:
-                            try:
-                                if artifact.url:
-                                    joint_images.append(Image(url=artifact.url))
-                                elif artifact.content:
-                                    joint_images.append(Image(content=artifact.content))
-                            except Exception as e:
-                                log_warning(f"Error converting input ImageArtifact to Image: {e}")
-                                continue
+                        joint_images.extend(historical_run.input.images)
                         log_debug(
                             f"Added {len(historical_run.input.images)} input images from historical run {historical_run.run_id}"
                         )
@@ -3814,19 +3831,11 @@ class Agent:
         session: Optional[AgentSession] = None,
     ) -> Optional[Sequence[Video]]:
         """Collect videos from input, session history, and current run response."""
-        joint_videos = []
+        joint_videos: List[Video] = []
 
         # 1. Add videos from current input
         if run_input and run_input.videos:
-            for artifact in run_input.videos:
-                try:
-                    if artifact.url:
-                        joint_videos.append(Video(url=artifact.url))
-                    elif artifact.content:
-                        joint_videos.append(Video(content=artifact.content))
-                except Exception as e:
-                    log_warning(f"Error converting VideoArtifact to Video: {e}")
-                    continue
+            joint_videos.extend(run_input.videos)
             log_debug(f"Added {len(run_input.videos)} input videos to joint list")
 
         # 2. Add videos from session history (from both input and generated sources)
@@ -3835,30 +3844,14 @@ class Agent:
                 for historical_run in session.runs:
                     # Add generated videos from previous runs
                     if historical_run.videos:
-                        for artifact in historical_run.videos:
-                            try:
-                                if artifact.url:
-                                    joint_videos.append(Video(url=artifact.url))
-                                elif artifact.content:
-                                    joint_videos.append(Video(content=artifact.content))
-                            except Exception as e:
-                                log_warning(f"Error converting historical VideoArtifact to Video: {e}")
-                                continue
+                        joint_videos.extend(historical_run.videos)
                         log_debug(
                             f"Added {len(historical_run.videos)} generated videos from historical run {historical_run.run_id}"
                         )
 
                     # Add input videos from previous runs
                     if historical_run.input and historical_run.input.videos:
-                        for artifact in historical_run.input.videos:
-                            try:
-                                if artifact.url:
-                                    joint_videos.append(Video(url=artifact.url))
-                                elif artifact.content:
-                                    joint_videos.append(Video(content=artifact.content))
-                            except Exception as e:
-                                log_warning(f"Error converting input VideoArtifact to Video: {e}")
-                                continue
+                        joint_videos.extend(historical_run.input.videos)
                         log_debug(
                             f"Added {len(historical_run.input.videos)} input videos from historical run {historical_run.run_id}"
                         )
@@ -3875,19 +3868,11 @@ class Agent:
         session: Optional[AgentSession] = None,
     ) -> Optional[Sequence[Audio]]:
         """Collect audios from input, session history, and current run response."""
-        joint_audios = []
+        joint_audios: List[Audio] = []
 
         # 1. Add audios from current input
         if run_input and run_input.audios:
-            for artifact in run_input.audios:
-                try:
-                    if artifact.url:
-                        joint_audios.append(Audio(url=artifact.url))
-                    elif artifact.base64_audio:
-                        joint_audios.append(Audio(content=artifact.base64_audio))
-                except Exception as e:
-                    log_warning(f"Error converting AudioArtifact to Audio: {e}")
-                    continue
+            joint_audios.extend(run_input.audios)
             log_debug(f"Added {len(run_input.audios)} input audios to joint list")
 
         # 2. Add audios from session history (from both input and generated sources)
@@ -3896,30 +3881,14 @@ class Agent:
                 for historical_run in session.runs:
                     # Add generated audios from previous runs
                     if historical_run.audio:
-                        for artifact in historical_run.audio:
-                            try:
-                                if artifact.url:
-                                    joint_audios.append(Audio(url=artifact.url))
-                                elif artifact.base64_audio:
-                                    joint_audios.append(Audio(content=artifact.base64_audio))
-                            except Exception as e:
-                                log_warning(f"Error converting historical AudioArtifact to Audio: {e}")
-                                continue
+                        joint_audios.extend(historical_run.audio)
                         log_debug(
                             f"Added {len(historical_run.audio)} generated audios from historical run {historical_run.run_id}"
                         )
 
                     # Add input audios from previous runs
                     if historical_run.input and historical_run.input.audios:
-                        for artifact in historical_run.input.audios:
-                            try:
-                                if artifact.url:
-                                    joint_audios.append(Audio(url=artifact.url))
-                                elif artifact.base64_audio:
-                                    joint_audios.append(Audio(content=artifact.base64_audio))
-                            except Exception as e:
-                                log_warning(f"Error converting input AudioArtifact to Audio: {e}")
-                                continue
+                        joint_audios.extend(historical_run.input.audios)
                         log_debug(
                             f"Added {len(historical_run.input.audios)} input audios from historical run {historical_run.run_id}"
                         )
@@ -5660,21 +5629,21 @@ class Agent:
     # Handle images, videos and audio
     ###########################################################################
 
-    def _add_image(self, image: ImageArtifact, run_response: RunOutput) -> None:
+    def _add_image(self, image: Image, run_response: RunOutput) -> None:
         """Add an image to both the agent's stateful storage and the current run response"""
         # Add to run response
         if run_response.images is None:
             run_response.images = []
         run_response.images.append(image)
 
-    def _add_video(self, video: VideoArtifact, run_response: RunOutput) -> None:
+    def _add_video(self, video: Video, run_response: RunOutput) -> None:
         """Add a video to both the agent's stateful storage and the current run response"""
         # Add to run response
         if run_response.videos is None:
             run_response.videos = []
         run_response.videos.append(video)
 
-    def _add_audio(self, audio: AudioArtifact, run_response: RunOutput) -> None:
+    def _add_audio(self, audio: Audio, run_response: RunOutput) -> None:
         """Add audio to both the agent's stateful storage and the current run response"""
         # Add to run response
         if run_response.audio is None:
@@ -7159,63 +7128,46 @@ class Agent:
         message.image_output = None
         message.video_output = None
 
-    def _convert_media_to_artifacts(
+    def _validate_media_object_id(
         self,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         audios: Optional[Sequence[Audio]] = None,
     ) -> tuple:
-        """Convert raw Image/Video/Audio objects to ImageArtifact/VideoArtifact/AudioArtifact objects."""
-        from uuid import uuid4
-
-        from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
-
-        image_artifacts = None
+        """Convert raw Image/Video/Audio objects - now unified, so just return as-is."""
+        # With unified classes, no conversion needed - just ensure IDs are set
+        image_list = None
         if images:
-            image_artifacts = []
+            image_list = []
             for img in images:
-                try:
-                    artifact_id = img.id if hasattr(img, "id") and img.id else str(uuid4())
+                # Ensure ID is set (validation should handle this, but double-check)
+                if not img.id:
+                    from uuid import uuid4
 
-                    if img.url:
-                        image_artifacts.append(ImageArtifact(id=artifact_id, url=img.url))
-                    elif img.content:
-                        image_artifacts.append(ImageArtifact(id=artifact_id, content=img.content))
-                except Exception as e:
-                    log_warning(f"Error creating ImageArtifact: {e}")
-                    continue
+                    img.id = str(uuid4())
+                image_list.append(img)
 
-        video_artifacts = None
+        video_list = None
         if videos:
-            video_artifacts = []
+            video_list = []
             for vid in videos:
-                try:
-                    artifact_id = vid.id if hasattr(vid, "id") and vid.id else str(uuid4())
+                if not vid.id:
+                    from uuid import uuid4
 
-                    if vid.url:
-                        video_artifacts.append(VideoArtifact(id=artifact_id, url=vid.url))
-                    elif vid.content:
-                        video_artifacts.append(VideoArtifact(id=artifact_id, content=vid.content))
-                except Exception as e:
-                    log_warning(f"Error creating VideoArtifact: {e}")
-                    continue
+                    vid.id = str(uuid4())
+                video_list.append(vid)
 
-        audio_artifacts = None
+        audio_list = None
         if audios:
-            audio_artifacts = []
+            audio_list = []
             for aud in audios:
-                try:
-                    artifact_id = aud.id if hasattr(aud, "id") and aud.id else str(uuid4())
+                if not aud.id:
+                    from uuid import uuid4
 
-                    if aud.url:
-                        audio_artifacts.append(AudioArtifact(id=artifact_id, url=aud.url))
-                    elif aud.content:
-                        audio_artifacts.append(AudioArtifact(id=artifact_id, content=aud.content))
-                except Exception as e:
-                    log_warning(f"Error creating AudioArtifact: {e}")
-                    continue
+                    aud.id = str(uuid4())
+                audio_list.append(aud)
 
-        return image_artifacts, video_artifacts, audio_artifacts
+        return image_list, video_list, audio_list
 
     def cli_app(
         self,

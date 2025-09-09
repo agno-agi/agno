@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
+from agno.media import Audio, Image, Video
 from agno.models.response import FileType
 from agno.team import Team
 from agno.tools import Toolkit
@@ -89,20 +89,20 @@ class ModelsLabTools(Toolkit):
 
     def _create_media_artifacts(self, media_id: str, media_url: str, eta: Optional[str] = None) -> Dict[str, List]:
         """Create appropriate media artifacts based on file type."""
-        artifacts: Dict[str, List[Union[ImageArtifact, VideoArtifact, AudioArtifact]]] = {
+        artifacts: Dict[str, List[Union[Image, Video, Audio]]] = {
             "images": [],
             "videos": [],
             "audios": [],
         }
 
         if self.file_type == FileType.MP4:
-            video_artifact = VideoArtifact(id=str(media_id), url=media_url, eta=str(eta))
+            video_artifact = Video(id=str(media_id), url=media_url, eta=str(eta))
             artifacts["videos"].append(video_artifact)
         elif self.file_type == FileType.GIF:
-            image_artifact = ImageArtifact(id=str(media_id), url=media_url)
+            image_artifact = Image(id=str(media_id), url=media_url)
             artifacts["images"].append(image_artifact)
         elif self.file_type == FileType.MP3:
-            audio_artifact = AudioArtifact(id=str(media_id), url=media_url)
+            audio_artifact = Audio(id=str(media_id), url=media_url)
             artifacts["audios"].append(audio_artifact)
 
         return artifacts
