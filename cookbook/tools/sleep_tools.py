@@ -1,11 +1,12 @@
 from agno.agent import Agent
 from agno.tools.sleep import SleepTools
 
-# Create an Agent with the Sleep tool
-agent = Agent(tools=[SleepTools()], name="Sleep Agent")
+# Example 1: Enable specific sleep functions
+agent = Agent(tools=[SleepTools(enable_sleep=True)], name="Sleep Agent")
 
-# Example 1: Sleep for 2 seconds
+# Example 2: Enable all sleep functions
+agent_all = Agent(tools=[SleepTools(all=True)], name="Full Sleep Agent")
+
+# Test the agents
 agent.print_response("Sleep for 2 seconds")
-
-# Example 2: Sleep for a longer duration
-agent.print_response("Sleep for 5 seconds")
+agent_all.print_response("Sleep for 5 seconds")

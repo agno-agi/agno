@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Union
 
 import requests
 
@@ -8,7 +8,7 @@ from agno.models.litellm import LiteLLMOpenAI
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 
-def _get_audio_input() -> bytes | Any:
+def _get_audio_input() -> Union[bytes, Any]:
     """Fetch an example audio file and return it as base64 encoded string"""
     url = "https://openaiassets.blob.core.windows.net/$web/API/docs/audio/alloy.wav"
     response = requests.get(url)
@@ -23,7 +23,6 @@ def test_image_input():
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -43,7 +42,6 @@ def test_audio_input_bytes():
         model=LiteLLMOpenAI(id="gpt-4o-audio-preview"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
     response = agent.run("What is in this audio?", audio=[Audio(content=wav_data, format="wav")])
 
@@ -56,7 +54,6 @@ def test_audio_input_url():
         model=LiteLLMOpenAI(id="gpt-4o-audio-preview"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -73,7 +70,6 @@ def test_single_image_simple():
         model=LiteLLMOpenAI(id="gpt-4o"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(

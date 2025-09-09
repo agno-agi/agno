@@ -1,12 +1,12 @@
 from agno.agent import Agent
 from agno.media import Image
-from agno.models.aimlapi import AIMLApi
+from agno.models.aimlapi import AIMLAPI
 
 agent = Agent(
-    model=AIMLApi(id="meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo"),
+    model=AIMLAPI(id="meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo"),
     markdown=True,
-    add_history_to_messages=True,
-    num_history_responses=3,
+    add_history_to_context=True,
+    num_history_runs=3,
 )
 
 agent.print_response(

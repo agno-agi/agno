@@ -1,4 +1,4 @@
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.perplexity import Perplexity
 
 agent = Agent(model=Perplexity(id="sonar-pro"), markdown=True)
@@ -7,5 +7,5 @@ agent = Agent(model=Perplexity(id="sonar-pro"), markdown=True)
 agent.print_response("Show me top 2 news stories from USA?")
 
 # Get the response in a variable
-# run: RunResponse = agent.run("What is happening in the world today?")
+# run: RunOutput = agent.run("What is happening in the world today?")
 # print(run.content)

@@ -10,22 +10,23 @@ class FileTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
-        save_files: bool = True,
-        read_files: bool = True,
-        list_files: bool = True,
-        search_files: bool = True,
+        enable_save_file: bool = True,
+        enable_read_file: bool = True,
+        enable_list_files: bool = True,
+        enable_search_files: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.base_dir: Path = base_dir or Path.cwd()
 
         tools: List[Any] = []
-        if save_files:
+        if all or enable_save_file:
             tools.append(self.save_file)
-        if read_files:
+        if all or enable_read_file:
             tools.append(self.read_file)
-        if list_files:
+        if all or enable_list_files:
             tools.append(self.list_files)
-        if search_files:
+        if all or enable_search_files:
             tools.append(self.search_files)
 
         super().__init__(name="file_tools", tools=tools, **kwargs)

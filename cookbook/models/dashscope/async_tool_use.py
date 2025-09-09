@@ -7,7 +7,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 agent = Agent(
     model=DashScope(id="qwen-plus"),
     tools=[DuckDuckGoTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 

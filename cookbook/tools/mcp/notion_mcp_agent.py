@@ -52,11 +52,10 @@ async def run_agent():
                 - Confirm with the user before making modifications.
             """),
             markdown=True,
-            show_tool_calls=True,
         )
 
         await agent.acli_app(
-            message="You are a helpful assistant that can access Notion workspaces and pages.",
+            input="You are a helpful assistant that can access Notion workspaces and pages.",
             stream=True,
             markdown=True,
             exit_on=["exit", "quit"],

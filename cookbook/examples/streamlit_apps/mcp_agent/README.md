@@ -1,119 +1,108 @@
-# UAgI: Universal Agent Interface powered by MCP
+# Universal MCP Agent
 
-> [!IMPORTANT]
-> This is a work in progress (see [open issues](#-open-issues) below), please contribute and help improve.
+**Universal MCP Agent (UAgI)** is a powerful agent application that leverages the Model Context Protocol (MCP) to provide a unified interface for interacting with various MCP servers. This application allows you to connect to different data sources and tools through MCP servers, providing a seamless experience for working with external services.
 
-UAgI (Universal Agent Interface) is a powerful agent application that leverages the Model Context Protocol (MCP) to provide a unified interface for interacting with various MCP servers. This application allows you to connect to different data sources and tools through MCP servers, providing a seamless experience for working with external services.
+> Note: Fork and clone this repository if needed
 
-## 🌟 Features
+### 1. Create a virtual environment
 
-- **Multiple Model Support**: Works with various LLM providers including:
-  - OpenAI (o3-mini, gpt-4o, gpt-4.5)
-  - Anthropic (claude-3-7-sonnet, claude-3-7-sonnet-thinking)
-  - Google (gemini-2.0-flash, gemini-2.0-pro)
-  - Groq (llama-3.3-70b-versatile)
-
-- **MCP Server Integration**: Connect to the following MCP servers:
-  - GitHub: Access repositories, issues, and more
-  - Filesystem: Browse and manipulate files on your local system
-
-- **Knowledge Base**: Built-in knowledge of MCP documentation to help answer questions about the protocol
-
-- **Session Management**: Save and restore chat sessions using SQLite storage
-
-- **Chat History Export**: Export your conversations as markdown files
-
-- **Streamlit UI**: User-friendly interface with customizable settings
-
-## 🐞 Open Issues
-
-- Only works with 1 MCP server at a time
-- Changing MCP servers resets the agent
-- Only supports 2 MCP servers at the moment
-- Chat history is broken
-- MCP Cleanup is not working, so memory leaks are possible
-
-## 🚀 Quick Start
-
-### 1. Environment Setup
-
-Create and activate a virtual environment:
-```bash
+```shell
 python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate
 ```
 
-### 2. Install Dependencies
+### 2. Install dependencies
 
-```bash
+```shell
 pip install -r cookbook/examples/streamlit_apps/mcp_agent/requirements.txt
 ```
 
 ### 3. Configure API Keys
 
 Required:
+
 ```bash
 export OPENAI_API_KEY=your_openai_key_here
 ```
 
 Optional (for additional models):
+
 ```bash
 export ANTHROPIC_API_KEY=your_anthropic_key_here
 export GOOGLE_API_KEY=your_google_key_here
 export GROQ_API_KEY=your_groq_key_here
 ```
 
-For GitHub MCP server:
+### 4. Install MCP Servers
+
+The application requires Node.js and npm to run MCP servers:
+
+For GitHub server:
 ```bash
-export GITHUB_TOKEN=your_github_token_here
+npm install -g @modelcontextprotocol/server-github
 ```
 
-### 4. Launch the Application
+### 5. Run PgVector
 
-```bash
+> Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) first.
+
+- Run using a helper script
+
+```shell
+./cookbook/scripts/run_pgvector.sh
+```
+
+- OR run using the docker run command
+
+```shell
+docker run -d \
+  -e POSTGRES_DB=ai \
+  -e POSTGRES_USER=ai \
+  -e POSTGRES_PASSWORD=ai \
+  -e PGDATA=/var/lib/postgresql/data/pgdata \
+  -v pgvolume:/var/lib/postgresql/data \
+  -p 5532:5432 \
+  --name pgvector \
+  agno/pgvector:16
+```
+
+### 6. Run the App
+
+```shell
 streamlit run cookbook/examples/streamlit_apps/mcp_agent/app.py
 ```
 
-Visit [localhost:8501](http://localhost:8501) to access the UAgI application.
+- Open [localhost:8501](http://localhost:8501) to view your app.
 
-## 🔧 How It Works
+### Features
 
-UAgI connects to MCP servers using the Model Context Protocol, which standardizes how applications provide context to LLMs. When you ask a question:
+- **Multiple Model Support**: Works with various LLM providers (OpenAI, Anthropic, Google, Groq)
+- **MCP Server Integration**: Connect to GitHub MCP server
+- **Knowledge Base**: Built-in knowledge of MCP documentation
+- **Session Management**: Save and restore chat sessions
+- **Real-time Interaction**: Stream responses and display tool executions
+- **Export Functionality**: Export chat history as markdown files
 
-1. The agent analyzes your request and determines which MCP tools might be helpful
-2. It connects to the appropriate MCP server (GitHub, Filesystem, etc.)
-3. The agent executes the necessary tools through the MCP server
-4. Results are processed and returned in a natural language response
-5. All interactions are saved in your session history
+### Available MCP Servers
 
-## 📚 Understanding MCP
+#### GitHub Server
+- Search repositories
+- Access repository information
+- View issues and pull requests
+- Interact with GitHub API
 
-The Model Context Protocol (MCP) is an open protocol that standardizes how applications provide context to LLMs. Think of MCP like a USB-C port for AI applications - it provides a standardized way to connect AI models to different data sources and tools.
+### How to Use
 
-MCP helps you build agents and complex workflows on top of LLMs by providing:
-- A growing list of pre-built integrations that your LLM can directly plug into
-- The flexibility to switch between LLM providers and vendors
-- Best practices for securing your data within your infrastructure
-
-## 🛠️ Customization
-
-### Adding New MCP Servers
-
-The application is designed to be extensible. To add new MCP servers:
-
-1. Update the `get_mcp_server_config()` function in `utils.py`
-2. Add server-specific example inputs in the `example_inputs()` function
-
-### Modifying Agent Behavior
-
-The agent configuration is in `agents.py`:
-- Adjust the agent description and instructions to change its behavior
-- Modify the knowledge base to include additional documentation
-- Add new tools or capabilities as needed
+1. **Select Model**: Choose your preferred AI model from the sidebar
+2. **Choose MCP Server**: Select which MCP server to connect to
+3. **Start Chatting**: Ask questions or request actions that leverage the MCP server
+4. **Monitor Connections**: View server status and connection information
+5. **Export Conversations**: Save your chat history for later reference
 
 ## 📚 Documentation
 
 For more detailed information:
+
 - [Agno Documentation](https://docs.agno.com)
 - [Streamlit Documentation](https://docs.streamlit.io)
 

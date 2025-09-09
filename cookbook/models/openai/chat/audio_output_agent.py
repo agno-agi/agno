@@ -1,6 +1,7 @@
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIChat
 from agno.utils.audio import write_audio_to_file
+from agno.db.in_memory import InMemoryDb
 
 
 # Provide the agent with the audio file and audio configuration and get result as text + audio
@@ -10,22 +11,23 @@ agent = Agent(
         modalities=["text", "audio"],
         audio={"voice": "sage", "format": "wav"},
     ),
-    add_history_to_messages=True,
+    db=InMemoryDb(),
+    add_history_to_context=True,
     markdown=True,
 )
-agent.print_response("Tell me a 5 second scary story")
+run_output: RunOutput = agent.run("Tell me a 5 second scary story")
 
 # Save the response audio to a file
-if agent.run_response.response_audio is not None:
+if run_output.response_audio:
     write_audio_to_file(
-        audio=agent.run_response.response_audio.content, filename="tmp/scary_story.wav"
+        audio=run_output.response_audio.content, filename="tmp/scary_story.wav"
     )
 
-agent.print_response("What would be in a sequal of this story?")
+run_output: RunOutput = agent.run("What would be in a sequal of this story?")
 
 # Save the response audio to a file
-if agent.run_response.response_audio is not None:
+if run_output.response_audio:
     write_audio_to_file(
-        audio=agent.run_response.response_audio.content,
+        audio=run_output.response_audio.content,
         filename="tmp/scary_story_sequal.wav",
     )

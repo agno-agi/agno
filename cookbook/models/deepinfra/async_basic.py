@@ -1,6 +1,6 @@
 import asyncio
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.deepinfra import DeepInfra  # noqa
 
 agent = Agent(
@@ -9,7 +9,7 @@ agent = Agent(
 )
 
 # Get the response in a variable
-# def run_async() -> RunResponse:
+# def run_async() -> RunOutput:
 #     return agent.arun("Share a 2 sentence horror story")
 # response = asyncio.run(run_async())
 # print(response.content)
