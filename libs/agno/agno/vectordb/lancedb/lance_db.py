@@ -370,7 +370,11 @@ class LanceDb(VectorDb):
 
             # Ensure the async table is created before inserting
             if self.async_table is None:
-                await self.async_create()
+                try:
+                    await self.async_create()
+                except Exception as create_e:
+                    logger.error(f"Failed to create async table: {create_e}")
+                    # Continue to fallback logic below
 
             if self.async_table is None:
                 # Fall back to sync insertion if async table creation failed
