@@ -17,7 +17,7 @@
 
 [Agno](https://docs.agno.com) is a high-performance runtime for multi-agent systems. Use it to build, run and manage secure multi-agent systems in your cloud.
 
-Agno gives you the fastest framework for building agents with session management, memory, knowledge, human in the loop and MCP support. You can put agents together as an autonomous multi-agent team, or build step-based agentic workflows for full control over complex multi-step agentic processes.
+Agno gives you the fastest framework for building agents with session management, memory, knowledge, human in the loop and MCP support. You can put agents together as an autonomous multi-agent team, or build step-based agentic workflows for full control over complex multi-step processes.
 
 In 10 lines of code, we can build an Agent that will fetch the top stories from HackerNews and summarize them.
 
