@@ -152,6 +152,15 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
             ):
                 assistant_message.metrics.cached_tokens = response_usage.prompt_tokens_details.cached_tokens
 
+    # Handle input_tokens_details field (openai Responses API format)
+    if hasattr(response_usage, "input_tokens_details"):
+        if hasattr(response_usage.input_tokens_details, "model_dump"):
+            if (
+                hasattr(response_usage.input_tokens_details, "cached_tokens")
+                and response_usage.input_tokens_details.cached_tokens is not None
+            ):
+                assistant_message.metrics.cached_tokens = response_usage.input_tokens_details.cached_tokens
+
     if hasattr(response_usage, "completion_tokens_details"):
         if isinstance(response_usage.completion_tokens_details, dict):
             assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details
@@ -181,6 +190,15 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
                 and response_usage.completion_tokens_details.reasoning_tokens is not None
             ):
                 assistant_message.metrics.reasoning_tokens = response_usage.completion_tokens_details.reasoning_tokens
+
+    # Handle output_tokens_details field (openai Responses API format)
+    if hasattr(response_usage, "output_tokens_details"):
+        if hasattr(response_usage.output_tokens_details, "model_dump"):
+            if (
+                hasattr(response_usage.output_tokens_details, "reasoning_tokens")
+                and response_usage.output_tokens_details.reasoning_tokens is not None
+            ):
+                assistant_message.metrics.reasoning_tokens = response_usage.output_tokens_details.reasoning_tokens
 
     assistant_message.metrics.audio_tokens = (
         assistant_message.metrics.input_audio_tokens + assistant_message.metrics.output_audio_tokens
