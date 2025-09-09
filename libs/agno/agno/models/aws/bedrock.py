@@ -179,14 +179,10 @@ class AwsBedrock(Model):
                 required = []
 
                 for param_name, param_info in func_def.get("parameters", {}).get("properties", {}).items():
-                    param_type = param_info.get("type")
-                    if isinstance(param_type, list):
-                        param_type = [t for t in param_type if t != "null"][0]
+                    properties[param_name] = param_info.copy()
 
-                    properties[param_name] = {
-                        "type": param_type or "string",
-                        "description": param_info.get("description") or "",
-                    }
+                    if "description" not in properties[param_name]:
+                        properties[param_name]["description"] = ""
 
                     if "null" not in (
                         param_info.get("type") if isinstance(param_info.get("type"), list) else [param_info.get("type")]
