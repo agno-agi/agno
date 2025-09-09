@@ -34,15 +34,14 @@ def run_docker_compose_up(compose_file: Path, build: bool = True, detached: bool
 
     try:
         logger.info(f"Running: {' '.join(cmd)}")
-        # Pass through TTY and environment for better Docker experience
         result = subprocess.run(
             cmd,
             check=True,
             cwd=compose_file.parent,
-            env=environ.copy(),  # Pass through all environment variables
-            stdin=stdin,  # Pass through stdin for interactive prompts
-            stdout=stdout,  # Direct output to terminal
-            stderr=stderr,  # Direct errors to terminal
+            env=environ.copy(),
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
         )
 
         logger.info(f"Docker Compose started successfully from {compose_file}")
