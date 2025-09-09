@@ -17,7 +17,7 @@
 
 [Agno](https://docs.agno.com) is a high-performance runtime for multi-agent systems. Use it to build, run and manage secure multi-agent systems in your cloud.
 
-Agno gives you the fastest framework for building agents with out of the box session management, memory, knowledge, human in the loop and MCP support. You can also build autonomous multi-agent teams, or step-based agentic workflows for full control over complex multi-step agentic processes.
+Agno gives you the fastest framework for building agents with session management, memory, knowledge, human in the loop and MCP support. You can put agents together as an autonomous multi-agent team, or build step-based agentic workflows for full control over complex multi-step agentic processes.
 
 In 10 lines of code, we can build an Agent that will fetch the top stories from HackerNews and summarize them.
 
@@ -34,7 +34,7 @@ agent = Agent(
 agent.print_response("Summarize the top 5 stories on hackernews", stream=True)
 ```
 
-But the real advantage of Agno is the AgentOS runtime:
+But the real advantage of Agno is its [AgentOS](https://docs.agno.com/agent-os/introduction) runtime:
 
 1. You get a pre-built FastAPI app for running your agentic system, meaning you start building your product on day one. This is a remarkable advantage over other solutions or rolling your own.
 2. You also get a control plane which connects directly to your AgentOS for testing, monitoring and managing your system. This gives you unmatched visibility and control over your system.
@@ -42,13 +42,13 @@ But the real advantage of Agno is the AgentOS runtime:
 
 For organizations building agents, Agno provides the complete solution. You get the fastest framework for building agents (speed of development and execution), a pre-built FastAPI app that lets you build your product on day one, and a control plane for managing your system.
 
-We bring a novel architecture that no other framework provides, your AgentOS runs securely in your cloud, and the control plane connects directly to it. You don't need to send traces to external services or pay retention costs, you get complete data privacy and control.
+We bring a novel architecture that no other framework provides, your AgentOS runs securely in your cloud, and the control plane connects directly to it from your browser. You don't need to send data to external services or pay retention costs, you get complete privacy and control.
 
 ## Getting started
 
-If you're new to Agno, start by [building your first Agent](/introduction/first-agent) and run it using the AgentOS.
+If you're new to Agno, follow our [quickstart](https://docs.agno.com/introduction/quickstart) to build your first Agent and run it using the AgentOS.
 
-After that, checkout the [examples gallery](/examples/introduction) and build real-world applications with Agno.
+After that, checkout the [examples gallery](https://docs.agno.com/examples/introduction) and build real-world applications with Agno.
 
 ## Documentation, Community & More examples
 
@@ -59,24 +59,24 @@ After that, checkout the [examples gallery](/examples/introduction) and build re
 
 ## Setup your coding agent to use Agno
 
-For LLMs and AI assistants to understand and navigate Agno's documentation, we provide an [LLMs.txt](https://docs.agno.com/llms.txt) or [LLMs-Full.txt](https://docs.agno.com/llms-full.txt) file.
+For LLMs and AI assistants to understand and navigate Agno's documentation, we provide an [llms.txt](https://docs.agno.com/llms.txt) or [llms-full.txt](https://docs.agno.com/llms-full.txt) file.
 
-This file is specifically formatted for AI systems to efficiently parse and reference our documentation.
+This file is built for AI systems to efficiently parse and reference our documentation.
 
-### Cursor Setup
+### IDE Integration
 
-When building Agno agents, using Agno documentation as a source in Cursor is a great way to speed up your development.
+When building Agno agents, using Agno documentation as a source in your IDE is a great way to speed up your development. Here's how to integrate with Cursor:
 
 1. In Cursor, go to the "Cursor Settings" menu.
 2. Find the "Indexing & Docs" section.
 3. Add `https://docs.agno.com/llms-full.txt` to the list of documentation URLs.
 4. Save the changes.
 
-Now, Cursor will have access to the Agno documentation.
+Now, Cursor will have access to the Agno documentation. You can do the same with other IDEs like VSCode, Windsurf etc.
 
 ## Performance
 
-At Agno, we're obsessed with performance. Why? because even simple AI workflows can spawn thousands of Agents. Scale that to a modest number of users and performance becomes a bottleneck. Agno is designed for building high performance agentic systems:
+At Agno, we're obsessed with performance. Why? because even simple AI workflows can spawn thousands of Agents. Scale that to a modest number of users and performance becomes a bottleneck. Agno is designed for building highly performant agentic systems:
 
 - Agent instantiation: ~3μs on average
 - Memory footprint: ~6.5Kib on average
