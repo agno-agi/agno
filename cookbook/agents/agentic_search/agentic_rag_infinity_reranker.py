@@ -70,7 +70,6 @@ knowledge = Knowledge(
         ),
     ),
 )
-
 asyncio.run(
     knowledge.add_contents_async(
         urls=[

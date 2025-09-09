@@ -474,7 +474,7 @@ class Knowledge:
         # 4. Select reader
         # If a reader was provided by the user, use it
         reader = content.reader
-        name = content.name
+        name = content.name if content.name else content.url
         # Else select based on file extension
         if reader is None:
             url_path = Path(parsed_url.path)
@@ -501,6 +501,8 @@ class Knowledge:
                 import inspect
 
                 read_signature = inspect.signature(reader.read)
+                if name is None:
+                    name = content.url
                 if reader.__class__.__name__ == "YouTubeReader":
                     read_documents = reader.read(content.url, name=name)
                 elif "password" in read_signature.parameters and content.auth and content.auth.password:
