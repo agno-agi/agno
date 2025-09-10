@@ -93,7 +93,7 @@ class MemoryTools(Toolkit):
             log_error(f"Error recording memory thought: {e}")
             return f"Error recording memory thought: {e}"
 
-    def get_memories(self, session_state: Dict[str, Any]) -> str:
+    def get_memories(self, session_state: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Use this tool to get a list of memories from the database.
         """
@@ -102,7 +102,7 @@ class MemoryTools(Toolkit):
             user_id = session_state.get("current_user_id") if session_state else None
 
             memories = self.db.get_user_memories(user_id=user_id)
-            return [memory.to_dict() for memory in memories]
+            return [memory.to_dict() for memory in memories] # type: ignore
         except Exception as e:
             log_error(f"Error getting memories: {e}")
             return json.dumps({"error": str(e)}, indent=2)
