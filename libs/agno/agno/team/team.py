@@ -432,6 +432,7 @@ class Team:
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
         telemetry: bool = True,
+        memory_manager: Optional[MemoryManager] = None,
     ):
         self.members = members
 
