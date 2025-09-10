@@ -20,9 +20,10 @@ from agno.utils.models.schema_utils import get_response_schema_for_provider
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
     from openai.types.responses.response import Response
+    from openai.types.responses.response_reasoning_item import ResponseReasoningItem
     from openai.types.responses.response_stream_event import ResponseStreamEvent
     from openai.types.responses.response_usage import ResponseUsage
-except (ImportError, ModuleNotFoundError) as e:
+except ImportError as e:
     raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
 
 
@@ -263,7 +264,10 @@ class OpenAIResponses(Model):
                 include_list = request_params.get("include", []) or []
                 if "reasoning.encrypted_content" not in include_list:
                     include_list.append("reasoning.encrypted_content")
-                    request_params["include"] = include_list
+                    if request_params.get("include") is None:
+                        request_params["include"] = include_list
+                    elif isinstance(request_params["include"], list):
+                        request_params["include"].extend(include_list)
 
             else:
                 request_params["store"] = True
@@ -385,7 +389,7 @@ class OpenAIResponses(Model):
 
         return formatted_tools
 
-    def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
+    def _format_messages(self, messages: List[Message]) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
         """
         Format a message into the format expected by OpenAI.
 
@@ -395,7 +399,7 @@ class OpenAIResponses(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        formatted_messages: List[Dict[str, Any]] = []
+        formatted_messages: List[Union[Dict[str, Any], ResponseReasoningItem]] = []
 
         if self._using_reasoning_model():
             # Detect whether we're chaining via previous_response_id. If so, we should NOT
@@ -486,11 +490,12 @@ class OpenAIResponses(Model):
                 content = message.content if message.content is not None else ""
                 formatted_messages.append({"role": self.role_map[message.role], "content": content})
 
-                if (self.store is False and 
-                    hasattr(message, "provider_data") and 
-                    message.provider_data is not None):
-                    if "reasoning_output" in message.provider_data:
-                        formatted_messages.append(message.provider_data["reasoning_output"])
+                if self.store is False and hasattr(message, "provider_data") and message.provider_data is not None:
+                    if message.provider_data.get("reasoning_output") is not None:
+                        reasoning_output = ResponseReasoningItem.model_validate(
+                            message.provider_data["reasoning_output"]
+                        )
+                        formatted_messages.append(reasoning_output)
         return formatted_messages
 
     def invoke(
@@ -920,7 +925,7 @@ class OpenAIResponses(Model):
                 if self.store is False:
                     if model_response.provider_data is None:
                         model_response.provider_data = {}
-                    model_response.provider_data["reasoning_output"] = output
+                    model_response.provider_data["reasoning_output"] = output.model_dump(exclude_none=True)
 
                 if reasoning_summaries := getattr(output, "summary", None):
                     for summary in reasoning_summaries:
@@ -1041,8 +1046,7 @@ class OpenAIResponses(Model):
                             if model_response.provider_data is None:
                                 model_response.provider_data = {}
                             # Store the complete output item
-                            model_response.provider_data["reasoning_output"] = out
-
+                            model_response.provider_data["reasoning_output"] = out.model_dump(exclude_none=True)
                         if self.reasoning_summary is not None:
                             summaries = getattr(out, "summary", None)
                             if summaries:

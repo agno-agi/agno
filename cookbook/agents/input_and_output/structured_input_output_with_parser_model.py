@@ -17,17 +17,37 @@ class ResearchTopic(BaseModel):
 
 class HackerNewsResearch(BaseModel):
     """Structured output for Hackernews research results"""
-    
-    research_summary: str = Field(..., description="Executive summary of the research findings")
-    key_insights: List[str] = Field(..., description="Main insights discovered from Hackernews posts")
-    trending_topics: List[str] = Field(..., description="Currently trending topics related to the research")
-    top_stories: List[str] = Field(..., description="Most relevant and popular stories found")
-    discussion_highlights: List[str] = Field(..., description="Notable comments or discussions")
-    technologies_mentioned: List[str] = Field(..., description="Technologies, tools, or frameworks mentioned")
-    industry_sentiment: str = Field(..., description="Overall sentiment and mood of the community")
-    actionable_takeaways: List[str] = Field(..., description="Practical insights the target audience can act on")
-    source_links: List[str] = Field(..., description="Links to the most relevant Hackernews posts")
-    confidence_score: int = Field(..., ge=1, le=10, description="Research confidence level (1=low, 10=high)")
+
+    research_summary: str = Field(
+        ..., description="Executive summary of the research findings"
+    )
+    key_insights: List[str] = Field(
+        ..., description="Main insights discovered from Hackernews posts"
+    )
+    trending_topics: List[str] = Field(
+        ..., description="Currently trending topics related to the research"
+    )
+    top_stories: List[str] = Field(
+        ..., description="Most relevant and popular stories found"
+    )
+    discussion_highlights: List[str] = Field(
+        ..., description="Notable comments or discussions"
+    )
+    technologies_mentioned: List[str] = Field(
+        ..., description="Technologies, tools, or frameworks mentioned"
+    )
+    industry_sentiment: str = Field(
+        ..., description="Overall sentiment and mood of the community"
+    )
+    actionable_takeaways: List[str] = Field(
+        ..., description="Practical insights the target audience can act on"
+    )
+    source_links: List[str] = Field(
+        ..., description="Links to the most relevant Hackernews posts"
+    )
+    confidence_score: int = Field(
+        ..., ge=1, le=10, description="Research confidence level (1=low, 10=high)"
+    )
 
 
 # Define agents
