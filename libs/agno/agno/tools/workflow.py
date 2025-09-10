@@ -41,7 +41,6 @@ class WorkflowTools(Toolkit):
         # The workflow to execute
         self.workflow: Workflow = workflow
 
-
         super().__init__(
             name="workflow_tools",
             instructions=self.instructions,
@@ -49,7 +48,7 @@ class WorkflowTools(Toolkit):
             auto_register=False,
             **kwargs,
         )
-        
+
         if enable_think or all:
             if async_mode:
                 self.register(self.async_think, name="think")
@@ -160,8 +159,7 @@ class WorkflowTools(Toolkit):
         except Exception as e:
             log_error(f"Error running workflow: {e}")
             return f"Error running workflow: {e}"
-    
-    
+
     async def async_run_workflow(
         self,
         session_state: Dict[str, Any],
@@ -226,7 +224,7 @@ class WorkflowTools(Toolkit):
         except Exception as e:
             log_error(f"Error recording workflow analysis: {e}")
             return f"Error recording workflow analysis: {e}"
-        
+
     async def async_analyze(self, session_state: Dict[str, Any], analysis: str) -> str:
         """Use this tool to evaluate whether the workflow execution results are correct and sufficient.
         If not, go back to "Think" or "Run" with refined inputs or parameters.
