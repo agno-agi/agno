@@ -879,7 +879,7 @@ class OpenAIResponses(Model):
 
         # Add role
         model_response.role = "assistant"
-        reasoning_summary: str = None
+        reasoning_summary: Optional[str] = None
 
         for output in response.output:
             # Add content
