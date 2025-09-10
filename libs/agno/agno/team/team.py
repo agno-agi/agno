@@ -408,6 +408,7 @@ class Team:
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
         add_memories_to_context: Optional[bool] = None,
+        memory_manager: Optional[MemoryManager] = None,
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
@@ -432,7 +433,6 @@ class Team:
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
         telemetry: bool = True,
-        memory_manager: Optional[MemoryManager] = None,
     ):
         self.members = members
 
