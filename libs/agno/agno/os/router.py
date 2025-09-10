@@ -79,10 +79,10 @@ def format_sse_event(json_data: str) -> str:
         event_type = data.get("event", "message")
 
         # Format as SSE: event: <event_type>\ndata: <json_data>\n\n
-        return f"event: {event_type}\ndata: {json_data}\n\n"
+        return f"event: {event_type}\ndata: {data}\n\n"
     except (json.JSONDecodeError, KeyError):
         # Fallback to generic message event if parsing fails
-        return f"event: message\ndata: {json_data}\n\n"
+        return f"event: message\ndata: {data}\n\n"
 
 
 class WebSocketManager:
