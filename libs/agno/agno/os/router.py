@@ -59,12 +59,12 @@ if TYPE_CHECKING:
 
 async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
     """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
-        Args:
-            request: The FastAPI Request object
-            endpoint_func: The function exposing the endpoint that received the request
+    Args:
+        request: The FastAPI Request object
+        endpoint_func: The function exposing the endpoint that received the request
 
-        Returns:
-            A dictionary of kwargs
+    Returns:
+        A dictionary of kwargs
     """
     import inspect
 
@@ -97,11 +97,13 @@ def format_sse_event(json_data: str) -> str:
         data = json.loads(json_data)
         event_type = data.get("event", "message")
 
-        # Format as SSE: event: <event_type>\ndata: <json_data>\n\n
-        return f"event: {event_type}\ndata: {data}\n\n"
-    except (json.JSONDecodeError, KeyError):
-        # Fallback to generic message event if parsing fails
-        return f"event: message\ndata: {data}\n\n"
+        # Re-serialize to ensure valid JSON with double quotes and no newlines
+        clean_json = json.dumps(data, separators=(",", ":"))
+
+        return f"event: {event_type}\ndata: {clean_json}\n\n"
+    except json.JSONDecodeError:
+        clean_json = json_data.replace("\n", "").replace("\r", "")
+        return f"event: message\ndata: {clean_json}\n\n"
 
 
 class WebSocketManager:
