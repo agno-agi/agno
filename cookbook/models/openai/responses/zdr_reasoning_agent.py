@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 An example of using OpenAI Responses with reasoning features and ZDR mode enabled.
 
