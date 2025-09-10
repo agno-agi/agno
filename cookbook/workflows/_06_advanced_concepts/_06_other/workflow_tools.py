@@ -127,10 +127,12 @@ agent = Agent(
     markdown=True,
 )
 
-asyncio.run(agent.aprint_response(
-    "Create a blog post with the following title: Quantum Computing in 2025",
-    instructions="When you run the workflow using the `run_workflow` tool, remember to pass `additional_data` as a dictionary of key-value pairs.",
-    markdown=True,
-    stream=True,
-    debug_mode=True,
-))
+asyncio.run(
+    agent.aprint_response(
+        "Create a blog post with the following title: Quantum Computing in 2025",
+        instructions="When you run the workflow using the `run_workflow` tool, remember to pass `additional_data` as a dictionary of key-value pairs.",
+        markdown=True,
+        stream=True,
+        debug_mode=True,
+    )
+)

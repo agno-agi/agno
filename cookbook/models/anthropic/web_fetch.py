@@ -5,7 +5,6 @@ agent = Agent(
     model=Claude(
         id="claude-opus-4-1-20250805",
         default_headers={"anthropic-beta": "web-fetch-2025-09-10"},
-
     ),
     tools=[
         {
@@ -17,4 +16,7 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response("Tell me more about https://en.wikipedia.org/wiki/Glacier_National_Park_(U.S.)", stream=True)
+agent.print_response(
+    "Tell me more about https://en.wikipedia.org/wiki/Glacier_National_Park_(U.S.)",
+    stream=True,
+)

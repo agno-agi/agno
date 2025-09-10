@@ -100,7 +100,7 @@ class MemoryTools(Toolkit):
         try:
             # Get user info from session state
             user_id = session_state.get("current_user_id") if session_state else None
-            
+
             memories = self.db.get_user_memories(user_id=user_id)
             return [memory.to_dict() for memory in memories]
         except Exception as e:
