@@ -13,6 +13,7 @@ class MemoryTools(Toolkit):
     def __init__(
         self,
         db: BaseDb,
+        enable_get_memories: bool = True,
         enable_add_memory: bool = True,
         enable_update_memory: bool = True,
         enable_delete_memory: bool = True,
@@ -42,6 +43,8 @@ class MemoryTools(Toolkit):
         tools: List[Any] = []
         if enable_think or all:
             tools.append(self.think)
+        if enable_get_memories or all:
+            tools.append(self.get_memories)
         if enable_add_memory or all:
             tools.append(self.add_memory)
         if enable_update_memory or all:
@@ -89,6 +92,20 @@ class MemoryTools(Toolkit):
         except Exception as e:
             log_error(f"Error recording memory thought: {e}")
             return f"Error recording memory thought: {e}"
+
+    def get_memories(self, session_state: Dict[str, Any]) -> str:
+        """
+        Use this tool to get a list of memories from the database.
+        """
+        try:
+            # Get user info from session state
+            user_id = session_state.get("current_user_id") if session_state else None
+            
+            memories = self.db.get_user_memories(user_id=user_id)
+            return [memory.to_dict() for memory in memories]
+        except Exception as e:
+            log_error(f"Error getting memories: {e}")
+            return json.dumps({"error": str(e)}, indent=2)
 
     def add_memory(
         self,

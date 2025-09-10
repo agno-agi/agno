@@ -99,41 +99,38 @@ research_team = Team(
 
 
 # Create and use workflow
-if __name__ == "__main__":
-    content_creation_workflow = Workflow(
-        name="Blog Post Workflow",
-        description="Automated blog post creation from Hackernews and the web",
-        db=SqliteDb(
-            session_table="workflow_session",
-            db_file="tmp/workflow.db",
-        ),
-        steps=[
-            prepare_input_for_web_search,
-            research_team,
-            prepare_input_for_writer,
-            writer_agent,
-        ],
-    )
+content_creation_workflow = Workflow(
+    name="Blog Post Workflow",
+    description="Automated blog post creation from Hackernews and the web",
+    db=SqliteDb(
+        session_table="workflow_session",
+        db_file="tmp/workflow.db",
+    ),
+    steps=[
+        prepare_input_for_web_search,
+        research_team,
+        prepare_input_for_writer,
+        writer_agent,
+    ],
+)
 
-    workflow_tools = WorkflowTools(
-        workflow=content_creation_workflow,
-        add_few_shot=True,
-        few_shot_examples=FEW_SHOT_EXAMPLES,
-        async_mode=True,
-    )
+workflow_tools = WorkflowTools(
+    workflow=content_creation_workflow,
+    add_few_shot=True,
+    few_shot_examples=FEW_SHOT_EXAMPLES,
+    async_mode=True,
+)
 
-    agent = Agent(
-        model=OpenAIChat(id="gpt-5-mini"),
-        tools=[workflow_tools],
-        markdown=True,
-    )
+agent = Agent(
+    model=OpenAIChat(id="gpt-5-mini"),
+    tools=[workflow_tools],
+    markdown=True,
+)
 
-    asyncio.run(
-        agent.aprint_response(
-            "Create a blog post with the following title: Quantum Computing in 2025",
-            instructions="When you run the workflow using the `run_workflow` tool, remember to pass `additional_data` as a dictionary of key-value pairs.",
-            markdown=True,
-            stream=True,
-            debug_mode=True,
-        )
-    )
+asyncio.run(agent.aprint_response(
+    "Create a blog post with the following title: Quantum Computing in 2025",
+    instructions="When you run the workflow using the `run_workflow` tool, remember to pass `additional_data` as a dictionary of key-value pairs.",
+    markdown=True,
+    stream=True,
+    debug_mode=True,
+))
