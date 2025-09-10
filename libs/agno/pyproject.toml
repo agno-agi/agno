@@ -151,7 +151,7 @@ upstash = ["upstash-vector"]
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 text = ["aiofiles"]
-csv = ["aiofiles"]
+csv = ["aiofiles", "chardet"]
 markdown = ["unstructured", "markdown", "aiofiles"]
 chonkie = ["chonkie[st]", "chonkie"]
 
