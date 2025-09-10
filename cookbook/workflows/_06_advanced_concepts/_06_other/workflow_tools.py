@@ -6,6 +6,7 @@ Here is a tool with reasoning capabilities to allow agents to run workflows.
 3. Run: `python cookbook/workflows/_06_advanced_concepts/_06_other/workflow_tools.py` to run the agent
 """
 
+import asyncio
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -25,6 +26,8 @@ FEW_SHOT_EXAMPLES = dedent("""\
     User: Please create a blog post on the topic: AI Trends in 2024
     Run: input_data="AI trends in 2024", additional_data={"topic": "AI, AI agents, AI workflows", "style": "The blog post should be written in a style that is easy to understand and follow."}
     Final Answer: I've created a blog post on the topic: AI trends in 2024 through the workflow. The blog post shows...
+    
+    You HAVE TO USE additional_data to pass the topic and style to the workflow.
 """)
 
 
@@ -116,6 +119,7 @@ if __name__ == "__main__":
         workflow=content_creation_workflow,
         add_few_shot=True,
         few_shot_examples=FEW_SHOT_EXAMPLES,
+        async_mode=True,
     )
 
     agent = Agent(
@@ -124,9 +128,10 @@ if __name__ == "__main__":
         markdown=True,
     )
 
-    agent.print_response(
-        "Create a blog post with the following title: AI trends in 2024",
+    asyncio.run(agent.aprint_response(
+        "Create a blog post with the following title: Quantum Computing in 2025",
         instructions="When you run the workflow using the `run_workflow` tool, remember to pass `additional_data` as a dictionary of key-value pairs.",
         markdown=True,
         stream=True,
-    )
+        debug_mode=True,
+    ))
