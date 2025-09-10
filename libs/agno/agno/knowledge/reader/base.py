@@ -19,6 +19,7 @@ class Reader:
     name: Optional[str] = None
     description: Optional[str] = None
     max_results: int = 5  # Maximum number of results to return (useful for search-based readers)
+    encoding: Optional[str] = None
 
     def __init__(
         self,
@@ -29,6 +30,7 @@ class Reader:
         name: Optional[str] = None,
         description: Optional[str] = None,
         max_results: int = 5,
+        encoding: Optional[str] = None,
         **kwargs,
     ) -> None:
         self.chunk = chunk
@@ -40,6 +42,7 @@ class Reader:
         self.name = name
         self.description = description
         self.max_results = max_results
+        self.encoding = encoding
 
     def set_chunking_strategy_from_string(self, strategy_name: str, **kwargs) -> None:
         """Set the chunking strategy from a string name."""

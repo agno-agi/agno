@@ -74,18 +74,6 @@ class S3Reader(Reader):
                 obj_name = s3_object.name.split("/")[-1]
                 temporary_file = Path("storage").joinpath(obj_name)
                 s3_object.download(temporary_file)
-
-                # TODO: Before we were using textract here. Needed?
-                # s3_object.download(temporary_file)
-                # doc_content = textract.process(temporary_file)
-                # documents = [
-                #     Document(
-                #         name=doc_name,
-                #         id=doc_name,
-                #         content=doc_content.decode("utf-8"),
-                #     )
-                # ]
-
                 documents = TextReader().read(file=temporary_file, name=doc_name)
 
                 temporary_file.unlink()

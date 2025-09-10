@@ -43,7 +43,7 @@ class JSONReader(Reader):
                     raise FileNotFoundError(f"Could not find file: {path}")
                 log_info(f"Reading: {path}")
                 json_name = name or path.name.split(".")[0]
-                json_contents = json.loads(path.read_text("utf-8"))
+                json_contents = json.loads(path.read_text(self.encoding or "utf-8"))
 
             elif isinstance(path, BytesIO):
                 json_name = name or path.name.split(".")[0]
