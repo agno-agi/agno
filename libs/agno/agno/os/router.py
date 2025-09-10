@@ -46,9 +46,10 @@ from agno.os.utils import (
     process_image,
     process_video,
 )
-from agno.run.agent import RunErrorEvent, RunOutput
+from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
-from agno.run.workflow import WorkflowErrorEvent
+from agno.run.team import TeamRunOutputEvent
+from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutputEvent
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.workflow import Workflow
@@ -59,12 +60,12 @@ if TYPE_CHECKING:
 
 async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
     """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
-        Args:
-            request: The FastAPI Request object
-            endpoint_func: The function exposing the endpoint that received the request
+    Args:
+        request: The FastAPI Request object
+        endpoint_func: The function exposing the endpoint that received the request
 
-        Returns:
-            A dictionary of kwargs
+    Returns:
+        A dictionary of kwargs
     """
     import inspect
 
@@ -75,11 +76,11 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
     return kwargs
 
 
-def format_sse_event(json_data: str) -> str:
+def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]) -> str:
     """Parse JSON data into SSE-compliant format.
 
     Args:
-        json_data: JSON string containing the event data
+        event_dict: Dictionary containing the event data
 
     Returns:
         SSE-formatted response:
@@ -94,14 +95,15 @@ def format_sse_event(json_data: str) -> str:
     """
     try:
         # Parse the JSON to extract the event type
-        data = json.loads(json_data)
-        event_type = data.get("event", "message")
+        event_type = event.event or "message"
 
-        # Format as SSE: event: <event_type>\ndata: <json_data>\n\n
-        return f"event: {event_type}\ndata: {json_data}\n\n"
-    except (json.JSONDecodeError, KeyError):
-        # Fallback to generic message event if parsing fails
-        return f"event: message\ndata: {json_data}\n\n"
+        # Serialize to valid JSON with double quotes and no newlines
+        clean_json = event.to_json(separators=(",", ":"), indent=None)
+
+        return f"event: {event_type}\ndata: {clean_json}\n\n"
+    except json.JSONDecodeError:
+        clean_json = event.to_json(separators=(",", ":"), indent=None)
+        return f"event: message\ndata: {clean_json}\n\n"
 
 
 class WebSocketManager:
@@ -178,7 +180,7 @@ async def agent_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk.to_json())
+            yield format_sse_event(run_response_chunk)  # type: ignore
 
     except Exception as e:
         import traceback
@@ -187,7 +189,7 @@ async def agent_response_streamer(
         error_response = RunErrorEvent(
             content=str(e),
         )
-        yield format_sse_event(error_response.to_json())
+        yield format_sse_event(error_response)
 
 
 async def agent_continue_response_streamer(
@@ -207,7 +209,7 @@ async def agent_continue_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in continue_response:
-            yield format_sse_event(run_response_chunk.to_json())
+            yield format_sse_event(run_response_chunk)  # type: ignore
 
     except Exception as e:
         import traceback
@@ -216,7 +218,7 @@ async def agent_continue_response_streamer(
         error_response = RunErrorEvent(
             content=str(e),
         )
-        yield format_sse_event(error_response.to_json())
+        yield format_sse_event(error_response)
         return
 
 
@@ -246,7 +248,7 @@ async def team_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk.to_json())
+            yield format_sse_event(run_response_chunk)  # type: ignore
 
     except Exception as e:
         import traceback
@@ -255,7 +257,7 @@ async def team_response_streamer(
         error_response = TeamRunErrorEvent(
             content=str(e),
         )
-        yield format_sse_event(error_response.to_json())
+        yield format_sse_event(error_response)
         return
 
 
@@ -319,7 +321,7 @@ async def workflow_response_streamer(
         )
 
         async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk.to_json())
+            yield format_sse_event(run_response_chunk)  # type: ignore
 
     except Exception as e:
         import traceback
@@ -328,7 +330,7 @@ async def workflow_response_streamer(
         error_response = WorkflowErrorEvent(
             error=str(e),
         )
-        yield format_sse_event(error_response.to_json())
+        yield format_sse_event(error_response)
         return
 
 
