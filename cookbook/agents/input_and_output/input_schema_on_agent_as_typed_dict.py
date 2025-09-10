@@ -81,5 +81,5 @@ try:
         }
     )
 except ValueError as e:
-    print(f"\n=== Expected Error for Unexpected Field ===")
-    print(f"Error: {e}")
+    print("\n=== Expected Error for Unexpected Field ===")
+    print("Error: {e}")
