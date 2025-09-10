@@ -819,8 +819,6 @@ class Gemini(Model):
                 if hasattr(part, "inline_data") and part.inline_data is not None:
                     # Handle audio responses (for TTS models)
                     if part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
-                        from agno.media import Audio
-
                         # Store raw bytes data
                         model_response.audio = Audio(
                             id=str(uuid4()),
@@ -943,8 +941,6 @@ class Gemini(Model):
                     if hasattr(part, "inline_data") and part.inline_data is not None:
                         # Audio responses
                         if part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
-                            from agno.media import Audio
-
                             # Store raw bytes audio data
                             model_response.audio = Audio(
                                 id=str(uuid4()),
