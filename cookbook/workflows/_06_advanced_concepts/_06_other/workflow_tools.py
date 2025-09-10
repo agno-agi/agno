@@ -18,6 +18,16 @@ from agno.tools.workflow import WorkflowTools
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
+FEW_SHOT_EXAMPLES = dedent("""\
+    You can refer to the examples below as guidance for how to use each tool.
+    ### Examples
+    #### Example: Blog Post Workflow
+    User: Please create a blog post on the topic: AI Trends in 2024
+    Run: input_data="AI trends in 2024", additional_data={"topic": "AI, AI agents, AI workflows", "style": "The blog post should be written in a style that is easy to understand and follow."}
+    Final Answer: I've created a blog post on the topic: AI trends in 2024 through the workflow. The blog post shows...
+""")
+
+
 # Define agents
 web_agent = Agent(
     name="Web Agent",
@@ -104,6 +114,8 @@ if __name__ == "__main__":
 
     workflow_tools = WorkflowTools(
         workflow=content_creation_workflow,
+        add_few_shot=True,
+        few_shot_examples=FEW_SHOT_EXAMPLES,
     )
 
     agent = Agent(
