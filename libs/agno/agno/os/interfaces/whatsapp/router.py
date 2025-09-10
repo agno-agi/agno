@@ -167,6 +167,8 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
                         )
                         await _send_whatsapp_message(phone_number, response.content)  # type: ignore
                 await _send_whatsapp_message(phone_number, response.content)  # type: ignore
+            else:
+                await _send_whatsapp_message(phone_number, response.content)
 
         except Exception as e:
             log_error(f"Error processing message: {str(e)}")
