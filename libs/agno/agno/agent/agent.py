@@ -18,9 +18,11 @@ from typing import (
     Set,
     Tuple,
     Type,
+    TypedDict,
     Union,
     cast,
     get_args,
+    get_type_hints,
     overload,
 )
 from uuid import uuid4
@@ -281,7 +283,7 @@ class Agent:
 
     # --- Agent Response Model Settings ---
     # Provide an input schema to validate the input
-    input_schema: Optional[Type[BaseModel]] = None
+    input_schema: Optional[Union[Type[BaseModel], Type[TypedDict]]] = None
     # Provide a response model to get the response as a Pydantic model
     output_schema: Optional[Type[BaseModel]] = None
     # Provide a secondary model to parse the response from the primary model
@@ -404,7 +406,7 @@ class Agent:
         exponential_backoff: bool = False,
         parser_model: Optional[Model] = None,
         parser_model_prompt: Optional[str] = None,
-        input_schema: Optional[Type[BaseModel]] = None,
+        input_schema: Optional[Union[Type[BaseModel], Type[TypedDict]]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
         output_model: Optional[Model] = None,
@@ -578,6 +580,94 @@ class Agent:
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
+    def _is_typed_dict(self, cls) -> bool:
+        """Check if a class is a TypedDict."""
+        return (
+            hasattr(cls, '__annotations__') and 
+            hasattr(cls, '__total__') and
+            hasattr(cls, '__required_keys__') and
+            hasattr(cls, '__optional_keys__')
+        )
+
+    def _validate_typed_dict(self, data: dict, schema_cls) -> dict:
+        """Validate input data against a TypedDict schema."""
+        if not isinstance(data, dict):
+            raise ValueError(f"Expected dict for TypedDict {schema_cls.__name__}, got {type(data)}")
+        
+        # Get type hints from the TypedDict
+        try:
+            type_hints = get_type_hints(schema_cls)
+        except Exception as e:
+            raise ValueError(f"Could not get type hints for TypedDict {schema_cls.__name__}: {e}")
+        
+        # Get required and optional keys
+        required_keys = getattr(schema_cls, '__required_keys__', set())
+        optional_keys = getattr(schema_cls, '__optional_keys__', set())
+        all_keys = required_keys | optional_keys
+        
+        # Check for missing required fields
+        missing_required = required_keys - set(data.keys())
+        if missing_required:
+            raise ValueError(f"Missing required fields in TypedDict {schema_cls.__name__}: {missing_required}")
+        
+        # Check for unexpected fields
+        unexpected_fields = set(data.keys()) - all_keys
+        if unexpected_fields:
+            raise ValueError(f"Unexpected fields in TypedDict {schema_cls.__name__}: {unexpected_fields}")
+        
+        # Basic type checking for provided fields
+        validated_data = {}
+        for field_name, value in data.items():
+            if field_name in type_hints:
+                expected_type = type_hints[field_name]
+                
+                # Handle simple type checking - could be extended for more complex types
+                if not self._check_type_compatibility(value, expected_type):
+                    raise ValueError(f"Field '{field_name}' expected type {expected_type}, got {type(value)} with value {value}")
+                
+                validated_data[field_name] = value
+        
+        return validated_data
+
+    def _check_type_compatibility(self, value: Any, expected_type: Type) -> bool:
+        """Basic type compatibility checking."""
+        import sys
+        from typing import get_origin, get_args
+        
+        # Handle None/Optional types
+        if value is None:
+            return type(None) in get_args(expected_type) if hasattr(expected_type, '__args__') else expected_type is type(None)
+        
+        # Handle Union types (including Optional)
+        origin = get_origin(expected_type)
+        if origin is Union:
+            return any(self._check_type_compatibility(value, arg) for arg in get_args(expected_type))
+        
+        # Handle List types
+        if origin is list or expected_type is list:
+            if not isinstance(value, list):
+                return False
+            if origin is list and get_args(expected_type):
+                # Check list element types if specified
+                element_type = get_args(expected_type)[0]
+                return all(self._check_type_compatibility(item, element_type) for item in value)
+            return True
+        
+        # Handle basic types
+        if expected_type in (str, int, float, bool):
+            return isinstance(value, expected_type)
+        
+        # Handle Any type
+        if expected_type is Any:
+            return True
+        
+        # Default: check if it's an instance of the expected type
+        try:
+            return isinstance(value, expected_type)
+        except TypeError:
+            # For complex types that can't use isinstance
+            return True
+
     def _validate_input(
         self, input: Union[str, List, Dict, Message, BaseModel]
     ) -> Union[str, List, Dict, Message, BaseModel]:
@@ -598,32 +688,48 @@ class Agent:
             except Exception as e:
                 raise ValueError(f"Failed to parse input. Is it a valid JSON string?: {e}")
 
-        # Case 1: Message is already a BaseModel instance
-        if isinstance(input, BaseModel):
-            if isinstance(input, self.input_schema):
+        # Check if the schema is a TypedDict
+        if self._is_typed_dict(self.input_schema):
+            # Handle TypedDict validation
+            if isinstance(input, dict):
                 try:
-                    # Re-validate to catch any field validation errors
-                    input.model_validate(input.model_dump())
-                    return input
+                    validated_dict = self._validate_typed_dict(input, self.input_schema)
+                    return validated_dict  # Return the validated dict, not an instance
                 except Exception as e:
-                    raise ValueError(f"BaseModel validation failed: {str(e)}")
+                    raise ValueError(f"Failed to validate dict against TypedDict {self.input_schema.__name__}: {str(e)}")
             else:
-                # Different BaseModel types
-                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
-
-        # Case 2: Message is a dict
-        elif isinstance(input, dict):
-            try:
-                validated_model = self.input_schema(**input)
-                return validated_model
-            except Exception as e:
-                raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
-
-        # Case 3: Other types not supported for structured input
+                raise ValueError(
+                    f"Cannot validate {type(input)} against TypedDict schema. Expected dict."
+                )
+        
+        # Original BaseModel handling
         else:
-            raise ValueError(
-                f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
-            )
+            # Case 1: Input is already a BaseModel instance
+            if isinstance(input, BaseModel):
+                if isinstance(input, self.input_schema):
+                    try:
+                        # Re-validate to catch any field validation errors
+                        input.model_validate(input.model_dump())
+                        return input
+                    except Exception as e:
+                        raise ValueError(f"BaseModel validation failed: {str(e)}")
+                else:
+                    # Different BaseModel types
+                    raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
+
+            # Case 2: Input is a dict
+            elif isinstance(input, dict):
+                try:
+                    validated_model = self.input_schema(**input)
+                    return validated_model
+                except Exception as e:
+                    raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
+
+            # Case 3: Other types not supported for structured input
+            else:
+                raise ValueError(
+                    f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
+                )
 
     def _set_memory_manager(self) -> None:
         if self.db is None:
@@ -4938,11 +5044,23 @@ class Agent:
                 return input
             # If message is provided as a dict, try to validate it as a Message
             elif isinstance(input, dict):
-                try:
-                    return Message.model_validate(input)
-                except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
-                    raise Exception(f"Failed to validate message: {e}")
+                # Check if this is a Message dict (has 'role') or data dict (like TypedDict)
+                if 'role' in input:
+                    # This is a Message dict
+                    try:
+                        return Message.model_validate(input)
+                    except Exception as e:
+                        log_warning(f"Failed to validate message: {e}")
+                        raise Exception(f"Failed to validate message: {e}")
+                else:
+                    # This is a data dict (like TypedDict)
+                    try:
+                        import json
+                        content = json.dumps(input, indent=2, ensure_ascii=False)
+                        return Message(role=self.user_message_role, content=content)
+                    except Exception as e:
+                        log_warning(f"Failed to convert data dict to message: {e}")
+                        raise Exception(f"Failed to convert data dict to message: {e}")
 
             # If message is provided as a BaseModel, convert it to a Message
             elif isinstance(input, BaseModel):
@@ -5172,10 +5290,28 @@ class Agent:
 
         # 4.3 If input is provided as a dict, try to validate it as a Message
         elif isinstance(input, dict):
-            try:
-                user_message = Message.model_validate(input)
-            except Exception as e:
-                log_warning(f"Failed to validate message: {e}")
+            # Check if this is a Message dict (has 'role') or data dict (like TypedDict)
+            if 'role' in input:
+                # This is a Message dict
+                try:
+                    user_message = Message.model_validate(input)
+                except Exception as e:
+                    log_warning(f"Failed to validate message: {e}")
+            else:
+                # This is a data dict (like TypedDict)
+                try:
+                    import json
+                    content = json.dumps(input, indent=2, ensure_ascii=False)
+                    user_message = Message(
+                        role=self.user_message_role,
+                        content=content,
+                        images=images if self.send_media_to_model else None,
+                        audio=audio if self.send_media_to_model else None,
+                        videos=videos if self.send_media_to_model else None,
+                        files=files if self.send_media_to_model else None,
+                    )
+                except Exception as e:
+                    log_warning(f"Failed to convert data dict to message: {e}")
 
         # 4.4 If input is provided as a BaseModel, convert it to a Message
         elif isinstance(input, BaseModel):
