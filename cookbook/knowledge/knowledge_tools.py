@@ -1,7 +1,9 @@
 """
+Here is a tool with reasoning capabilities to allow agents to search and analyze information from a knowledge base.
+
 1. Run: `pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
 2. Export your OPENAI_API_KEY
-3. Run: `python cookbook/reasoning/tools/knowledge_tools.py` to run the agent
+3. Run: `python cookbook/knowledge/knowledge_tools.py` to run the agent
 """
 
 from agno.agent import Agent
