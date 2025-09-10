@@ -45,7 +45,7 @@ class Cerebras(Model):
     supports_json_schema_outputs: bool = True
 
     # Request parameters
-    parallel_tool_calls: bool = False
+    parallel_tool_calls: Optional[bool] = None
     max_completion_tokens: Optional[int] = None
     repetition_penalty: Optional[float] = None
     temperature: Optional[float] = None
@@ -166,7 +166,6 @@ class Cerebras(Model):
                     "type": "function",
                     "function": {
                         "name": tool["function"]["name"],
-                        "strict": True,  # Ensure strict adherence to expected outputs
                         "description": tool["function"]["description"],
                         "parameters": tool["function"]["parameters"],
                     },
@@ -174,7 +173,10 @@ class Cerebras(Model):
                 for tool in tools
             ]
             # Cerebras requires parallel_tool_calls=False for llama-4-scout-17b-16e-instruct
-            request_params["parallel_tool_calls"] = self.parallel_tool_calls
+            if self.id == "llama-4-scout-17b-16e-instruct":
+                request_params["parallel_tool_calls"] = False
+            elif self.parallel_tool_calls is not None:
+                request_params["parallel_tool_calls"] = self.parallel_tool_calls
 
         # Handle response format for structured outputs
         if response_format is not None:
