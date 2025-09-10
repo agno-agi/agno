@@ -256,23 +256,33 @@ class OpenAIResponses(Model):
 
         # Handle reasoning tools for o3 and o4-mini models
         if self._using_reasoning_model() and messages is not None:
-            request_params["store"] = True
+            if self.store is False:
+                request_params["store"] = False
 
-            # Check if the last assistant message has a previous_response_id to continue from
-            previous_response_id = None
-            for msg in reversed(messages):
-                if (
-                    msg.role == "assistant"
-                    and hasattr(msg, "provider_data")
-                    and msg.provider_data
-                    and "response_id" in msg.provider_data
-                ):
-                    previous_response_id = msg.provider_data["response_id"]
-                    log_debug(f"Using previous_response_id: {previous_response_id}")
-                    break
+                # Add encrypted reasoning content to include if not already present
+                include_list = request_params.get("include", []) or []
+                if "reasoning.encrypted_content" not in include_list:
+                    include_list.append("reasoning.encrypted_content")
+                    request_params["include"] = include_list
 
-            if previous_response_id:
-                request_params["previous_response_id"] = previous_response_id
+            else:
+                request_params["store"] = True
+
+                # Check if the last assistant message has a previous_response_id to continue from
+                previous_response_id = None
+                for msg in reversed(messages):
+                    if (
+                        msg.role == "assistant"
+                        and hasattr(msg, "provider_data")
+                        and msg.provider_data
+                        and "response_id" in msg.provider_data
+                    ):
+                        previous_response_id = msg.provider_data["response_id"]
+                        log_debug(f"Using previous_response_id: {previous_response_id}")
+                        break
+
+                if previous_response_id:
+                    request_params["previous_response_id"] = previous_response_id
 
         # Add additional request params if provided
         if self.request_params:
@@ -392,15 +402,16 @@ class OpenAIResponses(Model):
             # re-send prior function_call items; the Responses API already has the state and
             # expects only the corresponding function_call_output items.
             previous_response_id: Optional[str] = None
-            for msg in reversed(messages):
-                if (
-                    msg.role == "assistant"
-                    and hasattr(msg, "provider_data")
-                    and msg.provider_data
-                    and "response_id" in msg.provider_data
-                ):
-                    previous_response_id = msg.provider_data["response_id"]
-                    break
+            if self.store is not False:
+                for msg in reversed(messages):
+                    if (
+                        msg.role == "assistant"
+                        and hasattr(msg, "provider_data")
+                        and msg.provider_data
+                        and "response_id" in msg.provider_data
+                    ):
+                        previous_response_id = msg.provider_data["response_id"]
+                        break
 
         # Build a mapping from function_call id (fc_*) → call_id (call_*) from prior assistant tool_calls
         fc_id_to_call_id: Dict[str, str] = {}
@@ -475,6 +486,9 @@ class OpenAIResponses(Model):
                 content = message.content if message.content is not None else ""
                 formatted_messages.append({"role": self.role_map[message.role], "content": content})
 
+                if self.store is False and hasattr(message, "provider_data"):
+                    if "reasoning_output" in message.provider_data:
+                        formatted_messages.append(message.provider_data["reasoning_output"])
         return formatted_messages
 
     def invoke(
@@ -898,8 +912,14 @@ class OpenAIResponses(Model):
                 model_response.extra = model_response.extra or {}
                 model_response.extra.setdefault("tool_call_ids", []).append(output.call_id)
 
-            # Add reasoning summary
+            # Handle reasoning output items
             elif output.type == "reasoning":
+                # Save encrypted reasoning content for ZDR mode
+                if self.store is False:
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    model_response.provider_data["reasoning_output"] = output
+
                 if reasoning_summaries := getattr(output, "summary", None):
                     for summary in reasoning_summaries:
                         if isinstance(summary, dict):
@@ -1009,19 +1029,28 @@ class OpenAIResponses(Model):
         elif stream_event.type == "response.completed":
             model_response = ModelResponse()
 
-            # Add reasoning summary
-            if self.reasoning_summary is not None:
+            # Handle reasoning output items
+            if self.reasoning_summary is not None or self.store is False:
                 summary_text: str = ""
                 for out in getattr(stream_event.response, "output", []) or []:
                     if getattr(out, "type", None) == "reasoning":
-                        summaries = getattr(out, "summary", None)
-                        if summaries:
-                            for s in summaries:
-                                text_val = s.get("text") if isinstance(s, dict) else getattr(s, "text", None)
-                                if text_val:
-                                    if summary_text:
-                                        summary_text += "\n\n"
-                                    summary_text += text_val
+                        # In ZDR mode (store=False), store reasoning data for next request
+                        if self.store is False and hasattr(out, "encrypted_content"):
+                            if model_response.provider_data is None:
+                                model_response.provider_data = {}
+                            # Store the complete output item
+                            model_response.provider_data["reasoning_output"] = out
+
+                        if self.reasoning_summary is not None:
+                            summaries = getattr(out, "summary", None)
+                            if summaries:
+                                for s in summaries:
+                                    text_val = s.get("text") if isinstance(s, dict) else getattr(s, "text", None)
+                                    if text_val:
+                                        if summary_text:
+                                            summary_text += "\n\n"
+                                        summary_text += text_val
+
                 if summary_text:
                     model_response.reasoning_content = summary_text
 
