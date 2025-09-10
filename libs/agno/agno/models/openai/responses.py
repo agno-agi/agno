@@ -486,7 +486,9 @@ class OpenAIResponses(Model):
                 content = message.content if message.content is not None else ""
                 formatted_messages.append({"role": self.role_map[message.role], "content": content})
 
-                if self.store is False and hasattr(message, "provider_data"):
+                if (self.store is False and 
+                    hasattr(message, "provider_data") and 
+                    message.provider_data is not None):
                     if "reasoning_output" in message.provider_data:
                         formatted_messages.append(message.provider_data["reasoning_output"])
         return formatted_messages
