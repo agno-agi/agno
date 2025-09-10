@@ -6,11 +6,10 @@ from agno.tools.lumalab import LumaLabTools
 
 luma_agent = Agent(
     name="Luma Video Agent",
-    agent_id="luma-video-agent",
+    id="luma-video-agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[LumaLabTools()],  # Using the LumaLab tool we created
     markdown=True,
-    show_tool_calls=True,
     instructions=[
         "You are an agent designed to generate videos using the Luma AI API.",
         "You can generate videos in two ways:",

@@ -1,0 +1,7 @@
+agno==2.0.0
+streamlit
+pandas
+nest-asyncio
+openai
+exa_py
+arxiv

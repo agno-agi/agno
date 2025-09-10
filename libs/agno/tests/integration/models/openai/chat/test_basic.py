@@ -3,38 +3,31 @@ from typing import Optional
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
+from agno.db.sqlite import SqliteDb
 from agno.exceptions import ModelProviderError
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 
 
-def _assert_metrics(response: RunResponse):
-    input_tokens = response.metrics.get("input_tokens", [])
-    output_tokens = response.metrics.get("output_tokens", [])
-    total_tokens = response.metrics.get("total_tokens", [])
+def _assert_metrics(response: RunOutput):
+    assert response.metrics is not None
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
-    assert sum(input_tokens) > 0
-    assert sum(output_tokens) > 0
-    assert sum(total_tokens) > 0
-    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
-
-    assert response.metrics.get("completion_tokens_details") is not None
-    assert response.metrics.get("prompt_tokens_details") is not None
-    assert response.metrics.get("audio_tokens") is not None
-    assert response.metrics.get("input_audio_tokens") is not None
-    assert response.metrics.get("output_audio_tokens") is not None
-    assert response.metrics.get("cached_tokens") is not None
-    assert response.metrics.get("reasoning_tokens") is not None
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert total_tokens > 0
+    assert total_tokens == input_tokens + output_tokens
 
 
 def test_basic():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     # Print the response in the terminal
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
-    assert response.content is not None
+    assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
@@ -42,28 +35,21 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
-    response_stream = agent.run("Share a 2 sentence horror story", stream=True)
-
-    # Verify it's an iterator
-    assert hasattr(response_stream, "__iter__")
-
-    responses = list(response_stream)
-    assert len(responses) > 0
-    for response in responses:
-        assert response.content is not None
-
-    _assert_metrics(agent.run_response)
+    run_stream = agent.run("Say 'hi'", stream=True)
+    for chunk in run_stream:
+        assert chunk.content is not None
 
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
@@ -71,17 +57,14 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
-
-    async for response in response_stream:
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
-    _assert_metrics(agent.run_response)
 
 
 def test_exception_handling():
-    agent = Agent(model=OpenAIChat(id="gpt-100"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=OpenAIChat(id="gpt-100"), markdown=True, telemetry=False)
 
     # Print the response in the terminal
     with pytest.raises(ModelProviderError) as exc:
@@ -94,12 +77,11 @@ def test_exception_handling():
 
 def test_with_memory():
     agent = Agent(
+        db=SqliteDb(db_file="tmp/test_with_memory.db"),
         model=OpenAIChat(id="gpt-4o-mini"),
-        add_history_to_messages=True,
-        num_history_responses=5,
+        add_history_to_context=True,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # First interaction
@@ -108,7 +90,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
-    assert "John Smith" in response2.content
+    assert response2.content is not None and "John Smith" in response2.content
 
     # Verify memories were created
     messages = agent.get_messages_for_session()
@@ -130,10 +112,9 @@ def test_structured_output_json_mode():
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -156,9 +137,8 @@ def test_structured_output():
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -173,44 +153,50 @@ def test_structured_output():
 def test_history():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        db=SqliteDb(db_file="tmp/openai/test_basic.db"),
+        add_history_to_context=True,
         telemetry=False,
-        monitoring=False,
     )
-    agent.run("Hello")
-    assert len(agent.run_response.messages) == 2
-    agent.run("Hello 2")
-    assert len(agent.run_response.messages) == 4
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
-    agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 2
+
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 4
+
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 6
+
+    run_output = agent.run("Hello 4")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 8
 
 
-@pytest.mark.skip(reason="This test is flaky and needs to be fixed")
-def test_cached_tokens():
-    """Assert cached_tokens is populated correctly and returned in the metrics"""
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+def test_cache_read_tokens():
+    """Assert cache_read_tokens is populated correctly and returned in the metrics"""
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     # Multiple + one large prompt to ensure token caching is triggered
-    agent.run("Share a 2 sentence horror story")
+    agent.run("Share a 2 sentence horror story" * 250)
     response = agent.run("Share a 2 sentence horror story" * 250)
 
-    cached_tokens = response.metrics.get("cached_tokens")
-    assert cached_tokens is not None
-    assert sum(cached_tokens) > 0
+    assert response.metrics is not None
+    assert response.metrics.cache_read_tokens is not None
+    assert response.metrics.cache_read_tokens > 0
 
 
 def test_reasoning_tokens():
     """Assert reasoning_tokens is populated correctly and returned in the metrics"""
-    agent = Agent(model=OpenAIChat(id="o3-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=OpenAIChat(id="o3-mini"), markdown=True, telemetry=False)
 
     response = agent.run(
         "Solve the trolley problem. Evaluate multiple ethical frameworks. Include an ASCII diagram of your solution.",
-        stream=False,
     )
 
-    reasoning_tokens = response.metrics.get("reasoning_tokens")
+    assert response.metrics is not None
+
+    reasoning_tokens = response.metrics.reasoning_tokens
     assert reasoning_tokens is not None
-    assert sum(reasoning_tokens) > 0
+    assert reasoning_tokens > 0

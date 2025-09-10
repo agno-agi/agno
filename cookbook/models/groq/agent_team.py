@@ -26,21 +26,16 @@ finance_agent = Agent(
 
 agent_team = Team(
     members=[web_agent, finance_agent],
-    mode="coordinate",
     model=Groq(
         id="llama-3.3-70b-versatile"
     ),  # You can use a different model for the team leader agent
-    success_criteria="The team has successfully completed the task",
     instructions=["Always include sources", "Use tables to display data"],
-    show_tool_calls=True,  # Comment to hide transfer of tasks between agents
     markdown=True,
-    enable_agentic_context=True,
-    debug_mode=True,
     show_members_responses=False,  # Comment to hide responses from team members
 )
 
 # Give the team a task
 agent_team.print_response(
-    message="Summarize the latest news about Nvidia and share its stock price?",
+    input="Summarize the latest news about Nvidia and share its stock price?",
     stream=True,
 )

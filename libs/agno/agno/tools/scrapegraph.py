@@ -1,5 +1,5 @@
 import json
-import os
+from os import getenv
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
@@ -18,31 +18,32 @@ class ScrapeGraphTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        smartscraper: bool = True,
-        markdownify: bool = False,
-        crawl: bool = False,
-        searchscraper: bool = False,
-        agentic_crawler: bool = False,
+        enable_smartscraper: bool = True,
+        enable_markdownify: bool = False,
+        enable_crawl: bool = False,
+        enable_searchscraper: bool = False,
+        enable_agentic_crawler: bool = False,
+        all: bool = False,
         **kwargs,
     ):
-        self.api_key: Optional[str] = api_key or os.getenv("SGAI_API_KEY")
+        self.api_key: Optional[str] = api_key or getenv("SGAI_API_KEY")
         self.client = Client(api_key=self.api_key)
 
         # Start with smartscraper by default
         # Only enable markdownify if smartscraper is False
-        if not smartscraper:
-            markdownify = True
+        if not enable_smartscraper and not all:
+            enable_markdownify = True
 
         tools: List[Any] = []
-        if smartscraper:
+        if enable_smartscraper or all:
             tools.append(self.smartscraper)
-        if markdownify:
+        if enable_markdownify or all:
             tools.append(self.markdownify)
-        if crawl:
+        if enable_crawl or all:
             tools.append(self.crawl)
-        if searchscraper:
+        if enable_searchscraper or all:
             tools.append(self.searchscraper)
-        if agentic_crawler:
+        if enable_agentic_crawler or all:
             tools.append(self.agentic_crawler)
 
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)

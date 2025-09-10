@@ -16,13 +16,6 @@ class PythonTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
-        save_and_run: bool = True,
-        pip_install: bool = False,
-        uv_pip_install: bool = False,
-        run_code: bool = False,
-        list_files: bool = False,
-        run_files: bool = False,
-        read_files: bool = False,
         safe_globals: Optional[dict] = None,
         safe_locals: Optional[dict] = None,
         **kwargs,
@@ -33,21 +26,15 @@ class PythonTools(Toolkit):
         self.safe_globals: dict = safe_globals or globals()
         self.safe_locals: dict = safe_locals or locals()
 
-        tools: List[Any] = []
-        if run_code:
-            tools.append(self.run_python_code)
-        if save_and_run:
-            tools.append(self.save_to_file_and_run)
-        if pip_install:
-            tools.append(self.pip_install_package)
-        if uv_pip_install:
-            tools.append(self.uv_pip_install_package)
-        if run_files:
-            tools.append(self.run_python_file_return_variable)
-        if read_files:
-            tools.append(self.read_file)
-        if list_files:
-            tools.append(self.list_files)
+        tools: List[Any] = [
+            self.save_to_file_and_run,
+            self.run_python_code,
+            self.pip_install_package,
+            self.uv_pip_install_package,
+            self.run_python_file_return_variable,
+            self.read_file,
+            self.list_files,
+        ]
 
         super().__init__(name="python_tools", tools=tools, **kwargs)
 

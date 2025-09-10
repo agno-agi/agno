@@ -1,3 +1,4 @@
+import asyncio
 import json
 from hashlib import md5
 from typing import Any, Dict, List, Optional
@@ -8,17 +9,15 @@ try:
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql.expression import func, select, text
+    from sqlalchemy.sql.expression import func, select, text, update
     from sqlalchemy.types import DateTime
 except ImportError:
     raise ImportError("`sqlalchemy` not installed")
 
-from agno.document import Document
-from agno.embedder import Embedder
-from agno.reranker.base import Reranker
-
-# from agno.vectordb.singlestore.index import Ivfflat, HNSWFlat
-from agno.utils.log import log_debug, log_info, logger
+from agno.knowledge.document import Document
+from agno.knowledge.embedder import Embedder
+from agno.knowledge.reranker.base import Reranker
+from agno.utils.log import log_debug, log_error, log_info
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -49,7 +48,7 @@ class SingleStore(VectorDb):
         self.metadata: MetaData = MetaData(schema=self.schema)
 
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
@@ -81,6 +80,7 @@ class SingleStore(VectorDb):
             Column("created_at", DateTime(timezone=True), server_default=text("now()")),
             Column("updated_at", DateTime(timezone=True), onupdate=text("now()")),
             Column("content_hash", mysql.TEXT),
+            Column("content_id", mysql.TEXT),
             extend_existing=True,
         )
 
@@ -102,7 +102,8 @@ class SingleStore(VectorDb):
                         `usage` TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                        content_hash TEXT
+                        content_hash TEXT,
+                        content_id TEXT
                     );
                     """)
                 )
@@ -120,20 +121,18 @@ class SingleStore(VectorDb):
         try:
             return inspect(self.db_engine).has_table(self.table.name, schema=self.schema)
         except Exception as e:
-            logger.error(e)
+            log_error(e)
             return False
 
-    def doc_exists(self, document: Document) -> bool:
+    def content_hash_exists(self, content_hash: str) -> bool:
         """
         Validating if the document exists or not
 
         Args:
             document (Document): Document to validate
         """
-        columns = [self.table.c.name, self.table.c.content_hash]
         with self.Session.begin() as sess:
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            stmt = select(*columns).where(self.table.c.content_hash == md5(cleaned_content.encode()).hexdigest())
+            stmt = select(self.table.c.name).where(self.table.c.content_hash == content_hash)
             result = sess.execute(stmt).first()
             return result is not None
 
@@ -161,7 +160,13 @@ class SingleStore(VectorDb):
             result = sess.execute(stmt).first()
             return result is not None
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, batch_size: int = 10) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 10,
+    ) -> None:
         """
         Insert documents into the table.
 
@@ -175,8 +180,8 @@ class SingleStore(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                content_hash = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or content_hash
+                record_id = md5(cleaned_content.encode()).hexdigest()
+                _id = document.id or record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -192,6 +197,7 @@ class SingleStore(VectorDb):
                     embedding=embeddings,
                     usage=usage_json,
                     content_hash=content_hash,
+                    content_id=document.content_id,
                 )
                 sess.execute(stmt)
                 counter += 1
@@ -204,7 +210,24 @@ class SingleStore(VectorDb):
         """Indicate that upsert functionality is available."""
         return True
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, batch_size: int = 20) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 20,
+    ) -> None:
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        self._upsert(content_hash=content_hash, documents=documents, filters=filters, batch_size=batch_size)
+
+    def _upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 20,
+    ) -> None:
         """
         Upsert (insert or update) documents in the table.
 
@@ -218,8 +241,8 @@ class SingleStore(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                content_hash = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or content_hash
+                record_id = md5(cleaned_content.encode()).hexdigest()
+                _id = document.id or record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -236,6 +259,7 @@ class SingleStore(VectorDb):
                         embedding=embeddings,
                         usage=usage_json,
                         content_hash=content_hash,
+                        content_id=document.content_id,
                     )
                     .on_duplicate_key_update(
                         name=document.name,
@@ -244,6 +268,7 @@ class SingleStore(VectorDb):
                         embedding=embeddings,
                         usage=usage_json,
                         content_hash=content_hash,
+                        content_id=document.content_id,
                     )
                 )
                 sess.execute(stmt)
@@ -267,7 +292,7 @@ class SingleStore(VectorDb):
         """
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         columns = [
@@ -276,6 +301,7 @@ class SingleStore(VectorDb):
             self.table.c.content,
             self.table.c.embedding,
             self.table.c.usage,
+            self.table.c.content_id,
         ]
 
         stmt = select(*columns)
@@ -326,7 +352,7 @@ class SingleStore(VectorDb):
                 try:
                     embedding_list = json.loads(neighbor.embedding)
                 except Exception as e:
-                    logger.error(f"Error extracting vector: {e}")
+                    log_error(f"Error extracting vector: {e}")
                     embedding_list = []
 
             search_results.append(
@@ -393,22 +419,178 @@ class SingleStore(VectorDb):
             sess.execute(stmt)
             return True
 
+    def delete_by_id(self, id: str) -> bool:
+        """
+        Delete a document by its ID.
+        """
+        from sqlalchemy import delete
+
+        try:
+            with self.Session.begin() as sess:
+                stmt = delete(self.table).where(self.table.c.id == id)
+                result = sess.execute(stmt)
+                log_info(f"Deleted {result.rowcount} records with ID {id} from table '{self.table.name}'.")
+                return result.rowcount > 0
+        except Exception as e:
+            log_error(f"Error deleting document with ID {id}: {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """
+        Delete a document by its content ID.
+        """
+        from sqlalchemy import delete
+
+        try:
+            with self.Session.begin() as sess:
+                stmt = delete(self.table).where(self.table.c.content_id == content_id)
+                result = sess.execute(stmt)
+                log_info(
+                    f"Deleted {result.rowcount} records with content_id {content_id} from table '{self.table.name}'."
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            log_error(f"Error deleting document with content_id {content_id}: {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """
+        Delete a document by its name.
+        """
+        from sqlalchemy import delete
+
+        try:
+            with self.Session.begin() as sess:
+                stmt = delete(self.table).where(self.table.c.name == name)
+                result = sess.execute(stmt)
+                log_info(f"Deleted {result.rowcount} records with name '{name}' from table '{self.table.name}'.")
+                return result.rowcount > 0
+        except Exception as e:
+            log_error(f"Error deleting document with name {name}: {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """
+        Delete documents by metadata.
+        """
+        from sqlalchemy import delete
+
+        try:
+            with self.Session.begin() as sess:
+                # Convert metadata to JSON string for comparison
+                metadata_json = json.dumps(metadata, sort_keys=True)
+                stmt = delete(self.table).where(self.table.c.meta_data == metadata_json)
+                result = sess.execute(stmt)
+                log_info(f"Deleted {result.rowcount} records with metadata {metadata} from table '{self.table.name}'.")
+                return result.rowcount > 0
+        except Exception as e:
+            log_error(f"Error deleting documents with metadata {metadata}: {e}")
+            return False
+
     async def async_create(self) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
-    async def async_doc_exists(self, document: Document) -> bool:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+    async def async_insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+        with self.Session.begin() as sess:
+            counter = 0
+            for document in documents:
+                cleaned_content = document.content.replace("\x00", "\ufffd")
+                record_id = md5(cleaned_content.encode()).hexdigest()
+                _id = document.id or record_id
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+                meta_data_json = json.dumps(document.meta_data)
+                usage_json = json.dumps(document.usage)
+
+                # Convert embedding list to SingleStore VECTOR format
+                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
+
+                stmt = mysql.insert(self.table).values(
+                    id=_id,
+                    name=document.name,
+                    meta_data=meta_data_json,
+                    content=cleaned_content,
+                    embedding=embeddings,
+                    usage=usage_json,
+                    content_hash=content_hash,
+                    content_id=document.content_id,
+                )
+                sess.execute(stmt)
+                counter += 1
+                log_debug(f"Inserted document: {document.name} ({document.meta_data})")
+
+            sess.commit()
+            log_debug(f"Committed {counter} documents")
+
+    async def async_upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Upsert (insert or update) documents in the table.
+
+        Args:
+            documents (List[Document]): List of documents to upsert.
+            filters (Optional[Dict[str, Any]]): Optional filters for the upsert.
+            batch_size (int): Number of documents to upsert in each batch.
+        """
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+        with self.Session.begin() as sess:
+            counter = 0
+            for document in documents:
+                cleaned_content = document.content.replace("\x00", "\ufffd")
+                record_id = md5(cleaned_content.encode()).hexdigest()
+                _id = document.id or record_id
+
+                meta_data_json = json.dumps(document.meta_data)
+                usage_json = json.dumps(document.usage)
+
+                # Convert embedding list to SingleStore VECTOR format
+                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
+                stmt = (
+                    mysql.insert(self.table)
+                    .values(
+                        id=_id,
+                        name=document.name,
+                        meta_data=meta_data_json,
+                        content=cleaned_content,
+                        embedding=embeddings,
+                        usage=usage_json,
+                        content_hash=content_hash,
+                        content_id=document.content_id,
+                    )
+                    .on_duplicate_key_update(
+                        name=document.name,
+                        meta_data=meta_data_json,
+                        content=cleaned_content,
+                        embedding=embeddings,
+                        usage=usage_json,
+                        content_hash=content_hash,
+                        content_id=document.content_id,
+                    )
+                )
+                sess.execute(stmt)
+                counter += 1
+                log_debug(f"Upserted document: {document.name} ({document.meta_data})")
+
+            sess.commit()
+            log_debug(f"Committed {counter} documents")
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+        return self.search(query=query, limit=limit, filters=filters)
 
     async def async_drop(self) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
@@ -418,3 +600,78 @@ class SingleStore(VectorDb):
 
     async def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """
+        Delete documents by their content hash.
+
+        Args:
+            content_hash (str): The content hash to delete.
+
+        Returns:
+            bool: True if documents were deleted, False otherwise.
+        """
+        from sqlalchemy import delete
+
+        try:
+            with self.Session.begin() as sess:
+                stmt = delete(self.table).where(self.table.c.content_hash == content_hash)
+                result = sess.execute(stmt)
+                log_info(
+                    f"Deleted {result.rowcount} records with content_hash '{content_hash}' from table '{self.table.name}'."
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            log_error(f"Error deleting documents with content_hash {content_hash}: {e}")
+            return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        import json
+
+        try:
+            with self.Session.begin() as sess:
+                # Find documents with the given content_id
+                stmt = select(self.table).where(self.table.c.content_id == content_id)
+                result = sess.execute(stmt)
+
+                updated_count = 0
+                for row in result:
+                    # Parse existing metadata
+                    current_metadata = json.loads(row.meta_data) if row.meta_data else {}
+
+                    # Merge existing metadata with new metadata
+                    updated_metadata = current_metadata.copy()
+                    updated_metadata.update(metadata)
+
+                    # Also update filters field within the metadata JSON
+                    if "filters" not in updated_metadata:
+                        updated_metadata["filters"] = {}
+                    if isinstance(updated_metadata["filters"], dict):
+                        updated_metadata["filters"].update(metadata)
+                    else:
+                        updated_metadata["filters"] = metadata
+
+                    # Update the document (only meta_data column exists)
+                    update_stmt = (
+                        update(self.table)
+                        .where(self.table.c.id == row.id)
+                        .values(meta_data=json.dumps(updated_metadata))
+                    )
+                    sess.execute(update_stmt)
+                    updated_count += 1
+
+                if updated_count == 0:
+                    log_debug(f"No documents found with content_id: {content_id}")
+                else:
+                    log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            log_error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

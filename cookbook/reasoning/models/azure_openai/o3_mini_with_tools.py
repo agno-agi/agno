@@ -13,7 +13,6 @@ agent = Agent(
         )
     ],
     instructions="Use tables to display data.",
-    show_tool_calls=True,
     markdown=True,
 )
 agent.print_response("Write a report comparing NVDA to TSLA", stream=True)

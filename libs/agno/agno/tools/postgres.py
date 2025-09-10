@@ -22,10 +22,6 @@ class PostgresTools(Toolkit):
         password: Optional[str] = None,
         host: Optional[str] = None,
         port: Optional[int] = None,
-        run_queries: bool = True,
-        inspect_queries: bool = False,
-        summarize_tables: bool = True,
-        export_tables: bool = False,
         table_schema: str = "public",
         **kwargs,
     ):
@@ -40,15 +36,11 @@ class PostgresTools(Toolkit):
         tools: List[Any] = [
             self.show_tables,
             self.describe_table,
+            self.summarize_table,
+            self.inspect_query,
+            self.run_query,
+            self.export_table_to_path,
         ]
-        if inspect_queries:
-            tools.append(self.inspect_query)
-        if run_queries:
-            tools.append(self.run_query)
-        if summarize_tables:
-            tools.append(self.summarize_table)
-        if export_tables:
-            tools.append(self.export_table_to_path)
 
         super().__init__(name="postgres_tools", tools=tools, **kwargs)
 

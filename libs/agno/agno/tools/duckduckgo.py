@@ -7,7 +7,7 @@ from agno.utils.log import log_debug
 try:
     from ddgs import DDGS
 except ImportError:
-    raise ImportError("`duckduckgo-search` not installed. Please install using `pip install ddgs`")
+    raise ImportError("`ddgs` not installed. Please install using `pip install ddgs`")
 
 
 class DuckDuckGoTools(Toolkit):
@@ -25,8 +25,9 @@ class DuckDuckGoTools(Toolkit):
 
     def __init__(
         self,
-        search: bool = True,
-        news: bool = True,
+        enable_search: bool = True,
+        enable_news: bool = True,
+        all: bool = False,
         modifier: Optional[str] = None,
         fixed_max_results: Optional[int] = None,
         proxy: Optional[str] = None,
@@ -41,9 +42,9 @@ class DuckDuckGoTools(Toolkit):
         self.verify_ssl: bool = verify_ssl
 
         tools: List[Any] = []
-        if search:
+        if all or enable_search:
             tools.append(self.duckduckgo_search)
-        if news:
+        if all or enable_news:
             tools.append(self.duckduckgo_news)
 
         super().__init__(name="duckduckgo", tools=tools, **kwargs)
@@ -63,7 +64,7 @@ class DuckDuckGoTools(Toolkit):
 
         log_debug(f"Searching DDG for: {search_query}")
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.text(search_query, max_results=actual_max_results)
+            results = ddgs.text(query=search_query, max_results=actual_max_results)
 
         return json.dumps(results, indent=2)
 
@@ -81,6 +82,6 @@ class DuckDuckGoTools(Toolkit):
 
         log_debug(f"Searching DDG news for: {query}")
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.news(query, max_results=actual_max_results)
+            results = ddgs.news(query=query, max_results=actual_max_results)
 
         return json.dumps(results, indent=2)

@@ -73,13 +73,13 @@ export GOOGLE_API_KEY=***
 export GROQ_API_KEY=***
 ```
 
-### 6. Run Demo Agents
+### 6. Run the OS demo
 
 ```shell
-python cookbook/demo/app.py
+python cookbook/demo/os.py
 ```
 
-- Open [app.agno.com/playground](https://app.agno.com/playground?endpoint=localhost%3A7777) to chat with the demo agents.
+- Open [os.agno.com](https://os.agno.com/) and connect to your running OS to chat with the demo agents.
 
 ### 7. Message us on [discord](https://agno.link/discord) if you have any questions
 
