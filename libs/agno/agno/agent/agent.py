@@ -18,7 +18,6 @@ from typing import (
     Set,
     Tuple,
     Type,
-    TypedDict,
     Union,
     cast,
     get_args,
@@ -283,7 +282,7 @@ class Agent:
 
     # --- Agent Response Model Settings ---
     # Provide an input schema to validate the input
-    input_schema: Optional[Union[Type[BaseModel], Type[TypedDict]]] = None
+    input_schema: Optional[Union[Type[BaseModel], type]] = None
     # Provide a response model to get the response as a Pydantic model
     output_schema: Optional[Type[BaseModel]] = None
     # Provide a secondary model to parse the response from the primary model
@@ -406,7 +405,7 @@ class Agent:
         exponential_backoff: bool = False,
         parser_model: Optional[Model] = None,
         parser_model_prompt: Optional[str] = None,
-        input_schema: Optional[Union[Type[BaseModel], Type[TypedDict]]] = None,
+        input_schema: Optional[Union[Type[BaseModel], type]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
         output_model: Optional[Model] = None,
@@ -601,8 +600,8 @@ class Agent:
             raise ValueError(f"Could not get type hints for TypedDict {schema_cls.__name__}: {e}")
         
         # Get required and optional keys
-        required_keys = getattr(schema_cls, '__required_keys__', set())
-        optional_keys = getattr(schema_cls, '__optional_keys__', set())
+        required_keys: Set[str] = getattr(schema_cls, '__required_keys__', set())
+        optional_keys: Set[str] = getattr(schema_cls, '__optional_keys__', set())
         all_keys = required_keys | optional_keys
         
         # Check for missing required fields
@@ -702,8 +701,6 @@ class Agent:
             if isinstance(input, BaseModel):
                 if isinstance(input, self.input_schema):
                     try:
-                        # Re-validate to catch any field validation errors
-                        input.model_validate(input.model_dump())
                         return input
                     except Exception as e:
                         raise ValueError(f"BaseModel validation failed: {str(e)}")
@@ -5038,23 +5035,11 @@ class Agent:
                 return input
             # If message is provided as a dict, try to validate it as a Message
             elif isinstance(input, dict):
-                # Check if this is a Message dict (has 'role') or data dict (like TypedDict)
-                if 'role' in input:
-                    # This is a Message dict
-                    try:
-                        return Message.model_validate(input)
-                    except Exception as e:
-                        log_warning(f"Failed to validate message: {e}")
-                        raise Exception(f"Failed to validate message: {e}")
-                else:
-                    # This is a data dict (like TypedDict)
-                    try:
-                        import json
-                        content = json.dumps(input, indent=2, ensure_ascii=False)
-                        return Message(role=self.user_message_role, content=content)
-                    except Exception as e:
-                        log_warning(f"Failed to convert data dict to message: {e}")
-                        raise Exception(f"Failed to convert data dict to message: {e}")
+                try:
+                    return Message.model_validate(input)
+                except Exception as e:
+                    log_warning(f"Failed to validate message: {e}")
+                    raise Exception(f"Failed to validate message: {e}")
 
             # If message is provided as a BaseModel, convert it to a Message
             elif isinstance(input, BaseModel):
@@ -5284,28 +5269,15 @@ class Agent:
 
         # 4.3 If input is provided as a dict, try to validate it as a Message
         elif isinstance(input, dict):
-            # Check if this is a Message dict (has 'role') or data dict (like TypedDict)
-            if 'role' in input:
-                # This is a Message dict
-                try:
-                    user_message = Message.model_validate(input)
-                except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
-            else:
-                # This is a data dict (like TypedDict)
-                try:
+            try:
+                if self.input_schema and self._is_typed_dict(self.input_schema):
                     import json
                     content = json.dumps(input, indent=2, ensure_ascii=False)
-                    user_message = Message(
-                        role=self.user_message_role,
-                        content=content,
-                        images=images if self.send_media_to_model else None,
-                        audio=audio if self.send_media_to_model else None,
-                        videos=videos if self.send_media_to_model else None,
-                        files=files if self.send_media_to_model else None,
-                    )
-                except Exception as e:
-                    log_warning(f"Failed to convert data dict to message: {e}")
+                    user_message = Message(role=self.user_message_role, content=content)
+                else:
+                    user_message = Message.model_validate(input)
+            except Exception as e:
+                log_warning(f"Failed to validate message: {e}")
 
         # 4.4 If input is provided as a BaseModel, convert it to a Message
         elif isinstance(input, BaseModel):
