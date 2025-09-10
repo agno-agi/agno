@@ -6,16 +6,16 @@ from typing import Optional
 from agno.agent import Agent
 from agno.eval.reliability import ReliabilityEval, ReliabilityResult
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunResponse
+from agno.run.agent import RunOutput
 from agno.tools.calculator import CalculatorTools
 
 
 def factorial():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[CalculatorTools(factorial=True)],
+        tools=[CalculatorTools()],
     )
-    response: RunResponse = agent.run("What is 10!?")
+    response: RunOutput = agent.run("What is 10!?")
     evaluation = ReliabilityEval(
         agent_response=response,
         expected_tool_calls=["factorial"],
@@ -25,7 +25,8 @@ def factorial():
     result: Optional[ReliabilityResult] = asyncio.run(
         evaluation.arun(print_results=True)
     )
-    result.assert_passed()
+    if result:
+        result.assert_passed()
 
 
 if __name__ == "__main__":

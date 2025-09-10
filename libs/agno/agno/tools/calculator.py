@@ -9,35 +9,18 @@ from agno.utils.log import log_debug, logger
 class CalculatorTools(Toolkit):
     def __init__(
         self,
-        add: bool = True,
-        subtract: bool = True,
-        multiply: bool = True,
-        divide: bool = True,
-        exponentiate: bool = False,
-        factorial: bool = False,
-        is_prime: bool = False,
-        square_root: bool = False,
-        enable_all: bool = False,
         **kwargs,
     ):
-        # Build the include_tools list based on enabled functions
-        tools: List[Callable] = []
-        if add or enable_all:
-            tools.append(self.add)
-        if subtract or enable_all:
-            tools.append(self.subtract)
-        if multiply or enable_all:
-            tools.append(self.multiply)
-        if divide or enable_all:
-            tools.append(self.divide)
-        if exponentiate or enable_all:
-            tools.append(self.exponentiate)
-        if factorial or enable_all:
-            tools.append(self.factorial)
-        if is_prime or enable_all:
-            tools.append(self.is_prime)
-        if square_root or enable_all:
-            tools.append(self.square_root)
+        tools: List[Callable] = [
+            self.add,
+            self.subtract,
+            self.multiply,
+            self.divide,
+            self.exponentiate,
+            self.factorial,
+            self.is_prime,
+            self.square_root,
+        ]
 
         # Initialize the toolkit with auto-registration enabled
         super().__init__(name="calculator", tools=tools, **kwargs)

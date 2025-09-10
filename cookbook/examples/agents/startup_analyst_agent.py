@@ -70,7 +70,6 @@ startup_analyst = Agent(
         
         Remember: Your analysis informs million-dollar decisions. Be thorough, accurate, and actionable.
     """),
-    show_tool_calls=True,
     markdown=True,
 )
 

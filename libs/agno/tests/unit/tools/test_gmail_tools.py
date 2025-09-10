@@ -63,7 +63,11 @@ def test_init_with_default_scopes():
 def test_init_with_custom_scopes():
     """Test initialization with custom scopes."""
     custom_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
-    tools = GmailTools(scopes=custom_scopes, get_latest_emails=True, create_draft_email=False, send_email=False)
+    tools = GmailTools(
+        scopes=custom_scopes,
+        include_tools=["get_latest_emails", "create_draft_email", "send_email"],
+        exclude_tools=["create_draft_email", "send_email"],
+    )
     assert tools.scopes == custom_scopes
 
 
@@ -73,8 +77,23 @@ def test_init_with_invalid_scopes():
     with pytest.raises(ValueError, match="required for email composition operations"):
         GmailTools(
             scopes=custom_scopes,
-            create_draft_email=True,  # This should raise error as compose scope is missing
         )
+
+
+def test_init_with_invalid_scopes_include_tools():
+    """Test initialization with invalid scopes for requested operations."""
+    custom_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+    with pytest.raises(ValueError, match="required for email composition operations"):
+        GmailTools(
+            scopes=custom_scopes,
+            include_tools=["create_draft_email", "send_email"],
+        )
+
+    # Check that it doesn't raise an error if different tools are included
+    GmailTools(
+        scopes=custom_scopes,
+        include_tools=["get_latest_emails"],
+    )
 
 
 def test_init_with_missing_read_scope():
@@ -82,8 +101,7 @@ def test_init_with_missing_read_scope():
     custom_scopes = ["https://www.googleapis.com/auth/gmail.compose"]
     with pytest.raises(ValueError, match="required for email reading operations"):
         GmailTools(
-            scopes=custom_scopes,
-            get_latest_emails=True,  # This should raise error as readonly scope is missing
+            scopes=custom_scopes,  # This should raise error as readonly scope is missing
         )
 
 

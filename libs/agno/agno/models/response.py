@@ -3,8 +3,9 @@ from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional
 
-from agno.media import AudioResponse, ImageArtifact
-from agno.models.message import Citations, MessageMetrics
+from agno.media import Audio, Image, Video
+from agno.models.message import Citations
+from agno.models.metrics import Metrics
 from agno.tools.function import UserInputField
 
 
@@ -26,7 +27,7 @@ class ToolExecution:
     tool_args: Optional[Dict[str, Any]] = None
     tool_call_error: Optional[bool] = None
     result: Optional[str] = None
-    metrics: Optional[MessageMetrics] = None
+    metrics: Optional[Metrics] = None
 
     # If True, the agent will stop executing after this tool call.
     stop_after_tool_call: bool = False
@@ -74,7 +75,7 @@ class ToolExecution:
             if "user_input_schema" in data
             else None,
             external_execution_required=data.get("external_execution_required"),
-            metrics=MessageMetrics(**(data.get("metrics", {}) or {})),
+            metrics=Metrics(**(data.get("metrics", {}) or {})),
         )
 
 
@@ -86,8 +87,12 @@ class ModelResponse:
 
     content: Optional[Any] = None
     parsed: Optional[Any] = None
-    audio: Optional[AudioResponse] = None
-    image: Optional[ImageArtifact] = None
+    audio: Optional[Audio] = None
+
+    # Unified media fields for LLM-generated and tool-generated media artifacts
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audios: Optional[List[Audio]] = None
 
     # Model tool calls
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
@@ -99,17 +104,18 @@ class ModelResponse:
 
     provider_data: Optional[Dict[str, Any]] = None
 
-    thinking: Optional[str] = None
-    redacted_thinking: Optional[str] = None
+    redacted_reasoning_content: Optional[str] = None
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None
 
-    response_usage: Optional[Any] = None
+    response_usage: Optional[Metrics] = None
 
     created_at: int = int(time())
 
     extra: Optional[Dict[str, Any]] = None
+
+    updated_session_state: Optional[Dict[str, Any]] = None
 
 
 class FileType(str, Enum):

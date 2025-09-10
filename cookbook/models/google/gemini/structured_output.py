@@ -69,7 +69,7 @@ class EventSchema(BaseModel):
 structured_output_agent = Agent(
     name="Advanced Event Planner",
     model=Gemini(id="gemini-2.5-pro"),
-    response_model=EventSchema,
+    output_schema=EventSchema,
     instructions="""
     Create a detailed event plan that demonstrates all schema constraints:
     - Use proper date/time/duration formats

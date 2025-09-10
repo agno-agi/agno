@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from agno.document import Document
+from agno.knowledge.document import Document
 
 
 class VectorDb(ABC):
@@ -16,14 +16,6 @@ class VectorDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def doc_exists(self, document: Document) -> bool:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def async_doc_exists(self, document: Document) -> bool:
-        raise NotImplementedError
-
-    @abstractmethod
     def name_exists(self, name: str) -> bool:
         raise NotImplementedError
 
@@ -31,26 +23,35 @@ class VectorDb(ABC):
     def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError
 
+    @abstractmethod
     def id_exists(self, id: str) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def content_hash_exists(self, content_hash: str) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         raise NotImplementedError
 
     def upsert_available(self) -> bool:
         return False
 
     @abstractmethod
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -61,15 +62,6 @@ class VectorDb(ABC):
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
-        raise NotImplementedError
-
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
-        raise NotImplementedError
-
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
-        raise NotImplementedError
-
-    def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
         raise NotImplementedError
 
     @abstractmethod
@@ -93,4 +85,24 @@ class VectorDb(ABC):
 
     @abstractmethod
     def delete(self) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_by_id(self, id: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_by_name(self, name: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_by_content_id(self, content_id: str) -> bool:
         raise NotImplementedError

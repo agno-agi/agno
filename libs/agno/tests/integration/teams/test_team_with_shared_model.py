@@ -34,7 +34,7 @@ def finance_agent(shared_model):
         name="Finance Agent",
         model=shared_model,
         role="Get financial data",
-        tools=[YFinanceTools(stock_price=True)],
+        tools=[YFinanceTools()],
     )
 
 
@@ -45,28 +45,36 @@ def analysis_agent(shared_model):
 
 
 @pytest.fixture
-def route_team(web_agent, finance_agent, analysis_agent, shared_model):
+def mock_team(web_agent, finance_agent, analysis_agent, shared_model):
     """Create a route team with storage and memory for testing."""
     return Team(
-        name="Route Team",
-        mode="route",
         model=shared_model,
         members=[web_agent, finance_agent, analysis_agent],
-        enable_user_memories=True,
+        respond_directly=True,
     )
 
 
-def test_tools_available_to_agents(route_team, shared_model):
+def test_tools_available_to_agents(mock_team, shared_model):
     with patch.object(shared_model, "invoke", wraps=shared_model.invoke) as mock_invoke:
-        route_team.run("What is the current stock price of AAPL?")
+        mock_team.run("What is the current stock price of AAPL?")
 
         # Get the tools passed to invoke
         tools = mock_invoke.call_args[1].get("tools", [])
         tool_names = [tool["function"]["name"] for tool in tools]
-        assert tool_names == ["get_current_stock_price"]
+        assert tool_names == [
+            "get_current_stock_price",
+            "get_company_info",
+            "get_stock_fundamentals",
+            "get_income_statements",
+            "get_key_financial_ratios",
+            "get_analyst_recommendations",
+            "get_company_news",
+            "get_technical_indicators",
+            "get_historical_stock_prices",
+        ]
 
     with patch.object(shared_model, "invoke", wraps=shared_model.invoke) as mock_invoke:
-        route_team.run("What is currently happening in the news?")
+        mock_team.run("What is currently happening in the news?")
 
         # Get the tools passed to invoke
         tools = mock_invoke.call_args[1].get("tools", [])

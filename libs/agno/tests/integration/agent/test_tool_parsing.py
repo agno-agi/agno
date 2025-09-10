@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from git import Union
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIChat
 
 
@@ -15,12 +15,12 @@ def test_tool_call_custom_tool_no_parameters():
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Tokyo?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
@@ -44,12 +44,12 @@ def test_tool_call_custom_tool_optional_parameters():
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Paris?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
@@ -73,12 +73,12 @@ def test_tool_call_custom_tool_untyped_parameters():
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Paris?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
@@ -103,19 +103,19 @@ def test_tool_call_list_parameters():
         instructions="Use a single tool call if possible",
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Tokyo and Paris?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
     for call in tool_calls:
-        assert call["function"]["name"] in ["get_the_weather"]
+        assert call["function"]["name"] in ["get_the_weather"]  # type: ignore
     assert response.content is not None
     assert "70" in response.content
     assert "Tokyo" in response.content
@@ -140,11 +140,11 @@ def test_tool_call_custom_tool_union_parameters():
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Paris?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
