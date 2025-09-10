@@ -621,7 +621,7 @@ class Agent:
             if field_name in type_hints:
                 expected_type = type_hints[field_name]
                 
-                # Handle simple type checking - could be extended for more complex types
+                # Handle simple type checking
                 if not self._check_type_compatibility(value, expected_type):
                     raise ValueError(f"Field '{field_name}' expected type {expected_type}, got {type(value)} with value {value}")
                 
@@ -631,7 +631,6 @@ class Agent:
 
     def _check_type_compatibility(self, value: Any, expected_type: Type) -> bool:
         """Basic type compatibility checking."""
-        import sys
         from typing import get_origin, get_args
         
         # Handle None/Optional types
@@ -648,24 +647,19 @@ class Agent:
             if not isinstance(value, list):
                 return False
             if origin is list and get_args(expected_type):
-                # Check list element types if specified
                 element_type = get_args(expected_type)[0]
                 return all(self._check_type_compatibility(item, element_type) for item in value)
             return True
         
-        # Handle basic types
         if expected_type in (str, int, float, bool):
             return isinstance(value, expected_type)
         
-        # Handle Any type
         if expected_type is Any:
             return True
         
-        # Default: check if it's an instance of the expected type
         try:
             return isinstance(value, expected_type)
         except TypeError:
-            # For complex types that can't use isinstance
             return True
 
     def _validate_input(
