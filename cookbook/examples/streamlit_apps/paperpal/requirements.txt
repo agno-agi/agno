@@ -35,7 +35,7 @@ distro==1.9.0
     # via openai
 docstring-parser==0.17.0
     # via agno
-exa-py==1.15.5
+exa-py==1.15.6
     # via -r cookbook/examples/streamlit_apps/paperpal/requirements.in
 feedparser==6.0.11
     # via arxiv
@@ -79,7 +79,7 @@ narwhals==2.4.0
     # via altair
 nest-asyncio==1.6.0
     # via -r cookbook/examples/streamlit_apps/paperpal/requirements.in
-numpy==2.3.2
+numpy==2.3.3
     # via
     #   pandas
     #   pydeck
