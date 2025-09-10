@@ -84,7 +84,26 @@ uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 user = os.getenv("NEO4J_USERNAME", "neo4j")
 password = os.getenv("NEO4J_PASSWORD", "password")
 
-# Instantiate the toolkit
+# Example 1: All functions enabled (default)
+neo4j_toolkit_all = Neo4jTools(
+    uri=uri,
+    user=user,
+    password=password,
+    all=True,
+)
+
+# Example 2: Specific functions only
+neo4j_toolkit_specific = Neo4jTools(
+    uri=uri,
+    user=user,
+    password=password,
+    enable_list_labels=True,
+    enable_get_schema=True,
+    enable_list_relationships=False,
+    enable_run_cypher=False,
+)
+
+# Example 3: Default behavior
 neo4j_toolkit = Neo4jTools(
     uri=uri,
     user=user,

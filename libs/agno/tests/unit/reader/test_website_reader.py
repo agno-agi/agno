@@ -2,8 +2,9 @@ from unittest.mock import patch
 
 import pytest
 
-from agno.document.base import Document
-from agno.document.reader.website_reader import WebsiteReader
+from agno.knowledge.chunking.fixed import FixedSizeChunking
+from agno.knowledge.document.base import Document
+from agno.knowledge.reader.website_reader import WebsiteReader
 
 
 @pytest.fixture
@@ -59,6 +60,7 @@ def test_crawl_basic(mock_html_content):
 
 def test_read_basic(mock_html_content):
     reader = WebsiteReader(max_depth=1, max_links=1)
+    reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
 
     # Create a simple crawler result to return
     crawler_result = {"https://example.com": "This is the main content"}
@@ -198,7 +200,7 @@ async def test_async_crawl_basic(mock_html_content):
 @pytest.mark.asyncio
 async def test_async_read_basic(mock_html_content):
     reader = WebsiteReader(max_depth=1, max_links=1)
-
+    reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
     # Create a simple crawler result to return
     crawler_result = {"https://example.com": "This is the main content"}
 

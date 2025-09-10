@@ -39,7 +39,7 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
 
         # The audio is a URL
         elif audio_snippet.url:
-            audio_bytes = audio_snippet.audio_url_content
+            audio_bytes = audio_snippet.get_content_bytes()
             if audio_bytes is not None:
                 encoded_string = base64.b64encode(audio_bytes).decode("utf-8")
                 if not audio_format:

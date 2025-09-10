@@ -1,52 +1,40 @@
 from agno.agent import Agent
-from agno.memory.v2.db.postgres import PostgresMemoryDb
-from agno.memory.v2.memory import Memory
+from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
-from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
-# ************* Database Connection *************
+# ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 # *******************************
 
-# ************* Memory *************
-memory = Memory(
-    model=OpenAIChat(id="gpt-4.1"),
-    db=PostgresMemoryDb(table_name="user_memories", db_url=db_url),
-    delete_memories=True,
-    clear_memories=True,
-)
-# *******************************
 
 # ************* Core Agents *************
 web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests and general research",
-    agent_id="web_agent",
+    id="web_agent",
     model=OpenAIChat(id="gpt-4.1"),
     tools=[DuckDuckGoTools()],
-    storage=PostgresAgentStorage(
-        db_url=db_url,
-        table_name="web_agent_sessions",
-    ),
-    memory=memory,
+    db=db,
+    enable_user_memories=True,
     instructions=[
         "Search for current and relevant information on financial topics",
         "Always include sources and publication dates",
         "Focus on reputable financial news sources",
         "Provide context and background information",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests and market analysis",
-    agent_id="finance_agent",
+    id="finance_agent",
     model=OpenAIChat(id="gpt-4.1"),
     tools=[
         YFinanceTools(
@@ -57,11 +45,8 @@ finance_agent = Agent(
             analyst_recommendations=True,
         )
     ],
-    storage=PostgresAgentStorage(
-        db_url=db_url,
-        table_name="finance_agent_sessions",
-    ),
-    memory=memory,
+    db=db,
+    enable_user_memories=True,
     instructions=[
         "You are a financial data specialist and your goal is to generate comprehensive and accurate financial reports.",
         "Use tables to display stock prices, fundamentals (P/E, Market Cap, Revenue), and recommendations.",
@@ -70,7 +55,7 @@ finance_agent = Agent(
         "Focus on delivering actionable financial insights.",
         "Delegate tasks and run tools in parallel if needed.",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 # *******************************
 
@@ -78,8 +63,7 @@ finance_agent = Agent(
 def get_reasoning_finance_team():
     return Team(
         name="Reasoning Finance Team",
-        mode="coordinate",
-        team_id="reasoning_finance_team",
+        id="reasoning_finance_team",
         model=Claude(id="claude-sonnet-4-20250514"),
         members=[
             web_agent,
@@ -96,17 +80,11 @@ def get_reasoning_finance_team():
             "Only output the final consolidated analysis, not individual agent responses",
             "Dont use emojis",
         ],
-        storage=PostgresAgentStorage(
-            db_url=db_url,
-            table_name="reasoning_finance_team_sessions",
-        ),
-        memory=memory,
+        db=db,
+        enable_user_memories=True,
         markdown=True,
-        enable_agentic_memory=True,
         show_members_responses=True,
-        enable_agentic_context=True,
-        add_datetime_to_instructions=True,
-        success_criteria="The team has provided a complete financial analysis with data, visualizations, risk assessment, and actionable investment recommendations supported by quantitative analysis and market research.",
+        add_datetime_to_context=True,
     )
 
 

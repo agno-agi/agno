@@ -1,9 +1,9 @@
 from agno.agent import Agent
 from agno.media import Image
-from agno.models.qwen import Qwen
+from agno.models.dashscope import DashScope
 
 agent = Agent(
-    model=Qwen(id="qvq-max", enable_thinking=True),
+    model=DashScope(id="qvq-max", enable_thinking=True),
 )
 
 image_url = "https://img.alicdn.com/imgextra/i1/O1CN01gDEY8M1W114Hi3XcN_!!6000000002727-0-tps-1024-406.jpg"

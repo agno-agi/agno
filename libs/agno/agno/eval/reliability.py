@@ -1,15 +1,17 @@
 from dataclasses import asdict, dataclass, field
 from os import getenv
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from uuid import uuid4
+
+from agno.db.base import BaseDb
 
 if TYPE_CHECKING:
     from rich.console import Console
 
-from agno.agent import RunResponse
-from agno.api.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
-from agno.run.team import TeamRunResponse
+from agno.agent import RunOutput
+from agno.db.schemas.evals import EvalType
+from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
+from agno.run.team import TeamRunOutput
 from agno.utils.log import logger
 
 
@@ -46,9 +48,9 @@ class ReliabilityEval:
     eval_id: str = field(default_factory=lambda: str(uuid4()))
 
     # Agent response
-    agent_response: Optional[RunResponse] = None
+    agent_response: Optional[RunOutput] = None
     # Team response
-    team_response: Optional[TeamRunResponse] = None
+    team_response: Optional[TeamRunOutput] = None
     # Expected tool calls
     expected_tool_calls: Optional[List[str]] = None
     # Result of the evaluation
@@ -60,8 +62,13 @@ class ReliabilityEval:
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
-    # Log the results to the Agno platform. On by default.
-    monitoring: bool = getenv("AGNO_MONITOR", "true").lower() == "true"
+    # The database to store Evaluation results
+    db: Optional[BaseDb] = None
+
+    # Telemetry settings
+    # telemetry=True logs minimal telemetry for analytics
+    # This helps us improve our Evals and provide better support
+    telemetry: bool = True
 
     def run(self, *, print_results: bool = False) -> Optional[ReliabilityResult]:
         if self.agent_response is None and self.team_response is None:
@@ -100,15 +107,18 @@ class ReliabilityEval:
 
             failed_tool_calls = []
             passed_tool_calls = []
-            for tool_call in actual_tool_calls:  # type: ignore
-                tool_name = tool_call.get("function", {}).get("name")
-                if not tool_name:
-                    continue
-                else:
-                    if tool_name not in self.expected_tool_calls:  # type: ignore
-                        failed_tool_calls.append(tool_call.get("function", {}).get("name"))
+            if not actual_tool_calls:
+                failed_tool_calls = self.expected_tool_calls or []
+            else:
+                for tool_call in actual_tool_calls:  # type: ignore
+                    tool_name = tool_call.get("function", {}).get("name")
+                    if not tool_name:
+                        continue
                     else:
-                        passed_tool_calls.append(tool_call.get("function", {}).get("name"))
+                        if tool_name not in self.expected_tool_calls:  # type: ignore
+                            failed_tool_calls.append(tool_call.get("function", {}).get("name"))
+                        else:
+                            passed_tool_calls.append(tool_call.get("function", {}).get("name"))
 
             self.result = ReliabilityResult(
                 eval_status="PASSED" if len(failed_tool_calls) == 0 else "FAILED",
@@ -130,7 +140,7 @@ class ReliabilityEval:
             self.result.print_eval(console)
 
         # Log results to the Agno platform if requested
-        if self.monitoring:
+        if self.db:
             if self.agent_response is not None:
                 agent_id = self.agent_response.agent_id
                 team_id = None
@@ -142,7 +152,12 @@ class ReliabilityEval:
                 model_id = self.team_response.model
                 model_provider = self.team_response.model_provider
 
+            eval_input = {
+                "expected_tool_calls": self.expected_tool_calls,
+            }
+
             log_eval_run(
+                db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
@@ -151,6 +166,18 @@ class ReliabilityEval:
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,
+                eval_input=eval_input,
+            )
+
+        if self.telemetry:
+            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
+
+            create_eval_run_telemetry(
+                eval_run=EvalRunCreate(
+                    run_id=self.eval_id,
+                    eval_type=EvalType.RELIABILITY,
+                    data=self._get_telemetry_data(),
+                ),
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
@@ -223,7 +250,7 @@ class ReliabilityEval:
             self.result.print_eval(console)
 
         # Log results to the Agno platform if requested
-        if self.monitoring:
+        if self.db:
             if self.agent_response is not None:
                 agent_id = self.agent_response.agent_id
                 team_id = None
@@ -235,7 +262,12 @@ class ReliabilityEval:
                 model_id = self.team_response.model
                 model_provider = self.team_response.model_provider
 
-            await async_log_eval_run(
+            eval_input = {
+                "expected_tool_calls": self.expected_tool_calls,
+            }
+
+            await async_log_eval(
+                db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
@@ -244,7 +276,28 @@ class ReliabilityEval:
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,
+                eval_input=eval_input,
+            )
+
+        if self.telemetry:
+            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
+
+            await async_create_eval_run_telemetry(
+                eval_run=EvalRunCreate(
+                    run_id=self.eval_id,
+                    eval_type=EvalType.RELIABILITY,
+                    data=self._get_telemetry_data(),
+                ),
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result
+
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the evaluation"""
+        return {
+            "team_id": self.team_response.team_id if self.team_response else None,
+            "agent_id": self.agent_response.agent_id if self.agent_response else None,
+            "model_id": self.agent_response.model if self.agent_response else None,
+            "model_provider": self.agent_response.model_provider if self.agent_response else None,
+        }

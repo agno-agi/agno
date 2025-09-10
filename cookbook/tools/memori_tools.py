@@ -15,6 +15,10 @@ from agno.tools.memori import MemoriTools
 memori_tools = MemoriTools(
     database_connect="sqlite:///memori_cookbook_memory.db",
     namespace="cookbook_agent",
+    # enable_* flags are optional; defaults enable all small functions
+    enable_search_memory=True,
+    enable_record_conversation=True,
+    enable_get_memory_stats=True,
 )
 
 # Setup your Agent
@@ -22,7 +26,6 @@ agent = Agent(
     # Add the Memori ToolKit to the Agent
     tools=[memori_tools],
     model=OpenAIChat(id="gpt-4o"),
-    show_tool_calls=True,
     markdown=True,
     instructions=dedent(
         """\

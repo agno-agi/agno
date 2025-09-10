@@ -7,6 +7,7 @@ from typing import List, Tuple
 import pytest
 
 from agno.agent.agent import Agent
+from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
 from agno.team.team import Team
 
@@ -99,7 +100,7 @@ class MemoryMonitor:
         }
 
 
-def test_team_memory_impact_with_gc_monitoring(agent_storage, team_storage, memory):
+def test_team_memory_impact_with_gc_monitoring(shared_db):
     """
     Test that creates a team with memory and storage, runs a series of prompts,
     and monitors memory usage to verify garbage collection is working correctly.
@@ -136,8 +137,7 @@ def test_team_memory_impact_with_gc_monitoring(agent_storage, team_storage, memo
         model=OpenAIChat(id="gpt-4o-mini"),
         role="Perform mathematical calculations",
         tools=[simple_calculator],
-        storage=agent_storage,
-        memory=memory,
+        db=shared_db,
         enable_user_memories=True,
     )
 
@@ -146,19 +146,18 @@ def test_team_memory_impact_with_gc_monitoring(agent_storage, team_storage, memo
         model=OpenAIChat(id="gpt-4o-mini"),
         role="Process and analyze text",
         tools=[text_processor],
-        storage=agent_storage,
-        memory=memory,
+        db=shared_db,
         enable_user_memories=True,
     )
 
     # Create team with memory and storage
     team = Team(
         name="Memory Test Team",
-        mode="route",
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[calculator_agent, text_agent],
-        storage=team_storage,
-        memory=memory,
+        respond_directly=True,
+        determine_input_for_members=False,
+        db=shared_db,
         enable_user_memories=True,
         instructions="Route mathematical questions to the calculator agent and text processing questions to the text processor agent.",
     )
@@ -222,7 +221,7 @@ def test_team_memory_impact_with_gc_monitoring(agent_storage, team_storage, memo
             print(f"Max memory growth in single operation: {max(memory_growth):.2f} MB")
 
         # STRICT MEMORY LIMITS: Final memory must be under 20MB
-        assert final_memory < 20, f"Final memory usage too high: {final_memory:.2f} MB (limit: 20MB)"
+        assert final_memory < 5, f"Final memory usage too high: {final_memory:.2f} MB (limit: 5MB)"
 
         # Verify that garbage collection is working
         # After GC, memory should not be significantly higher than before
@@ -238,24 +237,16 @@ def test_team_memory_impact_with_gc_monitoring(agent_storage, team_storage, memo
                 assert memory_increase < 0.5, f"Memory leak detected: {memory_increase:.2f} MB increase after GC"
 
         # Check that sessions were stored
-        session_from_storage = team_storage.read(session_id=session_id)
+        session_from_storage = shared_db.get_session(session_id=session_id, session_type=SessionType.TEAM)
         assert session_from_storage is not None, "Session was not stored"
 
         # Check that runs are in memory
-        assert session_id in memory.runs, "Session runs not found in memory"
-        assert len(memory.runs[session_id]) == len(prompts), (
-            f"Expected {len(prompts)} runs, got {len(memory.runs[session_id])}"
-        )
-
-        print("✅ Team memory impact test completed successfully")
-        print(f"✅ Stored {len(memory.runs[session_id])} runs in memory")
-        print(f"✅ Peak memory: {peak_memory:.2f} MB, Final memory: {final_memory:.2f} MB")
-
+        assert len(session_from_storage.runs) > len(prompts)
     finally:
         monitor.stop_monitoring()
 
 
-def test_team_memory_cleanup_after_session_switch(agent_storage, team_storage, memory):
+def test_team_memory_cleanup_after_session_switch(shared_db):
     """
     Test that verifies team memory is properly cleaned up when switching between sessions.
     """
@@ -269,18 +260,15 @@ def test_team_memory_cleanup_after_session_switch(agent_storage, team_storage, m
         model=OpenAIChat(id="gpt-4o-mini"),
         role="Process simple requests",
         tools=[simple_function],
-        storage=agent_storage,
-        memory=memory,
+        db=shared_db,
         enable_user_memories=True,
     )
 
     team = Team(
         name="Session Switch Team",
-        mode="route",
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[agent],
-        storage=team_storage,
-        memory=memory,
+        db=shared_db,
         enable_user_memories=True,
     )
 
@@ -324,23 +312,19 @@ def test_team_memory_cleanup_after_session_switch(agent_storage, team_storage, m
 
         # STRICT MEMORY LIMITS: Final memory must be under 20MB
         final_memory = monitor.get_final_memory()
-        assert final_memory < 20, f"Final memory usage too high: {final_memory:.2f} MB (limit: 20MB)"
+        assert final_memory < 5, f"Final memory usage too high: {final_memory:.2f} MB (limit: 5MB)"
 
         # Verify all sessions are properly stored
         for session_id in sessions:
-            session_from_storage = team_storage.read(session_id=session_id)
+            session_from_storage = shared_db.get_session(session_id=session_id, session_type=SessionType.TEAM)
             assert session_from_storage is not None, f"Session {session_id} was not stored"
-            assert session_id in memory.runs, f"Session {session_id} runs not found in memory"
-
-        print("✅ Team session switching memory test completed successfully")
-        print(f"✅ Final memory: {final_memory:.2f} MB")
 
     finally:
         monitor.stop_monitoring()
 
 
 @pytest.mark.asyncio
-async def test_team_memory_with_multiple_members(agent_storage, team_storage, memory):
+async def test_team_memory_with_multiple_members(shared_db):
     """
     Test memory usage with multiple team members to ensure scalability.
     """
@@ -410,7 +394,7 @@ async def test_team_memory_with_multiple_members(agent_storage, team_storage, me
                     "content": f"Mock response for {messages[-1].content[:50]}...",
                     "run_id": f"mock_run_{hash(str(messages))}",
                     "model": self.name,
-                    "thinking": None,
+                    "reasoning_content": None,
                     "citations": None,
                     "tool_executions": None,
                     "tool_calls": [],
@@ -420,51 +404,52 @@ async def test_team_memory_with_multiple_members(agent_storage, team_storage, me
                         "MockUsage", (), {"total_tokens": 100, "prompt_tokens": 50, "completion_tokens": 50}
                     )(),
                     "finish_reason": "stop",
+                    "images": [],
+                    "videos": [],
+                    "audios": [],
+                    "files": [],
                 },
             )()
 
     agent1 = Agent(
         name="Financial Advisor",
-        model=MockModel(id="gpt-4o-mini"),
+        model=MockModel(id="gpt-4o-mini"),  # type: ignore
         role="Provide financial planning and budget analysis",
         tools=[calculate_budget],
-        storage=agent_storage,
-        memory=memory,
+        db=shared_db,
         enable_user_memories=True,
-        add_history_to_messages=True,
+        add_history_to_context=True,
     )
 
     agent2 = Agent(
         name="Health Coach",
-        model=MockModel(id="gpt-4o-mini"),
+        model=MockModel(id="gpt-4o-mini"),  # type: ignore
         role="Analyze health data and provide wellness recommendations",
         tools=[analyze_health_data],
-        storage=agent_storage,
-        memory=memory,
+        db=shared_db,
         enable_user_memories=True,
-        add_history_to_messages=True,
+        add_history_to_context=True,
     )
 
     agent3 = Agent(
         name="Meeting Coordinator",
-        model=MockModel(id="gpt-4o-mini"),
+        model=MockModel(id="gpt-4o-mini"),  # type: ignore
         role="Help schedule meetings and coordinate team activities",
         tools=[schedule_meeting],
-        storage=agent_storage,
-        memory=memory,
+        db=shared_db,
         enable_user_memories=True,
-        add_history_to_messages=True,
+        add_history_to_context=True,
     )
 
     team = Team(
         name="Personal Assistant Team",
-        mode="route",
-        model=MockModel(id="gpt-4o-mini"),
+        model=MockModel(id="gpt-4o-mini"),  # type: ignore
         members=[agent1, agent2, agent3],
-        storage=team_storage,
-        memory=memory,
+        respond_directly=True,
+        determine_input_for_members=False,
+        db=shared_db,
         enable_user_memories=True,
-        add_history_to_messages=True,
+        add_history_to_context=True,
         instructions="Route financial questions to the Financial Advisor, health-related questions to the Health Coach, and meeting/scheduling requests to the Meeting Coordinator. Remember user preferences and past interactions to provide personalized assistance.",
     )
 

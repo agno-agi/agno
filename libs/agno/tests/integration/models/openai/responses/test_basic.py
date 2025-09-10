@@ -3,44 +3,38 @@ from typing import Optional
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
+from agno.db.sqlite import SqliteDb
 from agno.exceptions import ModelProviderError
-from agno.memory import AgentMemory
-from agno.memory.classifier import MemoryClassifier
-from agno.memory.db.sqlite import SqliteMemoryDb
-from agno.memory.manager import MemoryManager
-from agno.memory.summarizer import MemorySummarizer
-from agno.models.message import Message
 from agno.models.openai import OpenAIResponses
-from agno.storage.agent.sqlite import SqliteAgentStorage
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     """
     Assert that the response metrics are valid and consistent.
 
     Args:
-        response: The RunResponse to validate metrics for
+        response: The RunOutput to validate metrics for
     """
-    input_tokens = response.metrics.get("input_tokens", [])
-    output_tokens = response.metrics.get("output_tokens", [])
-    total_tokens = response.metrics.get("total_tokens", [])
+    assert response.metrics is not None
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
-    assert sum(input_tokens) > 0
-    assert sum(output_tokens) > 0
-    assert sum(total_tokens) > 0
-    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert total_tokens > 0
+    assert total_tokens == input_tokens + output_tokens
 
 
 def test_basic():
     """Test basic functionality of the OpenAIResponses model."""
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     # Run a simple query
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
-    assert response.content is not None
+    assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
@@ -49,29 +43,22 @@ def test_basic():
 
 def test_basic_stream():
     """Test basic streaming functionality of the OpenAIResponses model."""
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
-    response_stream = agent.run("Share a 2 sentence horror story", stream=True)
-
-    # Verify it's an iterator
-    assert hasattr(response_stream, "__iter__")
-
-    responses = list(response_stream)
-    assert len(responses) > 0
-    for response in responses:
-        assert response.content is not None
-
-    _assert_metrics(agent.run_response)
+    run_stream = agent.run("Say 'hi'", stream=True)
+    for chunk in run_stream:
+        assert chunk.content is not None
 
 
 @pytest.mark.asyncio
 async def test_async_basic():
     """Test basic async functionality of the OpenAIResponses model."""
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
@@ -80,18 +67,15 @@ async def test_async_basic():
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     """Test basic async streaming functionality of the OpenAIResponses model."""
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
-
-    async for response in response_stream:
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
-    _assert_metrics(agent.run_response)
 
 
 def test_exception_handling():
     """Test proper error handling for invalid model IDs."""
-    agent = Agent(model=OpenAIResponses(id="gpt-100"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=OpenAIResponses(id="gpt-100"), markdown=True, telemetry=False)
 
     with pytest.raises(ModelProviderError) as exc:
         agent.run("Share a 2 sentence horror story")
@@ -105,11 +89,10 @@ def test_with_memory():
     """Test that the model retains context from previous interactions."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        add_history_to_messages=True,
-        num_history_responses=5,
+        db=SqliteDb(db_file="tmp/openai/responses/test_with_memory.db"),
+        add_history_to_context=True,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # First interaction
@@ -118,7 +101,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
-    assert "John Smith" in response2.content
+    assert response2.content is not None and "John Smith" in response2.content
 
     # Verify memories were created
     messages = agent.get_messages_for_session()
@@ -140,10 +123,9 @@ def test_structured_output_json_mode():
 
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -166,9 +148,8 @@ def test_structured_output():
 
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -184,62 +165,22 @@ def test_history():
     """Test conversation history in the agent."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        storage=SqliteAgentStorage(table_name="responses_agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        db=SqliteDb(db_file="tmp/openai/responses/test_basic.db"),
+        add_history_to_context=True,
         telemetry=False,
-        monitoring=False,
     )
-    agent.run("Hello")
-    assert len(agent.run_response.messages) == 2
-    agent.run("Hello 2")
-    assert len(agent.run_response.messages) == 4
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
-    agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 2
 
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 4
 
-def test_persistent_memory():
-    """Test persistent memory with the Responses API."""
-    agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools(cache_results=True)],
-        markdown=True,
-        telemetry=False,
-        monitoring=False,
-        instructions=[
-            "You can search the internet with DuckDuckGo.",
-        ],
-        storage=SqliteAgentStorage(table_name="responses_agent", db_file="tmp/agent_storage.db"),
-        # Adds the current date and time to the instructions
-        add_datetime_to_instructions=True,
-        # Adds the history of the conversation to the messages
-        add_history_to_messages=True,
-        # Number of history responses to add to the messages
-        num_history_responses=15,
-        memory=AgentMemory(
-            db=SqliteMemoryDb(db_file="tmp/responses_agent_memory.db"),
-            create_user_memories=True,
-            create_session_summary=True,
-            update_user_memories_after_run=True,
-            update_session_summary_after_run=True,
-            classifier=MemoryClassifier(model=OpenAIResponses(id="gpt-4o-mini")),
-            summarizer=MemorySummarizer(model=OpenAIResponses(id="gpt-4o-mini")),
-            manager=MemoryManager(model=OpenAIResponses(id="gpt-4o-mini")),
-        ),
-    )
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 6
 
-    response = agent.run("What is current news in France?")
-    assert response.content is not None
-
-
-def test_reasoning_summary():
-    """Test we obtain reasoning summaries from the model when requesting them."""
-    model = OpenAIResponses(id="o4-mini", reasoning_summary="auto")
-
-    raw_model_reponse = model.invoke(messages=[Message(role="user", content="What is going on in France?")])
-    model_response = model.parse_provider_response(raw_model_reponse)
-
-    assert model_response is not None
-    assert model_response.reasoning_content is not None
-    assert "France" in model_response.reasoning_content
+    run_output = agent.run("Hello 4")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 8

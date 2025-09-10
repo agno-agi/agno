@@ -1,5 +1,5 @@
 import requests
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.media import Audio
 from agno.models.openai import OpenAIChat
 
