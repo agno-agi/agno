@@ -141,6 +141,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run tests for Agno
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit
