@@ -59,12 +59,12 @@ if TYPE_CHECKING:
 
 async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
     """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
-        Args:
-            request: The FastAPI Request object
-            endpoint_func: The function exposing the endpoint that received the request
+    Args:
+        request: The FastAPI Request object
+        endpoint_func: The function exposing the endpoint that received the request
 
-        Returns:
-            A dictionary of kwargs
+    Returns:
+        A dictionary of kwargs
     """
     import inspect
 
