@@ -11,7 +11,7 @@ agent = Agent(
         id="o4-mini",
         reasoning_summary="auto",  # Requesting a reasoning summary
     ),
-    tools=[DuckDuckGoTools(enable_search=True)],
+    tools=[DuckDuckGoTools(search=True)],
     instructions="Use tables to display the analysis",
     markdown=True,
 )
