@@ -18,9 +18,9 @@ class WorkflowTools(Toolkit):
     def __init__(
         self,
         workflow: Workflow,
-        enable_think: bool = True,
         enable_run_workflow: bool = True,
-        enable_analyze: bool = True,
+        enable_think: bool = False,
+        enable_analyze: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         add_few_shot: bool = False,

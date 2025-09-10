@@ -13,11 +13,11 @@ class MemoryTools(Toolkit):
     def __init__(
         self,
         db: BaseDb,
-        enable_think: bool = True,
         enable_add_memory: bool = True,
         enable_update_memory: bool = True,
         enable_delete_memory: bool = True,
         enable_analyze: bool = True,
+        enable_think: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         add_few_shot: bool = True,
