@@ -1,4 +1,3 @@
-import inspect
 import json
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
 from uuid import uuid4
@@ -68,6 +67,8 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
         Returns:
             A dictionary of kwargs
     """
+    import inspect
+
     form_data = await request.form()
     sig = inspect.signature(endpoint_func)
     known_fields = set(sig.parameters.keys())
