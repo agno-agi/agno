@@ -5,6 +5,7 @@ from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 from agno.knowledge.reader.csv_reader import CSVReader
+from agno.models.openai import OpenAIChat
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -18,6 +19,7 @@ knowledge = Knowledge(
 
 # Initialize the Agent with the knowledge
 agent = Agent(
+    model=OpenAIChat(id="gpt-4.1-mini"),
     knowledge=knowledge,
     search_knowledge=True,
 )
