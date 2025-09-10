@@ -1,6 +1,6 @@
 import json
 from textwrap import dedent
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
 
