@@ -32,9 +32,9 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import (
-    InputValidationError,
+    InputCheckError,
     ModelProviderError,
-    OutputValidationError,
+    OutputCheckError,
     RunCancelledException,
 )
 from agno.knowledge.knowledge import Knowledge
@@ -870,7 +870,7 @@ class Team:
 
                 hook(**filtered_args)
 
-            except (InputValidationError, OutputValidationError) as e:
+            except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
                 log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
@@ -901,7 +901,7 @@ class Team:
                     # Synchronous function
                     hook(**filtered_args)
 
-            except (InputValidationError, OutputValidationError) as e:
+            except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
                 log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
@@ -931,7 +931,7 @@ class Team:
 
                 hook(**filtered_args)
 
-            except (InputValidationError, OutputValidationError) as e:
+            except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
                 log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
@@ -961,7 +961,7 @@ class Team:
                 else:
                     hook(**filtered_args)
 
-            except (InputValidationError, OutputValidationError) as e:
+            except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
                 log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")

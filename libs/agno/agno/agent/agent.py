@@ -29,9 +29,9 @@ from pydantic import BaseModel
 
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import (
-    InputValidationError,
+    InputCheckError,
     ModelProviderError,
-    OutputValidationError,
+    OutputCheckError,
     RunCancelledException,
     StopAgentRun,
 )
@@ -1260,7 +1260,7 @@ class Agent:
                         response_format=response_format,
                     )
                     return response
-            except (InputValidationError, OutputValidationError) as e:
+            except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed: {str(e)} | Guardrail trigger: {e.guardrail_trigger}")
                 raise e
             except ModelProviderError as e:
@@ -1871,7 +1871,7 @@ class Agent:
                         dependencies=run_dependencies,
                     )
 
-            except (InputValidationError, OutputValidationError) as e:
+            except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed: {str(e)} | Guardrail trigger: {e.guardrail_trigger}")
                 raise e
             except ModelProviderError as e:
@@ -2758,7 +2758,7 @@ class Agent:
 
                 hook(**filtered_args)
 
-            except (InputValidationError, OutputValidationError) as e:
+            except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
                 log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
@@ -2789,7 +2789,7 @@ class Agent:
                     # Synchronous function
                     hook(**filtered_args)
 
-            except (InputValidationError, OutputValidationError) as e:
+            except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
                 log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
@@ -2819,7 +2819,7 @@ class Agent:
 
                 hook(**filtered_args)
 
-            except (InputValidationError, OutputValidationError) as e:
+            except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
                 log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
@@ -2849,7 +2849,7 @@ class Agent:
                 else:
                     hook(**filtered_args)
 
-            except (InputValidationError, OutputValidationError) as e:
+            except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
                 log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")

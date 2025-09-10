@@ -1,6 +1,6 @@
 from typing import List, Optional, Union
 
-from agno.guardrails import GuardrailTrigger
+from agno.checks import CheckTrigger
 from agno.models.message import Message
 
 
@@ -95,19 +95,19 @@ class EvalError(Exception):
     pass
 
 
-class InputValidationError(Exception):
-    """Exception raised when an input validation fails."""
+class InputCheckError(Exception):
+    """Exception raised when an input check fails."""
 
-    def __init__(self, message: str, guardrail_trigger: GuardrailTrigger = GuardrailTrigger.VALIDATION_FAILED):
+    def __init__(self, message: str, check_trigger: CheckTrigger = CheckTrigger.VALIDATION_FAILED):
         super().__init__(message)
         self.message = message
-        self.guardrail_trigger = guardrail_trigger
+        self.check_trigger = check_trigger
 
 
-class OutputValidationError(Exception):
-    """Exception raised when an output validation fails."""
+class OutputCheckError(Exception):
+    """Exception raised when an output check fails."""
 
-    def __init__(self, message: str, guardrail_trigger: GuardrailTrigger = GuardrailTrigger.VALIDATION_FAILED):
+    def __init__(self, message: str, check_trigger: CheckTrigger = CheckTrigger.VALIDATION_FAILED):
         super().__init__(message)
         self.message = message
-        self.guardrail_trigger = guardrail_trigger
+        self.check_trigger = check_trigger
