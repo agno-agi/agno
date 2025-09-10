@@ -1,6 +1,5 @@
 from functools import update_wrapper, wraps
 from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, overload
-
 from agno.tools.function import Function, get_entrypoint_docstring
 from agno.utils.log import logger
 
@@ -12,7 +11,6 @@ ToolConfig = TypeVar("ToolConfig", bound=Dict[str, Any])
 def _is_async_function(func: Callable) -> bool:
     """
     Check if a function is async, even when wrapped by decorators like @staticmethod.
-
     This function tries to detect async functions by:
     1. Checking the function directly with inspect functions
     2. Looking at the original function if it's wrapped
@@ -50,6 +48,29 @@ def _is_async_function(func: Callable) -> bool:
         pass
 
     return False
+
+
+async def _execute_hook_if_async(hook: Callable, *args: Any, **kwargs: Any) -> Any:
+    """
+    Execute a hook function, awaiting it if it's async.
+    """
+    if _is_async_function(hook):
+        return await hook(*args, **kwargs)
+    else:
+        return hook(*args, **kwargs)
+
+
+def _execute_hook_sync(hook: Callable, *args: Any, **kwargs: Any) -> Any:
+    """
+    Execute a hook function synchronously (for sync tool functions).
+    Note: This will not work properly with async hooks - they should be avoided with sync tools.
+    """
+    if _is_async_function(hook):
+        logger.warning(
+            f"Async hook {hook.__name__!r} used with sync tool function. "
+            "This may not work as expected. Consider making the tool function async."
+        )
+    return hook(*args, **kwargs)
 
 
 @overload
@@ -98,9 +119,9 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         requires_user_input: Optional[bool] - If True, the function will require user input before execution
         user_input_fields: Optional[List[str]] - List of fields that will be provided to the function as user input
         external_execution: Optional[bool] - If True, the function will be executed outside of the agent's context
-        pre_hook: Optional[Callable] - Hook that runs before the function is executed.
-        post_hook: Optional[Callable] - Hook that runs after the function is executed.
-        tool_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed.
+        pre_hook: Optional[Callable] - Hook that runs before the function is executed. Can be async.
+        post_hook: Optional[Callable] - Hook that runs after the function is executed. Can be async.
+        tool_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed. Can be async.
         cache_results: bool - If True, enable caching of function results
         cache_dir: Optional[str] - Directory to store cache files
         cache_ttl: int - Time-to-live for cached results in seconds
@@ -119,6 +140,10 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
 
         @tool
         async def my_async_function():
+            pass
+
+        @tool(pre_hook=async_pre_hook, post_hook=async_post_hook)
+        async def tool_with_async_hooks():
             pass
     """
     # Move valid kwargs to a frozen set at module level
@@ -158,7 +183,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         kwargs.get("external_execution", False),
     ]
     true_flags_count = sum(1 for flag in exclusive_flags if flag)
-
     if true_flags_count > 1:
         raise ValueError(
             "Only one of 'requires_user_input', 'requires_confirmation', or 'external_execution' can be set to True at the same time."
@@ -167,10 +191,32 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
     def decorator(func: F) -> Function:
         from inspect import isasyncgenfunction
 
+        # Extract hooks from kwargs
+        pre_hook = kwargs.get("pre_hook")
+        post_hook = kwargs.get("post_hook")
+        tool_hooks = kwargs.get("tool_hooks", [])
+
         @wraps(func)
-        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+        def sync_wrapper(*args: Any, **kwargs_inner: Any) -> Any:
             try:
-                return func(*args, **kwargs)
+                # Execute pre_hook and tool_hooks (before) synchronously
+                if pre_hook:
+                    _execute_hook_sync(pre_hook, *args, **kwargs_inner)
+                
+                for hook in tool_hooks:
+                    _execute_hook_sync(hook, *args, **kwargs_inner)
+
+                # Execute the actual function
+                result = func(*args, **kwargs_inner)
+
+                # Execute post_hook and tool_hooks (after) synchronously
+                if post_hook:
+                    _execute_hook_sync(post_hook, result, *args, **kwargs_inner)
+                
+                for hook in tool_hooks:
+                    _execute_hook_sync(hook, result, *args, **kwargs_inner)
+
+                return result
             except Exception as e:
                 logger.error(
                     f"Error in tool {func.__name__!r}: {e!r}",
@@ -179,9 +225,26 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
                 raise
 
         @wraps(func)
-        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+        async def async_wrapper(*args: Any, **kwargs_inner: Any) -> Any:
             try:
-                return await func(*args, **kwargs)
+                # Execute pre_hook and tool_hooks (before) with async support
+                if pre_hook:
+                    await _execute_hook_if_async(pre_hook, *args, **kwargs_inner)
+                
+                for hook in tool_hooks:
+                    await _execute_hook_if_async(hook, *args, **kwargs_inner)
+
+                # Execute the actual async function
+                result = await func(*args, **kwargs_inner)
+
+                # Execute post_hook and tool_hooks (after) with async support
+                if post_hook:
+                    await _execute_hook_if_async(post_hook, result, *args, **kwargs_inner)
+                
+                for hook in tool_hooks:
+                    await _execute_hook_if_async(hook, result, *args, **kwargs_inner)
+
+                return result
             except Exception as e:
                 logger.error(
                     f"Error in async tool {func.__name__!r}: {e!r}",
@@ -190,9 +253,26 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
                 raise
 
         @wraps(func)
-        async def async_gen_wrapper(*args: Any, **kwargs: Any) -> Any:
+        async def async_gen_wrapper(*args: Any, **kwargs_inner: Any) -> Any:
             try:
-                return func(*args, **kwargs)
+                # Execute pre_hook and tool_hooks (before) with async support
+                if pre_hook:
+                    await _execute_hook_if_async(pre_hook, *args, **kwargs_inner)
+                
+                for hook in tool_hooks:
+                    await _execute_hook_if_async(hook, *args, **kwargs_inner)
+
+                # Execute the async generator function (note: doesn't await, returns the generator)
+                result = func(*args, **kwargs_inner)
+
+                # Execute post_hook and tool_hooks (after) with async support
+                if post_hook:
+                    await _execute_hook_if_async(post_hook, result, *args, **kwargs_inner)
+                
+                for hook in tool_hooks:
+                    await _execute_hook_if_async(hook, result, *args, **kwargs_inner)
+
+                return result
             except Exception as e:
                 logger.error(
                     f"Error in async generator tool {func.__name__!r}: {e!r}",
@@ -213,7 +293,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
 
         if kwargs.get("requires_user_input", True):
             kwargs["user_input_fields"] = kwargs.get("user_input_fields", [])
-
         if kwargs.get("user_input_fields"):
             kwargs["requires_user_input"] = True
 
@@ -256,5 +335,4 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
     # Handle both @tool and @tool() cases
     if len(args) == 1 and callable(args[0]) and not kwargs:
         return decorator(args[0])
-
     return decorator
