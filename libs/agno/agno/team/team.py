@@ -6040,7 +6040,7 @@ class Team:
         session = self.get_session(session_id=session_id)  # type: ignore
 
         if session is None:
-            raise Exception("Session not found")
+            return []
 
         # Only filter by agent_id if this is part of a team
         return session.get_messages_from_last_n_runs(
