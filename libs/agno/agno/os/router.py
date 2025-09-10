@@ -1,5 +1,6 @@
+import inspect
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -8,6 +9,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
     WebSocket,
 )
@@ -54,6 +56,23 @@ from agno.workflow.workflow import Workflow
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
+
+
+async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
+    """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
+
+    Args:
+        request: The FastAPI Request object
+        endpoint_func: The function exposing the endpoint that received the request
+
+    Returns:
+        A dictionary of kwargs
+    """
+    form_data = await request.form()
+    sig = inspect.signature(endpoint_func)
+    known_fields = set(sig.parameters.keys())
+    kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
+    return kwargs
 
 
 def format_sse_event(json_data: str) -> str:
@@ -143,6 +162,7 @@ async def agent_response_streamer(
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
+    **kwargs: Any,
 ) -> AsyncGenerator:
     try:
         run_response = agent.arun(
@@ -155,6 +175,7 @@ async def agent_response_streamer(
             files=files,
             stream=True,
             stream_intermediate_steps=True,
+            **kwargs,
         )
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk.to_json())
@@ -501,6 +522,8 @@ def get_base_router(
 
     # -- Agent routes ---
 
+    from fastapi import Request
+
     @router.post(
         "/agents/{agent_id}/runs",
         tags=["Agents"],
@@ -538,12 +561,15 @@ def get_base_router(
     )
     async def create_agent_run(
         agent_id: str,
+        request: Request,
         message: str = Form(...),
         stream: bool = Form(False),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
     ):
+        kwargs = _get_request_kwargs(request, create_agent_run)
+
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -620,6 +646,7 @@ def get_base_router(
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
                     files=input_files if input_files else None,
+                    **kwargs,
                 ),
                 media_type="text/event-stream",
             )
@@ -635,6 +662,7 @@ def get_base_router(
                     videos=base64_videos if base64_videos else None,
                     files=input_files if input_files else None,
                     stream=False,
+                    **kwargs,
                 ),
             )
             return run_response.to_dict()
