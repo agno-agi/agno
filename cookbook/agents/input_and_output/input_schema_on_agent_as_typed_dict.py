@@ -66,8 +66,8 @@ try:
         }
     )
 except ValueError as e:
-    print(f"\n=== Expected Error for Missing Fields ===")
-    print(f"Error: {e}")
+    print("\n=== Expected Error for Missing Fields ===")
+    print("Error: {e}")
 
 # This will raise an error - unexpected field
 try:
