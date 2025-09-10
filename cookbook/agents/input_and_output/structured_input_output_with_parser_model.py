@@ -1,72 +1,47 @@
 from typing import List
 
 from agno.agent import Agent
+from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel, Field
+from rich.pretty import pprint
 
 
+# Define your input schema
 class ResearchTopic(BaseModel):
-    """Structured research topic with specific requirements"""
-
     topic: str
-    focus_areas: List[str] = Field(description="Specific areas to focus on")
-    target_audience: str = Field(description="Who this research is for")
-    sources_required: int = Field(description="Number of sources needed", default=5)
+    sources_required: int = Field(description="Number of sources required", default=5)
 
 
-class HackerNewsResearch(BaseModel):
-    """Structured output for Hackernews research results"""
-
-    research_summary: str = Field(
-        ..., description="Executive summary of the research findings"
-    )
-    key_insights: List[str] = Field(
-        ..., description="Main insights discovered from Hackernews posts"
-    )
-    trending_topics: List[str] = Field(
-        ..., description="Currently trending topics related to the research"
-    )
+# Define your output schema
+class ResearchOutput(BaseModel):
+    summary: str = Field(..., description="Executive summary of the research findings")
+    insights: List[str] = Field(..., description="Key insights discovered from posts")
     top_stories: List[str] = Field(
         ..., description="Most relevant and popular stories found"
     )
-    discussion_highlights: List[str] = Field(
-        ..., description="Notable comments or discussions"
-    )
-    technologies_mentioned: List[str] = Field(
+    technologies: List[str] = Field(
         ..., description="Technologies, tools, or frameworks mentioned"
     )
-    industry_sentiment: str = Field(
-        ..., description="Overall sentiment and mood of the community"
-    )
-    actionable_takeaways: List[str] = Field(
-        ..., description="Practical insights the target audience can act on"
-    )
-    source_links: List[str] = Field(
-        ..., description="Links to the most relevant Hackernews posts"
-    )
-    confidence_score: int = Field(
-        ..., ge=1, le=10, description="Research confidence level (1=low, 10=high)"
-    )
+    sources: List[str] = Field(..., description="Links to the most relevant posts")
 
 
-# Define agents
-hackernews_agent = Agent(
-    name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+# Define your agent
+hn_researcher_agent = Agent(
+    # Model to use
+    model=Claude(id="claude-sonnet-4-0"),
+    # Tools to use
     tools=[HackerNewsTools()],
-    role="Extract key insights and content from Hackernews posts",
+    instructions="Research hackernews posts for a given topic",
     input_schema=ResearchTopic,
-    output_schema=HackerNewsResearch,
-    parser_model=OpenAIChat(id="gpt-4.1"),
+    output_schema=ResearchOutput,
+    # Model to use convert the output to the JSON schema
+    parser_model=OpenAIChat(id="gpt-5-nano"),
 )
 
-# Pass a dict that matches the input schema
-hackernews_agent.print_response(
-    input={
-        "topic": "AI",
-        "focus_areas": ["AI", "Machine Learning"],
-        "target_audience": "Developers",
-        "sources_required": 5,
-    }
-)
+# Run the Agent
+response = hn_researcher_agent.run(input=ResearchTopic(topic="AI", sources_required=5))
+
+# Print the response
+pprint(response.content)
