@@ -27,7 +27,7 @@ agent = Agent(
 
 if __name__ == "__main__":
     # Comment out after first run
-    asyncio.run(knowledge.add_content_async(path=Path("data/csv"), reader=CSVReader(encoding="gb2312")))
+    asyncio.run(knowledge.add_content_async(url="https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv", reader=CSVReader(encoding="gb2312")))
 
     # Create and use the agent
     asyncio.run(agent.aprint_response("What is the csv file about", markdown=True))
