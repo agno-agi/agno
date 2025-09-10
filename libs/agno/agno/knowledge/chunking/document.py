@@ -14,7 +14,16 @@ class DocumentChunking(ChunkingStrategy):
     def chunk(self, document: Document) -> List[Document]:
         """Split document into chunks based on document structure"""
         if len(document.content) <= self.chunk_size:
-            return [document]
+            # Even single chunks should have proper metadata
+            meta_data = document.meta_data.copy()
+            meta_data["chunk"] = 1
+            meta_data["chunk_size"] = len(document.content)
+            chunk_id = None
+            if document.id:
+                chunk_id = f"{document.id}_1"
+            elif document.name:
+                chunk_id = f"{document.name}_1"
+            return [Document(id=chunk_id, name=document.name, meta_data=meta_data, content=document.content)]
 
         # Split on double newlines first (paragraphs)
         paragraphs = self.clean_text(document.content).split("\n\n")
@@ -32,20 +41,23 @@ class DocumentChunking(ChunkingStrategy):
                 current_chunk.append(para)
                 current_size += para_size
             else:
-                meta_data = chunk_meta_data.copy()
-                meta_data["chunk"] = chunk_number
-                chunk_id = None
-                if document.id:
-                    chunk_id = f"{document.id}_{chunk_number}"
-                elif document.name:
-                    chunk_id = f"{document.name}_{chunk_number}"
-                meta_data["chunk_size"] = len("\n\n".join(current_chunk))
+                # Create chunk from current_chunk if it's not empty
                 if current_chunk:
+                    meta_data = chunk_meta_data.copy()
+                    meta_data["chunk"] = chunk_number
+                    chunk_id = None
+                    if document.id:
+                        chunk_id = f"{document.id}_{chunk_number}"
+                    elif document.name:
+                        chunk_id = f"{document.name}_{chunk_number}"
+                    meta_data["chunk_size"] = len("\n\n".join(current_chunk))
                     chunks.append(
                         Document(
                             id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk)
                         )
                     )
+                    chunk_number += 1  # Increment chunk count
+
                 current_chunk = [para]
                 current_size = para_size
 
@@ -69,19 +81,23 @@ class DocumentChunking(ChunkingStrategy):
                 if i > 0:
                     # Add overlap from previous chunk
                     prev_text = chunks[i - 1].content[-self.overlap :]
+                    current_chunk_number = i + 1  # Increment chunk count
                     meta_data = chunk_meta_data.copy()
-                    meta_data["chunk"] = chunk_number
+                    meta_data["chunk"] = current_chunk_number
                     chunk_id = None
                     if document.id:
-                        chunk_id = f"{document.id}_{chunk_number}"
-                    meta_data["chunk_size"] = len(prev_text + chunks[i].content)
+                        chunk_id = f"{document.id}_{current_chunk_number}"
+                    elif document.name:
+                        chunk_id = f"{document.name}_{current_chunk_number}"
+                    overlapped_content = prev_text + chunks[i].content
+                    meta_data["chunk_size"] = len(overlapped_content)
                     if prev_text:
                         overlapped_chunks.append(
                             Document(
                                 id=chunk_id,
                                 name=document.name,
                                 meta_data=meta_data,
-                                content=prev_text + chunks[i].content,
+                                content=overlapped_content,
                             )
                         )
                 else:
