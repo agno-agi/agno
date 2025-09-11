@@ -7,7 +7,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 # ************* Database Connection *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url)
+db = PostgresDb(db_url,)
 # *******************************
 
 
@@ -19,7 +19,6 @@ memory_agent = Agent(
     num_history_runs=5,
     add_datetime_to_context=True,
     markdown=True,
-    debug_mode=debug_mode,
     # Set a database
     db=db,
     # Enable memory
