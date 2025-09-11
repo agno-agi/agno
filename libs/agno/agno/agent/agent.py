@@ -21,7 +21,6 @@ from typing import (
     Union,
     cast,
     get_args,
-    get_type_hints,
     overload,
 )
 from uuid import uuid4
@@ -106,6 +105,7 @@ from agno.utils.response import (
     generator_wrapper,
     get_paused_content,
 )
+from agno.utils.common import validate_typed_dict
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
@@ -589,79 +589,6 @@ class Agent:
             hasattr(cls, '__optional_keys__')
         )
 
-    def _validate_typed_dict(self, data: dict, schema_cls) -> dict:
-        """Validate input data against a TypedDict schema."""
-        if not isinstance(data, dict):
-            raise ValueError(f"Expected dict for TypedDict {schema_cls.__name__}, got {type(data)}")
-        
-        # Get type hints from the TypedDict
-        try:
-            type_hints = get_type_hints(schema_cls)
-        except Exception as e:
-            raise ValueError(f"Could not get type hints for TypedDict {schema_cls.__name__}: {e}")
-        
-        # Get required and optional keys
-        required_keys: Set[str] = getattr(schema_cls, '__required_keys__', set())
-        optional_keys: Set[str] = getattr(schema_cls, '__optional_keys__', set())
-        all_keys = required_keys | optional_keys
-        
-        # Check for missing required fields
-        missing_required = required_keys - set(data.keys())
-        if missing_required:
-            raise ValueError(f"Missing required fields in TypedDict {schema_cls.__name__}: {missing_required}")
-        
-        # Check for unexpected fields
-        unexpected_fields = set(data.keys()) - all_keys
-        if unexpected_fields:
-            raise ValueError(f"Unexpected fields in TypedDict {schema_cls.__name__}: {unexpected_fields}")
-        
-        # Basic type checking for provided fields
-        validated_data = {}
-        for field_name, value in data.items():
-            if field_name in type_hints:
-                expected_type = type_hints[field_name]
-                
-                # Handle simple type checking
-                if not self._check_type_compatibility(value, expected_type):
-                    raise ValueError(f"Field '{field_name}' expected type {expected_type}, got {type(value)} with value {value}")
-                
-                validated_data[field_name] = value
-        
-        return validated_data
-
-    def _check_type_compatibility(self, value: Any, expected_type: Type) -> bool:
-        """Basic type compatibility checking."""
-        from typing import get_origin, get_args
-        
-        # Handle None/Optional types
-        if value is None:
-            return type(None) in get_args(expected_type) if hasattr(expected_type, '__args__') else expected_type is type(None)
-        
-        # Handle Union types (including Optional)
-        origin = get_origin(expected_type)
-        if origin is Union:
-            return any(self._check_type_compatibility(value, arg) for arg in get_args(expected_type))
-        
-        # Handle List types
-        if origin is list or expected_type is list:
-            if not isinstance(value, list):
-                return False
-            if origin is list and get_args(expected_type):
-                element_type = get_args(expected_type)[0]
-                return all(self._check_type_compatibility(item, element_type) for item in value)
-            return True
-        
-        if expected_type in (str, int, float, bool):
-            return isinstance(value, expected_type)
-        
-        if expected_type is Any:
-            return True
-        
-        try:
-            return isinstance(value, expected_type)
-        except TypeError:
-            return True
-
     def _validate_input(
         self, input: Union[str, List, Dict, Message, BaseModel]
     ) -> Union[str, List, Dict, Message, BaseModel]:
@@ -687,7 +614,7 @@ class Agent:
             # Handle TypedDict validation
             if isinstance(input, dict):
                 try:
-                    validated_dict = self._validate_typed_dict(input, self.input_schema)
+                    validated_dict = validate_typed_dict(input, self.input_schema)
                     return validated_dict  # Return the validated dict, not an instance
                 except Exception as e:
                     raise ValueError(f"Failed to validate dict against TypedDict {self.input_schema.__name__}: {str(e)}")
