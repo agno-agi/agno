@@ -22,7 +22,7 @@ from agno.vectordb.pgvector.pgvector import PgVector
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Create Postgres-backed memory store
-db = PostgresDb(db_url=db_url)
+db = PostgresDb(id="demo-db", db_url=db_url)
 
 # Create Postgres-backed vector store
 vector_db = PgVector(
