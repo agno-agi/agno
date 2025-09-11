@@ -105,7 +105,7 @@ from agno.utils.response import (
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
 from agno.utils.team import format_member_agent_task, get_member_id
-from agno.utils.common import validate_typed_dict
+from agno.utils.common import validate_typed_dict, is_typed_dict
 from agno.utils.timer import Timer
 
 
@@ -598,15 +598,6 @@ class Team:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
-    def _is_typed_dict(self, cls: Type[Any]) -> bool:
-        """Check if a class is a TypedDict"""
-        return (
-            hasattr(cls, '__annotations__') 
-            and hasattr(cls, '__total__')
-            and hasattr(cls, '__required_keys__')
-            and hasattr(cls, '__optional_keys__')
-        )
-
     def _validate_input(
         self, input: Union[str, List, Dict, Message, BaseModel]
     ) -> Union[str, List, Dict, Message, BaseModel]:
@@ -642,7 +633,7 @@ class Team:
         elif isinstance(input, dict):
             try:
                 # Check if the schema is a TypedDict
-                if self._is_typed_dict(self.input_schema):
+                if is_typed_dict(self.input_schema):
                     validated_dict = validate_typed_dict(input, self.input_schema)  
                     return validated_dict
                 else:
@@ -4612,7 +4603,7 @@ class Team:
             # If message is provided as a dict, try to validate it as a Message
             elif isinstance(input_message, dict):
                 try:
-                    if self.input_schema and self._is_typed_dict(self.input_schema):
+                    if self.input_schema and is_typed_dict(self.input_schema):
                         import json
                         content = json.dumps(input_message, indent=2, ensure_ascii=False)
                         return Message(role="user", content=content)

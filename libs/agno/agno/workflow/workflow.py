@@ -51,7 +51,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.team.team import Team
-from agno.utils.common import validate_typed_dict
+from agno.utils.common import validate_typed_dict, is_typed_dict
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -216,15 +216,6 @@ class Workflow:
             else:
                 self.id = str(uuid4())
 
-    def _is_typed_dict(self, cls: Type[Any]) -> bool:
-        """Check if a class is a TypedDict"""
-        return (
-            hasattr(cls, '__annotations__') 
-            and hasattr(cls, '__total__')
-            and hasattr(cls, '__required_keys__')
-            and hasattr(cls, '__optional_keys__')
-        )
-
     def _validate_input(
         self, input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]]
     ) -> Optional[Union[str, List, Dict, Message, BaseModel]]:
@@ -263,7 +254,7 @@ class Workflow:
         elif isinstance(input, dict):
             try:
                 # Check if the schema is a TypedDict
-                if self._is_typed_dict(self.input_schema):
+                if is_typed_dict(self.input_schema):
                     validated_dict = validate_typed_dict(input, self.input_schema)  
                     return validated_dict
                 else:

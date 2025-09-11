@@ -42,6 +42,15 @@ def nested_model_dump(value):
         return [nested_model_dump(item) for item in value]
     return value
 
+def is_typed_dict(cls: Type[Any]) -> bool:
+        """Check if a class is a TypedDict"""
+        return (
+            hasattr(cls, '__annotations__') 
+            and hasattr(cls, '__total__')
+            and hasattr(cls, '__required_keys__')
+            and hasattr(cls, '__optional_keys__')
+        )
+
 def check_type_compatibility(value: Any, expected_type: Type) -> bool:
         """Basic type compatibility checking."""
         from typing import get_origin, get_args

@@ -27,7 +27,7 @@ hackernews_agent = Agent(
     input_schema=ResearchTopicDict,
 )
 
-# Test with valid input
+# with valid input
 print("=== Testing TypedDict Input Schema ===")
 hackernews_agent.print_response(
     input={
@@ -38,7 +38,7 @@ hackernews_agent.print_response(
     }
 )
 
-# Test with optional fields
+# with optional fields
 optional_agent = Agent(
     name="Hackernews Agent with Optional Fields",
     model=OpenAIChat(id="gpt-4o-mini"),
