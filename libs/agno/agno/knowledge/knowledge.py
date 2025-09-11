@@ -474,7 +474,7 @@ class Knowledge:
         # 4. Select reader
         # If a reader was provided by the user, use it
         reader = content.reader
-        name = content.name
+        name = content.name if content.name else content.url
         # Else select based on file extension
         if reader is None:
             url_path = Path(parsed_url.path)

@@ -91,7 +91,7 @@ class BaseWorkflowRunOutputEvent:
 
         return _dict
 
-    def to_json(self) -> str:
+    def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
         import json
 
         try:
@@ -100,7 +100,28 @@ class BaseWorkflowRunOutputEvent:
             log_error("Failed to convert response to json", exc_info=True)
             raise
 
-        return json.dumps(_dict, indent=2)
+        if indent is None:
+            return json.dumps(_dict, separators=separators)
+        else:
+            return json.dumps(_dict, indent=indent, separators=separators)
+
+    @property
+    def is_cancelled(self):
+        return False
+
+    @property
+    def is_error(self):
+        return False
+
+    @property
+    def status(self):
+        status = "Completed"
+        if self.is_error:
+            status = "Error"
+        if self.is_cancelled:
+            status = "Cancelled"
+
+        return status
 
     @property
     def is_cancelled(self):

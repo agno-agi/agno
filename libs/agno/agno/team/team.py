@@ -408,6 +408,7 @@ class Team:
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
         add_memories_to_context: Optional[bool] = None,
+        memory_manager: Optional[MemoryManager] = None,
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
@@ -505,6 +506,7 @@ class Team:
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
         self.add_memories_to_context = add_memories_to_context
+        self.memory_manager = memory_manager
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
         self.add_session_summary_to_context = add_session_summary_to_context
@@ -4720,9 +4722,18 @@ class Team:
         system_message_content += "</team_members>\n"
 
         system_message_content += "\n<how_to_respond>\n"
-        if self.mode == "coordinate":
+
+        if self.delegate_task_to_all_members:
             system_message_content += (
                 "- Your role is to forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
+                "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
+                "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
+                "- If you feel the task has been completed, you can stop and respond to the user.\n"
+            )
+        else:
+            system_message_content += (
+                "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
                 "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
                 "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
                 "- When you delegate a task to another member, make sure to include:\n"
@@ -4735,24 +4746,6 @@ class Team:
                 "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
                 "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
                 "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
-            )
-        elif self.mode == "route":
-            system_message_content += (
-                "- Your role is to forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
-                "- Carefully analyze the tools available to the members and their roles before forwarding tasks.\n"
-                "- When you forward a task to another Agent, make sure to include:\n"
-                "  - member_id (str): The ID of the member to forward the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
-                "  - expected_output (str): The expected output.\n"
-                "- You can forward tasks to multiple members at once.\n"
-                "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
-                "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
-            )
-        elif self.mode == "collaborate":
-            system_message_content += (
-                "- You can either respond directly or use the `run_member_agents` tool to run all members in your team to get a collaborative response.\n"
-                "- To run the members in your team, call `run_member_agents` ONLY once. This will run all members in your team.\n"
-                "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
-                "- If you feel the task has been completed, you can stop and respond to the user.\n"
             )
         system_message_content += "</how_to_respond>\n\n"
 
@@ -6722,7 +6715,8 @@ class Team:
         session = self.get_session(session_id=session_id)  # type: ignore
 
         if session is None:
-            raise Exception("Session not found")
+            log_warning(f"Session {session_id} not found")
+            return []
 
         # Only filter by agent_id if this is part of a team
         return session.get_messages_from_last_n_runs(

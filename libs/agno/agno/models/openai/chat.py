@@ -70,6 +70,7 @@ class OpenAIChat(Model):
     service_tier: Optional[str] = None  # "auto" | "default" | "flex" | "priority", defaults to "auto" when not set
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
+    extra_body: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
     role_map: Optional[Dict[str, str]] = None
 
@@ -191,6 +192,7 @@ class OpenAIChat(Model):
             "top_p": self.top_p,
             "extra_headers": self.extra_headers,
             "extra_query": self.extra_query,
+            "extra_body": self.extra_body,
             "metadata": self.metadata,
             "service_tier": self.service_tier,
         }
@@ -270,6 +272,7 @@ class OpenAIChat(Model):
                 "user": self.user,
                 "extra_headers": self.extra_headers,
                 "extra_query": self.extra_query,
+                "extra_body": self.extra_body,
                 "service_tier": self.service_tier,
             }
         )

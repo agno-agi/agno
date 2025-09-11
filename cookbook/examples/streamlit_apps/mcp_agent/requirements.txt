@@ -74,6 +74,7 @@ openai==1.59.6
     # via -r cookbook/examples/streamlit_apps/mcp_agent/requirements.in
 packaging==25.0
     # via
+    #   agno
     #   altair
     #   streamlit
 pandas==2.2.3
@@ -132,6 +133,7 @@ typing-extensions==4.12.2
     #   groq
     #   mcp
     #   openai
+    #   psycopg
     #   pydantic
     #   pydantic-core
     #   sqlalchemy

@@ -18,14 +18,14 @@ research_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[DuckDuckGoTools()],
     instructions=dedent("""\
-        You are an expert research specialist! 
-        
+        You are an expert research specialist!
+
         Your expertise:
         - **Deep Research**: Find comprehensive, current information on any topic
         - **Fact Verification**: Cross-reference claims and verify accuracy
         - **Source Analysis**: Evaluate credibility and relevance of sources
         - **Data Synthesis**: Organize research into clear, usable insights
-        
+
         Always provide:
         - Multiple reliable sources
         - Key statistics and recent developments
@@ -39,14 +39,14 @@ brainstorm_agent = Agent(
     role="Idea Generation and Creative Concepts",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions=dedent("""\
-        You are a creative brainstorming expert! 
-        
+        You are a creative brainstorming expert!
+
         Your specialty:
         - **Idea Generation**: Create unique, engaging content concepts
         - **Creative Angles**: Find fresh perspectives on familiar topics
         - **Content Formats**: Suggest various ways to present information
         - **Audience Targeting**: Tailor ideas to specific audiences
-        
+
         Generate:
         - Multiple creative approaches
         - Compelling headlines and hooks
@@ -60,14 +60,14 @@ writer_agent = Agent(
     role="Content Creation and Storytelling",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions=dedent("""\
-        You are a skilled content writer! 
-        
+        You are a skilled content writer!
+
         Your craft includes:
         - **Structured Writing**: Create clear, logical content flow
         - **Engaging Style**: Write compelling, readable content
         - **Audience Awareness**: Adapt tone and style for target readers
         - **SEO Knowledge**: Optimize for search and engagement
-        
+
         Create:
         - Well-structured articles and posts
         - Compelling introductions and conclusions
@@ -81,14 +81,14 @@ editor_agent = Agent(
     role="Content Editing and Quality Assurance",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions=dedent("""\
-        You are a meticulous editor! 
-        
+        You are a meticulous editor!
+
         Your expertise:
         - **Grammar & Style**: Perfect language mechanics and flow
         - **Clarity**: Ensure ideas are clear and well-expressed
         - **Consistency**: Maintain consistent tone and formatting
         - **Quality Assurance**: Final review for publication readiness
-        
+
         Focus on:
         - Error-free grammar and punctuation
         - Clear, concise expression
@@ -103,20 +103,20 @@ writing_team = Team(
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions=dedent("""\
         You are a collaborative writing team that excels at creating high-quality content!
-        
+
         Team Process:
         1. **Research Phase**: Gather comprehensive, current information
-        2. **Creative Phase**: Brainstorm unique angles and approaches  
+        2. **Creative Phase**: Brainstorm unique angles and approaches
         3. **Writing Phase**: Create structured, engaging content
         4. **Editing Phase**: Polish and perfect the final piece
-        
+
         Collaboration Style:
         - Each member contributes their specialized expertise
         - Build upon each other's contributions
         - Ensure cohesive, high-quality final output
         - Provide diverse perspectives and ideas
-        
-        Always deliver content that is well-researched, creative, 
+
+        Always deliver content that is well-researched, creative,
         expertly written, and professionally edited!
         """),
     show_members_responses=True,

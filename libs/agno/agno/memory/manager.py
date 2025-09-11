@@ -438,7 +438,7 @@ class MemoryManager:
         existing_memories = memories.get(user_id, [])  # type: ignore
         existing_memories = [{"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories]
         # The memory manager updates the DB directly
-        response = await self.arun_memory_task(
+        response = await self.arun_memory_task(  # type: ignore
             task=task,
             existing_memories=existing_memories,
             user_id=user_id,

@@ -17,6 +17,8 @@ class SessionType(str, Enum):
 
 
 class BaseDb(ABC):
+    """Base abstract class for all our Database implementations."""
+
     def __init__(
         self,
         session_table: Optional[str] = None,
@@ -246,7 +248,7 @@ class BaseDb(ABC):
 
 
 class AsyncBaseDb(ABC):
-    """Base class for all async database implementations."""
+    """Base abstract class for all our async database implementations."""
 
     def __init__(
         self,

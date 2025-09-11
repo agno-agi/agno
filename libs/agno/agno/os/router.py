@@ -1,5 +1,5 @@
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -8,6 +8,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
     WebSocket,
 )
@@ -45,9 +46,10 @@ from agno.os.utils import (
     process_image,
     process_video,
 )
-from agno.run.agent import RunErrorEvent, RunOutput
+from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
-from agno.run.workflow import WorkflowErrorEvent
+from agno.run.team import TeamRunOutputEvent
+from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutputEvent
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.workflow import Workflow
@@ -56,11 +58,11 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
-def format_sse_event(json_data: str) -> str:
+def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]) -> str:
     """Parse JSON data into SSE-compliant format.
 
     Args:
-        json_data: JSON string containing the event data
+        event_dict: Dictionary containing the event data
 
     Returns:
         SSE-formatted response:
@@ -75,14 +77,33 @@ def format_sse_event(json_data: str) -> str:
     """
     try:
         # Parse the JSON to extract the event type
-        data = json.loads(json_data)
-        event_type = data.get("event", "message")
+        event_type = event.event or "message"
 
-        # Format as SSE: event: <event_type>\ndata: <json_data>\n\n
-        return f"event: {event_type}\ndata: {json_data}\n\n"
-    except (json.JSONDecodeError, KeyError):
-        # Fallback to generic message event if parsing fails
-        return f"event: message\ndata: {json_data}\n\n"
+        # Serialize to valid JSON with double quotes and no newlines
+        clean_json = event.to_json(separators=(",", ":"), indent=None)
+
+        return f"event: {event_type}\ndata: {clean_json}\n\n"
+    except json.JSONDecodeError:
+        clean_json = event.to_json(separators=(",", ":"), indent=None)
+        return f"event: message\ndata: {clean_json}\n\n"
+
+
+async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
+    """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
+    Args:
+        request: The FastAPI Request object
+        endpoint_func: The function exposing the endpoint that received the request
+
+    Returns:
+        A dictionary of kwargs
+    """
+    import inspect
+
+    form_data = await request.form()
+    sig = inspect.signature(endpoint_func)
+    known_fields = set(sig.parameters.keys())
+    kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
+    return kwargs
 
 
 class WebSocketManager:
@@ -143,6 +164,7 @@ async def agent_response_streamer(
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
+    **kwargs: Any,
 ) -> AsyncGenerator:
     try:
         run_response = agent.arun(
@@ -155,9 +177,10 @@ async def agent_response_streamer(
             files=files,
             stream=True,
             stream_intermediate_steps=True,
+            **kwargs,
         )
         async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk.to_json())
+            yield format_sse_event(run_response_chunk)  # type: ignore
 
     except Exception as e:
         import traceback
@@ -166,7 +189,7 @@ async def agent_response_streamer(
         error_response = RunErrorEvent(
             content=str(e),
         )
-        yield format_sse_event(error_response.to_json())
+        yield format_sse_event(error_response)
 
 
 async def agent_continue_response_streamer(
@@ -186,7 +209,7 @@ async def agent_continue_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in continue_response:
-            yield format_sse_event(run_response_chunk.to_json())
+            yield format_sse_event(run_response_chunk)  # type: ignore
 
     except Exception as e:
         import traceback
@@ -195,7 +218,7 @@ async def agent_continue_response_streamer(
         error_response = RunErrorEvent(
             content=str(e),
         )
-        yield format_sse_event(error_response.to_json())
+        yield format_sse_event(error_response)
         return
 
 
@@ -208,6 +231,7 @@ async def team_response_streamer(
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
+    **kwargs: Any,
 ) -> AsyncGenerator:
     """Run the given team asynchronously and yield its response"""
     try:
@@ -221,9 +245,10 @@ async def team_response_streamer(
             files=files,
             stream=True,
             stream_intermediate_steps=True,
+            **kwargs,
         )
         async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk.to_json())
+            yield format_sse_event(run_response_chunk)  # type: ignore
 
     except Exception as e:
         import traceback
@@ -232,7 +257,7 @@ async def team_response_streamer(
         error_response = TeamRunErrorEvent(
             content=str(e),
         )
-        yield format_sse_event(error_response.to_json())
+        yield format_sse_event(error_response)
         return
 
 
@@ -296,7 +321,7 @@ async def workflow_response_streamer(
         )
 
         async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk.to_json())
+            yield format_sse_event(run_response_chunk)  # type: ignore
 
     except Exception as e:
         import traceback
@@ -305,7 +330,7 @@ async def workflow_response_streamer(
         error_response = WorkflowErrorEvent(
             error=str(e),
         )
-        yield format_sse_event(error_response.to_json())
+        yield format_sse_event(error_response)
         return
 
 
@@ -538,12 +563,15 @@ def get_base_router(
     )
     async def create_agent_run(
         agent_id: str,
+        request: Request,
         message: str = Form(...),
         stream: bool = Form(False),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
     ):
+        kwargs = await _get_request_kwargs(request, create_agent_run)
+
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -620,6 +648,7 @@ def get_base_router(
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
                     files=input_files if input_files else None,
+                    **kwargs,
                 ),
                 media_type="text/event-stream",
             )
@@ -635,6 +664,7 @@ def get_base_router(
                     videos=base64_videos if base64_videos else None,
                     files=input_files if input_files else None,
                     stream=False,
+                    **kwargs,
                 ),
             )
             return run_response.to_dict()
@@ -880,6 +910,7 @@ def get_base_router(
     )
     async def create_team_run(
         team_id: str,
+        request: Request,
         message: str = Form(...),
         stream: bool = Form(True),
         monitor: bool = Form(True),
@@ -887,7 +918,10 @@ def get_base_router(
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
     ):
-        logger.debug(f"Creating team run: {message} {session_id} {monitor} {user_id} {team_id} {files}")
+        kwargs = await _get_request_kwargs(request, create_team_run)
+
+        logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
+
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -962,6 +996,7 @@ def get_base_router(
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
                     files=document_files if document_files else None,
+                    **kwargs,
                 ),
                 media_type="text/event-stream",
             )
@@ -975,6 +1010,7 @@ def get_base_router(
                 videos=base64_videos if base64_videos else None,
                 files=document_files if document_files else None,
                 stream=False,
+                **kwargs,
             )
             return run_response.to_dict()
 
@@ -1328,12 +1364,14 @@ def get_base_router(
     )
     async def create_workflow_run(
         workflow_id: str,
+        request: Request,
         message: str = Form(...),
         stream: bool = Form(True),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
-        **kwargs: Any,
     ):
+        kwargs = await _get_request_kwargs(request, create_workflow_run)
+
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:

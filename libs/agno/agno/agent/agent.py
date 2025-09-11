@@ -1317,6 +1317,10 @@ class Agent:
         11. Add RunOutput to Agent Session
         12. Save session to storage
         """
+        # Resolving here for async requirement
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies)
+
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # 1. Resolve dependencies
@@ -1367,7 +1371,7 @@ class Agent:
         )
         if len(run_messages.messages) == 0:
             log_error("No messages to be sent to the model.")
-            
+
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
@@ -1510,6 +1514,11 @@ class Agent:
         10. Add RunOutput to Agent Session
         11. Save session to storage
         """
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+        # Resolving here for async requirement
+        if run_dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=run_dependencies)
+
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # 1. Resolve dependencies
@@ -1790,7 +1799,7 @@ class Agent:
 
         # 2. Validate input against input_schema if provided
         validated_input = self._validate_input(input)
-        
+
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
         )
@@ -1801,7 +1810,7 @@ class Agent:
         image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
             images=images, videos=videos, audios=audio
         )
-        
+
         # Resolve variables
         run_dependencies = dependencies if dependencies is not None else self.dependencies
         add_dependencies = (
@@ -1841,7 +1850,7 @@ class Agent:
         # Prepare arguments for the model
         response_format = self._get_response_format() if self.parser_model is None else None
         self.model = cast(Model, self.model)
-        
+
         # Get knowledge filters
         effective_filters = knowledge_filters
         if self.knowledge_filters or knowledge_filters:
@@ -1936,6 +1945,17 @@ class Agent:
                     import time
 
                     time.sleep(delay)
+            except RunCancelledException as e:
+                # Handle run cancellation
+                log_info(f"Run {run_response.run_id} was cancelled")
+                run_response.content = str(e)
+                run_response.status = RunStatus.cancelled
+
+                # Add the RunOutput to Agent Session even when cancelled
+                agent_session.upsert_run(run=run_response)
+                self.save_session(session=agent_session)
+
+                return run_response
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -2467,10 +2487,11 @@ class Agent:
                         session_state=session_state,
                         run_id=run_id,
                         user_id=user_id,
-                        session_id=session_id,
+                        session=agent_session,
                         response_format=response_format,
                         dependencies=run_dependencies,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        dependencies=run_dependencies,
                     )
                 else:
                     return self._acontinue_run(  # type: ignore
@@ -2480,7 +2501,7 @@ class Agent:
                         session_state=session_state,
                         run_id=run_id,
                         user_id=user_id,
-                        session_id=session_id,
+                        session=agent_session,
                         response_format=response_format,
                         dependencies=run_dependencies,
                     )
@@ -2635,13 +2656,13 @@ class Agent:
                 self._store_media(run_response, model_response)
             else:
                 self._scrub_media_from_run_output(run_response)
-                
+
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 return self._handle_agent_run_paused(
                     run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
                 )
-                
+
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 11. Update Agent Memory
@@ -2784,7 +2805,7 @@ class Agent:
         run_messages: RunMessages = self._get_continue_run_messages(
             input=input,
         )
-        
+
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
@@ -2841,7 +2862,7 @@ class Agent:
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
-                    
+
             # Check for cancellation after model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2907,7 +2928,7 @@ class Agent:
                 create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                 run_response,
             )
-            
+
             # Add the RunOutput to Agent Session even when cancelled
             agent_session.upsert_run(run=run_response)
             if self._has_async_db():
@@ -5463,7 +5484,6 @@ class Agent:
         user_id: Optional[str] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        add_session_state_to_context: Optional[bool] = None,
     ) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -6142,7 +6162,6 @@ class Agent:
             user_id=user_id,
             dependencies=run_dependencies,
             metadata=metadata,
-            add_session_state_to_context=add_session_state_to_context,
         )
         if system_message is not None:
             run_messages.system_message = system_message

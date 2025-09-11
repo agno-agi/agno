@@ -21,11 +21,16 @@ session_id = str(uuid4())
 john_doe_id = "john_doe@example.com"
 
 # 1. Create memories by setting `enable_user_memories=True` in the Agent
+memory_manager = MemoryManager(model=OpenAIChat(id="o3-mini"))
+
+memory_manager.clear()
+
 agent = Agent(
     model=OpenAIChat(id="o3-mini"),
 )
 team = Team(
     model=OpenAIChat(id="o3-mini"),
+    memory_manager=memory_manager,
     members=[agent],
     db=db,
     enable_user_memories=True,
