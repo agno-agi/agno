@@ -3,11 +3,11 @@ import io
 import re
 from typing import List, Optional, Tuple, Union
 
-from agno.document.base import Document
-from agno.document.chunking.strategy import ChunkingStrategy
+from agno.knowledge.chunking.strategy import ChunkingStrategy
+from agno.knowledge.document.base import Document
 from agno.utils.log import log_error
 
-class FieldLabeledCSVChunking(ChunkingStrategy):
+class FieldLabeledChunking(ChunkingStrategy):
     """Chunking strategy that converts CSV content to field-labeled text format."""
 
     def __init__(
