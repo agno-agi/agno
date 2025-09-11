@@ -4852,7 +4852,7 @@ class Agent:
 
         # 3.3.15 Add the session state to the system message
         if self.add_session_state_to_context and session_state is not None:
-            system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
+            system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
         # Return the system message
         return (
