@@ -46,5 +46,5 @@ web_search_agent = Agent(
             enable_search=True,
         ),
     ],
-)   
+)
 # *******************************

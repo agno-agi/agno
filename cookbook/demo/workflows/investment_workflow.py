@@ -1,4 +1,4 @@
-"""💰 Investment Report Generator - Your AI Financial Analysis Studio! """
+"""💰 Investment Report Generator - Your AI Financial Analysis Studio!"""
 
 from textwrap import dedent
 from typing import List
@@ -12,7 +12,6 @@ from agno.workflow.types import StepOutput, WorkflowExecutionInput
 from agno.workflow.workflow import Workflow
 from pydantic import BaseModel
 
-
 # ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url, id="agno_assist_db")
@@ -22,6 +21,8 @@ db = PostgresDb(db_url=db_url, id="agno_assist_db")
 # ************* Model Setup *************
 class InvestmentWorkflowInput(BaseModel):
     companies: List[str]
+
+
 # *******************************
 
 
@@ -46,6 +47,8 @@ class PortfolioAllocation(BaseModel):
     investment_thesis: str
     risk_management: str
     final_recommendations: str
+
+
 # *******************************
 
 
@@ -53,9 +56,7 @@ class PortfolioAllocation(BaseModel):
 stock_analyst = Agent(
     name="Stock Analyst",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        YFinanceTools()
-    ],
+    tools=[YFinanceTools()],
     description=dedent("""\
     You are MarketMaster-X, an elite Senior Investment Analyst at Goldman Sachs with expertise in:
 
@@ -165,7 +166,7 @@ async def investment_analysis_execution(
     if not companies:
         return "❌ No company symbols provided"
 
-    print(f"🚀 Starting investment analysis for companies: {companies}")  
+    print(f"🚀 Starting investment analysis for companies: {companies}")
 
     # Phase 1: Stock Analysis
     print("\n📊 PHASE 1: COMPREHENSIVE STOCK ANALYSIS")
@@ -285,6 +286,8 @@ async def investment_analysis_execution(
     """
 
     return summary
+
+
 # *******************************
 
 

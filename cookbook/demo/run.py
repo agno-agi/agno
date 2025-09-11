@@ -4,11 +4,11 @@ from pathlib import Path
 
 from agents.agno_assist import agno_assist
 from agents.web_search import web_search_agent
+from agno.os import AgentOS
 from teams.multilingual_team import multilingual_team
 from teams.reasoning_finance_team import reasoning_finance_team
-from workflows.research_workflow import research_workflow
 from workflows.investment_workflow import investment_workflow
-from agno.os import AgentOS
+from workflows.research_workflow import research_workflow
 
 # ************* Config File Path *************
 config_path = str(Path(__file__).parent.joinpath("config.yaml"))

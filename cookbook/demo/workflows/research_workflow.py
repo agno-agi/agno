@@ -1,7 +1,5 @@
 from typing import List
 
-from pydantic import BaseModel, Field
-
 from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
@@ -10,7 +8,7 @@ from agno.tools.firecrawl import FirecrawlTools
 from agno.tools.wikipedia import WikipediaTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
-
+from pydantic import BaseModel, Field
 
 # ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -24,6 +22,8 @@ class ResearchTopic(BaseModel):
 
     topic: str
     focus_areas: List[str] = Field(description="Specific areas to focus on")
+
+
 # *******************************
 
 

@@ -1,5 +1,5 @@
-
 from textwrap import dedent
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
@@ -69,4 +69,3 @@ multilingual_team = Team(
     add_history_to_context=True,
 )
 # *******************************
-
