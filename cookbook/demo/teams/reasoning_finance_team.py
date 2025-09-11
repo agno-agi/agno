@@ -9,7 +9,7 @@ from agno.tools.yfinance import YFinanceTools
 
 # ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url=db_url)
+db = PostgresDb(db_url=db_url, id="agno_assist_db")
 # *******************************
 
 
