@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
-from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
+from agno.media import Audio, Image, Video
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
@@ -13,6 +13,9 @@ from agno.utils.log import log_error
 
 if TYPE_CHECKING:
     from agno.workflow.types import StepOutput, WorkflowMetrics
+else:
+    StepOutput = Any
+    WorkflowMetrics = Any
 
 
 class WorkflowRunEvent(str, Enum):
@@ -134,7 +137,7 @@ class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
     content_type: str = "str"
 
     # Store actual step execution results as StepOutput objects
-    step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
+    step_results: List[StepOutput] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -179,13 +182,13 @@ class StepCompletedEvent(BaseWorkflowRunOutputEvent):
     content_type: str = "str"
 
     # Media content fields
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
-    response_audio: Optional[AudioResponse] = None
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audio: Optional[List[Audio]] = None
+    response_audio: Optional[Audio] = None
 
     # Store actual step execution results as StepOutput objects
-    step_response: Optional["StepOutput"] = None  # noqa: F821
+    step_response: Optional[StepOutput] = None
 
 
 @dataclass
@@ -228,7 +231,7 @@ class LoopIterationCompletedEvent(BaseWorkflowRunOutputEvent):
     step_index: Optional[Union[int, tuple]] = None
     iteration: int = 0
     max_iterations: Optional[int] = None
-    iteration_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
+    iteration_results: List[StepOutput] = field(default_factory=list)
     should_continue: bool = True
 
 
@@ -241,7 +244,7 @@ class LoopExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
     step_index: Optional[Union[int, tuple]] = None
     total_iterations: int = 0
     max_iterations: Optional[int] = None
-    all_results: List[List["StepOutput"]] = field(default_factory=list)  # noqa: F821
+    all_results: List[List[StepOutput]] = field(default_factory=list)
 
 
 @dataclass
@@ -264,7 +267,7 @@ class ParallelExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
     parallel_step_count: Optional[int] = None
 
     # Results from all parallel steps
-    step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
+    step_results: List[StepOutput] = field(default_factory=list)
 
 
 @dataclass
@@ -288,7 +291,7 @@ class ConditionExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
     executed_steps: Optional[int] = None
 
     # Results from executed steps
-    step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
+    step_results: List[StepOutput] = field(default_factory=list)
 
 
 @dataclass
@@ -314,7 +317,7 @@ class RouterExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
     executed_steps: Optional[int] = None
 
     # Results from executed steps
-    step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
+    step_results: List[StepOutput] = field(default_factory=list)
 
 
 @dataclass
@@ -338,7 +341,7 @@ class StepsExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
     executed_steps: Optional[int] = None
 
     # Results from executed steps
-    step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
+    step_results: List[StepOutput] = field(default_factory=list)
 
 
 @dataclass
@@ -350,7 +353,7 @@ class StepOutputEvent(BaseWorkflowRunOutputEvent):
     step_index: Optional[Union[int, tuple]] = None
 
     # Store actual step execution result as StepOutput object
-    step_output: Optional["StepOutput"] = None  # noqa: F821
+    step_output: Optional[StepOutput] = None
 
     # Properties for backward compatibility
     @property
@@ -358,15 +361,15 @@ class StepOutputEvent(BaseWorkflowRunOutputEvent):
         return self.step_output.content if self.step_output else None
 
     @property
-    def images(self) -> Optional[List[ImageArtifact]]:
+    def images(self) -> Optional[List[Image]]:
         return self.step_output.images if self.step_output else None
 
     @property
-    def videos(self) -> Optional[List[VideoArtifact]]:
+    def videos(self) -> Optional[List[Video]]:
         return self.step_output.videos if self.step_output else None
 
     @property
-    def audio(self) -> Optional[List[AudioArtifact]]:
+    def audio(self) -> Optional[List[Audio]]:
         return self.step_output.audio if self.step_output else None
 
     @property
@@ -430,13 +433,13 @@ class WorkflowRunOutput:
     session_id: Optional[str] = None
 
     # Media content fields
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
-    response_audio: Optional[AudioResponse] = None
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audio: Optional[List[Audio]] = None
+    response_audio: Optional[Audio] = None
 
     # Store actual step execution results as StepOutput objects
-    step_results: List[Union["StepOutput", List["StepOutput"]]] = field(default_factory=list)  # noqa: F821
+    step_results: List[Union[StepOutput, List[StepOutput]]] = field(default_factory=list)
 
     # Store agent/team responses separately with parent_run_id references
     step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
@@ -445,7 +448,7 @@ class WorkflowRunOutput:
     events: Optional[List[WorkflowRunOutputEvent]] = None
 
     # Workflow metrics aggregated from all steps
-    metrics: Optional["WorkflowMetrics"] = None
+    metrics: Optional[WorkflowMetrics] = None
 
     metadata: Optional[Dict[str, Any]] = None
     created_at: int = field(default_factory=lambda: int(time()))
@@ -531,7 +534,7 @@ class WorkflowRunOutput:
             workflow_metrics = WorkflowMetrics.from_dict(workflow_metrics_dict)
 
         step_results = data.pop("step_results", [])
-        parsed_step_results: List[Union["StepOutput", List["StepOutput"]]] = []
+        parsed_step_results: List[Union[StepOutput, List[StepOutput]]] = []
         if step_results:
             for step_output_dict in step_results:
                 # Reconstruct StepOutput from dict
@@ -551,16 +554,16 @@ class WorkflowRunOutput:
         metadata = data.pop("metadata", None)
 
         images = data.pop("images", [])
-        images = [ImageArtifact.model_validate(image) for image in images] if images else None
+        images = [Image.model_validate(image) for image in images] if images else None
 
         videos = data.pop("videos", [])
-        videos = [VideoArtifact.model_validate(video) for video in videos] if videos else None
+        videos = [Video.model_validate(video) for video in videos] if videos else None
 
         audio = data.pop("audio", [])
-        audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
+        audio = [Audio.model_validate(audio) for audio in audio] if audio else None
 
         response_audio = data.pop("response_audio", None)
-        response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
+        response_audio = Audio.model_validate(response_audio) if response_audio else None
 
         events = data.pop("events", [])
 

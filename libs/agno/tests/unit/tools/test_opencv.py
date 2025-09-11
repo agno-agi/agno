@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from agno.agent import Agent
-from agno.media import ImageArtifact, VideoArtifact
+from agno.media import Image, Video
 from agno.tools.function import ToolResult
 from agno.tools.opencv import OpenCVTools
 
@@ -112,7 +112,7 @@ class TestImageCapture:
 
         # Verify image artifact was created correctly
         image_artifact = result.images[0]
-        assert isinstance(image_artifact, ImageArtifact)
+        assert isinstance(image_artifact, Image)
         assert image_artifact.original_prompt == "Test capture"
         assert image_artifact.mime_type == "image/png"
 
@@ -253,7 +253,7 @@ class TestVideoCapture:
 
         # Verify video artifact was created correctly
         video_artifact = result.videos[0]
-        assert isinstance(video_artifact, VideoArtifact)
+        assert isinstance(video_artifact, Video)
         assert video_artifact.original_prompt == "Test video"
         assert video_artifact.mime_type == "video/mp4"
 

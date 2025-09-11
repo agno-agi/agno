@@ -875,8 +875,8 @@ async def main():
 ```
 
 **See**:
-- [`background_execution_poll.py`](06_advanced_concepts/05_background_execution/background_execution_poll.py)
-- [`background_execution_websocket.py`](06_advanced_concepts/05_background_execution/background_execution_websocket.py)
+- [`background_execution_poll.py`](/cookbook/workflows/_06_advanced_concepts/_05_background_execution/background_execution_poll.py)
+- [`background_execution_using_websocket`](/cookbook/workflows/_06_advanced_concepts/_05_background_execution/background_execution_using_websocket)
 
 ### Structured Inputs
 

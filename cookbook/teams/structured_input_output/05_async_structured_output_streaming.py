@@ -71,7 +71,6 @@ company_info_agent = Agent(
 # Create team with structured output streaming
 team = Team(
     name="Stock Research Team",
-    mode="coordinate",
     model=OpenAIChat("o3-mini"),
     members=[stock_searcher, company_info_agent],
     output_schema=StockReport,

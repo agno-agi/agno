@@ -3,13 +3,12 @@
 import json
 
 # import logging # Removed unused import
-from base64 import b64encode  # Added for TTS test
 from unittest.mock import MagicMock, patch  # Removed unused mock_open
 
 import pytest
 
 from agno.agent import Agent  # Added for TTS test
-from agno.media import AudioArtifact  # Added for TTS test
+from agno.media import Audio
 from agno.tools.cartesia import CartesiaTools
 from agno.tools.function import ToolResult  # Added for updated tests
 
@@ -220,10 +219,10 @@ def test_text_to_speech(cartesia_tools, mock_cartesia_client, mock_agent):
 
     # Check artifact content
     audio_artifact = result.audios[0]
-    assert isinstance(audio_artifact, AudioArtifact)
+    assert isinstance(audio_artifact, Audio)
     assert audio_artifact.mime_type == "audio/mpeg"
-    expected_base64 = b64encode(b"audio data").decode("utf-8")
-    assert audio_artifact.base64_audio == expected_base64
+    expected_content = b"audio data"
+    assert audio_artifact.content == expected_content
 
 
 def test_text_to_speech_error(cartesia_tools, mock_cartesia_client, mock_agent):

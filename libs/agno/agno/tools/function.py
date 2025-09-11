@@ -8,7 +8,7 @@ from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
 
 from agno.exceptions import AgentRunException
-from agno.media import Audio, AudioArtifact, File, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_debug, log_error, log_exception, log_warning
 
 T = TypeVar("T")
@@ -482,9 +482,9 @@ class FunctionExecutionResult(BaseModel):
     updated_session_state: Optional[Dict[str, Any]] = None
 
     # New fields for media artifacts
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audios: Optional[List[AudioArtifact]] = None
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audios: Optional[List[Audio]] = None
 
 
 class FunctionCall(BaseModel):
@@ -962,6 +962,6 @@ class ToolResult(BaseModel):
     """Result from a tool that can include media artifacts."""
 
     content: str
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audios: Optional[List[AudioArtifact]] = None
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audios: Optional[List[Audio]] = None

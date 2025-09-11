@@ -80,7 +80,6 @@ research_team = Team(
     description="A team of agents that research the web",
     members=[research_agent, simple_agent],
     model=OpenAIChat(id="gpt-4o"),
-    mode="coordinate",
     id="research_team",
     instructions=[
         "You are the lead researcher of a research team! 🔍",

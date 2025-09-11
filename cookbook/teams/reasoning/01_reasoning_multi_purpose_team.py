@@ -163,7 +163,6 @@ local_python_agent = Agent(
 
 agent_team = Team(
     name="Multi-Purpose Team",
-    mode="coordinate",
     model=Claude(id="claude-3-7-sonnet-latest"),
     tools=[
         ReasoningTools(add_instructions=True, add_few_shot=True),
@@ -186,7 +185,6 @@ agent_team = Team(
     ],
     markdown=True,
     show_members_responses=True,
-
     share_member_interactions=True,
 )
 

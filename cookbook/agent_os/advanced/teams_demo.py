@@ -111,7 +111,6 @@ research_team = Team(
     description="A team of agents that research the web",
     members=[research_agent, simple_agent],
     model=OpenAIChat(id="gpt-4o"),
-    mode="coordinate",
     id="research_team",
     instructions=[
         "You are the lead researcher of a research team! 🔍",
@@ -127,7 +126,8 @@ multimodal_team = Team(
     description="A team of agents that can handle multiple modalities",
     members=[file_agent, audio_agent, video_agent],
     model=OpenAIChat(id="gpt-4o"),
-    mode="route",
+    determine_input_for_members=False,
+    respond_directly=True,
     id="multimodal_team",
     instructions=[
         "You are the lead editor of a prestigious financial news desk! 📰",
@@ -147,7 +147,7 @@ financial_news_team = Team(
         video_agent,
     ],
     model=OpenAIChat(id="gpt-4o"),
-    mode="route",
+    respond_directly=True,
     id="financial_news_team",
     instructions=[
         "You are the lead editor of a prestigious financial news desk! 📰",

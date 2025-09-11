@@ -45,7 +45,6 @@ article_reader = Agent(
 
 hn_team = Team(
     name="HackerNews Team",
-    mode="coordinate",
     model=OpenAIChat("gpt-4o"),
     members=[hn_researcher, web_searcher, article_reader],
     instructions=[
@@ -56,7 +55,6 @@ hn_team = Team(
         "Finally, provide a thoughtful and engaging summary.",
     ],
     output_schema=Article,
-
     share_member_interactions=True,
     markdown=True,
     debug_mode=True,

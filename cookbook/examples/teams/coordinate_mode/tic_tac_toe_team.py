@@ -32,7 +32,6 @@ player_2 = Agent(
 # This is a simple team that plays Tic Tac Toe. It is not perfect and would work better with reasoning.
 agent_team = Team(
     name="Tic Tac Toe Team",
-    mode="coordinate",
     model=OpenAIChat("gpt-4o"),
     members=[player_1, player_2],
     instructions=[
@@ -43,7 +42,6 @@ agent_team = Team(
         "Don't confirm the results of the game afterwards, just report the final board state and the results.",
         "You have to stop the game when one of the players has won.",
     ],
-
     share_member_interactions=True,
     debug_mode=True,
     markdown=True,

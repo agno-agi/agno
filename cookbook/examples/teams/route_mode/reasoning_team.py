@@ -26,7 +26,6 @@ finance_agent = Agent(
 
 team_leader = Team(
     name="Reasoning Team Leader",
-    mode="route",
     model=Claude(id="claude-3-7-sonnet-latest"),
     members=[
         web_agent,
@@ -35,7 +34,6 @@ team_leader = Team(
     tools=[ReasoningTools(add_instructions=True)],
     markdown=True,
     show_members_responses=True,
-
 )
 
 team_leader.print_response(

@@ -23,6 +23,61 @@ from agno.team.team import Team
 from agno.workflow.workflow import Workflow
 
 
+class BadRequestResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}}
+
+
+class NotFoundResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {"example": {"detail": "Not found", "error_code": "NOT_FOUND"}}
+
+
+class UnauthorizedResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {"example": {"detail": "Unauthorized access", "error_code": "UNAUTHORIZED"}}
+
+
+class UnauthenticatedResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {"example": {"detail": "Unauthenticated access", "error_code": "UNAUTHENTICATED"}}
+
+
+class ValidationErrorResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {"example": {"detail": "Validation error", "error_code": "VALIDATION_ERROR"}}
+
+
+class InternalServerErrorResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {"example": {"detail": "Internal server error", "error_code": "INTERNAL_SERVER_ERROR"}}
+
+
+class HealthResponse(BaseModel):
+    status: str
+
+    class Config:
+        json_schema_extra = {"example": {"status": "ok"}}
+
+
 class InterfaceResponse(BaseModel):
     type: str
     version: str
@@ -342,7 +397,6 @@ class TeamResponse(BaseModel):
     name: Optional[str] = None
     db_id: Optional[str] = None
     description: Optional[str] = None
-    mode: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -541,7 +595,6 @@ class TeamResponse(BaseModel):
         return TeamResponse(
             id=team.id,
             name=team.name,
-            mode=team.mode,
             db_id=team.db.id if team.db else None,
             model=ModelResponse(**_team_model_data) if _team_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),

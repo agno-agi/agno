@@ -10,7 +10,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.media import Audio, File, ImageArtifact, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
@@ -559,9 +559,14 @@ class Gemini(Model):
             return Part.from_bytes(mime_type=mime_type, data=audio.content)
 
         # Case 2: Audio is an url
-        elif audio.url is not None and audio.audio_url_content is not None:
-            mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
-            return Part.from_bytes(mime_type=mime_type, data=audio.audio_url_content)
+        elif audio.url is not None:
+            audio_bytes = audio.get_content_bytes()  # type: ignore
+            if audio_bytes is not None:
+                mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
+                return Part.from_bytes(mime_type=mime_type, data=audio_bytes)
+            else:
+                log_warning(f"Failed to download audio from {audio}")
+                return None
 
         # Case 3: Audio is a local file path
         elif audio.filepath is not None:
@@ -815,9 +820,7 @@ class Gemini(Model):
                     if model_response.images is None:
                         model_response.images = []
                     model_response.images.append(
-                        ImageArtifact(
-                            id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
-                        )
+                        Image(id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type)
                     )
 
                 # Extract function call if present
@@ -929,9 +932,7 @@ class Gemini(Model):
                         if model_response.images is None:
                             model_response.images = []
                         model_response.images.append(
-                            ImageArtifact(
-                                id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
-                            )
+                            Image(id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type)
                         )
 
                     # Extract function call if present

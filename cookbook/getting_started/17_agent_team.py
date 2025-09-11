@@ -81,7 +81,6 @@ finance_agent = Agent(
 agent_team = Team(
     members=[web_agent, finance_agent],
     model=OpenAIChat(id="gpt-4o"),
-    mode="coordinate",
     instructions=dedent("""\
         You are the lead editor of a prestigious financial news desk! 📰
 
@@ -105,7 +104,6 @@ agent_team = Team(
     """),
     add_datetime_to_context=True,
     markdown=True,
-
     show_members_responses=False,
 )
 

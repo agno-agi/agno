@@ -3,7 +3,7 @@ from typing import Any, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
@@ -94,10 +94,13 @@ class DalleTools(Toolkit):
             if response.data:
                 for img in response.data:
                     if img.url:
-                        image_artifact = ImageArtifact(
-                            id=str(uuid4()), url=img.url, original_prompt=prompt, revised_prompt=img.revised_prompt
+                        image = Image(
+                            id=str(uuid4()),
+                            url=img.url,
+                            original_prompt=prompt,
+                            revised_prompt=img.revised_prompt,
                         )
-                        generated_images.append(image_artifact)
+                        generated_images.append(image)
                         response_str += f"Image has been generated at the URL {img.url}\n"
 
             return ToolResult(

@@ -35,13 +35,13 @@ class ChunkingStrategy(ABC):
 class ChunkingStrategyType(str, Enum):
     """Enumeration of available chunking strategies."""
 
-    AGENTIC_CHUNKING = "AgenticChunking"
-    DOCUMENT_CHUNKING = "DocumentChunking"
-    RECURSIVE_CHUNKING = "RecursiveChunking"
-    SEMANTIC_CHUNKING = "SemanticChunking"
-    FIXED_SIZE_CHUNKING = "FixedSizeChunking"
-    ROW_CHUNKING = "RowChunking"
-    MARKDOWN_CHUNKING = "MarkdownChunking"
+    AGENTIC_CHUNKER = "AgenticChunker"
+    DOCUMENT_CHUNKER = "DocumentChunker"
+    RECURSIVE_CHUNKER = "RecursiveChunker"
+    SEMANTIC_CHUNKER = "SemanticChunker"
+    FIXED_SIZE_CHUNKER = "FixedSizeChunker"
+    ROW_CHUNKER = "RowChunker"
+    MARKDOWN_CHUNKER = "MarkdownChunker"
 
     @classmethod
     def from_string(cls, strategy_name: str) -> "ChunkingStrategyType":
@@ -63,13 +63,13 @@ class ChunkingStrategyFactory:
     def create_strategy(cls, strategy_type: ChunkingStrategyType, **kwargs) -> ChunkingStrategy:
         """Create an instance of the chunking strategy with the given parameters."""
         strategy_map = {
-            ChunkingStrategyType.AGENTIC_CHUNKING: cls._create_agentic_chunking,
-            ChunkingStrategyType.DOCUMENT_CHUNKING: cls._create_document_chunking,
-            ChunkingStrategyType.RECURSIVE_CHUNKING: cls._create_recursive_chunking,
-            ChunkingStrategyType.SEMANTIC_CHUNKING: cls._create_semantic_chunking,
-            ChunkingStrategyType.FIXED_SIZE_CHUNKING: cls._create_fixed_chunking,
-            ChunkingStrategyType.ROW_CHUNKING: cls._create_row_chunking,
-            ChunkingStrategyType.MARKDOWN_CHUNKING: cls._create_markdown_chunking,
+            ChunkingStrategyType.AGENTIC_CHUNKER: cls._create_agentic_chunking,
+            ChunkingStrategyType.DOCUMENT_CHUNKER: cls._create_document_chunking,
+            ChunkingStrategyType.RECURSIVE_CHUNKER: cls._create_recursive_chunking,
+            ChunkingStrategyType.SEMANTIC_CHUNKER: cls._create_semantic_chunking,
+            ChunkingStrategyType.FIXED_SIZE_CHUNKER: cls._create_fixed_chunking,
+            ChunkingStrategyType.ROW_CHUNKER: cls._create_row_chunking,
+            ChunkingStrategyType.MARKDOWN_CHUNKER: cls._create_markdown_chunking,
         }
         return strategy_map[strategy_type](**kwargs)
 

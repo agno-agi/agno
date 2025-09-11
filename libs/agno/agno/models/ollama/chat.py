@@ -149,7 +149,7 @@ class Ollama(Model):
                 message_images = []
                 for image in message.images:
                     if image.url is not None:
-                        message_images.append(image.image_url_content)
+                        message_images.append(image.get_content_bytes())
                     if image.filepath is not None:
                         message_images.append(image.filepath)  # type: ignore
                     if image.content is not None and isinstance(image.content, bytes):

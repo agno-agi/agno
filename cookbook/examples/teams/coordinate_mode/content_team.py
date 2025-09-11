@@ -20,7 +20,6 @@ writer = Agent(
 # Create a team with these agents
 content_team = Team(
     name="Content Team",
-    mode="coordinate",
     model=Gemini("gemini-2.5-flash"),
     # model=Gemini("gemini-2.0-flash-lite"),  # Try a small model for faster response
     members=[researcher, writer],

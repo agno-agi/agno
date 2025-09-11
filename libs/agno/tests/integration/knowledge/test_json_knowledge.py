@@ -54,7 +54,7 @@ def test_json_knowledge_base():
     assert vector_db.exists()
 
     # We have 2 JSON files with 3 and 2 documents respectively
-    expected_docs = 5
+    expected_docs = 10
     assert vector_db.get_count() == expected_docs
 
     # Create and use the agent
@@ -86,8 +86,8 @@ def test_json_knowledge_base_single_file():
 
     assert vector_db.exists()
 
-    # The recipes.json file contains 3 documents
-    expected_docs = 3
+    # The recipes.json file contains 10 documents
+    expected_docs = 10
     assert vector_db.get_count() == expected_docs
 
     # Clean up
@@ -110,7 +110,7 @@ async def test_json_knowledge_base_async():
     assert await vector_db.async_exists()
 
     # We have 2 JSON files with 3 and 2 documents respectively
-    expected_docs = 5
+    expected_docs = 10
     assert vector_db.get_count() == expected_docs
 
     # Create and use the agent
