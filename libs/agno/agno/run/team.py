@@ -489,7 +489,7 @@ class TeamRunOutput:
 
         return _dict
 
-    def to_json(self, separators=(",", ":"), indent: Optional[int] = 2) -> str:
+    def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
         import json
 
         try:
