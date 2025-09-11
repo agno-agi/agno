@@ -1261,7 +1261,7 @@ class Agent:
                     )
                     return response
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Guardrail trigger: {e.guardrail_trigger}")
+                log_error(f"Validation failed: {str(e)} | Guardrail trigger: {e.check_trigger}")
                 raise e
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -1872,7 +1872,7 @@ class Agent:
                     )
 
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Guardrail trigger: {e.guardrail_trigger}")
+                log_error(f"Validation failed: {str(e)} | Guardrail trigger: {e.check_trigger}")
                 raise e
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
