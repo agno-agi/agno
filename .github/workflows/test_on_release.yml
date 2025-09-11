@@ -655,6 +655,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run agent integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/agent
@@ -685,6 +687,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run teams integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/teams
@@ -713,6 +717,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run workflows integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/workflows
@@ -742,6 +748,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run embedder tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/embedder
@@ -771,6 +779,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run knowledge integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
@@ -805,6 +815,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run knowledge integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/knowledge/test_arxiv_knowledge.py \
@@ -838,6 +850,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run remaining integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 ./libs/agno/tests/integration
