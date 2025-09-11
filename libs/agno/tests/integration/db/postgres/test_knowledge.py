@@ -162,6 +162,16 @@ def test_upsert_knowledge_content_update(postgres_db_real: PostgresDb, sample_kn
     assert result.status == "updated"
 
 
+def test_get_knowledge_content_by_content_hash(postgres_db_real: PostgresDb, sample_knowledge_document: KnowledgeRow):
+    """Test getting knowledge content by content hash"""
+    postgres_db_real.upsert_knowledge_content(sample_knowledge_document)
+
+    result = postgres_db_real.get_knowledge_content_by_content_hash(sample_knowledge_document.content_hash)
+
+    assert result is not None
+    assert isinstance(result, KnowledgeRow)
+    assert result.id == sample_knowledge_document.id
+
 def test_get_knowledge_content_by_id(postgres_db_real: PostgresDb, sample_knowledge_document: KnowledgeRow):
     """Test getting knowledge content by ID"""
     postgres_db_real.upsert_knowledge_content(sample_knowledge_document)
@@ -275,7 +285,7 @@ def test_delete_knowledge_content(postgres_db_real: PostgresDb, sample_knowledge
 
 def test_knowledge_table_creation_and_structure(postgres_db_real: PostgresDb):
     """Test that the knowledge table is created with the correct structure"""
-    knowledge_table = postgres_db_real._get_table("knowledge")
+    knowledge_table = postgres_db_real._get_table("knowledge", create_table_if_not_found=True)
 
     assert knowledge_table is not None
     assert knowledge_table.name == "test_knowledge"
@@ -294,6 +304,7 @@ def test_knowledge_table_creation_and_structure(postgres_db_real: PostgresDb):
         "access_count",
         "status",
         "status_message",
+        "content_hash",
         "created_at",
         "updated_at",
     ]

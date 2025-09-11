@@ -163,27 +163,26 @@ def validate_migration(
 if __name__ == "__main__":
     """
     Example usage:
-    
+    """  
+    """
     from agno.db.postgres.postgres import PostgresDb
     from agno.db.migrations.knowledge_content_hash import migrate, validate_migration
     
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+
     # Initialize your database
     db = PostgresDb(
-        host="localhost",
-        port=5432,
-        user="your_user",
-        password="your_password",
-        database="your_database"
+        db_url=db_url,
     )
     
     # Run migration (dry run first to see what will happen)
-    migrate(db, dry_run=True)
+    migrate(db, knowledge_table_name="knowledge_contents", dry_run=True)
     
     # Run actual migration
-    migrate(db, dry_run=False)
+    migrate(db, knowledge_table_name="knowledge_contents", dry_run=False)
     
     # Validate migration (check that column was added)
-    results = validate_migration(db)
+    results = validate_migration(db, knowledge_table_name="knowledge_contents")
     print(f"Migration validation: {results}")
     print("Note: Existing records will have NULL content_hash until accessed by the application")
     """
