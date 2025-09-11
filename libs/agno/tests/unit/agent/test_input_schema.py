@@ -3,9 +3,10 @@ from typing import List, Optional
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from typing import TypedDict
+from pydantic import BaseModel, Field
 
-# For TypedDict
 
+# TypedDict schemas
 class ResearchTopicDict(TypedDict):
     topic: str
     focus_areas: List[str]
@@ -19,6 +20,39 @@ class OptionalFieldsDict(TypedDict, total=False):
     priority: Optional[str]
 
 
+# Pydantic schemas
+class ResearchTopic(BaseModel):
+    """Structured research topic with specific requirements"""
+    
+    topic: str
+    focus_areas: List[str] = Field(description="Specific areas to focus on")
+    target_audience: str = Field(description="Who this research is for")
+    sources_required: int = Field(description="Number of sources needed", default=5)
+
+
+class OptionalResearchTopic(BaseModel):
+    """Research topic with optional fields"""
+    
+    topic: str
+    focus_areas: List[str] = Field(description="Specific areas to focus on")
+    target_audience: Optional[str] = None
+    sources_required: int = Field(default=3, description="Number of sources needed")
+    priority: Optional[str] = Field(default=None, description="Priority level")
+
+
+class StrictResearchTopic(BaseModel):
+    """Strict research topic with validation"""
+    
+    class Config:
+        extra = "forbid"  # Forbid extra fields
+    
+    topic: str = Field(min_length=1, max_length=100)
+    focus_areas: List[str] = Field(min_items=1, max_items=5)
+    target_audience: str = Field(min_length=1)
+    sources_required: int = Field(gt=0, le=20)  # Greater than 0, less than or equal to 20
+
+
+# Fixtures
 @pytest.fixture
 def typed_dict_agent():
     """Create an agent with TypedDict input schema for testing."""
@@ -39,7 +73,38 @@ def optional_fields_agent():
     )
 
 
-def test_agent_validate_input_with_valid_typed_dict(typed_dict_agent):
+@pytest.fixture
+def pydantic_agent():
+    """Create an agent with Pydantic input schema for testing."""
+    return Agent(
+        name="Pydantic Test Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        input_schema=ResearchTopic,
+    )
+
+
+@pytest.fixture
+def optional_pydantic_agent():
+    """Create an agent with optional Pydantic fields."""
+    return Agent(
+        name="Optional Pydantic Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        input_schema=OptionalResearchTopic,
+    )
+
+
+@pytest.fixture
+def strict_pydantic_agent():
+    """Create an agent with strict Pydantic validation."""
+    return Agent(
+        name="Strict Pydantic Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        input_schema=StrictResearchTopic,
+    )
+
+
+# TypedDict tests
+def test_typed_dict_agent_validate_input_with_valid_data(typed_dict_agent):
     """Test agent input validation with valid TypedDict data."""
     valid_input = {
         "topic": "AI Research",
@@ -48,12 +113,11 @@ def test_agent_validate_input_with_valid_typed_dict(typed_dict_agent):
         "sources_required": 5
     }
     
-    # This should not raise an exception
     result = typed_dict_agent._validate_input(valid_input)
     assert result == valid_input
 
 
-def test_agent_validate_input_with_missing_required_field(typed_dict_agent):
+def test_typed_dict_agent_validate_input_with_missing_required_field(typed_dict_agent):
     """Test agent input validation fails with missing required fields."""
     invalid_input = {
         "topic": "AI Research",
@@ -64,7 +128,7 @@ def test_agent_validate_input_with_missing_required_field(typed_dict_agent):
         typed_dict_agent._validate_input(invalid_input)
 
 
-def test_agent_validate_input_with_unexpected_field(typed_dict_agent):
+def test_typed_dict_agent_validate_input_with_unexpected_field(typed_dict_agent):
     """Test agent input validation fails with unexpected fields."""
     invalid_input = {
         "topic": "AI Research",
@@ -78,7 +142,7 @@ def test_agent_validate_input_with_unexpected_field(typed_dict_agent):
         typed_dict_agent._validate_input(invalid_input)
 
 
-def test_agent_validate_input_with_wrong_type(typed_dict_agent):
+def test_typed_dict_agent_validate_input_with_wrong_type(typed_dict_agent):
     """Test agent input validation fails with wrong field types."""
     invalid_input = {
         "topic": "AI Research",
@@ -91,7 +155,7 @@ def test_agent_validate_input_with_wrong_type(typed_dict_agent):
         typed_dict_agent._validate_input(invalid_input)
 
 
-def test_agent_validate_input_with_optional_fields(optional_fields_agent):
+def test_typed_dict_agent_validate_input_with_optional_fields(optional_fields_agent):
     """Test agent input validation with optional fields."""
     # Minimal input (only required fields)
     minimal_input = {
@@ -132,77 +196,8 @@ def test_agent_without_input_schema_handles_dict():
     assert result == dict_input
 
 
-# For BaseModel
-
-import pytest
-from typing import List, Optional
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from pydantic import BaseModel, Field, ValidationError
-
-
-class ResearchTopic(BaseModel):
-    """Structured research topic with specific requirements"""
-    
-    topic: str
-    focus_areas: List[str] = Field(description="Specific areas to focus on")
-    target_audience: str = Field(description="Who this research is for")
-    sources_required: int = Field(description="Number of sources needed", default=5)
-
-
-class OptionalResearchTopic(BaseModel):
-    """Research topic with optional fields"""
-    
-    topic: str
-    focus_areas: List[str] = Field(description="Specific areas to focus on")
-    target_audience: Optional[str] = None
-    sources_required: int = Field(default=3, description="Number of sources needed")
-    priority: Optional[str] = Field(default=None, description="Priority level")
-
-
-class StrictResearchTopic(BaseModel):
-    """Strict research topic with validation"""
-    
-    class Config:
-        extra = "forbid"  # Forbid extra fields
-    
-    topic: str = Field(min_length=1, max_length=100)
-    focus_areas: List[str] = Field(min_items=1, max_items=5)
-    target_audience: str = Field(min_length=1)
-    sources_required: int = Field(gt=0, le=20)  # Greater than 0, less than or equal to 20
-
-
-@pytest.fixture
-def pydantic_agent():
-    """Create an agent with Pydantic input schema for testing."""
-    return Agent(
-        name="Pydantic Test Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        input_schema=ResearchTopic,
-    )
-
-
-@pytest.fixture
-def optional_pydantic_agent():
-    """Create an agent with optional Pydantic fields."""
-    return Agent(
-        name="Optional Pydantic Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        input_schema=OptionalResearchTopic,
-    )
-
-
-@pytest.fixture
-def strict_pydantic_agent():
-    """Create an agent with strict Pydantic validation."""
-    return Agent(
-        name="Strict Pydantic Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        input_schema=StrictResearchTopic,
-    )
-
-
-def test_agent_validate_input_with_valid_pydantic_dict(pydantic_agent):
+# Pydantic tests
+def test_pydantic_agent_validate_input_with_valid_dict(pydantic_agent):
     """Test agent input validation with valid dict that matches Pydantic schema."""
     valid_input = {
         "topic": "AI Research",
@@ -221,7 +216,7 @@ def test_agent_validate_input_with_valid_pydantic_dict(pydantic_agent):
     assert result.sources_required == 8
 
 
-def test_agent_validate_input_with_pydantic_instance(pydantic_agent):
+def test_pydantic_agent_validate_input_with_model_instance(pydantic_agent):
     """Test agent input validation with direct Pydantic model instance."""
     model_instance = ResearchTopic(
         topic="Blockchain",
@@ -237,7 +232,7 @@ def test_agent_validate_input_with_pydantic_instance(pydantic_agent):
     assert isinstance(result, ResearchTopic)
 
 
-def test_agent_validate_input_with_default_values(pydantic_agent):
+def test_pydantic_agent_validate_input_with_default_values(pydantic_agent):
     """Test agent input validation uses Pydantic default values."""
     input_without_sources = {
         "topic": "Machine Learning",
@@ -252,7 +247,7 @@ def test_agent_validate_input_with_default_values(pydantic_agent):
     assert result.sources_required == 5  # Default value
 
 
-def test_agent_validate_input_with_missing_required_field(pydantic_agent):
+def test_pydantic_agent_validate_input_with_missing_required_field(pydantic_agent):
     """Test agent input validation fails with missing required fields."""
     invalid_input = {
         "topic": "AI Research",
@@ -264,7 +259,7 @@ def test_agent_validate_input_with_missing_required_field(pydantic_agent):
         pydantic_agent._validate_input(invalid_input)
 
 
-def test_agent_validate_input_with_wrong_type(pydantic_agent):
+def test_pydantic_agent_validate_input_with_wrong_type(pydantic_agent):
     """Test agent input validation fails with wrong field types."""
     invalid_input = {
         "topic": "AI Research",
@@ -277,7 +272,7 @@ def test_agent_validate_input_with_wrong_type(pydantic_agent):
         pydantic_agent._validate_input(invalid_input)
 
 
-def test_agent_validate_input_with_type_coercion(pydantic_agent):
+def test_pydantic_agent_validate_input_with_type_coercion(pydantic_agent):
     """Test that Pydantic performs type coercion when possible."""
     input_with_coercion = {
         "topic": "AI Research",
@@ -293,7 +288,7 @@ def test_agent_validate_input_with_type_coercion(pydantic_agent):
     assert isinstance(result.sources_required, int)
 
 
-def test_agent_validate_input_with_optional_fields(optional_pydantic_agent):
+def test_pydantic_agent_validate_input_with_optional_fields(optional_pydantic_agent):
     """Test agent input validation with optional Pydantic fields."""
     # Minimal input (only required fields)
     minimal_input = {
@@ -312,7 +307,7 @@ def test_agent_validate_input_with_optional_fields(optional_pydantic_agent):
     assert result.priority is None
 
 
-def test_agent_validate_input_with_all_optional_fields(optional_pydantic_agent):
+def test_pydantic_agent_validate_input_with_all_optional_fields(optional_pydantic_agent):
     """Test agent input validation with all optional fields provided."""
     full_input = {
         "topic": "Blockchain",
@@ -330,7 +325,7 @@ def test_agent_validate_input_with_all_optional_fields(optional_pydantic_agent):
     assert result.sources_required == 10
 
 
-def test_agent_validate_input_with_strict_validation(strict_pydantic_agent):
+def test_pydantic_agent_validate_input_with_strict_validation(strict_pydantic_agent):
     """Test agent with strict Pydantic validation rules."""
     valid_input = {
         "topic": "AI Research",
@@ -343,7 +338,7 @@ def test_agent_validate_input_with_strict_validation(strict_pydantic_agent):
     assert isinstance(result, StrictResearchTopic)
 
 
-def test_agent_validate_input_strict_validation_failures(strict_pydantic_agent):
+def test_pydantic_agent_validate_input_strict_validation_failures(strict_pydantic_agent):
     """Test various strict validation failures."""
     
     # Test empty topic (violates min_length=1)
@@ -383,7 +378,7 @@ def test_agent_validate_input_strict_validation_failures(strict_pydantic_agent):
         })
 
 
-def test_agent_validate_input_forbids_extra_fields(strict_pydantic_agent):
+def test_pydantic_agent_validate_input_forbids_extra_fields(strict_pydantic_agent):
     """Test that strict model forbids extra fields."""
     input_with_extra = {
         "topic": "AI",
@@ -397,7 +392,7 @@ def test_agent_validate_input_forbids_extra_fields(strict_pydantic_agent):
         strict_pydantic_agent._validate_input(input_with_extra)
 
 
-def test_agent_validate_input_different_model_instance(pydantic_agent):
+def test_pydantic_agent_validate_input_different_model_instance(pydantic_agent):
     """Test agent input validation fails with wrong Pydantic model type."""
     wrong_model = OptionalResearchTopic(
         topic="Test",
@@ -429,13 +424,6 @@ def test_agent_without_input_schema_handles_pydantic_model():
 
 def test_pydantic_field_descriptions_preserved():
     """Test that Pydantic Field descriptions are preserved in the model."""
-    model = ResearchTopic(
-        topic="Test",
-        focus_areas=["Test"],
-        target_audience="Test",
-        sources_required=5
-    )
-    
     # Check that field info is available (this is how Pydantic stores Field metadata)
     schema = ResearchTopic.model_json_schema()
     
