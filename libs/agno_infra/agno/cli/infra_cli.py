@@ -32,7 +32,7 @@ Run `ag infra [COMMAND] --help` for more info.
 )
 
 
-@infra_cli.command(short_help="Create a new Agno AgentOS codebase in the current directory.")
+@infra_cli.command(short_help="Create a new AgentOS codebase in the current directory.")
 def create(
     name: Optional[str] = typer.Option(
         None,
