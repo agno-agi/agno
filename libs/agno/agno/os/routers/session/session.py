@@ -377,7 +377,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             return run_responses
 
         elif session_type == SessionType.WORKFLOW:
-            run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = [] # type: ignore
+            run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []  # type: ignore
             for run in runs:
                 if run.get("workflow_id") is not None:
                     run_responses.append(WorkflowRunSchema.from_dict(run))

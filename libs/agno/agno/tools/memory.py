@@ -102,18 +102,17 @@ class MemoryTools(Toolkit):
             user_id = session_state.get("current_user_id") if session_state else None
 
             memories = self.db.get_user_memories(user_id=user_id)
-            
+
             # Store the result in session state for analysis
             if session_state is None:
                 session_state = {}
             if "memory_operations" not in session_state:
                 session_state["memory_operations"] = []
-            
-            
+
             operation_result = {
                 "operation": "get_memories",
                 "success": True,
-                "memories": [memory.to_dict() for memory in memories],
+                "memories": [memory.to_dict() for memory in memories],  # type: ignore
                 "error": None,
             }
             session_state["memory_operations"].append(operation_result)
