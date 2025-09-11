@@ -342,19 +342,23 @@ class MemoryTools(Toolkit):
         - Purpose: A scratchpad for planning memory operations, brainstorming memory content, and refining your approach. You never reveal your "Think" content to the user.
         - Usage: Call `think` whenever you need to figure out what memory operations to perform, analyze requirements, or decide on strategy.
 
-        2. **Add Memory**
+        2. **Get Memories**
+        - Purpose: Retrieves a list of memories from the database for the current user.
+        - Usage: Call `get_memories` when you need to retrieve memories for the current user.
+
+        3. **Add Memory**
         - Purpose: Creates new memories in the database with specified content and metadata.
         - Usage: Call `add_memory` with memory content and optional topics when you need to store new information.
 
-        3. **Update Memory**
+        4. **Update Memory**
         - Purpose: Modifies existing memories in the database by memory ID.
         - Usage: Call `update_memory` with a memory ID and the fields you want to change. Only specify the fields that need updating.
 
-        4. **Delete Memory**
+        5. **Delete Memory**
         - Purpose: Removes memories from the database by memory ID.
         - Usage: Call `delete_memory` with a memory ID when a memory is no longer needed or requested to be removed.
 
-        5. **Analyze**
+        6. **Analyze**
         - Purpose: Evaluate whether the memory operations results are correct and sufficient. If not, go back to "Think" or use memory operations with refined parameters.
         - Usage: Call `analyze` after performing memory operations to verify:
             - Success: Did the operation complete successfully?
@@ -401,5 +405,14 @@ class MemoryTools(Toolkit):
         Delete Memory: memory_id="work_schedule_memory_id"
         Analyze: Successfully deleted the outdated work schedule memory. The old information won't interfere with future scheduling requests.
 
-        Final Answer: I've removed your old work schedule information. Feel free to share your new schedule when you're ready, and I'll store the updated information.\
+        Final Answer: I've removed your old work schedule information. Feel free to share your new schedule when you're ready, and I'll store the updated information.
+        
+        #### Example 4: Retrieving Memories
+
+        User: What have you remembered about me?
+        Think: The user wants to retrieve memories about themselves. I should use the get_memories tool to retrieve the memories.
+        Get Memories: 
+        Analyze: Successfully retrieved the memories about the user. The memories are relevant to the user's preferences and activities.
+
+        Final Answer: I've retrieved the memories about you. You like to hike in the mountains on weekends and travel to new places and experience different cultures. You are planning to travel to Africa in December.\
     """)
