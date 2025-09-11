@@ -159,6 +159,15 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_knowledge_content_by_content_hash(self, content_hash: str) -> Optional[KnowledgeRow]:
+        """Get a knowledge row from the database.
+
+        Args:
+            content_hash (str): The content hash of the knowledge row to get.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 

@@ -19,15 +19,16 @@ knowledge = Knowledge(
 asyncio.run(
     knowledge.add_content_async(
         name="Recipes",
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-        metadata={"doc_type": "recipe_book"},
+        path="cookbook/data/largeFile.pdf",
+        # url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+        metadata={"doc_type": "test"},
     )
 )
 
 # Create and use the agent
-agent = Agent(knowledge=knowledge)
-agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
+# agent = Agent(knowledge=knowledge)
+# agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
 
-vector_db.delete_by_name("Recipes")
-# or
-vector_db.delete_by_metadata({"doc_type": "recipe_book"})
+# vector_db.delete_by_name("Recipes")
+# # or
+# vector_db.delete_by_metadata({"doc_type": "recipe_book"})

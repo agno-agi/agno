@@ -69,6 +69,7 @@ def sample_knowledge_dataset() -> KnowledgeRow:
         access_count=12,
         status="processed",
         status_message="Dataset has been processed and is ready for training",
+        content_hash="test_knowledge_dataset_1_content_hash",
         created_at=int(time.time()) - 7200,  # 2 hours ago
         updated_at=int(time.time()) - 3600,  # 1 hour ago
     )
@@ -99,6 +100,7 @@ def sample_knowledge_model() -> KnowledgeRow:
         access_count=234,
         status="deployed",
         status_message="Model is deployed and serving predictions",
+        content_hash="test_knowledge_model_1_content_hash",
         created_at=int(time.time()) - 86400,  # 1 day ago
         updated_at=int(time.time()) - 7200,  # 2 hours ago
     )

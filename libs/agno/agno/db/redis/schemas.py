@@ -73,6 +73,7 @@ KNOWLEDGE_SCHEMA = {
     "size": {"type": "integer"},
     "linked_to": {"type": "string"},
     "access_count": {"type": "integer"},
+    "content_hash": {"type": "string"},
     "created_at": {"type": "integer"},
     "updated_at": {"type": "integer"},
     "status": {"type": "string"},

@@ -1243,6 +1243,27 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting knowledge content: {e}")
 
+    def get_knowledge_content_by_content_hash(self, content_hash: str) -> Optional[KnowledgeRow]:
+        """Get a knowledge row from the database.
+
+        Args:
+            content_hash (str): The content hash of the knowledge row to get.
+        """
+        table = self._get_table(table_type="knowledge")
+        if table is None:
+            return None
+
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.content_hash == content_hash)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+                return KnowledgeRow.model_validate(result._mapping)
+        except Exception as e:
+            log_error(f"Error getting knowledge content {content_hash}: {e}")
+            return None
+
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
@@ -1348,6 +1369,8 @@ class SqliteDb(BaseDb):
                         "linked_to": knowledge_row.linked_to,
                         "access_count": knowledge_row.access_count,
                         "status": knowledge_row.status,
+                        "status_message": knowledge_row.status_message,
+                        "content_hash": knowledge_row.content_hash,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
                         "external_id": knowledge_row.external_id,

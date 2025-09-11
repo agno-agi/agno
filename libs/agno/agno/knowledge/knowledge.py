@@ -329,6 +329,29 @@ class Knowledge:
             )
         )
 
+    def _handle_skip_if_exists(self, content: Content, skip_if_exists: bool) -> bool:
+        """
+        Handle the skip_if_exists logic for content.
+        
+        Args:
+            content: The content object with content_hash already set
+            skip_if_exists: Whether to skip if content already exists
+            
+        Returns:
+            bool: True if should skip processing, False if should continue
+        """
+        if not (self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists):
+            return False
+            
+        log_info(f"Content {content.content_hash} already exists, skipping")
+        content_db_row = self.contents_db.get_knowledge_content_by_content_hash(content.content_hash) if self.contents_db else None
+        if content_db_row:
+            log_info(f"Content {content.content_hash} already exists in contentsDB, skipping")
+        else:
+            # Content exists in vector_db but not in contents_db, add it
+            self._add_to_contents_db(content)
+        return True
+
     async def _load_from_path(
         self,
         content: Content,
@@ -350,8 +373,7 @@ class Knowledge:
                     return
 
                 content.content_hash = self._build_content_hash(content)
-                if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-                    log_info(f"Content {content.content_hash} already exists, skipping")
+                if self._handle_skip_if_exists(content, skip_if_exists):
                     return
 
                 self._add_to_contents_db(content)
@@ -445,9 +467,9 @@ class Knowledge:
 
         # 1. Set content hash
         content.content_hash = self._build_content_hash(content)
-        if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-            log_info(f"Content {content.content_hash} already exists, skipping")
+        if self._handle_skip_if_exists(content, skip_if_exists):
             return
+            
         self._add_to_contents_db(content)
 
         # 2. Validate URL
@@ -568,9 +590,7 @@ class Knowledge:
             return
 
         content.content_hash = self._build_content_hash(content)
-        if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-            log_info(f"Content {content.content_hash} already exists, skipping")
-
+        if self._handle_skip_if_exists(content, skip_if_exists):
             return
         self._add_to_contents_db(content)
 
@@ -671,11 +691,10 @@ class Knowledge:
                 return
 
             content.content_hash = self._build_content_hash(content)
-            if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-                log_info(f"Content {content.content_hash} already exists, skipping")
-                continue
-
+            if self._handle_skip_if_exists(content, skip_if_exists):
+                return
             self._add_to_contents_db(content)
+
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
                 continue
@@ -757,11 +776,10 @@ class Knowledge:
             )
 
             # 3. Hash content and add it to the contents database
-            content_hash = self._build_content_hash(content_entry)
-            if self.vector_db and self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
-                log_info(f"Content {content_hash} already exists, skipping")
-                continue
-            self._add_to_contents_db(content_entry)
+            content.content_hash = self._build_content_hash(content)
+            if self._handle_skip_if_exists(content, skip_if_exists):
+                return
+            self._add_to_contents_db(content)
 
             # 4. Select reader
             reader = content.reader
@@ -839,10 +857,10 @@ class Knowledge:
             )
 
             # 3. Hash content and add it to the contents database
-            content_hash = self._build_content_hash(content_entry)
-            if self.vector_db and self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
-                log_info(f"Content {content_hash} already exists, skipping")
-                continue
+            content.content_hash = self._build_content_hash(content)
+            if self._handle_skip_if_exists(content, skip_if_exists):
+                return
+            self._add_to_contents_db(content)
 
             # 4. Add it to the contents database
             self._add_to_contents_db(content_entry)
@@ -990,6 +1008,7 @@ class Knowledge:
                 access_count=0,
                 status=content.status if content.status else ContentStatus.PROCESSING,
                 status_message="",
+                content_hash=content.content_hash,
                 created_at=created_at,
                 updated_at=updated_at,
             )
@@ -1019,7 +1038,8 @@ class Knowledge:
                 content_row.status_message = content.status_message if content.status_message else ""
             if content.external_id is not None:
                 content_row.external_id = content.external_id
-
+            if content.content_hash is not None:
+                content_row.content_hash = content.content_hash
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 

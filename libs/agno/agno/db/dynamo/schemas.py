@@ -185,6 +185,7 @@ KNOWLEDGE_TABLE_SCHEMA = {
         {"AttributeName": "access_count", "AttributeType": "N"},
         {"AttributeName": "status", "AttributeType": "S"},
         {"AttributeName": "status_message", "AttributeType": "S"},
+        {"AttributeName": "content_hash", "AttributeType": "S"},
         {"AttributeName": "created_at", "AttributeType": "N"},
         {"AttributeName": "updated_at", "AttributeType": "N"},
         {"AttributeName": "external_id", "AttributeType": "S"},

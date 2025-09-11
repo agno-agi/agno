@@ -18,6 +18,7 @@ class KnowledgeRow(BaseModel):
     access_count: Optional[int] = None
     status: Optional[str] = None
     status_message: Optional[str] = None
+    content_hash: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
     external_id: Optional[str] = None
