@@ -37,6 +37,12 @@ agent.print_response(
 )
 ```
 
+## Implementing Your Own Chunking Strategy
+
+You can implement custom chunking strategies by inheriting from `ChunkingStrategy` and implementing the `chunk()` method. This allows you to create domain-specific chunking logic tailored to your content and use cases.
+
+See the [custom strategy example](./custom_strategy_example.py) for a complete walkthrough.
+
 ## Supported Chunking Strategies
 
 - **[Agentic Chunking](./agentic_chunking.py)** - AI-powered intelligent chunk boundaries
@@ -45,3 +51,4 @@ agent.print_response(
 - **[Fixed Size Chunking](./fixed_size_chunking.py)** - Fixed character/token length chunks
 - **[Recursive Chunking](./recursive_chunking.py)** - Natural boundary-aware chunking
 - **[Semantic Chunking](./semantic_chunking.py)** - Semantically coherent chunks
+- **[Custom Strategy Example](./custom_strategy_example.py)** - Learn how to implement your own chunking strategy
