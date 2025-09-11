@@ -12,19 +12,29 @@ from rich.text import Text
 
 
 class WorkflowWebSocketClient:
-    def __init__(self, server_url: str = "ws://localhost:8000/ws"):
+    def __init__(
+        self,
+        server_url: str = "ws://localhost:8000/ws",
+        auth_token: Optional[str] = None,
+    ):
         self.server_url = server_url
+        self.auth_token = auth_token
         self.console = Console()
         self.websocket = None
         self.connection_id = None
         self.events = []
         self.is_running = True
         self.current_step_content = {}  # Track streaming content per step
+        self.is_authenticated = False
 
     def get_event_style(self, event_type: str) -> tuple[str, str]:
         """Get style (emoji, color) for event type"""
         styles = {
+            "connected": ("🔌", "cyan"),
             "connection_established": ("🔌", "cyan"),
+            "authenticated": ("🔐", "green"),
+            "auth_error": ("❌", "red"),
+            "auth_required": ("🔒", "yellow"),
             "workflow_starting": ("🚀", "yellow"),
             "workflow_initiated": ("✅", "green"),
             "WorkflowStarted": ("🚀", "blue"),
@@ -164,14 +174,35 @@ class WorkflowWebSocketClient:
         return None
 
     async def connect(self):
-        """Connect to WebSocket server"""
+        """Connect to WebSocket server and authenticate"""
         try:
             self.websocket = await websockets.connect(self.server_url)
             self.console.print(f"🔌 [green]Connected to {self.server_url}[/green]")
+
+            # Wait for connection confirmation, then authenticate if token provided
+            if self.auth_token:
+                await self.authenticate()
+            else:
+                self.console.print(
+                    "⚠️  [yellow]No authentication token provided. Some features may be restricted.[/yellow]"
+                )
+
             return True
         except Exception as e:
             self.console.print(f"❌ [red]Failed to connect: {e}[/red]")
             return False
+
+    async def authenticate(self):
+        """Send authentication token to server"""
+        if not self.auth_token:
+            self.console.print("❌ [red]No authentication token available[/red]")
+            return False
+
+        auth_message = {"action": "authenticate", "token": self.auth_token}
+
+        await self.websocket.send(json.dumps(auth_message))
+        self.console.print("🔐 [blue]Sent authentication token[/blue]")
+        return True
 
     async def disconnect(self):
         """Disconnect from WebSocket server"""
@@ -201,9 +232,25 @@ class WorkflowWebSocketClient:
                     if panel:
                         self.console.print(panel)
 
-                    # Store connection ID
-                    if event_data.get("type") == "connection_established":
+                    # Store connection ID and authentication status
+                    if (
+                        event_data.get("event") == "connected"
+                        or event_data.get("type") == "connection_established"
+                    ):
                         self.connection_id = event_data.get("connection_id")
+                    elif event_data.get("event") == "authenticated":
+                        self.is_authenticated = True
+                        self.console.print(
+                            "✅ [green]Authentication successful![/green]"
+                        )
+                    elif event_data.get("event") == "auth_error":
+                        self.console.print(
+                            f"❌ [red]Authentication failed: {event_data.get('error')}[/red]"
+                        )
+                    elif event_data.get("event") == "auth_required":
+                        self.console.print(
+                            f"🔒 [yellow]Authentication required: {event_data.get('error')}[/yellow]"
+                        )
 
                 except json.JSONDecodeError:
                     # Try parsing as SSE format
@@ -231,11 +278,17 @@ class WorkflowWebSocketClient:
         self, workflow_message: str, session_id: Optional[str] = None
     ):
         """Start a workflow via WebSocket"""
+        if not self.is_authenticated and self.auth_token:
+            self.console.print(
+                "❌ [red]Not authenticated. Please authenticate first.[/red]"
+            )
+            return
+
         if not session_id:
             session_id = f"cli-session-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
         message_data = {
-            "type": "start_workflow",
+            "action": "start-workflow",
             "message": workflow_message,
             "session_id": session_id,
         }
@@ -247,7 +300,7 @@ class WorkflowWebSocketClient:
 
     async def ping_server(self):
         """Send ping to server"""
-        await self.send_message({"type": "ping"})
+        await self.send_message({"action": "ping"})
 
     def print_banner(self):
         """Print application banner"""
@@ -269,7 +322,11 @@ class WorkflowWebSocketClient:
         self.console.print("[green]Interactive mode started. Type commands:[/green]")
         self.console.print("  [bold]start <message>[/bold] - Start workflow")
         self.console.print("  [bold]ping[/bold] - Ping server")
+        if self.auth_token and not self.is_authenticated:
+            self.console.print("  [bold]auth[/bold] - Re-authenticate")
         self.console.print("  [bold]quit[/bold] - Exit")
+        if not self.is_authenticated and self.auth_token:
+            self.console.print("  [yellow]⚠️  Waiting for authentication...[/yellow]")
         self.console.print()
 
         try:
@@ -284,6 +341,11 @@ class WorkflowWebSocketClient:
                         self.is_running = False
                         break
                     elif user_input.lower() == "ping":
+                        if not self.is_authenticated and self.auth_token:
+                            self.console.print(
+                                "❌ [red]Not authenticated. Cannot send ping.[/red]"
+                            )
+                            continue
                         await self.ping_server()
                     elif user_input.lower().startswith("start "):
                         workflow_message = user_input[6:].strip()
@@ -293,9 +355,16 @@ class WorkflowWebSocketClient:
                             self.console.print(
                                 "❌ [red]Please provide a message for the workflow[/red]"
                             )
+                    elif user_input.lower() == "auth" and self.auth_token:
+                        await self.authenticate()
                     else:
+                        auth_help = (
+                            " 'auth' to authenticate,"
+                            if self.auth_token and not self.is_authenticated
+                            else ""
+                        )
                         self.console.print(
-                            "❌ [red]Unknown command. Use 'start <message>', 'ping', or 'quit'[/red]"
+                            f"❌ [red]Unknown command. Use 'start <message>', 'ping',{auth_help} or 'quit'[/red]"
                         )
 
                 except KeyboardInterrupt:
@@ -347,10 +416,20 @@ async def main():
     parser.add_argument(
         "--interactive", "-i", action="store_true", help="Run in interactive mode"
     )
+    parser.add_argument(
+        "--token",
+        "-t",
+        help="Authentication bearer token (or set SECURITY_KEY env var)",
+    )
 
     args = parser.parse_args()
 
-    client = WorkflowWebSocketClient(args.server)
+    # Get token from args or environment variable
+    import os
+
+    auth_token = args.token or os.getenv("SECURITY_KEY")
+
+    client = WorkflowWebSocketClient(args.server, auth_token)
 
     if args.interactive or not args.message:
         await client.run_interactive()
