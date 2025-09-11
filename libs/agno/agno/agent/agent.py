@@ -2487,21 +2487,20 @@ class Agent:
                         session_state=session_state,
                         run_id=run_id,
                         user_id=user_id,
-                        session=agent_session,
+                        session_id=session_id,
                         response_format=response_format,
                         dependencies=run_dependencies,
                         stream_intermediate_steps=stream_intermediate_steps,
-                        dependencies=run_dependencies,
                     )
                 else:
                     return self._acontinue_run(  # type: ignore
+                        session_id=session_id,
                         run_response=run_response,
                         updated_tools=updated_tools,
                         knowledge_filters=effective_filters,
                         session_state=session_state,
                         run_id=run_id,
                         user_id=user_id,
-                        session=agent_session,
                         response_format=response_format,
                         dependencies=run_dependencies,
                     )
@@ -2650,7 +2649,9 @@ class Agent:
             await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
 
             # 10. Update the RunOutput with the model response
-            self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+            self._update_run_response(
+                model_response=model_response, run_response=run_response, run_messages=run_messages
+            )
 
             if self.store_media:
                 self._store_media(run_response, model_response)
@@ -2815,7 +2816,9 @@ class Agent:
                 yield self._handle_event(create_run_continued_event(run_response), run_response)
 
             # 8. Handle the updated tools
-            async for event in self._ahandle_tool_call_updates_stream(run_response=run_response, run_messages=run_messages):
+            async for event in self._ahandle_tool_call_updates_stream(
+                run_response=run_response, run_messages=run_messages
+            ):
                 raise_if_cancelled(run_response.run_id)  # type: ignore
                 yield event
 
