@@ -1276,7 +1276,7 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting knowledge content {content_hash}: {e}")
             return None
-            
+
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 

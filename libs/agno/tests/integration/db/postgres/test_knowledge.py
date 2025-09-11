@@ -172,6 +172,7 @@ def test_get_knowledge_content_by_content_hash(postgres_db_real: PostgresDb, sam
     assert isinstance(result, KnowledgeRow)
     assert result.id == sample_knowledge_document.id
 
+
 def test_get_knowledge_content_by_id(postgres_db_real: PostgresDb, sample_knowledge_document: KnowledgeRow):
     """Test getting knowledge content by ID"""
     postgres_db_real.upsert_knowledge_content(sample_knowledge_document)

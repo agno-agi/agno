@@ -332,19 +332,21 @@ class Knowledge:
     def _handle_skip_if_exists(self, content: Content, skip_if_exists: bool) -> bool:
         """
         Handle the skip_if_exists logic for content.
-        
+
         Args:
             content: The content object with content_hash already set
             skip_if_exists: Whether to skip if content already exists
-            
+
         Returns:
             bool: True if should skip processing, False if should continue
         """
         if not (self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists):
             return False
-            
+
         log_info(f"Content {content.content_hash} already exists, skipping")
-        content_db_row = self.contents_db.get_knowledge_content_by_content_hash(content.content_hash) if self.contents_db else None
+        content_db_row = (
+            self.contents_db.get_knowledge_content_by_content_hash(content.content_hash) if self.contents_db else None
+        )
         if content_db_row:
             log_info(f"Content {content.content_hash} already exists in contentsDB, skipping")
         else:
@@ -469,7 +471,7 @@ class Knowledge:
         content.content_hash = self._build_content_hash(content)
         if self._handle_skip_if_exists(content, skip_if_exists):
             return
-            
+
         self._add_to_contents_db(content)
 
         # 2. Validate URL
