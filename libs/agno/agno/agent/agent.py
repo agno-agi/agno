@@ -609,46 +609,37 @@ class Agent:
             except Exception as e:
                 raise ValueError(f"Failed to parse input. Is it a valid JSON string?: {e}")
 
-        # Check if the schema is a TypedDict
-        if self._is_typed_dict(self.input_schema):
-            # Handle TypedDict validation
-            if isinstance(input, dict):
+        # Case 1: Message is already a BaseModel instance
+        if isinstance(input, BaseModel):
+            if isinstance(input, self.input_schema):
                 try:
-                    validated_dict = validate_typed_dict(input, self.input_schema)
-                    return validated_dict  # Return the validated dict, not an instance
+                    # Re-validate to catch any field validation errors
+                    input.model_validate(input.model_dump())
+                    return input
                 except Exception as e:
-                    raise ValueError(f"Failed to validate dict against TypedDict {self.input_schema.__name__}: {str(e)}")
+                    raise ValueError(f"BaseModel validation failed: {str(e)}")
             else:
-                raise ValueError(
-                    f"Cannot validate {type(input)} against TypedDict schema. Expected dict."
-                )
-        
-        # Original BaseModel handling
-        else:
-            # Case 1: Input is already a BaseModel instance
-            if isinstance(input, BaseModel):
-                if isinstance(input, self.input_schema):
-                    try:
-                        return input
-                    except Exception as e:
-                        raise ValueError(f"BaseModel validation failed: {str(e)}")
-                else:
-                    # Different BaseModel types
-                    raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
+                # Different BaseModel types
+                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
 
-            # Case 2: Input is a dict
-            elif isinstance(input, dict):
-                try:
+        # Case 2: Message is a dict
+        elif isinstance(input, dict):
+            try:
+                # Check if the schema is a TypedDict
+                if self._is_typed_dict(self.input_schema):
+                    validated_dict = validate_typed_dict(input, self.input_schema)  
+                    return validated_dict
+                else:
                     validated_model = self.input_schema(**input)
                     return validated_model
-                except Exception as e:
-                    raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
+            except Exception as e:
+                raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
 
-            # Case 3: Other types not supported for structured input
-            else:
-                raise ValueError(
-                    f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
-                )
+        # Case 3: Other types not supported for structured input
+        else:
+            raise ValueError(
+                f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
+            )
 
     def _set_memory_manager(self) -> None:
         if self.db is None:
