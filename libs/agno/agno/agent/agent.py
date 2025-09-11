@@ -580,13 +580,13 @@ class Agent:
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
-    def _is_typed_dict(self, cls) -> bool:
-        """Check if a class is a TypedDict."""
+    def _is_typed_dict(self, cls: Type[Any]) -> bool:
+        """Check if a class is a TypedDict"""
         return (
-            hasattr(cls, '__annotations__') and 
-            hasattr(cls, '__total__') and
-            hasattr(cls, '__required_keys__') and
-            hasattr(cls, '__optional_keys__')
+            hasattr(cls, '__annotations__') 
+            and hasattr(cls, '__total__')
+            and hasattr(cls, '__required_keys__')
+            and hasattr(cls, '__optional_keys__')
         )
 
     def _validate_input(
@@ -613,8 +613,6 @@ class Agent:
         if isinstance(input, BaseModel):
             if isinstance(input, self.input_schema):
                 try:
-                    # Re-validate to catch any field validation errors
-                    input.model_validate(input.model_dump())
                     return input
                 except Exception as e:
                     raise ValueError(f"BaseModel validation failed: {str(e)}")
