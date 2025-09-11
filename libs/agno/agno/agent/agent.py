@@ -34,9 +34,9 @@ from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
-from agno.models.utils import create_model
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
+from agno.models.utils import create_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import (
     RunEvent,
@@ -1162,7 +1162,9 @@ class Agent:
         )
 
         run_response.model = self.model.id if self.model is not None else None
-        run_response.model_provider = self.model.model_string.split(":")[0] if self.model is not None and ":" in self.model.model_string else None
+        run_response.model_provider = (
+            self.model.model_string.split(":")[0] if self.model is not None and ":" in self.model.model_string else None
+        )
 
         # Start the run metrics timer, to calculate the run duration
         run_response.metrics = Metrics()
@@ -1728,7 +1730,9 @@ class Agent:
         )
 
         run_response.model = self.model.id if self.model is not None else None
-        run_response.model_provider = self.model.model_string.split(":")[0] if self.model is not None and ":" in self.model.model_string else None
+        run_response.model_provider = (
+            self.model.model_string.split(":")[0] if self.model is not None and ":" in self.model.model_string else None
+        )
 
         # Start the run metrics timer, to calculate the run duration
         run_response.metrics = Metrics()

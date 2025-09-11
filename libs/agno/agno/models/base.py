@@ -147,84 +147,22 @@ class Model(ABC):
     @property
     def model_string(self) -> str:
         """Return the model string representation in format 'provider:model_id'.
-        
+
         This property generates the canonical string representation that can be used
         to recreate this model instance using the model string syntax.
-        
+
         Returns:
             String in format 'provider:model_id'
         """
-        # Map common class names to provider keys for consistency
-        provider_key = self._get_provider_key()
-        return f"{provider_key}:{self.id}"
-    
-    def _get_provider_key(self) -> str:
-        """Get the provider key for model string generation.
-        
-        Maps the model class/provider to the standard provider key used in model strings.
-        This ensures consistency between model string parsing and generation.
-        """
-        class_name = self.__class__.__name__
-        
-        # Map class names to provider keys
-        class_to_provider = {
-            "OpenAIChat": "openai",
-            "Claude": "anthropic", 
-            "Gemini": "google",
-            "Groq": "groq",
-            "Ollama": "ollama", 
-            "MistralChat": "mistral",
-            "Cohere": "cohere",
-            "AwsBedrock": "aws-bedrock",
-            "AzureOpenAI": "azure-openai",
-            "AzureAIFoundry": "azure-ai-foundry",
-            "Together": "together",
-            "Llama": "llama",
-            "LlamaOpenAI": "llama-openai",
-            "Cerebras": "cerebras",
-            "xAI": "xai",
-            "DeepSeek": "deepseek", 
-            "Fireworks": "fireworks",
-            "Perplexity": "perplexity",
-            "OpenRouter": "openrouter",
-            "Nvidia": "nvidia",
-            "SambaNova": "sambanova",
-            "DeepInfra": "deepinfra",
-            "Nebius": "nebius",
-            "InternLM": "internlm",
-            "DashScope": "dashscope",
-            "HuggingFace": "huggingface",
-            "WatsonX": "ibm",
-            "LiteLLMChat": "litellm",
-            "LMStudio": "lmstudio",
-            "Portkey": "portkey",
-            "VLLM": "vllm",
-            "V0": "vercel",
-            "LangDB": "langdb",
-            "AIMLAPI": "aimlapi",
-        }
-        
-        # First try the class name mapping
-        if class_name in class_to_provider:
-            return class_to_provider[class_name]
-        
-        # Fall back to provider field if set, converted to lowercase
-        if self.provider:
-            # Clean up common provider names
-            provider_clean = self.provider.lower().strip()
-            if "openai" in provider_clean:
-                return "openai"
-            elif "anthropic" in provider_clean:
-                return "anthropic"
-            elif "google" in provider_clean or "gemini" in provider_clean:
-                return "google"
-            elif "groq" in provider_clean:
-                return "groq"
-            else:
-                return provider_clean
-        
-        # Final fallback: use lowercase class name
-        return class_name.lower()
+        # Use the centralized get_model_string function to avoid code duplication
+        try:
+            from agno.models.utils import get_model_string
+
+            return get_model_string(self)
+        except ImportError:
+            # Fallback for edge cases where utils module is not available
+            provider = getattr(self, "provider", self.__class__.__name__.lower())
+            return f"{provider}:{self.id}"
 
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
