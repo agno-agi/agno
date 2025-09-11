@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
+from agno.db.utils import generate_deterministic_id
 from agno.db.gcs_json.utils import (
     apply_sorting,
     calculate_date_metrics,
@@ -35,6 +36,7 @@ class GcsJsonDb(BaseDb):
         knowledge_table: Optional[str] = None,
         project: Optional[str] = None,
         credentials: Optional[Any] = None,
+        id: Optional[str] = None,
     ):
         """
         Interface for interacting with JSON files stored in Google Cloud Storage as database.
@@ -50,8 +52,14 @@ class GcsJsonDb(BaseDb):
             project (Optional[str]): GCP project ID. If None, uses default project.
             location (Optional[str]): GCS bucket location. If None, uses default location.
             credentials (Optional[Any]): GCP credentials. If None, uses default credentials.
+            id (Optional[str]): ID of the database.
         """
+        if id is None:
+            seed = f"{bucket_name}_{project}"
+            id = generate_deterministic_id(seed)
+
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
@@ -67,6 +75,7 @@ class GcsJsonDb(BaseDb):
         # Initialize GCS client and bucket
         self.client = gcs.Client(project=project, credentials=credentials)
         self.bucket = self.client.bucket(self.bucket_name)
+
 
     def _get_blob_name(self, filename: str) -> str:
         """Get the full blob name including prefix for a given filename."""

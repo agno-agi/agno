@@ -20,6 +20,7 @@ from agno.db.mysql.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.utils import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 
@@ -45,6 +46,7 @@ class MySQLDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        id: Optional[str] = None,
     ):
         """
         Interface for interacting with a MySQL database.
@@ -63,12 +65,18 @@ class MySQLDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
+            id (Optional[str]): ID of the database.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
+        if id is None:
+            seed = db_url or str(db_engine.url)  # type: ignore
+            id = generate_deterministic_id(seed)
+
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,

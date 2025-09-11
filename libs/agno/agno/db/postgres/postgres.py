@@ -18,6 +18,7 @@ from agno.db.postgres.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.utils import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -68,6 +69,19 @@ class PostgresDb(BaseDb):
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
+        _engine: Optional[Engine] = db_engine
+        if _engine is None and db_url is not None:
+            _engine = create_engine(db_url)
+        if _engine is None:
+            raise ValueError("One of db_url or db_engine must be provided")
+
+        self.db_url: Optional[str] = db_url
+        self.db_engine: Engine = _engine
+
+        if id is None:
+            seed = db_url or str(db_engine.url)  # type: ignore
+            id = generate_deterministic_id(seed)
+
         super().__init__(
             id=id,
             session_table=session_table,
@@ -77,14 +91,6 @@ class PostgresDb(BaseDb):
             knowledge_table=knowledge_table,
         )
 
-        _engine: Optional[Engine] = db_engine
-        if _engine is None and db_url is not None:
-            _engine = create_engine(db_url)
-        if _engine is None:
-            raise ValueError("One of db_url or db_engine must be provided")
-
-        self.db_url: Optional[str] = db_url
-        self.db_engine: Engine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData()
 
