@@ -169,42 +169,15 @@ class Step:
         func: Callable, 
         step_input: StepInput, 
         session_state: Optional[Dict[str, Any]] = None,
-        **kwargs: Any
     ) -> Any:
-        """Call custom function with only the parameters it expects, including session_state support"""
-        from inspect import signature
-
-        sig = signature(func)
-
-        # Build arguments based on what the function actually accepts
-        call_kwargs: Dict[str, Any] = {}
-
-        # Always add step_input if the function expects it (backward compatibility)
-        if "step_input" in sig.parameters:
-            call_kwargs["step_input"] = step_input
-
-        # Add session_state if the function expects it
-        if "session_state" in sig.parameters and session_state is not None:
-            call_kwargs["session_state"] = session_state
-
-        # Add any other kwargs that the function expects
-        for param_name in kwargs:
-            if param_name in sig.parameters:
-                call_kwargs[param_name] = kwargs[param_name]
-
-        # If function has **kwargs parameter, pass all remaining kwargs
-        for param in sig.parameters.values():
-            if param.kind == param.VAR_KEYWORD:
-                call_kwargs.update(kwargs)
-                break
-
+        """Call custom function with session_state support, fallback to step_input only"""
+        
         try:
-            return func(**call_kwargs)
-        except TypeError as e:
-            # If signature inspection fails, fall back to original method (just step_input)
-            logger.warning(
-                f"Function signature inspection failed: {e}. Falling back to original calling convention."
-            )
+            if session_state is not None:
+                return func(step_input, session_state)
+            else:
+                return func(step_input)
+        except TypeError:
             return func(step_input)
 
     async def _acall_custom_function(
@@ -212,49 +185,15 @@ class Step:
         func: Callable, 
         step_input: StepInput, 
         session_state: Optional[Dict[str, Any]] = None,
-        **kwargs: Any
     ) -> Any:
-        """Call custom async function with only the parameters it expects, including session_state support"""
-        from inspect import signature
-
-        sig = signature(func)
-
-        # Build arguments based on what the function actually accepts
-        call_kwargs: Dict[str, Any] = {}
-
-        # Always add step_input if the function expects it (backward compatibility)
-        if "step_input" in sig.parameters:
-            call_kwargs["step_input"] = step_input
-
-        # Add session_state if the function expects it
-        if "session_state" in sig.parameters and session_state is not None:
-            call_kwargs["session_state"] = session_state
-
-        # Add any other kwargs that the function expects
-        for param_name in kwargs:
-            if param_name in sig.parameters:
-                call_kwargs[param_name] = kwargs[param_name]
-
-        # If function has **kwargs parameter, pass all remaining kwargs
-        for param in sig.parameters.values():
-            if param.kind == param.VAR_KEYWORD:
-                call_kwargs.update(kwargs)
-                break
-
+        """Call custom async function with session_state support, fallback to step_input only"""
         try:
-            if inspect.iscoroutinefunction(func):
-                return await func(**call_kwargs)
+            if session_state is not None:
+                return await func(step_input, session_state)
             else:
-                return func(**call_kwargs)
-        except TypeError as e:
-            # If signature inspection fails, fall back to original method (just step_input)
-            logger.warning(
-                f"Async function signature inspection failed: {e}. Falling back to original calling convention."
-            )
-            if inspect.iscoroutinefunction(func):
                 return await func(step_input)
-            else:
-                return func(step_input)
+        except TypeError:
+            return await func(step_input)
 
     def execute(
         self,

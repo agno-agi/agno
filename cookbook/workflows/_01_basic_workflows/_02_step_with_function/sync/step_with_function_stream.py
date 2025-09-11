@@ -9,6 +9,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
+from agno.db.in_memory import InMemoryDb
 
 # Define agents
 hackernews_agent = Agent(
@@ -39,6 +40,7 @@ content_planner = Agent(
         "Plan a content schedule over 4 weeks for the provided topic and research content",
         "Ensure that I have posts for 3 posts per week",
     ],
+    db=InMemoryDb(),
 )
 
 
