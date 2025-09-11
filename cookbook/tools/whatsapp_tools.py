@@ -30,8 +30,7 @@ For more complex use cases, check out the WhatsApp Cloud API documentation:
 [here](https://developers.facebook.com/docs/whatsapp/cloud-api/overview)
 """
 
-from agno.agent import Agent
-from agno.models.google import Gemini
+no.models.google import Gemini
 from agno.tools.whatsapp import WhatsAppTools
 
 agent = Agent(
