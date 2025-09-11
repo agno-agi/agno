@@ -119,7 +119,7 @@ async def run_reliability_eval(
         raise HTTPException(status_code=400, detail="expected_tool_calls is required for reliability evaluations")
 
     if agent:
-        agent_response = agent.run(eval_run_input.input)
+        agent_response = await agent.arun(eval_run_input.input)
         reliability_eval = ReliabilityEval(
             db=db,
             name=eval_run_input.name,
@@ -130,7 +130,7 @@ async def run_reliability_eval(
         model_provider = agent.model.provider if agent and agent.model else None
 
     elif team:
-        team_response = team.run(eval_run_input.input)
+        team_response = await team.arun(eval_run_input.input)
         reliability_eval = ReliabilityEval(
             db=db,
             name=eval_run_input.name,
