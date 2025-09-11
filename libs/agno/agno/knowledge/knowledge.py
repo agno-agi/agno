@@ -340,13 +340,19 @@ class Knowledge:
         Returns:
             bool: True if should skip processing, False if should continue
         """
-        if not (self.vector_db and content.content_hash and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists):
+        if not (
+            self.vector_db
+            and content.content_hash
+            and self.vector_db.content_hash_exists(content.content_hash)
+            and skip_if_exists
+        ):
             return False
 
         log_info(f"Content {content.content_hash} already exists, skipping")
         content_db_row = (
-            self.contents_db.get_knowledge_content_by_content_hash(content.content_hash) 
-            if self.contents_db and content.content_hash else None
+            self.contents_db.get_knowledge_content_by_content_hash(content.content_hash)
+            if self.contents_db and content.content_hash
+            else None
         )
         if content_db_row:
             log_info(f"Content {content.content_hash} already exists in contentsDB, skipping")

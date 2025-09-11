@@ -26,9 +26,9 @@ asyncio.run(
 )
 
 # Create and use the agent
-# agent = Agent(knowledge=knowledge)
-# agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
+agent = Agent(knowledge=knowledge)
+agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
 
-# vector_db.delete_by_name("Recipes")
-# # or
-# vector_db.delete_by_metadata({"doc_type": "recipe_book"})
+vector_db.delete_by_name("Recipes")
+# or
+vector_db.delete_by_metadata({"doc_type": "recipe_book"})
