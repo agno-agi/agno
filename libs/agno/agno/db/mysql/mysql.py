@@ -72,7 +72,9 @@ class MySQLDb(BaseDb):
             ValueError: If none of the tables are provided.
         """
         if id is None:
-            seed = db_url or str(db_engine.url)  # type: ignore
+            base_seed = db_url or str(db_engine.url)  # type: ignore
+            schema_suffix = db_schema if db_schema is not None else "ai"
+            seed = f"{base_seed}#{schema_suffix}"
             id = generate_deterministic_id(seed)
 
         super().__init__(

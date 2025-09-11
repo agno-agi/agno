@@ -69,7 +69,8 @@ class RedisDb(BaseDb):
             ValueError: If neither redis_client nor db_url is provided.
         """
         if id is None:
-            seed = db_url or str(redis_client)
+            base_seed = db_url or str(redis_client)
+            seed = f"{base_seed}#{db_prefix}"
             id = generate_deterministic_id(seed)
 
         super().__init__(

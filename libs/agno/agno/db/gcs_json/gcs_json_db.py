@@ -55,7 +55,8 @@ class GcsJsonDb(BaseDb):
             id (Optional[str]): ID of the database.
         """
         if id is None:
-            seed = f"{bucket_name}_{project}"
+            prefix_suffix = prefix or "agno/"
+            seed = f"{bucket_name}_{project}#{prefix_suffix}"
             id = generate_deterministic_id(seed)
 
         super().__init__(

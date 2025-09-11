@@ -60,7 +60,9 @@ class MongoDb(BaseDb):
             ValueError: If neither db_url nor db_client is provided.
         """
         if id is None:
-            seed = db_url or str(db_client)
+            base_seed = db_url or str(db_client)
+            db_name_suffix = db_name if db_name is not None else "agno"
+            seed = f"{base_seed}#{db_name_suffix}"
             id = generate_deterministic_id(seed)
 
         super().__init__(
