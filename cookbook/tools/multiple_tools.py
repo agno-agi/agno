@@ -1,4 +1,4 @@
-"""Run `pip install openai duckduckgo-search yfinance` to install dependencies."""
+"""Run `pip install openai ddgs yfinance` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -9,7 +9,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools(), YFinanceTools(enable_all=True)],
     instructions=["Use tables to display data"],
-    show_tool_calls=True,
     markdown=True,
 )
 agent.print_response(

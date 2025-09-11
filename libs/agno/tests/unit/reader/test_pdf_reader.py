@@ -5,11 +5,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from agno.document.reader.pdf_reader import (
+from agno.knowledge.reader.pdf_reader import (
     PDFImageReader,
     PDFReader,
-    PDFUrlImageReader,
-    PDFUrlReader,
     _clean_page_numbers,
 )
 
@@ -83,25 +81,6 @@ def test_pdf_reader_with_chunking_and_pages_merged(sample_pdf_path):
     assert len(documents_splitted) > len(documents_unsplit)
 
 
-def test_pdf_url_reader(sample_pdf_url):
-    reader = PDFUrlReader()
-    documents = reader.read(sample_pdf_url)
-
-    assert len(documents) > 0
-    assert all(doc.name == "ThaiRecipes" for doc in documents)
-    assert all(doc.content for doc in documents)
-
-
-@pytest.mark.asyncio
-async def test_pdf_url_reader_async(sample_pdf_url):
-    reader = PDFUrlReader()
-    documents = await reader.async_read(sample_pdf_url)
-
-    assert len(documents) > 0
-    assert all(doc.name == "ThaiRecipes" for doc in documents)
-    assert all(doc.content for doc in documents)
-
-
 def test_pdf_image_reader(sample_pdf_path):
     reader = PDFImageReader()
     documents = reader.read(sample_pdf_path)
@@ -121,35 +100,10 @@ async def test_pdf_image_reader_async(sample_pdf_path):
     assert all(doc.content for doc in documents)
 
 
-def test_pdf_url_image_reader(sample_pdf_url):
-    reader = PDFUrlImageReader()
-    documents = reader.read(sample_pdf_url)
-
-    assert len(documents) > 0
-    assert all(doc.name == "ThaiRecipes" for doc in documents)
-    assert all(doc.content for doc in documents)
-
-
-@pytest.mark.asyncio
-async def test_pdf_url_image_reader_async(sample_pdf_url):
-    reader = PDFUrlImageReader()
-    documents = await reader.async_read(sample_pdf_url)
-
-    assert len(documents) > 0
-    assert all(doc.name == "ThaiRecipes" for doc in documents)
-    assert all(doc.content for doc in documents)
-
-
 def test_pdf_reader_invalid_file():
     reader = PDFReader()
     with pytest.raises(Exception):
         reader.read("nonexistent.pdf")
-
-
-def test_pdf_url_reader_invalid_url():
-    reader = PDFUrlReader()
-    with pytest.raises(ValueError):
-        reader.read("")
 
 
 @pytest.mark.asyncio

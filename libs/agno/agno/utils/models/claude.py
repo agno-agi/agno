@@ -246,21 +246,23 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
         elif message.role == "assistant":
             content = []
 
-            if message.thinking is not None and message.provider_data is not None:
+            if message.reasoning_content is not None and message.provider_data is not None:
                 from anthropic.types import RedactedThinkingBlock, ThinkingBlock
 
                 content.append(
                     ThinkingBlock(
-                        thinking=message.thinking,
+                        thinking=message.reasoning_content,
                         signature=message.provider_data.get("signature"),
                         type="thinking",
                     )
                 )
 
-            if message.redacted_thinking is not None:
+            if message.redacted_reasoning_content is not None:
                 from anthropic.types import RedactedThinkingBlock
 
-                content.append(RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking"))
+                content.append(
+                    RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_reasoning_content")
+                )
 
             if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
@@ -284,3 +286,44 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
+
+
+def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
+    """
+    Transforms function definitions into a format accepted by the Anthropic API.
+    """
+    if not tools:
+        return None
+
+    parsed_tools: List[Dict[str, Any]] = []
+    for tool_def in tools:
+        if tool_def.get("type", "") != "function":
+            parsed_tools.append(tool_def)
+            continue
+
+        func_def = tool_def.get("function", {})
+        parameters: Dict[str, Any] = func_def.get("parameters", {})
+        properties: Dict[str, Any] = parameters.get("properties", {})
+        required: List[str] = parameters.get("required", [])
+        required_params: List[str] = required
+
+        input_properties: Dict[str, Any] = {}
+        for param_name, param_info in properties.items():
+            # Preserve the complete schema structure for complex types
+            input_properties[param_name] = param_info.copy()
+
+            # Ensure description is present (default to empty if missing)
+            if "description" not in input_properties[param_name]:
+                input_properties[param_name]["description"] = ""
+
+        tool = {
+            "name": func_def.get("name") or "",
+            "description": func_def.get("description") or "",
+            "input_schema": {
+                "type": parameters.get("type", "object"),
+                "properties": input_properties,
+                "required": required_params,
+            },
+        }
+        parsed_tools.append(tool)
+    return parsed_tools

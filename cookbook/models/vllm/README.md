@@ -24,10 +24,9 @@ vllm serve Qwen/Qwen2.5-7B-Instruct \
     --enable-auto-tool-choice \
     --tool-call-parser hermes \
     --dtype float16 \
-    --max-model-len 8192 \
+    --max-model-len 2048 \
     --gpu-memory-utilization 0.9
 ```
-
 
 ## Examples
 
@@ -35,4 +34,4 @@ vllm serve Qwen/Qwen2.5-7B-Instruct \
 
 ```shell
 python cookbook/models/vllm/basic.py
-``` 
+```

@@ -1,5 +1,5 @@
 import json
-import os
+from os import getenv
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
@@ -18,29 +18,33 @@ class ScrapeGraphTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        smartscraper: bool = True,
-        markdownify: bool = False,
-        crawl: bool = False,
-        searchscraper: bool = False,
+        enable_smartscraper: bool = True,
+        enable_markdownify: bool = False,
+        enable_crawl: bool = False,
+        enable_searchscraper: bool = False,
+        enable_agentic_crawler: bool = False,
+        all: bool = False,
         **kwargs,
     ):
-        self.api_key: Optional[str] = api_key or os.getenv("SGAI_API_KEY")
+        self.api_key: Optional[str] = api_key or getenv("SGAI_API_KEY")
         self.client = Client(api_key=self.api_key)
 
         # Start with smartscraper by default
         # Only enable markdownify if smartscraper is False
-        if not smartscraper:
-            markdownify = True
+        if not enable_smartscraper and not all:
+            enable_markdownify = True
 
         tools: List[Any] = []
-        if smartscraper:
+        if enable_smartscraper or all:
             tools.append(self.smartscraper)
-        if markdownify:
+        if enable_markdownify or all:
             tools.append(self.markdownify)
-        if crawl:
+        if enable_crawl or all:
             tools.append(self.crawl)
-        if searchscraper:
+        if enable_searchscraper or all:
             tools.append(self.searchscraper)
+        if enable_agentic_crawler or all:
+            tools.append(self.agentic_crawler)
 
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
 
@@ -107,6 +111,68 @@ class ScrapeGraphTools(Toolkit):
                 batch_size=batch_size,
             )
             return json.dumps(response, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    def agentic_crawler(
+        self,
+        url: str,
+        steps: List[str],
+        use_session: bool = True,
+        user_prompt: Optional[str] = None,
+        output_schema: Optional[dict] = None,
+        ai_extraction: bool = False,
+    ) -> str:
+        """Perform agentic crawling with automated browser actions and optional AI extraction.
+
+        This tool can:
+        1. Navigate to a website
+        2. Perform a series of automated actions (like filling forms, clicking buttons)
+        3. Extract the resulting HTML content as markdown
+        4. Optionally use AI to extract structured data
+
+        Args:
+            url (str): The URL to scrape
+            steps (List[str]): List of steps to perform on the webpage (e.g., ["Type email in input box", "click login"])
+            use_session (bool): Whether to use session for the scraping (default: True)
+            user_prompt (Optional[str]): Prompt for AI extraction (only used when ai_extraction=True)
+            output_schema (Optional[dict]): Schema for structured data extraction (only used when ai_extraction=True)
+            ai_extraction (bool): Whether to use AI for data extraction from the scraped content (default: False)
+
+        Returns:
+            JSON string containing the scraping results, including request_id, status, and extracted data
+        """
+        try:
+            # Validate required parameters for AI extraction
+            if ai_extraction and not user_prompt:
+                return json.dumps({"error": "user_prompt is required when ai_extraction=True"})
+
+            # Validate URL format
+            if not url.strip():
+                return json.dumps({"error": "URL cannot be empty"})
+            if not (url.startswith("http://") or url.startswith("https://")):
+                return json.dumps({"error": "Invalid URL - must start with http:// or https://"})
+
+            # Validate steps
+            if not steps:
+                return json.dumps({"error": "Steps cannot be empty"})
+            if any(not step.strip() for step in steps):
+                return json.dumps({"error": "All steps must contain valid instructions"})
+
+            # Prepare parameters for the API call
+            params = {"url": url, "steps": steps, "use_session": use_session, "ai_extraction": ai_extraction}
+
+            # Add optional parameters only if they are provided
+            if user_prompt:
+                params["user_prompt"] = user_prompt
+            if output_schema:
+                params["output_schema"] = output_schema
+
+            # Call the agentic scraper API
+            response = self.client.agenticscraper(**params)
+
+            return json.dumps(response, indent=2)
+
         except Exception as e:
             return json.dumps({"error": str(e)})
 

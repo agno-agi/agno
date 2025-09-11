@@ -8,15 +8,15 @@ import pytest
 import requests
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.tools.brightdata import BrightDataTools
+from agno.tools.function import ToolResult
 
 
 @pytest.fixture
 def mock_agent():
     """Create a mock Agent instance."""
     agent = Mock(spec=Agent)
-    agent.add_image = Mock()
     return agent
 
 
@@ -34,10 +34,10 @@ def brightdata_tools():
         api_key="test_api_key",
         serp_zone="test_serp_zone",
         web_unlocker_zone="test_web_unlocker_zone",
-        scrape_as_markdown=True,
-        get_screenshot=True,
-        search_engine=True,
-        web_data_feed=True,
+        enable_scrape_markdown=True,
+        enable_screenshot=True,
+        enable_search_engine=True,
+        enable_web_data_feed=True,
         verbose=True,
     )
 
@@ -68,10 +68,10 @@ def test_init_with_selective_tools():
     """Test initialization with only selected tools."""
     tools = BrightDataTools(
         api_key="test_key",
-        scrape_as_markdown=True,
-        get_screenshot=False,
-        search_engine=True,
-        web_data_feed=False,
+        enable_scrape_markdown=True,
+        enable_screenshot=False,
+        enable_search_engine=True,
+        enable_web_data_feed=False,
     )
 
     function_names = [func.name for func in tools.functions.values()]
@@ -177,7 +177,11 @@ def test_get_screenshot_success(brightdata_tools, mock_requests, mock_agent):
 
         result = brightdata_tools.get_screenshot(mock_agent, "https://example.com")
 
-    assert "Screenshot captured and added as artifact with ID: test-uuid-123" in result
+    # Check that result is a ToolResult with success content
+    assert isinstance(result, ToolResult)
+    assert "Screenshot captured and added as artifact with ID: test-uuid-123" in result.content
+    assert result.images is not None
+    assert len(result.images) == 1
 
     # Verify API call
     mock_requests.post.assert_called_once()
@@ -188,16 +192,15 @@ def test_get_screenshot_success(brightdata_tools, mock_requests, mock_agent):
     assert payload["zone"] == "test_web_unlocker_zone"
 
     # Verify ImageArtifact creation
-    mock_agent.add_image.assert_called_once()
-    call_args = mock_agent.add_image.call_args[0][0]
-    assert isinstance(call_args, ImageArtifact)
-    assert call_args.id == "test-uuid-123"
-    assert call_args.mime_type == "image/png"
-    assert call_args.original_prompt == "Screenshot of https://example.com"
+    image_artifact = result.images[0]
+    assert isinstance(image_artifact, Image)
+    assert image_artifact.id == "test-uuid-123"
+    assert image_artifact.mime_type == "image/png"
+    assert image_artifact.original_prompt == "Screenshot of https://example.com"
 
     # Verify base64 encoding
     expected_base64 = base64.b64encode(mock_image_bytes).decode("utf-8")
-    assert call_args.content == expected_base64.encode("utf-8")
+    assert image_artifact.content == expected_base64.encode("utf-8")
 
 
 def test_get_screenshot_no_api_key(mock_agent):
@@ -207,13 +210,21 @@ def test_get_screenshot_no_api_key(mock_agent):
         tools.api_key = None  # Then remove it to test the method behavior
 
         result = tools.get_screenshot(mock_agent, "https://example.com")
-        assert result == "Please provide a Bright Data API key"
+
+        # Check that result is a ToolResult with error content
+        assert isinstance(result, ToolResult)
+        assert result.content == "Please provide a Bright Data API key"
+        assert result.images is None
 
 
 def test_get_screenshot_no_url(brightdata_tools, mock_agent):
     """Test get_screenshot without URL."""
     result = brightdata_tools.get_screenshot(mock_agent, "")
-    assert result == "Please provide a URL to screenshot"
+
+    # Check that result is a ToolResult with error content
+    assert isinstance(result, ToolResult)
+    assert result.content == "Please provide a URL to screenshot"
+    assert result.images is None
 
 
 def test_get_screenshot_http_error(brightdata_tools, mock_requests, mock_agent):
@@ -224,7 +235,11 @@ def test_get_screenshot_http_error(brightdata_tools, mock_requests, mock_agent):
     mock_requests.post.return_value = mock_response
 
     result = brightdata_tools.get_screenshot(mock_agent, "https://example.com")
-    assert "Error taking screenshot of https://example.com: Error 500: Internal Server Error" in result
+
+    # Check that result is a ToolResult with error content
+    assert isinstance(result, ToolResult)
+    assert "Error taking screenshot of https://example.com: Error 500: Internal Server Error" in result.content
+    assert result.images is None
 
 
 def test_search_engine_success(brightdata_tools, mock_requests):

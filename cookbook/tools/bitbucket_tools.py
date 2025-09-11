@@ -17,7 +17,6 @@ workspace = "MaximMFP"
 
 agent = Agent(
     tools=[BitbucketTools(workspace=workspace, repo_slug=repo_slug)],
-    show_tool_calls=True,
 )
 
 agent.print_response("List open pull requests", markdown=True)

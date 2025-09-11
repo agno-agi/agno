@@ -1,4 +1,5 @@
 import logging
+from functools import lru_cache
 from os import getenv
 from typing import Any, Literal, Optional
 
@@ -52,18 +53,23 @@ class AgnoLogger(logging.Logger):
     def __init__(self, name: str, level: int = logging.NOTSET):
         super().__init__(name, level)
 
-    def debug(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):
+    def debug(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):  # type: ignore
         if center:
             msg = center_header(str(msg), symbol)
         super().debug(msg, *args, **kwargs)
 
-    def info(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):
+    def info(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):  # type: ignore
         if center:
             msg = center_header(str(msg), symbol)
         super().info(msg, *args, **kwargs)
 
 
 def build_logger(logger_name: str, source_type: Optional[str] = None) -> Any:
+    # If a logger with the name "agno.{source_type}" is already set, we want to use that one
+    _logger = logging.getLogger(f"agno.{logger_name}")
+    if _logger.handlers or _logger.level != logging.NOTSET:
+        return _logger
+
     # Set the custom logger class as the default for this logger
     logging.setLoggerClass(AgnoLogger)
 
@@ -174,6 +180,12 @@ def use_workflow_logger():
     logger = workflow_logger
 
 
+@lru_cache(maxsize=128)
+def _using_default_logger(logger_instance: Any) -> bool:
+    """Return True if the currently active logger is our default AgnoLogger"""
+    return isinstance(logger_instance, AgnoLogger)
+
+
 def log_debug(msg, center: bool = False, symbol: str = "*", log_level: Literal[1, 2] = 1, *args, **kwargs):
     global logger
     global debug_on
@@ -181,12 +193,18 @@ def log_debug(msg, center: bool = False, symbol: str = "*", log_level: Literal[1
 
     if debug_on:
         if debug_level >= log_level:
-            logger.debug(msg, center, symbol, *args, **kwargs)
+            if _using_default_logger(logger):
+                logger.debug(msg, center, symbol, *args, **kwargs)
+            else:
+                logger.debug(msg, *args, **kwargs)
 
 
 def log_info(msg, center: bool = False, symbol: str = "*", *args, **kwargs):
     global logger
-    logger.info(msg, center, symbol, *args, **kwargs)
+    if _using_default_logger(logger):
+        logger.info(msg, center, symbol, *args, **kwargs)
+    else:
+        logger.info(msg, *args, **kwargs)
 
 
 def log_warning(msg, *args, **kwargs):
@@ -202,3 +220,35 @@ def log_error(msg, *args, **kwargs):
 def log_exception(msg, *args, **kwargs):
     global logger
     logger.exception(msg, *args, **kwargs)
+
+
+def configure_agno_logging(
+    custom_default_logger: Optional[Any] = None,
+    custom_agent_logger: Optional[Any] = None,
+    custom_team_logger: Optional[Any] = None,
+    custom_workflow_logger: Optional[Any] = None,
+) -> None:
+    """
+    Util to set custom loggers. These will be used everywhere across the Agno library.
+
+    Args:
+        custom_default_logger: Default logger to use (overrides agent_logger for default)
+        custom_agent_logger: Custom logger for agent operations
+        custom_team_logger: Custom logger for team operations
+        custom_workflow_logger: Custom logger for workflow operations
+    """
+    if custom_default_logger is not None:
+        global logger
+        logger = custom_default_logger
+
+    if custom_agent_logger is not None:
+        global agent_logger
+        agent_logger = custom_agent_logger
+
+    if custom_team_logger is not None:
+        global team_logger
+        team_logger = custom_team_logger
+
+    if custom_workflow_logger is not None:
+        global workflow_logger
+        workflow_logger = custom_workflow_logger

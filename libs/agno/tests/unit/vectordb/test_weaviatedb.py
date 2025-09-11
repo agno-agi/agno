@@ -1,10 +1,11 @@
 import json
+import uuid
 from typing import List
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate import Weaviate
 from agno.vectordb.weaviate.index import Distance, VectorIndex
@@ -28,6 +29,14 @@ def mock_weaviate_client():
         collection.query.near_vector.return_value = mock_response
         collection.query.bm25.return_value = mock_response
         collection.query.hybrid.return_value = mock_response
+        collection.query.fetch_objects.return_value = mock_response
+
+        # Set up collection data mocks
+        collection.data.exists.return_value = False
+        collection.data.insert = Mock()
+        collection.data.delete_by_id = Mock()
+        collection.data.delete_many = Mock()
+        collection.aggregate.over_all.return_value = Mock(total_count=0)
 
         # Set up collection management mocks
         client.collections.create = Mock()
@@ -92,7 +101,7 @@ def test_insert_documents(weaviate_db, sample_documents, mock_weaviate_client):
     """Test inserting documents"""
     collection = mock_weaviate_client.collections.get.return_value
 
-    weaviate_db.insert(sample_documents)
+    weaviate_db.insert(content_hash="test_hash", documents=sample_documents)
     assert collection.data.insert.call_count == 3
 
 
@@ -185,17 +194,6 @@ def test_hybrid_search(weaviate_db, sample_documents, mock_weaviate_client):
     assert "pad_thai" in [doc.name for doc in results]
 
 
-def test_doc_exists(weaviate_db, sample_documents, mock_weaviate_client):
-    """Test document existence check"""
-    collection = mock_weaviate_client.collections.get.return_value
-    collection.data.exists.return_value = True
-
-    assert weaviate_db.doc_exists(sample_documents[0]) is True
-
-    collection.data.exists.return_value = False
-    assert weaviate_db.doc_exists(sample_documents[0]) is False
-
-
 def test_name_exists(weaviate_db, mock_weaviate_client):
     """Test name existence check"""
     collection = mock_weaviate_client.collections.get.return_value
@@ -212,6 +210,79 @@ def test_name_exists(weaviate_db, mock_weaviate_client):
     assert weaviate_db.name_exists("nonexistent") is False
 
 
+def test_delete_by_id(weaviate_db, mock_weaviate_client):
+    """Test deleting documents by ID"""
+    collection = mock_weaviate_client.collections.get.return_value
+    test_uuid = str(uuid.uuid4())
+
+    # Test successful deletion
+    collection.data.exists.return_value = True
+    result = weaviate_db.delete_by_id(test_uuid)
+    assert result is True
+    collection.data.delete_by_id.assert_called_once()
+
+    # Test deletion of non-existent ID (should still return True)
+    collection.data.exists.return_value = False
+    collection.data.delete_by_id.reset_mock()
+    result = weaviate_db.delete_by_id("nonexistent_id")
+    assert result is True
+    collection.data.delete_by_id.assert_not_called()
+
+
+def test_delete_by_name(weaviate_db, mock_weaviate_client):
+    """Test deleting documents by name"""
+    collection = mock_weaviate_client.collections.get.return_value
+
+    # Test successful deletion
+    result = weaviate_db.delete_by_name("tom_kha")
+    assert result is True
+    collection.data.delete_many.assert_called_once()
+
+    # Verify the filter was built correctly
+    call_args = collection.data.delete_many.call_args
+    assert "where" in call_args.kwargs
+
+
+def test_delete_by_metadata(weaviate_db, mock_weaviate_client):
+    """Test deleting documents by metadata"""
+    collection = mock_weaviate_client.collections.get.return_value
+
+    metadata = {"cuisine": "Thai", "type": "soup"}
+    result = weaviate_db.delete_by_metadata(metadata)
+    assert result is True
+    collection.data.delete_many.assert_called_once()
+
+
+def test_delete_by_content_id(weaviate_db, mock_weaviate_client):
+    """Test deleting documents by content ID"""
+    collection = mock_weaviate_client.collections.get.return_value
+
+    result = weaviate_db.delete_by_content_id("recipe_1")
+    assert result is True
+    collection.data.delete_many.assert_called_once()
+
+
+def test_delete_by_name_multiple_documents(weaviate_db, mock_weaviate_client):
+    """Test deleting multiple documents with the same name"""
+    collection = mock_weaviate_client.collections.get.return_value
+
+    # This should use delete_many to delete all documents with the same name
+    result = weaviate_db.delete_by_name("tom_kha")
+    assert result is True
+    collection.data.delete_many.assert_called_once()
+
+
+def test_delete_by_metadata_complex(weaviate_db, mock_weaviate_client):
+    """Test deleting documents with complex metadata matching"""
+    collection = mock_weaviate_client.collections.get.return_value
+
+    # Test complex metadata deletion
+    complex_metadata = {"cuisine": "Thai", "spicy": True, "type": "soup"}
+    result = weaviate_db.delete_by_metadata(complex_metadata)
+    assert result is True
+    collection.data.delete_many.assert_called_once()
+
+
 def test_upsert_documents(weaviate_db, sample_documents, mock_weaviate_client):
     """Test upserting documents"""
     collection = mock_weaviate_client.collections.get.return_value
@@ -220,7 +291,7 @@ def test_upsert_documents(weaviate_db, sample_documents, mock_weaviate_client):
     mock_result.objects = []
     collection.query.fetch_objects.return_value = mock_result
 
-    weaviate_db.upsert(sample_documents)
+    weaviate_db.upsert(content_hash="test_hash", documents=sample_documents)
     assert collection.data.insert.call_count == 3
 
 
@@ -232,8 +303,8 @@ def test_upsert_documents_with_existing_data(weaviate_db, sample_documents, mock
     mock_result.objects = [Mock()]  # Simulate existing data
     collection.query.fetch_objects.return_value = mock_result
 
-    weaviate_db.upsert(sample_documents)
-    assert collection.data.insert.call_count == 0
+    weaviate_db.upsert(content_hash="test_hash", documents=sample_documents)
+    assert collection.data.insert.call_count == 3
 
 
 def test_vector_index_config(weaviate_db):
@@ -252,11 +323,16 @@ def test_get_search_results(weaviate_db):
     mock_response = MagicMock()
 
     mock_obj1 = MagicMock()
-    mock_obj1.properties = {"name": "test1", "content": "Test content 1", "meta_data": json.dumps({"key": "value"})}
+    mock_obj1.properties = {
+        "name": "test1",
+        "content": "Test content 1",
+        "meta_data": json.dumps({"key": "value"}),
+        "content_id": "test_id_1",
+    }
     mock_obj1.vector = {"default": [0.1] * 768}
 
     mock_obj2 = MagicMock()
-    mock_obj2.properties = {"name": "test2", "content": "Test content 2", "meta_data": None}
+    mock_obj2.properties = {"name": "test2", "content": "Test content 2", "meta_data": None, "content_id": "test_id_2"}
     mock_obj2.vector = [0.2] * 768
 
     mock_response.objects = [mock_obj1, mock_obj2]
@@ -265,8 +341,41 @@ def test_get_search_results(weaviate_db):
     assert len(results) == 2
     assert results[0].name == "test1"
     assert results[0].meta_data == {"key": "value"}
+    assert results[0].content_id == "test_id_1"
     assert results[1].name == "test2"
     assert results[1].meta_data == {}
+    assert results[1].content_id == "test_id_2"
+
+
+def test_error_handling(weaviate_db, mock_weaviate_client):
+    """Test error handling scenarios"""
+    collection = mock_weaviate_client.collections.get.return_value
+
+    # Test deletion with exception
+    collection.data.delete_many.side_effect = Exception("Test error")
+    result = weaviate_db.delete_by_name("test")
+    assert result is False
+
+    # Reset the side effect
+    collection.data.delete_many.side_effect = None
+
+
+def test_build_filter_expression(weaviate_db):
+    """Test building filter expressions for metadata"""
+    # Test with no filters
+    result = weaviate_db._build_filter_expression(None)
+    assert result is None
+
+    result = weaviate_db._build_filter_expression({})
+    assert result is None
+
+    # Test with simple filter (should return a filter object)
+    result = weaviate_db._build_filter_expression({"cuisine": "Thai"})
+    assert result is not None
+
+    # Test with multiple filters
+    result = weaviate_db._build_filter_expression({"cuisine": "Thai", "type": "soup"})
+    assert result is not None
 
 
 @pytest.mark.asyncio

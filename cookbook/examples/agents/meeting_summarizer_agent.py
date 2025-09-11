@@ -6,6 +6,7 @@ to process a meeting recording, summarize it, visualize it, and create an audio 
 Requires: pip install openai agno
 """
 
+import base64
 from pathlib import Path
 from textwrap import dedent
 
@@ -31,7 +32,7 @@ meeting_agent: Agent = Agent(
         Your purpose is to process audio recordings of meetings, extract key information,
         create a visual representation, and provide an audio summary.
     """),
-    instructions=dedent(f"""\
+    instructions=dedent("""\
         Follow these steps precisely:
         1. Receive the path to an audio file.
         2. Use the `transcribe_audio` tool to get the text transcription.
@@ -40,12 +41,12 @@ meeting_agent: Agent = Agent(
         5. Convert the meeting minutes into an audio summary using the `generate_speech` tool.
     """),
     markdown=True,
-    show_tool_calls=True,
 )
 
 response = meeting_agent.run(
-    f"Please process the meeting recording located at '{local_audio_path}'",
+    f"Please process the meeting recording located at '{local_audio_path}'"
 )
 if response.audio:
-    save_base64_data(response.audio[0].base64_audio, Path("tmp/meeting_summary.mp3"))
+    base64_audio = base64.b64encode(response.audio[0].content).decode("utf-8")
+    save_base64_data(base64_audio, Path("tmp/meeting_summary.mp3"))
     print(f"Meeting summary saved to: {Path('tmp/meeting_summary.mp3')}")
