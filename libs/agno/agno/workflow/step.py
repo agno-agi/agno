@@ -164,6 +164,98 @@ class Step:
             return response.metrics
         return None
 
+    def _call_custom_function(
+        self, 
+        func: Callable, 
+        step_input: StepInput, 
+        session_state: Optional[Dict[str, Any]] = None,
+        **kwargs: Any
+    ) -> Any:
+        """Call custom function with only the parameters it expects, including session_state support"""
+        from inspect import signature
+
+        sig = signature(func)
+
+        # Build arguments based on what the function actually accepts
+        call_kwargs: Dict[str, Any] = {}
+
+        # Always add step_input if the function expects it (backward compatibility)
+        if "step_input" in sig.parameters:
+            call_kwargs["step_input"] = step_input
+
+        # Add session_state if the function expects it
+        if "session_state" in sig.parameters and session_state is not None:
+            call_kwargs["session_state"] = session_state
+
+        # Add any other kwargs that the function expects
+        for param_name in kwargs:
+            if param_name in sig.parameters:
+                call_kwargs[param_name] = kwargs[param_name]
+
+        # If function has **kwargs parameter, pass all remaining kwargs
+        for param in sig.parameters.values():
+            if param.kind == param.VAR_KEYWORD:
+                call_kwargs.update(kwargs)
+                break
+
+        try:
+            return func(**call_kwargs)
+        except TypeError as e:
+            # If signature inspection fails, fall back to original method (just step_input)
+            logger.warning(
+                f"Function signature inspection failed: {e}. Falling back to original calling convention."
+            )
+            return func(step_input)
+
+    async def _acall_custom_function(
+        self, 
+        func: Callable, 
+        step_input: StepInput, 
+        session_state: Optional[Dict[str, Any]] = None,
+        **kwargs: Any
+    ) -> Any:
+        """Call custom async function with only the parameters it expects, including session_state support"""
+        from inspect import signature
+
+        sig = signature(func)
+
+        # Build arguments based on what the function actually accepts
+        call_kwargs: Dict[str, Any] = {}
+
+        # Always add step_input if the function expects it (backward compatibility)
+        if "step_input" in sig.parameters:
+            call_kwargs["step_input"] = step_input
+
+        # Add session_state if the function expects it
+        if "session_state" in sig.parameters and session_state is not None:
+            call_kwargs["session_state"] = session_state
+
+        # Add any other kwargs that the function expects
+        for param_name in kwargs:
+            if param_name in sig.parameters:
+                call_kwargs[param_name] = kwargs[param_name]
+
+        # If function has **kwargs parameter, pass all remaining kwargs
+        for param in sig.parameters.values():
+            if param.kind == param.VAR_KEYWORD:
+                call_kwargs.update(kwargs)
+                break
+
+        try:
+            if inspect.iscoroutinefunction(func):
+                return await func(**call_kwargs)
+            else:
+                return func(**call_kwargs)
+        except TypeError as e:
+            # If signature inspection fails, fall back to original method (just step_input)
+            logger.warning(
+                f"Async function signature inspection failed: {e}. Falling back to original calling convention."
+            )
+            if inspect.iscoroutinefunction(func):
+                return await func(step_input)
+            else:
+                return func(step_input)
+
     def execute(
         self,
         step_input: StepInput,
@@ -191,8 +283,9 @@ class Step:
                     if inspect.isgeneratorfunction(self.active_executor):
                         content = ""
                         final_response = None
+                        session_state_copy = copy(session_state) if session_state else None
                         try:
-                            for chunk in self.active_executor(step_input):  # type: ignore
+                            for chunk in self.active_executor(step_input) if not self._function_has_session_state_param() else self._call_custom_function(self.active_executor, step_input, session_state_copy):  # type: ignore
                                 if (
                                     hasattr(chunk, "content")
                                     and chunk.content is not None
@@ -208,13 +301,22 @@ class Step:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
                                 final_response = e.value
 
+                        # Merge session_state changes back
+                        if session_state_copy and session_state:
+                            merge_dictionaries(session_state, session_state_copy)
+
                         if final_response is not None:
                             response = final_response
                         else:
                             response = StepOutput(content=content)
                     else:
-                        # Execute function directly with StepInput
-                        result = self.active_executor(step_input)  # type: ignore
+                        # Execute function with signature inspection for session_state support
+                        session_state_copy = copy(session_state) if session_state else None
+                        result = self._call_custom_function(self.active_executor, step_input, session_state_copy)
+
+                        # Merge session_state changes back
+                        if session_state_copy and session_state:
+                            merge_dictionaries(session_state, session_state_copy)
 
                         # If function returns StepOutput, use it directly
                         if isinstance(result, StepOutput):
@@ -291,6 +393,18 @@ class Step:
 
         return StepOutput(content=f"Step {self.name} failed but skipped", success=False)
 
+    def _function_has_session_state_param(self) -> bool:
+        """Check if the custom function has a session_state parameter"""
+        if self._executor_type != "function":
+            return False
+        
+        try:
+            from inspect import signature
+            sig = signature(self.active_executor)
+            return "session_state" in sig.parameters
+        except Exception:
+            return False
+
     def execute_stream(
         self,
         step_input: StepInput,
@@ -338,8 +452,10 @@ class Step:
                     if inspect.isgeneratorfunction(self.active_executor):
                         log_debug("Function returned iterable, streaming events")
                         content = ""
+                        session_state_copy = copy(session_state) if session_state else None
                         try:
-                            for event in self.active_executor(step_input):  # type: ignore
+                            iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy) if self._function_has_session_state_param() else self.active_executor(step_input)
+                            for event in iterator:  # type: ignore
                                 if (
                                     hasattr(event, "content")
                                     and event.content is not None
@@ -353,6 +469,11 @@ class Step:
                                     break
                                 else:
                                     yield event  # type: ignore[misc]
+
+                            # Merge session_state changes back
+                            if session_state_copy and session_state:
+                                merge_dictionaries(session_state, session_state_copy)
+
                             if not final_response:
                                 final_response = StepOutput(content=content)
                         except StopIteration as e:
@@ -360,7 +481,13 @@ class Step:
                                 final_response = e.value
 
                     else:
-                        result = self.active_executor(step_input)  # type: ignore
+                        session_state_copy = copy(session_state) if session_state else None
+                        result = self._call_custom_function(self.active_executor, step_input, session_state_copy)
+                        
+                        # Merge session_state changes back
+                        if session_state_copy and session_state:
+                            merge_dictionaries(session_state, session_state_copy)
+
                         if isinstance(result, StepOutput):
                             final_response = result
                         else:
@@ -505,9 +632,11 @@ class Step:
                     ):
                         content = ""
                         final_response = None
+                        session_state_copy = copy(session_state) if session_state else None
                         try:
                             if inspect.isgeneratorfunction(self.active_executor):
-                                for chunk in self.active_executor(step_input):  # type: ignore
+                                iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy) if self._function_has_session_state_param() else self.active_executor(step_input)
+                                for chunk in iterator:  # type: ignore
                                     if (
                                         hasattr(chunk, "content")
                                         and chunk.content is not None
@@ -520,7 +649,8 @@ class Step:
                                         final_response = chunk
                             else:
                                 if inspect.isasyncgenfunction(self.active_executor):
-                                    async for chunk in self.active_executor(step_input):  # type: ignore
+                                    iterator = await self._acall_custom_function(self.active_executor, step_input, session_state_copy) if self._function_has_session_state_param() else self.active_executor(step_input)
+                                    async for chunk in iterator:  # type: ignore
                                         if (
                                             hasattr(chunk, "content")
                                             and chunk.content is not None
@@ -536,15 +666,24 @@ class Step:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
                                 final_response = e.value
 
+                        # Merge session_state changes back
+                        if session_state_copy and session_state:
+                            merge_dictionaries(session_state, session_state_copy)
+
                         if final_response is not None:
                             response = final_response
                         else:
                             response = StepOutput(content=content)
                     else:
+                        session_state_copy = copy(session_state) if session_state else None
                         if inspect.iscoroutinefunction(self.active_executor):
-                            result = await self.active_executor(step_input)  # type: ignore
+                            result = await self._acall_custom_function(self.active_executor, step_input, session_state_copy)
                         else:
-                            result = self.active_executor(step_input)  # type: ignore
+                            result = self._call_custom_function(self.active_executor, step_input, session_state_copy)
+
+                        # Merge session_state changes back
+                        if session_state_copy and session_state:
+                            merge_dictionaries(session_state, session_state_copy)
 
                         # If function returns StepOutput, use it directly
                         if isinstance(result, StepOutput):
@@ -662,11 +801,14 @@ class Step:
                     log_debug(f"Executing async function executor for step: {self.name}")
                     import inspect
 
+                    session_state_copy = copy(session_state) if session_state else None
+
                     # Check if the function is an async generator
                     if inspect.isasyncgenfunction(self.active_executor):
                         content = ""
                         # It's an async generator - iterate over it
-                        async for event in self.active_executor(step_input):  # type: ignore
+                        iterator = await self._acall_custom_function(self.active_executor, step_input, session_state_copy) if self._function_has_session_state_param() else self.active_executor(step_input)
+                        async for event in iterator:  # type: ignore
                             if (
                                 hasattr(event, "content")
                                 and event.content is not None
@@ -684,7 +826,7 @@ class Step:
                             final_response = StepOutput(content=content)
                     elif inspect.iscoroutinefunction(self.active_executor):
                         # It's a regular async function - await it
-                        result = await self.active_executor(step_input)  # type: ignore
+                        result = await self._acall_custom_function(self.active_executor, step_input, session_state_copy)
                         if isinstance(result, StepOutput):
                             final_response = result
                         else:
@@ -692,7 +834,8 @@ class Step:
                     elif inspect.isgeneratorfunction(self.active_executor):
                         content = ""
                         # It's a regular generator function - iterate over it
-                        for event in self.active_executor(step_input):  # type: ignore
+                        iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy) if self._function_has_session_state_param() else self.active_executor(step_input)
+                        for event in iterator:  # type: ignore
                             if (
                                 hasattr(event, "content")
                                 and event.content is not None
@@ -710,11 +853,15 @@ class Step:
                             final_response = StepOutput(content=content)
                     else:
                         # It's a regular function - call it directly
-                        result = self.active_executor(step_input)  # type: ignore
+                        result = self._call_custom_function(self.active_executor, step_input, session_state_copy)
                         if isinstance(result, StepOutput):
                             final_response = result
                         else:
                             final_response = StepOutput(content=str(result))
+
+                    # Merge session_state changes back
+                    if session_state_copy and session_state:
+                        merge_dictionaries(session_state, session_state_copy)
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
@@ -767,6 +914,7 @@ class Step:
 
                         active_executor_run_response = None
                         async for event in response_stream:
+                            log_debug(f"Received async event from agent: {type(event).__name__}")
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 break
