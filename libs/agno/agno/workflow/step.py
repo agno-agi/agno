@@ -767,7 +767,6 @@ class Step:
 
                         active_executor_run_response = None
                         async for event in response_stream:
-                            log_debug(f"Received async event from agent: {type(event).__name__}")
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 break

@@ -16,7 +16,7 @@ from agno.db.mongo.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
+from agno.db.utils import deserialize_session_json_fields, generate_deterministic_id, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 
@@ -40,6 +40,7 @@ class MongoDb(BaseDb):
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
+        id: Optional[str] = None,
     ):
         """
         Interface for interacting with a MongoDB database.
@@ -53,11 +54,19 @@ class MongoDb(BaseDb):
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
+            id (Optional[str]): ID of the database.
 
         Raises:
             ValueError: If neither db_url nor db_client is provided.
         """
+        if id is None:
+            base_seed = db_url or str(db_client)
+            db_name_suffix = db_name if db_name is not None else "agno"
+            seed = f"{base_seed}#{db_name_suffix}"
+            id = generate_deterministic_id(seed)
+
         super().__init__(
+            id=id,
             session_table=session_collection,
             memory_table=memory_collection,
             metrics_table=metrics_collection,

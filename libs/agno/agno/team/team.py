@@ -2288,11 +2288,13 @@ class Team:
                             tc.tool_call_id: i for i, tc in enumerate(run_response.tools) if tc.tool_call_id is not None
                         }
                         # Process tool calls
-                        for tool_call_dict in tool_executions_list:
-                            tool_call_id = tool_call_dict.tool_call_id or ""
+                        for tool_execution in tool_executions_list:
+                            tool_call_id = tool_execution.tool_call_id or ""
                             index = tool_call_index_map.get(tool_call_id)
                             if index is not None:
-                                run_response.tools[index] = tool_call_dict
+                                if run_response.tools[index].child_run_id is not None:
+                                    tool_execution.child_run_id = run_response.tools[index].child_run_id
+                                run_response.tools[index] = tool_execution
                     else:
                         run_response.tools = tool_executions_list
 
@@ -5161,6 +5163,12 @@ class Team:
             # Add team run id to the member run
             if member_agent_run_response is not None:
                 member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
+
+            # Update the top-level team run_response tool call to have the run_id of the member run
+            if run_response.tools is not None:
+                for tool in run_response.tools:
+                    if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
+                        tool.child_run_id = member_agent_run_response.run_id  # type: ignore
 
             # Update the team run context
             member_name = member_agent.name if member_agent.name else member_agent.id if member_agent.id else "Unknown"

@@ -24,7 +24,6 @@ from agno.os.schema import (
     AgentSummaryResponse,
     BadRequestResponse,
     ConfigResponse,
-    HealthResponse,
     InterfaceResponse,
     InternalServerErrorResponse,
     Model,
@@ -362,24 +361,6 @@ def get_base_router(
     )
 
     # -- Main Routes ---
-
-    @router.get(
-        "/health",
-        tags=["Core"],
-        operation_id="health_check",
-        summary="Health Check",
-        description="Check the health status of the AgentOS API. Returns a simple status indicator.",
-        response_model=HealthResponse,
-        responses={
-            200: {
-                "description": "API is healthy and operational",
-                "content": {"application/json": {"example": {"status": "ok"}}},
-            }
-        },
-    )
-    async def health_check() -> HealthResponse:
-        return HealthResponse(status="ok")
-
     @router.get(
         "/config",
         response_model=ConfigResponse,

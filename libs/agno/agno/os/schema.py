@@ -837,7 +837,8 @@ class WorkflowSessionDetailSchema(BaseModel):
 
 class RunSchema(BaseModel):
     run_id: str
-    agent_session_id: Optional[str]
+    parent_run_id: Optional[str]
+    agent_id: Optional[str]
     user_id: Optional[str]
     run_input: Optional[str]
     content: Optional[Union[str, dict]]
@@ -855,7 +856,8 @@ class RunSchema(BaseModel):
         run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
         return cls(
             run_id=run_dict.get("run_id", ""),
-            agent_session_id=run_dict.get("session_id", ""),
+            parent_run_id=run_dict.get("parent_run_id", ""),
+            agent_id=run_dict.get("agent_id", ""),
             user_id=run_dict.get("user_id", ""),
             run_input=run_input,
             content=run_dict.get("content", ""),
@@ -874,6 +876,7 @@ class RunSchema(BaseModel):
 class TeamRunSchema(BaseModel):
     run_id: str
     parent_run_id: Optional[str]
+    team_id: Optional[str]
     content: Optional[Union[str, dict]]
     reasoning_content: Optional[str]
     run_input: Optional[str]
@@ -891,6 +894,7 @@ class TeamRunSchema(BaseModel):
         return cls(
             run_id=run_dict.get("run_id", ""),
             parent_run_id=run_dict.get("parent_run_id", ""),
+            team_id=run_dict.get("team_id", ""),
             run_input=run_input,
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
@@ -908,6 +912,7 @@ class TeamRunSchema(BaseModel):
 class WorkflowRunSchema(BaseModel):
     run_id: str
     run_input: Optional[str]
+    workflow_id: Optional[str]
     user_id: Optional[str]
     content: Optional[Union[str, dict]]
     content_type: Optional[str]
@@ -923,6 +928,7 @@ class WorkflowRunSchema(BaseModel):
         return cls(
             run_id=run_response.get("run_id", ""),
             run_input=run_input,
+            workflow_id=run_response.get("workflow_id", ""),
             user_id=run_response.get("user_id", ""),
             content=run_response.get("content", ""),
             content_type=run_response.get("content_type", ""),

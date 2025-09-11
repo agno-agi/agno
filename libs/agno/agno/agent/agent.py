@@ -399,6 +399,7 @@ class Agent:
         timezone_identifier: Optional[str] = None,
         resolve_in_context: bool = True,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
+        user_message_role: str = "user",
         build_user_context: bool = True,
         retries: int = 0,
         delay_between_retries: int = 1,
@@ -496,7 +497,7 @@ class Agent:
         self.timezone_identifier = timezone_identifier
         self.resolve_in_context = resolve_in_context
         self.additional_input = additional_input
-
+        self.user_message_role = user_message_role
         self.build_user_context = build_user_context
 
         self.retries = retries
