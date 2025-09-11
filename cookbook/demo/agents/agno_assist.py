@@ -12,7 +12,7 @@ from agno.vectordb.pgvector import PgVector, SearchType
 
 # ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url)
+db = PostgresDb(db_url, id="agno_assist_db")
 # *******************************
 
 
@@ -104,6 +104,7 @@ knowledge = Knowledge(
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
+    contents_db=db,
 )
 
 # Setup our Agno Agent
@@ -133,4 +134,4 @@ agno_assist = Agent(
 
 if __name__ == "__main__":
     knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
-    agno_assist.print_response("What is Agno?")
+    # agno_assist.print_response("What is Agno?")
