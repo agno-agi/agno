@@ -484,10 +484,8 @@ class TeamResponse(BaseModel):
         formatted_tools = format_team_tools(team_tools) if team_tools else None
 
         model_string = team.model.model_string if team.model else None
-        model_id = team.model.id if team.model else None
 
         # Use model_string as the canonical representation
-        model_provider = model_string if model_string else (model_id if model_id else "")
 
         session_table = team.db.session_table_name if team.db else None
         knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None

@@ -149,7 +149,6 @@ class Model(ABC):
         """
         Returns the model string representation in format 'provider:model_id'.
         """
-        # Use the centralized get_model_string function to avoid code duplication
         try:
             from agno.models.utils import get_model_string
 

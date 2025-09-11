@@ -2,63 +2,13 @@ from typing import Union
 
 from agno.models.base import Model
 
-PROVIDERS = {
-    "openai": ("agno.models.openai", "OpenAIChat"),
-    "anthropic": ("agno.models.anthropic", "Claude"),
-    "google": ("agno.models.google", "Gemini"),
-    "groq": ("agno.models.groq", "Groq"),
-    "ollama": ("agno.models.ollama", "Ollama"),
-    "aws": ("agno.models.aws", "AwsBedrock"),
-    "aws-bedrock": ("agno.models.aws", "AwsBedrock"),
-    "aws-claude": ("agno.models.aws", "Claude"),
-    "azure": ("agno.models.azure", "AzureOpenAI"),
-    "azure-openai": ("agno.models.azure", "AzureOpenAI"),
-    "azure-ai-foundry": ("agno.models.azure", "AzureAIFoundry"),
-    "mistral": ("agno.models.mistral", "MistralChat"),
-    "cohere": ("agno.models.cohere", "Cohere"),
-    "together": ("agno.models.together", "Together"),
-    "fireworks": ("agno.models.fireworks", "Fireworks"),
-    "perplexity": ("agno.models.perplexity", "Perplexity"),
-    "openrouter": ("agno.models.openrouter", "OpenRouter"),
-    "meta": ("agno.models.meta", "Llama"),
-    "llama": ("agno.models.meta", "Llama"),
-    "llama-openai": ("agno.models.meta", "LlamaOpenAI"),
-    "cerebras": ("agno.models.cerebras", "Cerebras"),
-    "xai": ("agno.models.xai", "xAI"),
-    "deepseek": ("agno.models.deepseek", "DeepSeek"),
-    "nvidia": ("agno.models.nvidia", "Nvidia"),
-    "sambanova": ("agno.models.sambanova", "Sambanova"),
-    "deepinfra": ("agno.models.deepinfra", "DeepInfra"),
-    "nebius": ("agno.models.nebius", "Nebius"),
-    "internlm": ("agno.models.internlm", "InternLM"),
-    "dashscope": ("agno.models.dashscope", "DashScope"),
-    "huggingface": ("agno.models.huggingface", "HuggingFace"),
-    "ibm": ("agno.models.ibm", "WatsonX"),
-    "litellm": ("agno.models.litellm", "LiteLLM"),
-    "lmstudio": ("agno.models.lmstudio", "LMStudio"),
-    "portkey": ("agno.models.portkey", "Portkey"),
-    "vllm": ("agno.models.vllm", "VLLM"),
-    "vercel": ("agno.models.vercel", "V0"),
-    "langdb": ("agno.models.langdb", "LangDB"),
-    "aimlapi": ("agno.models.aimlapi", "AIMLAPI"),
-}
-
 
 def create_model(model: Union[Model, str]) -> Model:
-    """Create a model instance from either a Model object or model string.
-    Args:
-        model: Either a Model instance or a string in format 'provider:model_id'
-
-    Returns:
-        Model instance
-    """
-    # Handle existing Model objects
+    """Create a model instance from either a Model object or model string."""
     if isinstance(model, Model):
         return model
 
-    # Handle string-based model creation
     if isinstance(model, str):
-        # Parse model string
         if ":" not in model:
             raise ValueError(f"Model string must be 'provider:model_id', got: {model}")
 
@@ -69,48 +19,239 @@ def create_model(model: Union[Model, str]) -> Model:
         if not provider or not model_id:
             raise ValueError(f"Both provider and model_id must be non-empty, got: {model}")
 
-        # Validate provider
-        if provider not in PROVIDERS:
-            available = ", ".join(sorted(PROVIDERS.keys()))
-            raise ValueError(f"Provider '{provider}' not supported. Available: {available}")
-
-        # Create model instance
-        module_path, class_name = PROVIDERS[provider]
-
         try:
-            import importlib
+            if provider == "openai":
+                from agno.models.openai import OpenAIChat
 
-            module = importlib.import_module(module_path)
-            model_class = getattr(module, class_name)
-            return model_class(id=model_id)
+                return OpenAIChat(id=model_id)
+            elif provider == "anthropic":
+                from agno.models.anthropic import Claude
+
+                return Claude(id=model_id)
+            elif provider == "google":
+                from agno.models.google import Gemini
+
+                return Gemini(id=model_id)
+            elif provider == "groq":
+                from agno.models.groq import Groq
+
+                return Groq(id=model_id)
+            elif provider == "ollama":
+                from agno.models.ollama import Ollama
+
+                return Ollama(id=model_id)
+            elif provider == "aws":
+                from agno.models.aws import AwsBedrock
+
+                return AwsBedrock(id=model_id)
+            elif provider == "aws-bedrock":
+                from agno.models.aws import AwsBedrock
+
+                return AwsBedrock(id=model_id)
+            elif provider == "aws-claude":
+                from agno.models.aws import Claude
+
+                return Claude(id=model_id)
+            elif provider == "azure":
+                from agno.models.azure import AzureOpenAI
+
+                return AzureOpenAI(id=model_id)
+            elif provider == "azure-openai":
+                from agno.models.azure import AzureOpenAI
+
+                return AzureOpenAI(id=model_id)
+            elif provider == "azure-ai-foundry":
+                from agno.models.azure import AzureAIFoundry
+
+                return AzureAIFoundry(id=model_id)
+            elif provider == "mistral":
+                from agno.models.mistral import MistralChat
+
+                return MistralChat(id=model_id)
+            elif provider == "cohere":
+                from agno.models.cohere import Cohere
+
+                return Cohere(id=model_id)
+            elif provider == "together":
+                from agno.models.together import Together
+
+                return Together(id=model_id)
+            elif provider == "fireworks":
+                from agno.models.fireworks import Fireworks
+
+                return Fireworks(id=model_id)
+            elif provider == "perplexity":
+                from agno.models.perplexity import Perplexity
+
+                return Perplexity(id=model_id)
+            elif provider == "openrouter":
+                from agno.models.openrouter import OpenRouter
+
+                return OpenRouter(id=model_id)
+            elif provider == "meta":
+                from agno.models.meta import Llama
+
+                return Llama(id=model_id)
+            elif provider == "llama":
+                from agno.models.meta import Llama
+
+                return Llama(id=model_id)
+            elif provider == "llama-openai":
+                from agno.models.meta import LlamaOpenAI
+
+                return LlamaOpenAI(id=model_id)
+            elif provider == "cerebras":
+                from agno.models.cerebras import Cerebras
+
+                return Cerebras(id=model_id)
+            elif provider == "xai":
+                from agno.models.xai import xAI
+
+                return xAI(id=model_id)
+            elif provider == "deepseek":
+                from agno.models.deepseek import DeepSeek
+
+                return DeepSeek(id=model_id)
+            elif provider == "nvidia":
+                from agno.models.nvidia import Nvidia
+
+                return Nvidia(id=model_id)
+            elif provider == "sambanova":
+                from agno.models.sambanova import Sambanova
+
+                return Sambanova(id=model_id)
+            elif provider == "deepinfra":
+                from agno.models.deepinfra import DeepInfra
+
+                return DeepInfra(id=model_id)
+            elif provider == "nebius":
+                from agno.models.nebius import Nebius
+
+                return Nebius(id=model_id)
+            elif provider == "internlm":
+                from agno.models.internlm import InternLM
+
+                return InternLM(id=model_id)
+            elif provider == "dashscope":
+                from agno.models.dashscope import DashScope
+
+                return DashScope(id=model_id)
+            elif provider == "huggingface":
+                from agno.models.huggingface import HuggingFace
+
+                return HuggingFace(id=model_id)
+            elif provider == "ibm":
+                from agno.models.ibm import WatsonX
+
+                return WatsonX(id=model_id)
+            elif provider == "litellm":
+                from agno.models.litellm import LiteLLM
+
+                return LiteLLM(id=model_id)
+            elif provider == "lmstudio":
+                from agno.models.lmstudio import LMStudio
+
+                return LMStudio(id=model_id)
+            elif provider == "portkey":
+                from agno.models.portkey import Portkey
+
+                return Portkey(id=model_id)
+            elif provider == "vllm":
+                from agno.models.vllm import VLLM
+
+                return VLLM(id=model_id)
+            elif provider == "vercel":
+                from agno.models.vercel import V0
+
+                return V0(id=model_id)
+            elif provider == "langdb":
+                from agno.models.langdb import LangDB
+
+                return LangDB(id=model_id)
+            elif provider == "aimlapi":
+                from agno.models.aimlapi import AIMLAPI
+
+                return AIMLAPI(id=model_id)
+            else:
+                raise ValueError(f"Provider '{provider}' not supported")
         except ImportError as e:
-            raise ImportError(
-                f"Failed to import {class_name} from {module_path}. "
-                f"Install required dependencies for {provider}. Original error: {e}"
-            ) from e
-        except AttributeError as e:
-            raise ValueError(f"Model class {class_name} not found in {module_path}") from e
+            raise ImportError(f"Install dependencies for {provider}: {e}") from e
 
-    # Invalid type
     raise TypeError(f"Model must be Model instance or string, got {type(model)}")
 
 
 def get_model_string(model: Model) -> str:
-    """Generate model string from model instance.
-
-    Args:
-        model: Model instance
-
-    Returns:
-        String in format 'provider:model_id'
-    """
+    """Generate model string from model instance."""
     class_name = model.__class__.__name__
 
-    # Reverse lookup from PROVIDERS mapping
-    for provider, (_, cls) in PROVIDERS.items():
-        if cls == class_name:
-            return f"{provider}:{model.id}"
-
-    # Fallback for custom models
-    provider = getattr(model, "provider", class_name.lower())
-    return f"{provider}:{model.id}"
+    # Map class names to provider keys (mirrors create_model logic)
+    if class_name == "OpenAIChat":
+        return f"openai:{model.id}"
+    elif class_name == "Claude":
+        return f"anthropic:{model.id}"
+    elif class_name == "Gemini":
+        return f"google:{model.id}"
+    elif class_name == "Groq":
+        return f"groq:{model.id}"
+    elif class_name == "Ollama":
+        return f"ollama:{model.id}"
+    elif class_name == "AwsBedrock":
+        return f"aws:{model.id}"
+    elif class_name == "AzureOpenAI":
+        return f"azure:{model.id}"
+    elif class_name == "MistralChat":
+        return f"mistral:{model.id}"
+    elif class_name == "Cohere":
+        return f"cohere:{model.id}"
+    elif class_name == "Together":
+        return f"together:{model.id}"
+    elif class_name == "Fireworks":
+        return f"fireworks:{model.id}"
+    elif class_name == "Perplexity":
+        return f"perplexity:{model.id}"
+    elif class_name == "OpenRouter":
+        return f"openrouter:{model.id}"
+    elif class_name == "Llama":
+        return f"llama:{model.id}"
+    elif class_name == "LlamaOpenAI":
+        return f"llama-openai:{model.id}"
+    elif class_name == "Cerebras":
+        return f"cerebras:{model.id}"
+    elif class_name == "xAI":
+        return f"xai:{model.id}"
+    elif class_name == "DeepSeek":
+        return f"deepseek:{model.id}"
+    elif class_name == "Nvidia":
+        return f"nvidia:{model.id}"
+    elif class_name == "Sambanova":
+        return f"sambanova:{model.id}"
+    elif class_name == "DeepInfra":
+        return f"deepinfra:{model.id}"
+    elif class_name == "Nebius":
+        return f"nebius:{model.id}"
+    elif class_name == "InternLM":
+        return f"internlm:{model.id}"
+    elif class_name == "DashScope":
+        return f"dashscope:{model.id}"
+    elif class_name == "HuggingFace":
+        return f"huggingface:{model.id}"
+    elif class_name == "WatsonX":
+        return f"ibm:{model.id}"
+    elif class_name == "LiteLLM":
+        return f"litellm:{model.id}"
+    elif class_name == "LMStudio":
+        return f"lmstudio:{model.id}"
+    elif class_name == "Portkey":
+        return f"portkey:{model.id}"
+    elif class_name == "VLLM":
+        return f"vllm:{model.id}"
+    elif class_name == "V0":
+        return f"vercel:{model.id}"
+    elif class_name == "LangDB":
+        return f"langdb:{model.id}"
+    elif class_name == "AIMLAPI":
+        return f"aimlapi:{model.id}"
+    else:
+        # Fallback for custom models
+        provider = getattr(model, "provider", class_name.lower())
+        return f"{provider}:{model.id}"
