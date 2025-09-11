@@ -123,24 +123,6 @@ class BaseWorkflowRunOutputEvent:
 
         return status
 
-    @property
-    def is_cancelled(self):
-        return False
-
-    @property
-    def is_error(self):
-        return False
-
-    @property
-    def status(self):
-        status = "Completed"
-        if self.is_error:
-            status = "Error"
-        if self.is_cancelled:
-            status = "Cancelled"
-
-        return status
-
 
 @dataclass
 class WorkflowStartedEvent(BaseWorkflowRunOutputEvent):
