@@ -105,6 +105,7 @@ from agno.utils.response import (
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
 from agno.utils.team import format_member_agent_task, get_member_id
+from agno.utils.common import validate_typed_dict
 from agno.utils.timer import Timer
 
 
@@ -597,6 +598,15 @@ class Team:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
+    def _is_typed_dict(self, cls: Type[Any]) -> bool:
+        """Check if a class is a TypedDict"""
+        return (
+            hasattr(cls, '__annotations__') 
+            and hasattr(cls, '__total__')
+            and hasattr(cls, '__required_keys__')
+            and hasattr(cls, '__optional_keys__')
+        )
+
     def _validate_input(
         self, input: Union[str, List, Dict, Message, BaseModel]
     ) -> Union[str, List, Dict, Message, BaseModel]:
@@ -621,8 +631,6 @@ class Team:
         if isinstance(input, BaseModel):
             if isinstance(input, self.input_schema):
                 try:
-                    # Re-validate to catch any field validation errors
-                    input.model_validate(input.model_dump())
                     return input
                 except Exception as e:
                     raise ValueError(f"BaseModel validation failed: {str(e)}")
@@ -633,8 +641,13 @@ class Team:
         # Case 2: Message is a dict
         elif isinstance(input, dict):
             try:
-                validated_model = self.input_schema(**input)
-                return validated_model
+                # Check if the schema is a TypedDict
+                if self._is_typed_dict(self.input_schema):
+                    validated_dict = validate_typed_dict(input, self.input_schema)  
+                    return validated_dict
+                else:
+                    validated_model = self.input_schema(**input)
+                    return validated_model
             except Exception as e:
                 raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
 
@@ -4597,7 +4610,12 @@ class Team:
             # If message is provided as a dict, try to validate it as a Message
             elif isinstance(input_message, dict):
                 try:
-                    return Message.model_validate(input_message)
+                    if self.input_schema and self._is_typed_dict(self.input_schema):
+                        import json
+                        content = json.dumps(input_message, indent=2, ensure_ascii=False)
+                        return Message(role="user", content=content)
+                    else:
+                        return Message.model_validate(input_message)
                 except Exception as e:
                     log_warning(f"Failed to validate input: {e}")
 
