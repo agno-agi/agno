@@ -4861,6 +4861,9 @@ class Agent:
             else None
         )
 
+    def _get_formatted_session_state_for_system_message(self, session_state: Dict[str, Any]) -> str:
+        return f"\n<session_state>\n{session_state}\n</session_state>\n\n"
+
     def _get_user_message(
         self,
         *,
