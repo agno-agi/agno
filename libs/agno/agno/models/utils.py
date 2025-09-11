@@ -2,29 +2,24 @@ from typing import Union
 
 from agno.models.base import Model
 
-# Core provider mapping - organized by category for better maintainability
 PROVIDERS = {
-    # Major Cloud Providers
     "openai": ("agno.models.openai", "OpenAIChat"),
     "anthropic": ("agno.models.anthropic", "Claude"),
     "google": ("agno.models.google", "Gemini"),
     "groq": ("agno.models.groq", "Groq"),
     "ollama": ("agno.models.ollama", "Ollama"),
-    # Cloud Platforms
     "aws": ("agno.models.aws", "AwsBedrock"),
     "aws-bedrock": ("agno.models.aws", "AwsBedrock"),
     "aws-claude": ("agno.models.aws", "Claude"),
     "azure": ("agno.models.azure", "AzureOpenAI"),
     "azure-openai": ("agno.models.azure", "AzureOpenAI"),
     "azure-ai-foundry": ("agno.models.azure", "AzureAIFoundry"),
-    # Popular Providers
     "mistral": ("agno.models.mistral", "MistralChat"),
     "cohere": ("agno.models.cohere", "Cohere"),
     "together": ("agno.models.together", "Together"),
     "fireworks": ("agno.models.fireworks", "Fireworks"),
     "perplexity": ("agno.models.perplexity", "Perplexity"),
     "openrouter": ("agno.models.openrouter", "OpenRouter"),
-    # Specialized Providers
     "meta": ("agno.models.meta", "Llama"),
     "llama": ("agno.models.meta", "Llama"),
     "llama-openai": ("agno.models.meta", "LlamaOpenAI"),
@@ -32,15 +27,14 @@ PROVIDERS = {
     "xai": ("agno.models.xai", "xAI"),
     "deepseek": ("agno.models.deepseek", "DeepSeek"),
     "nvidia": ("agno.models.nvidia", "Nvidia"),
-    "sambanova": ("agno.models.sambanova", "SambaNova"),
+    "sambanova": ("agno.models.sambanova", "Sambanova"),
     "deepinfra": ("agno.models.deepinfra", "DeepInfra"),
     "nebius": ("agno.models.nebius", "Nebius"),
     "internlm": ("agno.models.internlm", "InternLM"),
     "dashscope": ("agno.models.dashscope", "DashScope"),
     "huggingface": ("agno.models.huggingface", "HuggingFace"),
-    # Enterprise & Tools
     "ibm": ("agno.models.ibm", "WatsonX"),
-    "litellm": ("agno.models.litellm", "LiteLLMChat"),
+    "litellm": ("agno.models.litellm", "LiteLLM"),
     "lmstudio": ("agno.models.lmstudio", "LMStudio"),
     "portkey": ("agno.models.portkey", "Portkey"),
     "vllm": ("agno.models.vllm", "VLLM"),
@@ -52,23 +46,11 @@ PROVIDERS = {
 
 def create_model(model: Union[Model, str]) -> Model:
     """Create a model instance from either a Model object or model string.
-
-    This function handles both the old object-based syntax and the new string-based syntax.
-
     Args:
         model: Either a Model instance or a string in format 'provider:model_id'
 
     Returns:
         Model instance
-
-    Examples:
-        >>> create_model("openai:gpt-4o")
-        >>> create_model(OpenAIChat(id="gpt-4o"))
-
-    Raises:
-        ValueError: If string format is invalid or provider not supported
-        ImportError: If required dependencies are not installed
-        TypeError: If model is neither Model instance nor string
     """
     # Handle existing Model objects
     if isinstance(model, Model):

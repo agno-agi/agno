@@ -146,13 +146,8 @@ class Model(ABC):
 
     @property
     def model_string(self) -> str:
-        """Return the model string representation in format 'provider:model_id'.
-
-        This property generates the canonical string representation that can be used
-        to recreate this model instance using the model string syntax.
-
-        Returns:
-            String in format 'provider:model_id'
+        """
+        Returns the model string representation in format 'provider:model_id'.
         """
         # Use the centralized get_model_string function to avoid code duplication
         try:
@@ -160,7 +155,6 @@ class Model(ABC):
 
             return get_model_string(self)
         except ImportError:
-            # Fallback for edge cases where utils module is not available
             provider = getattr(self, "provider", self.__class__.__name__.lower())
             return f"{provider}:{self.id}"
 

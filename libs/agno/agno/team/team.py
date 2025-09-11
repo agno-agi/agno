@@ -117,7 +117,7 @@ class Team:
 
     members: List[Union[Agent, "Team"]]
 
-    # Model for this Team (can be a Model instance or a string like "openai:gpt-4o")
+    # Model for this Team
     model: Optional[Model] = None
 
     # --- Team settings ---
@@ -436,8 +436,6 @@ class Team:
         telemetry: bool = True,
     ):
         self.members = members
-
-        # Process model parameter - accept both Model objects and model strings
         self.model = create_model(model) if model is not None else None
 
         self.name = name

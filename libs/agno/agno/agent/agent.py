@@ -114,7 +114,7 @@ from agno.utils.timer import Timer
 @dataclass(init=False)
 class Agent:
     # --- Agent settings ---
-    # Model for this Agent (can be a Model instance or a string like "openai:gpt-4o")
+    # Model for this Agent
     model: Optional[Model] = None
     # Agent name
     name: Optional[str] = None
@@ -422,7 +422,6 @@ class Agent:
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
     ):
-        # Process model parameter - accept both Model objects and model strings
         self.model = create_model(model) if model is not None else None
         self.name = name
         self.id = id
