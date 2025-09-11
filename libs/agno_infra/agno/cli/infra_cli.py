@@ -38,7 +38,7 @@ def create(
         None,
         "-n",
         "--name",
-        help="Name of the new Agno AgentOS codebase directory (e.g. `my-agentos-project`).",
+        help="Name of the new AgentOS codebase directory (e.g. `my-agentos-project`).",
         show_default=False,
     ),
     template: Optional[str] = typer.Option(
