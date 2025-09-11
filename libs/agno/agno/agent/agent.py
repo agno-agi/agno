@@ -398,6 +398,7 @@ class Agent:
         timezone_identifier: Optional[str] = None,
         resolve_in_context: bool = True,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
+        user_message_role: str = "user",
         build_user_context: bool = True,
         retries: int = 0,
         delay_between_retries: int = 1,
@@ -495,7 +496,7 @@ class Agent:
         self.timezone_identifier = timezone_identifier
         self.resolve_in_context = resolve_in_context
         self.additional_input = additional_input
-
+        self.user_message_role = user_message_role
         self.build_user_context = build_user_context
 
         self.retries = retries
@@ -4518,7 +4519,8 @@ class Agent:
         session = self.get_session(session_id=session_id)  # type: ignore
 
         if session is None:
-            raise Exception("Session not found")
+            log_warning(f"Session {session_id} not found")
+            return []
 
         # Only filter by agent_id if this is part of a team
         return session.get_messages_from_last_n_runs(

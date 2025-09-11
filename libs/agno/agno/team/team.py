@@ -408,6 +408,7 @@ class Team:
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
         add_memories_to_context: Optional[bool] = None,
+        memory_manager: Optional[MemoryManager] = None,
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
@@ -505,6 +506,7 @@ class Team:
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
         self.add_memories_to_context = add_memories_to_context
+        self.memory_manager = memory_manager
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
         self.add_session_summary_to_context = add_session_summary_to_context
@@ -6040,7 +6042,8 @@ class Team:
         session = self.get_session(session_id=session_id)  # type: ignore
 
         if session is None:
-            raise Exception("Session not found")
+            log_warning(f"Session {session_id} not found")
+            return []
 
         # Only filter by agent_id if this is part of a team
         return session.get_messages_from_last_n_runs(

@@ -10,7 +10,7 @@ from agno.utils.log import log_info
 
 
 def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
-    @router.post("/slack/events")
+    @router.post("/events")
     async def slack_events(request: Request, background_tasks: BackgroundTasks):
         body = await request.body()
         timestamp = request.headers.get("X-Slack-Request-Timestamp")
