@@ -1,15 +1,20 @@
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-import streamlit as st
+try:
+    from agno.agent import Agent
+    from agno.db.base import SessionType
+    from agno.models.anthropic import Claude
+    from agno.models.google import Gemini
+    from agno.models.openai import OpenAIChat
+    from agno.utils.log import logger
+except ImportError:
+    raise ImportError("`agno` not installed. Please install using `pip install agno`")
 
-from agno.agent import Agent
-from agno.db.base import SessionType
-from agno.models.anthropic import Claude
-from agno.models.google import Gemini
-from agno.models.openai import OpenAIChat
-from agno.utils.log import logger
-
+try:
+    import streamlit as st
+except ImportError:
+    raise ImportError("`streamlit` not installed. Please install using `pip install streamlit`")
 
 def add_message(role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None) -> None:
     """Add a message to the session state."""
@@ -165,7 +170,7 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
                 if st.button(
                     "💾 Save",
                     type="primary",
-                    use_container_width=True,
+                    width=True,
                     key="save_session_name",
                 ):
                     if new_name and new_name.strip():
@@ -187,7 +192,7 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
                         st.sidebar.error("Please enter a valid name")
 
             with col2:
-                if st.button("❌ Cancel", use_container_width=True, key="cancel_session_rename"):
+                if st.button("❌ Cancel", width=True, key="cancel_session_rename"):
                     st.session_state.session_edit_mode = False
                     st.rerun()
 

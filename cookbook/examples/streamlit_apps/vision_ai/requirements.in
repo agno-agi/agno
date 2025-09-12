@@ -1,6 +1,9 @@
 agno==2.0.0
-openai
-google-genai
-pgvector
-streamlit
+anthropic
 ddgs
+google-genai
+groq
+openai
+psycopg[binary]
+sqlalchemy
+streamlit

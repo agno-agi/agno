@@ -1,14 +1,9 @@
-# Vision AI
+# Vision AI Agent
 
-**Vision AI** is a smart image analysis agent that extracts structured insights from images using AI-powered object detection, OCR, and scene recognition.
+**Vision AI** is a smart image analysis application that combines computer vision with large language models to provide intelligent visual understanding and interactive Q&A about images.
+It allows users to upload images, get comprehensive analysis, and ask follow-up questions with session persistence and chat history.
 
 > Note: Fork and clone this repository if needed
-
-The system is designed with two separate agents:
-- **Image Processing Agent**: Extracts structured insights based on the uploaded image and user instructions.
-- **Chat Agent**: Answers follow-up questions using the last extracted insights from image and (optionally) web search via DuckDuckGo.
-
-## Getting Started
 
 ### 1. Create a virtual environment
 
@@ -25,7 +20,7 @@ pip install -r cookbook/examples/streamlit_apps/vision_ai/requirements.txt
 
 ### 3. Configure API Keys
 
-Required (choose at least one):
+Required:
 
 ```bash
 export OPENAI_API_KEY=your_openai_key_here
@@ -36,52 +31,64 @@ Optional (for additional models):
 ```bash
 export ANTHROPIC_API_KEY=your_anthropic_key_here
 export GOOGLE_API_KEY=your_google_key_here
+export GROQ_API_KEY=your_groq_key_here
 ```
 
-### 4. Run the application
+### 4. Run PgVector
+
+> Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) first.
+
+- Run using a helper script
+
+```shell
+./cookbook/scripts/run_pgvector.sh
+```
+
+- OR run using the docker run command
+
+```shell
+docker run -d \
+  -e POSTGRES_DB=ai \
+  -e POSTGRES_USER=ai \
+  -e POSTGRES_PASSWORD=ai \
+  -e PGDATA=/var/lib/postgresql/data/pgdata \
+  -v pgvolume:/var/lib/postgresql/data \
+  -p 5532:5432 \
+  --name pgvector \
+  agnohq/pgvector:16
+```
+
+### 5. Run Vision AI App
 
 ```shell
 streamlit run cookbook/examples/streamlit_apps/vision_ai/app.py
 ```
 
-## How to Use
+## 🔧 Customization
 
-1. **Select Model**: Choose your preferred AI model for image analysis
-2. **Upload Image**: Select a PNG, JPG, or JPEG file (up to 200MB)
-3. **Choose Analysis Mode**: 
-   - **Auto**: Comprehensive automatic analysis
-   - **Manual**: Provide specific analysis instructions
-   - **Hybrid**: Automatic analysis + your custom instructions
-4. **Analyze**: Click "Analyze Image" to process your image
-5. **Ask Questions**: Chat about the analysis results and ask follow-up questions
+### Model Selection
 
-## Analysis Modes
+The application supports multiple model providers:
 
-### Auto Mode
-Performs comprehensive automatic analysis including:
-- Object and element identification
-- Text extraction (OCR)
-- Scene description
-- Context and purpose inference
-- Technical details
+- OpenAI (gpt-4o, o3-mini)
+- Anthropic (claude-4-sonnet)
+- Google (gemini-2.5-pro)
+- Groq (llama-3.3-70b-versatile)
 
-### Manual Mode
-Allows you to specify exactly what you want to analyze:
-- Focus on specific elements
-- Extract particular types of information
-- Custom analysis requirements
+### How to Use
 
-### Hybrid Mode
-Combines automatic comprehensive analysis with your custom instructions:
-- Gets the full auto analysis
-- Plus your specific requirements
-- Best of both approaches
+- Open [localhost:8501](http://localhost:8501) in your browser.
+- Upload an image (PNG, JPG, JPEG) for analysis.
+- Choose analysis mode: Auto, Manual, or Hybrid.
+- Get comprehensive image analysis results.
+- Ask follow-up questions using the chat interface.
+- Sessions are automatically saved with chat history.
 
-## Supported Image Formats
+### Troubleshooting
 
-- **PNG**: Portable Network Graphics
-- **JPG/JPEG**: Joint Photographic Experts Group
-- **Maximum Size**: 200MB per image
+- **Docker Connection Refused**: Ensure `pgvector` containers are running (`docker ps`).
+- **OpenAI API Errors**: Verify that the `OPENAI_API_KEY` is set and valid.
+- **Image Upload Issues**: Check file format (PNG, JPG, JPEG) and size limits.
 
 ## 📚 Documentation
 

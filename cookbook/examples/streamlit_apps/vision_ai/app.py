@@ -7,6 +7,12 @@ from agno.utils.streamlit import (
     MODELS,
     about_section,
     add_message,
+    display_chat_messages,
+    display_response,
+    export_chat_history,
+    initialize_agent,
+    reset_session_state,
+    session_selector_widget,
 )
 from agents import EXTRACTION_PROMPT, get_chat_agent, get_vision_agent
 
@@ -17,9 +23,38 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Add custom CSS
 st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
+def restart_agent(model_id: str = None):
+    target_model = model_id or st.session_state.get("current_model", MODELS[0])
+
+    new_agent = get_vision_agent(model_id=target_model, session_id=None)
+
+    st.session_state["agent"] = new_agent
+    st.session_state["session_id"] = new_agent.session_id
+    st.session_state["messages"] = []
+    st.session_state["current_model"] = target_model
+    st.session_state["is_new_session"] = True
+    # Clear current image
+    if "current_image" in st.session_state:
+        del st.session_state["current_image"]
+
+def on_model_change():
+    selected_model = st.session_state.get("model_selector")
+    if selected_model:
+        if selected_model in MODELS:
+            new_model_id = selected_model
+            current_model = st.session_state.get("current_model")
+
+            if current_model and current_model != new_model_id:
+                try:
+                    st.session_state["is_loading_session"] = False
+                    restart_agent(model_id=new_model_id)
+
+                except Exception as e:
+                    st.sidebar.error(f"Error switching to {selected_model}: {str(e)}")
+        else:
+            st.sidebar.error(f"Unknown model: {selected_model}")
 
 def main():
     ####################################################################
@@ -39,11 +74,21 @@ def main():
         options=MODELS,
         index=0,
         key="model_selector",
+        on_change=on_model_change,
         help="Choose the AI model for image analysis"
     )
 
     ####################################################################
-    # Analysis Settings
+    # Initialize Agent and Session
+    ####################################################################
+    vision_agent = initialize_agent(selected_model, get_vision_agent)
+    reset_session_state(vision_agent)
+
+    if prompt := st.chat_input("👋 Ask me anything!"):
+        add_message("user", prompt)
+
+    ####################################################################
+    # Vision AI Settings
     ####################################################################
     st.sidebar.markdown("#### 🔍 Analysis Settings")
     
@@ -61,208 +106,154 @@ def main():
     enable_search = st.sidebar.checkbox(
         "Enable Web Search",
         value=False,
+        key="enable_search",
         help="Allow the agent to search for additional context"
     )
 
     ####################################################################
-    # Initialize session state
+    # File upload
     ####################################################################
-    if "messages" not in st.session_state:
-        st.session_state["messages"] = []
-    if "last_analysis" not in st.session_state:
-        st.session_state["last_analysis"] = None
-    if "current_image_path" not in st.session_state:
-        st.session_state["current_image_path"] = None
+    st.sidebar.markdown("#### 🖼️ Image Analysis")
 
-    ####################################################################
-    # Image Upload Section
-    ####################################################################
-    uploaded_file = st.file_uploader(
-        "📤 Upload an Image",
-        type=["png", "jpg", "jpeg"],
-        help="Supported formats: PNG, JPG, JPEG (Max: 200MB)"
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload an Image", type=["png", "jpg", "jpeg"]
     )
 
     if uploaded_file:
-        # Display image preview
-        st.sidebar.markdown("#### 🖼️ Current Image")
-        st.sidebar.image(uploaded_file, use_container_width=True)
-        
-        # Save uploaded file
-        temp_dir = Path("tmp")
+        temp_dir = Path("tmp") 
         temp_dir.mkdir(exist_ok=True)
         image_path = temp_dir / uploaded_file.name
         
         with open(image_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
         
-        st.session_state["current_image_path"] = str(image_path)
+        st.session_state["current_image"] = {
+            "path": str(image_path),
+            "name": uploaded_file.name,
+            "analysis_mode": analysis_mode
+        }
         
-        # Check if this is a new image (reset analysis if so)
-        if st.session_state.get("last_image_name") != uploaded_file.name:
-            st.session_state["last_analysis"] = None
-            st.session_state["messages"] = []
-            st.session_state["last_image_name"] = uploaded_file.name
+        st.sidebar.image(uploaded_file, caption=uploaded_file.name, width=200)
+        st.sidebar.success(f"Image '{uploaded_file.name}' uploaded")
 
-    ####################################################################
-    # Analysis Instructions (for Manual/Hybrid modes)
-    ####################################################################
-    custom_instructions = None
-    if analysis_mode in ["Manual", "Hybrid"]:
-        st.sidebar.markdown("#### 📝 Custom Instructions")
-        custom_instructions = st.sidebar.text_area(
-            "Analysis Instructions",
-            placeholder="e.g., Focus on text extraction, identify people, analyze colors...",
-            help="Provide specific instructions for image analysis"
-        )
-
-    ####################################################################
-    # Analyze Image Button
-    ####################################################################
-    st.sidebar.markdown("#### 🔍 Image Analysis")
-    
-    if st.sidebar.button("🖼️ Analyze Image", type="primary", use_container_width=True):
-        if not st.session_state.get("current_image_path"):
-            st.sidebar.warning("⚠️ Please upload an image first.")
-        elif analysis_mode == "Manual" and not custom_instructions:
-            st.sidebar.warning("⚠️ Please provide analysis instructions for Manual mode.")
-        else:
-            with st.spinner("🔍 Analyzing image... This may take a moment..."):
-                try:
-                    # Get vision agent
-                    vision_agent = get_vision_agent(model_id=selected_model)
-                    
-                    # Prepare analysis prompt
-                    if analysis_mode == "Auto":
-                        prompt = EXTRACTION_PROMPT
-                    elif analysis_mode == "Manual":
-                        prompt = custom_instructions
-                    else:  # Hybrid
-                        prompt = f"{EXTRACTION_PROMPT}\n\nAdditional Instructions:\n{custom_instructions}"
-                    
-                    # Analyze image
-                    response = vision_agent.run(
-                        prompt,
-                        images=[Image(filepath=st.session_state["current_image_path"])]
-                    )
-                    
-                    st.session_state["last_analysis"] = response.content
-                    st.success("✅ Image analysis completed!")
-                    
-                except Exception as e:
-                    st.error(f"❌ Error analyzing image: {str(e)}")
-
-    ####################################################################
-    # Display Analysis Results
-    ####################################################################
-    if st.session_state["last_analysis"]:
-        st.markdown("### 🔍 Analysis Results")
-        st.markdown(st.session_state["last_analysis"])
-        
-        st.markdown("---")
-        st.markdown("### 💬 Ask Follow-up Questions")
-        st.markdown("You can now ask questions about the analyzed image!")
-
-    elif st.session_state.get("current_image_path"):
-        st.markdown("### 🎯 Ready to Analyze")
-        st.info("Image uploaded! Click 'Analyze Image' in the sidebar to start the analysis.")
-        
-        # Show image preview in main area
-        st.image(st.session_state["current_image_path"], caption="Uploaded Image", use_container_width=True)
-
-    else:
-        st.markdown("### 🖼️ How to Get Started")
-        st.markdown("""
-        1. **Upload an Image** - Select a PNG, JPG, or JPEG file
-        2. **Choose Analysis Mode** - Auto, Manual, or Hybrid
-        3. **Add Instructions** (if using Manual/Hybrid mode)
-        4. **Analyze** - Click 'Analyze Image' to start
-        5. **Ask Questions** - Chat about the analysis results
-
-        💡 **Tip:** Try different analysis modes to get the insights you need!
-        """)
-
-    ####################################################################
-    # Chat Interface
-    ####################################################################
-    if st.session_state["last_analysis"]:
-        # Display chat messages
-        for message in st.session_state["messages"]:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-
-        # Chat input
-        if prompt := st.chat_input("💬 Ask about the image..."):
-            add_message("user", prompt)
+    # Analysis
+    if st.session_state.get("current_image") and not prompt:
+        if st.sidebar.button("🔍 Analyze Image", type="primary", use_container_width=True):
+            image_info = st.session_state["current_image"]
             
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            
+            if analysis_mode == "Manual":
+                custom_instructions = st.sidebar.text_area("Analysis Instructions", key="manual_instructions")
+                analysis_prompt = custom_instructions if custom_instructions else EXTRACTION_PROMPT
+            elif analysis_mode == "Hybrid":
+                custom_instructions = st.sidebar.text_area("Additional Instructions", key="hybrid_instructions")
+                analysis_prompt = f"{EXTRACTION_PROMPT}\n\nAdditional Instructions:\n{custom_instructions}" if custom_instructions else EXTRACTION_PROMPT
+            else:
+                analysis_prompt = EXTRACTION_PROMPT
+
+            add_message("user", f"Analyze this image: {image_info['name']}")
+
+    ###############################################################
+    # Sample Questions
+    ###############################################################  
+    st.sidebar.markdown("#### ❓ Sample Questions")
+    if st.sidebar.button("🔍 What are the main objects?"):
+        add_message("user", "What are the main objects?")
+    if st.sidebar.button("📝 Is there any text to read?"):
+        add_message("user", "Is there any text to read?")  
+    if st.sidebar.button("🎨 Describe the colors and mood"):
+        add_message("user", "Describe the colors and mood")
+
+    ####################################################################
+    # Display Chat Messages
+    ####################################################################
+    display_chat_messages()
+
+    ####################################################################
+    # Generate response for user message
+    ####################################################################
+    last_message = (
+        st.session_state["messages"][-1] if st.session_state["messages"] else None
+    )
+    if last_message and last_message.get("role") == "user":
+        question = last_message["content"]
+        
+        images_to_include = []
+        if st.session_state.get("current_image"):
+            image_info = st.session_state["current_image"]
+            images_to_include = [Image(filepath=image_info["path"])]
+        
+        if images_to_include:
             with st.chat_message("assistant"):
                 response_container = st.empty()
                 with st.spinner("🤔 Thinking..."):
                     try:
-                        # Get chat agent
-                        chat_agent = get_chat_agent(
-                            model_id=selected_model,
-                            enable_search=enable_search
-                        )
-                        
-                        # Prepare context with image analysis
-                        context_prompt = f"""
-                        Previous Image Analysis:
-                        {st.session_state["last_analysis"]}
-                        
-                        User Question: {prompt}
-                        
-                        Please answer the user's question based on the image analysis above.
-                        """
-                        
-                        response = chat_agent.run(context_prompt)
-                        response_text = response.content
-                        
-                        response_container.markdown(response_text)
-                        add_message("assistant", response_text)
-                        
+                        response = vision_agent.run(question, images=images_to_include)
+                        response_container.markdown(response.content)
+                        add_message("assistant", response.content)
                     except Exception as e:
                         error_message = f"❌ Error: {str(e)}"
                         response_container.error(error_message)
                         add_message("assistant", error_message)
+        else:
+            display_response(vision_agent, question)
 
     ####################################################################
     # Utility buttons
     ####################################################################
-    if st.session_state["last_analysis"] or st.session_state["messages"]:
-        st.sidebar.markdown("#### 🛠️ Utilities")
-        
-        if st.sidebar.button("🗑️ Clear Analysis", use_container_width=True):
-            st.session_state["last_analysis"] = None
-            st.session_state["messages"] = []
-            st.session_state["current_image_path"] = None
-            if "last_image_name" in st.session_state:
-                del st.session_state["last_image_name"]
+    st.sidebar.markdown("#### 🛠️ Utilities")
+    col1, col2 = st.sidebar.columns([1, 1])
+    with col1:
+        if st.sidebar.button("🔄 New Chat", use_container_width=True):
+            restart_agent()
             st.rerun()
 
+    with col2:
+        has_messages = (
+            st.session_state.get("messages") and len(st.session_state["messages"]) > 0
+        )
+
+        if has_messages:
+            session_id = st.session_state.get("session_id")
+            session_name = None
+            
+            try:
+                if session_id and vision_agent:
+                    session_name = vision_agent.get_session_name()
+            except Exception:
+                session_name = None
+            
+            if session_id and session_name:
+                filename = f"vision_ai_chat_{session_name}.md"
+            elif session_id:
+                filename = f"vision_ai_chat_{session_id[:8]}.md"
+            else:
+                filename = "vision_ai_chat_new.md"
+
+            if st.sidebar.download_button(
+                "💾 Export Chat",
+                export_chat_history("Vision AI"),
+                file_name=filename,
+                mime="text/markdown",
+                use_container_width=True,
+                help=f"Export {len(st.session_state['messages'])} messages",
+            ):
+                st.sidebar.success("Chat history exported!")
+        else:
+            st.sidebar.button(
+                "💾 Export Chat",
+                disabled=True,
+                use_container_width=True,
+                help="No messages to export",
+            )
+
+
     ####################################################################
-    # Sample Questions
+    # Session management widgets
     ####################################################################
-    if st.session_state["last_analysis"]:
-        st.sidebar.markdown("#### ❓ Sample Questions")
-        sample_questions = [
-            "🔍 What are the main objects?",
-            "📝 Is there any text to read?",
-            "🎨 Describe the colors and mood",
-            "👥 Are there people in the image?",
-            "📍 What's the setting or location?",
-            "🔧 Any technical details?",
-        ]
-        
-        for question in sample_questions:
-            if st.sidebar.button(question, key=f"sample_{question}", use_container_width=True):
-                # Remove emoji and use as prompt
-                clean_question = question[2:]  # Remove emoji and space
-                add_message("user", clean_question)
-                st.rerun()
+    if not st.session_state.get("is_new_session", False):
+        session_selector_widget(vision_agent, selected_model, get_vision_agent)
+    else:
+        st.session_state["is_new_session"] = False
 
     ####################################################################
     # About section
