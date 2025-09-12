@@ -405,12 +405,14 @@ class File(BaseModel):
                 if self.mime_type and self.mime_type.startswith("text/"):
                     content_normalised = content_normalised.decode("utf-8")
                 else:
-                    content_normalised = b64encode(bytes(content_normalised)).decode("utf-8")
+                    content_normalised = b64encode(content_normalised).decode("utf-8")
             except UnicodeDecodeError:
-                content_normalised = b64encode(bytes(content_normalised)).decode("utf-8")
+                if isinstance(self.content, bytes):
+                    content_normalised = b64encode(self.content).decode("utf-8")
             except Exception:
                 try:
-                    content_normalised = b64encode(bytes(content_normalised)).decode("utf-8")
+                    if isinstance(self.content, bytes):
+                        content_normalised = b64encode(self.content).decode("utf-8")
                 except Exception:
                     pass
         return content_normalised

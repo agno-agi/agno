@@ -175,7 +175,10 @@ class FileGenerationTools(Toolkit):
                         fieldnames = list(data[0].keys())
                         writer.writerow(fieldnames)
                         for row in data:
-                            writer.writerow([row.get(field, '') for field in fieldnames])
+                            if isinstance(row, dict):
+                                writer.writerow([row.get(field, '') for field in fieldnames])
+                            else:
+                                writer.writerow([str(row)] + [''] * (len(fieldnames) - 1))
                 elif isinstance(data[0], list):
                     # List of lists
                     if headers:
