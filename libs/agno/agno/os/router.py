@@ -334,7 +334,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
                 session_id = str(uuid4())
 
         # Execute workflow in background with streaming
-        workflow_run = await workflow.arun(
+        workflow_result = await workflow.arun(
             input=user_message,
             session_id=session_id,
             user_id=user_id,
@@ -344,9 +344,9 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             websocket=websocket,
         )
 
-        workflow_run = cast(WorkflowRunOutput, workflow_run)
+        workflow_run_output = cast(WorkflowRunOutput, workflow_result)
         
-        await websocket_manager.register_workflow_websocket(workflow_run.run_id, websocket)
+        await websocket_manager.register_workflow_websocket(workflow_run_output.run_id, websocket) # type: ignore
 
     except Exception as e:
         logger.error(f"Error executing workflow via WebSocket: {e}")
