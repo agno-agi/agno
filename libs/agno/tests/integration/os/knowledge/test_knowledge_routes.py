@@ -16,10 +16,37 @@ from agno.os.routers.knowledge.knowledge import attach_routes
 
 @pytest.fixture
 def mock_knowledge():
-    """Create a mock Knowledge instance."""
-    knowledge = Mock(spec=Knowledge)
-    knowledge.name = "test_knowledge"
+    """Create a real Knowledge instance with mocked dependencies and methods."""
+    from unittest.mock import Mock, patch
+    
+    # Create real Knowledge instance
+    knowledge = Knowledge(name="test_knowledge")
+    
+    # Mock external dependencies
+    knowledge.vector_db = Mock()
+    knowledge.contents_db = Mock()
     knowledge.readers = {}
+    
+    # Configure vector_db mock to prevent actual operations
+    knowledge.vector_db.content_hash_exists.return_value = False
+    knowledge.vector_db.async_insert = Mock()
+    knowledge.vector_db.async_upsert = Mock()
+    knowledge.vector_db.upsert_available.return_value = True
+    
+    # Configure contents_db mock
+    knowledge.contents_db.upsert_knowledge_content = Mock()
+    
+    # Mock specific Knowledge methods that tests expect to interact with
+    knowledge.patch_content = Mock()
+    knowledge.get_content = Mock()
+    knowledge.get_content_by_id = Mock()
+    knowledge.remove_content_by_id = Mock() 
+    knowledge.remove_all_content = Mock()
+    knowledge.get_content_status = Mock()
+    knowledge.get_readers = Mock()
+    knowledge.get_filters = Mock()
+    knowledge._load_content = Mock()
+    
     return knowledge
 
 
@@ -86,7 +113,7 @@ class TestKnowledgeContentEndpoints:
                 data={
                     "name": "URL Content",
                     "description": "Content from URL",
-                    "url": '["https://example.com"]',
+                    "url": "https://example.com",
                     "metadata": '{"source": "web"}',
                 },
             )
@@ -275,7 +302,6 @@ class TestBackgroundTaskProcessing:
         """Test successful content processing."""
         from agno.os.routers.knowledge.knowledge import process_content
 
-        content_id = str(uuid4())
         reader_id = "text_reader"
 
         # Set up the readers dictionary in the mock
@@ -284,28 +310,25 @@ class TestBackgroundTaskProcessing:
 
         # Mock the knowledge.process_content method
         with patch.object(mock_knowledge, "_load_content") as mock_add:
-            # Call the function
-            await process_content(mock_knowledge, content_id, mock_content, reader_id)
+            # Call the function with correct parameter order: (knowledge, content, reader_id)
+            await process_content(mock_knowledge, mock_content, reader_id)
 
             # Verify the content was added
             mock_add.assert_called_once_with(mock_content, upsert=False, skip_if_exists=True)
 
-            # Also verify that the content ID was set
-            assert mock_content.id == content_id
-            # And that the reader was set
+            # Verify that the reader was set
             assert mock_content.reader == mock_reader
 
     async def test_process_content_with_exception(self, mock_knowledge, mock_content):
         """Test content processing with exception."""
         from agno.os.routers.knowledge.knowledge import process_content
 
-        content_id = str(uuid4())
         reader_id = "test_reader"
 
         # Mock the knowledge.process_content method to raise an exception
         with patch.object(mock_knowledge, "_load_content", side_effect=Exception("Test error")):
             # Should not raise an exception
-            await process_content(mock_knowledge, content_id, mock_content, reader_id)
+            await process_content(mock_knowledge, mock_content, reader_id)
 
 
 class TestFileUploadScenarios:
