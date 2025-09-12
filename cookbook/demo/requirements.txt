@@ -161,7 +161,7 @@ multidict==6.6.4
     #   yarl
 multitasking==0.0.12
     # via yfinance
-narwhals==2.4.0
+narwhals==2.5.0
     # via altair
 nest-asyncio==1.6.0
     # via
@@ -202,7 +202,7 @@ propcache==0.3.2
     # via
     #   aiohttp
     #   yarl
-protobuf==6.32.0
+protobuf==6.32.1
     # via
     #   streamlit
     #   yfinance

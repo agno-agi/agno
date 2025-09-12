@@ -1,6 +1,6 @@
-# Agno Demo Agents
+# AgentOS Demo
 
-This cookbook contains a collection of demo agents that showcase the capabilities of Agno.
+This cookbook contains a collection of demo agents that showcase the capabilities of AgentOS.
 
 > Note: Fork and clone the repository if needed
 
@@ -82,4 +82,3 @@ python cookbook/demo/os.py
 - Open [os.agno.com](https://os.agno.com/) and connect to your running OS to chat with the demo agents.
 
 ### 7. Message us on [discord](https://agno.link/discord) if you have any questions
-
