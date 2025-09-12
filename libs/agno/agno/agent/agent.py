@@ -1113,7 +1113,7 @@ class Agent:
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=validated_input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
         )
 
         # Read existing session from database
@@ -1743,7 +1743,7 @@ class Agent:
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=validated_input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
         )
 
         # Read existing session from storage
@@ -2751,7 +2751,7 @@ class Agent:
     def _execute_pre_hooks(
         self,
         hooks: Optional[List[Callable[..., Any]]],
-        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+        input: RunInput,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
