@@ -67,12 +67,12 @@ class MarkdownReader(Reader):
                     raise FileNotFoundError(f"Could not find file: {file}")
                 log_info(f"Reading: {file}")
                 file_name = name or file.stem
-                file_contents = file.read_text("utf-8")
+                file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
                 log_info(f"Reading uploaded file: {file.name}")
                 file_name = name or file.name.split(".")[0]
                 file.seek(0)
-                file_contents = file.read().decode("utf-8")
+                file_contents = file.read().decode(self.encoding or "utf-8")
 
             documents = [Document(name=file_name, id=str(uuid.uuid4()), content=file_contents)]
             if self.chunk:
@@ -97,16 +97,16 @@ class MarkdownReader(Reader):
                 try:
                     import aiofiles
 
-                    async with aiofiles.open(file, "r", encoding="utf-8") as f:
+                    async with aiofiles.open(file, "r", encoding=self.encoding or "utf-8") as f:
                         file_contents = await f.read()
                 except ImportError:
                     logger.warning("aiofiles not installed, using synchronous file I/O")
-                    file_contents = file.read_text("utf-8")
+                    file_contents = file.read_text(self.encoding or "utf-8")
             else:
                 log_info(f"Reading uploaded file asynchronously: {file.name}")
                 file_name = name or file.name.split(".")[0]
                 file.seek(0)
-                file_contents = file.read().decode("utf-8")
+                file_contents = file.read().decode(self.encoding or "utf-8")
 
             document = Document(
                 name=file_name,
