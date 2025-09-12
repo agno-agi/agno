@@ -305,7 +305,7 @@ class RunInput:
         files: Files directly passed to run()
     """
 
-    input_content: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None
+    input_content: Union[str, List, Dict, Message, BaseModel, List[Message]]
     images: Optional[Sequence[Image]] = None
     videos: Optional[Sequence[Video]] = None
     audios: Optional[Sequence[Audio]] = None
@@ -359,7 +359,9 @@ class RunInput:
         if data.get("files"):
             files = [File.model_validate(file_data) for file_data in data["files"]]
 
-        return cls(input_content=data.get("input_content"), images=images, videos=videos, audios=audios, files=files)
+        return cls(
+            input_content=data.get("input_content", ""), images=images, videos=videos, audios=audios, files=files
+        )
 
 
 @dataclass
