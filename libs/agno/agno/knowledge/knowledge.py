@@ -355,7 +355,7 @@ class Knowledge:
             else None
         )
         if content_db_row:
-            log_info(f"Content {content.content_hash} already exists in contentsDB, skipping")
+            log_info(f"Content {content.content_hash} already exists in ContentsDB, skipping")
         else:
             # Content exists in vector_db but not in contents_db, add it
             self._add_to_contents_db(content)
