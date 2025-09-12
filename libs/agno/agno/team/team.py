@@ -985,9 +985,9 @@ class Team:
                 session=session,
                 user_id=user_id,
             )
-            
+
             run_response.status = RunStatus.completed
-            
+
             # 4. Add the run to memory
             session.upsert_run(run_response=run_response)
 

@@ -1,10 +1,10 @@
-
 import uuid
+
 import pytest
 
 from agno.agent.agent import Agent
-from agno.run.base import RunStatus
 from agno.models.openai.chat import OpenAIChat
+from agno.run.base import RunStatus
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ async def test_run_history_persistence(agent):
     session_id = f"session_{uuid.uuid4()}"
 
     response = await agent.arun("Hello, how are you?", user_id=user_id, session_id=session_id)
-    
+
     assert response.status == RunStatus.completed
 
     # Verify the stored session data after all turns

@@ -1,7 +1,9 @@
-from agno.agent import Agent, RunOutput
-from agno.models.openai.chat import OpenAIChat
-from agno.db.in_memory import InMemoryDb
 import json
+
+from agno.agent import Agent, RunOutput
+from agno.db.in_memory import InMemoryDb
+from agno.models.openai.chat import OpenAIChat
+
 
 def test_dependencies():
     agent = Agent(
@@ -155,7 +157,10 @@ async def test_dependencies_mixed_async_stream():
 
     # Run agent and return the response as a variable
     response = agent.arun(
-        "Tell me a 5 second short story about a robot named {robot_name}", dependencies={"robot_name": "Anna"}, stream=True, stream_intermediate_steps=True
+        "Tell me a 5 second short story about a robot named {robot_name}",
+        dependencies={"robot_name": "Anna"},
+        stream=True,
+        stream_intermediate_steps=True,
     )
     async for _ in response:
         pass
@@ -191,7 +196,6 @@ def test_dependencies_resolve_in_context_false():
     assert "Tell me a 5 second short story about a robot named {robot_name}" in response.messages[1].content
 
 
-
 def test_add_dependencies_to_context():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -204,13 +208,9 @@ def test_add_dependencies_to_context():
     response: RunOutput = agent.run("Tell me a 5 second short story about a robot and include their name in the story.")
 
     # Check the user message
-    assert (
-        json.dumps({"robot_name": "Johnny"}, indent=2, default=str)
-        in response.messages[1].content
-    )
+    assert json.dumps({"robot_name": "Johnny"}, indent=2, default=str) in response.messages[1].content
     # Check the response
     assert "Johnny" in response.content
-
 
 
 def test_add_dependencies_to_context_function():
@@ -228,9 +228,6 @@ def test_add_dependencies_to_context_function():
     response: RunOutput = agent.run("Tell me a 5 second short story about a robot and include their name in the story.")
 
     # Check the user message
-    assert (
-        json.dumps({"robot_name": "Johnny"}, indent=2, default=str)
-        in response.messages[1].content
-    )
+    assert json.dumps({"robot_name": "Johnny"}, indent=2, default=str) in response.messages[1].content
     # Check the response
     assert "Johnny" in response.content

@@ -1338,7 +1338,6 @@ class Agent:
         if len(run_messages.messages) == 0:
             log_error("No messages to be sent to the model.")
 
-
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # Register run for cancellation tracking
@@ -4149,7 +4148,7 @@ class Agent:
                 return json_response_format
 
     def _resolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
-        from inspect import signature, iscoroutine, iscoroutinefunction
+        from inspect import iscoroutine, iscoroutinefunction, signature
 
         # Dependencies should already be resolved in run() method
         log_debug("Resolving dependencies")
@@ -4173,7 +4172,7 @@ class Agent:
                 dependencies[key] = value
 
     async def _aresolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
-        from inspect import iscoroutine, signature, iscoroutinefunction
+        from inspect import iscoroutine, iscoroutinefunction, signature
 
         log_debug("Resolving context (async)")
         if not isinstance(dependencies, dict):

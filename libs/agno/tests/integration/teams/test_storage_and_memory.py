@@ -69,7 +69,7 @@ async def test_run_history_persistence(team, shared_db):
 
     # Verify the stored session data after all turns
     team_session = team.get_session(session_id=session_id)
-    
+
     assert team_session is not None
     assert len(team_session.runs) == num_turns
     for run in team_session.runs:
