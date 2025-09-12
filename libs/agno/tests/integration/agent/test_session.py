@@ -1,6 +1,7 @@
 import uuid
 from typing import Any, Dict, Optional
 
+import json
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
@@ -295,3 +296,21 @@ async def test_agent_with_state_on_run_stream_async(shared_db):
         run_response.messages[1].content
         == 'Current shopping list: [\'oranges\']. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
     )
+
+def test_add_session_state_to_context(shared_db):
+    agent = Agent(
+        db=shared_db,
+        session_state={"shopping_list": ['oranges']},
+        markdown=True,
+        add_session_state_to_context=True,
+    )
+    response = agent.run("What is in my shopping list?")
+    assert response is not None
+    assert response.messages is not None
+    
+    # Check the system message
+    assert (
+        "'shopping_list': ['oranges']" in response.messages[0].content
+    )
+    
+    assert "oranges" in response.content.lower()

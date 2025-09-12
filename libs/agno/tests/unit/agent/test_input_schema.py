@@ -1,9 +1,10 @@
+from typing import List, Optional, TypedDict
+
 import pytest
-from typing import List, Optional
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from typing import TypedDict
-from pydantic import BaseModel, Field
 
 
 # TypedDict schemas
@@ -23,7 +24,7 @@ class OptionalFieldsDict(TypedDict, total=False):
 # Pydantic schemas
 class ResearchTopic(BaseModel):
     """Structured research topic with specific requirements"""
-    
+
     topic: str
     focus_areas: List[str] = Field(description="Specific areas to focus on")
     target_audience: str = Field(description="Who this research is for")
@@ -32,7 +33,7 @@ class ResearchTopic(BaseModel):
 
 class OptionalResearchTopic(BaseModel):
     """Research topic with optional fields"""
-    
+
     topic: str
     focus_areas: List[str] = Field(description="Specific areas to focus on")
     target_audience: Optional[str] = None
@@ -42,10 +43,10 @@ class OptionalResearchTopic(BaseModel):
 
 class StrictResearchTopic(BaseModel):
     """Strict research topic with validation"""
-    
+
     class Config:
         extra = "forbid"  # Forbid extra fields
-    
+
     topic: str = Field(min_length=1, max_length=100)
     focus_areas: List[str] = Field(min_items=1, max_items=5)
     target_audience: str = Field(min_length=1)
@@ -67,7 +68,7 @@ def typed_dict_agent():
 def optional_fields_agent():
     """Create an agent with optional fields TypedDict schema."""
     return Agent(
-        name="Optional Fields Agent", 
+        name="Optional Fields Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
         input_schema=OptionalFieldsDict,
     )
@@ -110,9 +111,9 @@ def test_typed_dict_agent_validate_input_with_valid_data(typed_dict_agent):
         "topic": "AI Research",
         "focus_areas": ["Machine Learning", "NLP"],
         "target_audience": "Developers",
-        "sources_required": 5
+        "sources_required": 5,
     }
-    
+
     result = typed_dict_agent._validate_input(valid_input)
     assert result == valid_input
 
@@ -123,7 +124,7 @@ def test_typed_dict_agent_validate_input_with_missing_required_field(typed_dict_
         "topic": "AI Research",
         # Missing focus_areas, target_audience, sources_required
     }
-    
+
     with pytest.raises(ValueError, match="Missing required fields"):
         typed_dict_agent._validate_input(invalid_input)
 
@@ -133,11 +134,11 @@ def test_typed_dict_agent_validate_input_with_unexpected_field(typed_dict_agent)
     invalid_input = {
         "topic": "AI Research",
         "focus_areas": ["Machine Learning"],
-        "target_audience": "Developers", 
+        "target_audience": "Developers",
         "sources_required": 5,
-        "unexpected_field": "value"
+        "unexpected_field": "value",
     }
-    
+
     with pytest.raises(ValueError, match="Unexpected fields"):
         typed_dict_agent._validate_input(invalid_input)
 
@@ -148,9 +149,9 @@ def test_typed_dict_agent_validate_input_with_wrong_type(typed_dict_agent):
         "topic": "AI Research",
         "focus_areas": "Not a list",  # Should be List[str]
         "target_audience": "Developers",
-        "sources_required": 5
+        "sources_required": 5,
     }
-    
+
     with pytest.raises(ValueError, match="expected type"):
         typed_dict_agent._validate_input(invalid_input)
 
@@ -158,22 +159,15 @@ def test_typed_dict_agent_validate_input_with_wrong_type(typed_dict_agent):
 def test_typed_dict_agent_validate_input_with_optional_fields(optional_fields_agent):
     """Test agent input validation with optional fields."""
     # Minimal input (only required fields)
-    minimal_input = {
-        "topic": "Blockchain",
-        "focus_areas": ["DeFi", "Smart Contracts"]
-    }
-    
+    minimal_input = {"topic": "Blockchain", "focus_areas": ["DeFi", "Smart Contracts"]}
+
     # Input with optional field
-    full_input = {
-        "topic": "Blockchain", 
-        "focus_areas": ["DeFi", "Smart Contracts"],
-        "priority": "high"
-    }
-    
+    full_input = {"topic": "Blockchain", "focus_areas": ["DeFi", "Smart Contracts"], "priority": "high"}
+
     # Both should validate successfully
     result1 = optional_fields_agent._validate_input(minimal_input)
     result2 = optional_fields_agent._validate_input(full_input)
-    
+
     assert result1 == minimal_input
     assert result2 == full_input
 
@@ -185,12 +179,9 @@ def test_agent_without_input_schema_handles_dict():
         model=OpenAIChat(id="gpt-4o-mini"),
         # No input_schema
     )
-    
-    dict_input = {
-        "arbitrary": "data",
-        "numbers": [1, 2, 3]
-    }
-    
+
+    dict_input = {"arbitrary": "data", "numbers": [1, 2, 3]}
+
     # Should not raise an exception and return input unchanged
     result = agent._validate_input(dict_input)
     assert result == dict_input
@@ -203,11 +194,11 @@ def test_pydantic_agent_validate_input_with_valid_dict(pydantic_agent):
         "topic": "AI Research",
         "focus_areas": ["Machine Learning", "NLP"],
         "target_audience": "Developers",
-        "sources_required": 8
+        "sources_required": 8,
     }
-    
+
     result = pydantic_agent._validate_input(valid_input)
-    
+
     # Result should be a ResearchTopic instance
     assert isinstance(result, ResearchTopic)
     assert result.topic == "AI Research"
@@ -222,11 +213,11 @@ def test_pydantic_agent_validate_input_with_model_instance(pydantic_agent):
         topic="Blockchain",
         focus_areas=["DeFi", "Smart Contracts"],
         target_audience="Crypto Developers",
-        sources_required=6
+        sources_required=6,
     )
-    
+
     result = pydantic_agent._validate_input(model_instance)
-    
+
     # Should return the same instance
     assert result is model_instance
     assert isinstance(result, ResearchTopic)
@@ -237,12 +228,12 @@ def test_pydantic_agent_validate_input_with_default_values(pydantic_agent):
     input_without_sources = {
         "topic": "Machine Learning",
         "focus_areas": ["Neural Networks"],
-        "target_audience": "Students"
+        "target_audience": "Students",
         # sources_required omitted - should use default value of 5
     }
-    
+
     result = pydantic_agent._validate_input(input_without_sources)
-    
+
     assert isinstance(result, ResearchTopic)
     assert result.sources_required == 5  # Default value
 
@@ -252,9 +243,9 @@ def test_pydantic_agent_validate_input_with_missing_required_field(pydantic_agen
     invalid_input = {
         "topic": "AI Research",
         # Missing focus_areas and target_audience (required fields)
-        "sources_required": 5
+        "sources_required": 5,
     }
-    
+
     with pytest.raises(ValueError, match="Failed to parse dict into ResearchTopic"):
         pydantic_agent._validate_input(invalid_input)
 
@@ -265,9 +256,9 @@ def test_pydantic_agent_validate_input_with_wrong_type(pydantic_agent):
         "topic": "AI Research",
         "focus_areas": "Not a list",  # Should be List[str]
         "target_audience": "Developers",
-        "sources_required": 5
+        "sources_required": 5,
     }
-    
+
     with pytest.raises(ValueError, match="Failed to parse dict into ResearchTopic"):
         pydantic_agent._validate_input(invalid_input)
 
@@ -278,11 +269,11 @@ def test_pydantic_agent_validate_input_with_type_coercion(pydantic_agent):
         "topic": "AI Research",
         "focus_areas": ["Machine Learning"],
         "target_audience": "Developers",
-        "sources_required": "5"  # String that can be converted to int
+        "sources_required": "5",  # String that can be converted to int
     }
-    
+
     result = pydantic_agent._validate_input(input_with_coercion)
-    
+
     assert isinstance(result, ResearchTopic)
     assert result.sources_required == 5  # Should be converted to int
     assert isinstance(result.sources_required, int)
@@ -293,12 +284,12 @@ def test_pydantic_agent_validate_input_with_optional_fields(optional_pydantic_ag
     # Minimal input (only required fields)
     minimal_input = {
         "topic": "Blockchain",
-        "focus_areas": ["DeFi"]
+        "focus_areas": ["DeFi"],
         # target_audience and sources_required are optional
     }
-    
+
     result = optional_pydantic_agent._validate_input(minimal_input)
-    
+
     assert isinstance(result, OptionalResearchTopic)
     assert result.topic == "Blockchain"
     assert result.focus_areas == ["DeFi"]
@@ -314,11 +305,11 @@ def test_pydantic_agent_validate_input_with_all_optional_fields(optional_pydanti
         "focus_areas": ["DeFi", "Smart Contracts"],
         "target_audience": "Crypto Developers",
         "sources_required": 10,
-        "priority": "high"
+        "priority": "high",
     }
-    
+
     result = optional_pydantic_agent._validate_input(full_input)
-    
+
     assert isinstance(result, OptionalResearchTopic)
     assert result.priority == "high"
     assert result.target_audience == "Crypto Developers"
@@ -331,51 +322,54 @@ def test_pydantic_agent_validate_input_with_strict_validation(strict_pydantic_ag
         "topic": "AI Research",
         "focus_areas": ["Machine Learning", "NLP"],
         "target_audience": "Developers",
-        "sources_required": 5
+        "sources_required": 5,
     }
-    
+
     result = strict_pydantic_agent._validate_input(valid_input)
     assert isinstance(result, StrictResearchTopic)
 
 
 def test_pydantic_agent_validate_input_strict_validation_failures(strict_pydantic_agent):
     """Test various strict validation failures."""
-    
+
     # Test empty topic (violates min_length=1)
     with pytest.raises(ValueError):
-        strict_pydantic_agent._validate_input({
-            "topic": "",
-            "focus_areas": ["ML"],
-            "target_audience": "Developers",
-            "sources_required": 5
-        })
-    
+        strict_pydantic_agent._validate_input(
+            {"topic": "", "focus_areas": ["ML"], "target_audience": "Developers", "sources_required": 5}
+        )
+
     # Test too many focus areas (violates max_items=5)
     with pytest.raises(ValueError):
-        strict_pydantic_agent._validate_input({
-            "topic": "AI",
-            "focus_areas": ["ML", "NLP", "CV", "RL", "DL", "Extra"],  # 6 items > max 5
-            "target_audience": "Developers", 
-            "sources_required": 5
-        })
-    
+        strict_pydantic_agent._validate_input(
+            {
+                "topic": "AI",
+                "focus_areas": ["ML", "NLP", "CV", "RL", "DL", "Extra"],  # 6 items > max 5
+                "target_audience": "Developers",
+                "sources_required": 5,
+            }
+        )
+
     # Test sources_required = 0 (violates gt=0)
     with pytest.raises(ValueError):
-        strict_pydantic_agent._validate_input({
-            "topic": "AI",
-            "focus_areas": ["ML"],
-            "target_audience": "Developers",
-            "sources_required": 0  # Should be > 0
-        })
-    
+        strict_pydantic_agent._validate_input(
+            {
+                "topic": "AI",
+                "focus_areas": ["ML"],
+                "target_audience": "Developers",
+                "sources_required": 0,  # Should be > 0
+            }
+        )
+
     # Test sources_required > 20 (violates le=20)
     with pytest.raises(ValueError):
-        strict_pydantic_agent._validate_input({
-            "topic": "AI",
-            "focus_areas": ["ML"],
-            "target_audience": "Developers",
-            "sources_required": 25  # Should be <= 20
-        })
+        strict_pydantic_agent._validate_input(
+            {
+                "topic": "AI",
+                "focus_areas": ["ML"],
+                "target_audience": "Developers",
+                "sources_required": 25,  # Should be <= 20
+            }
+        )
 
 
 def test_pydantic_agent_validate_input_forbids_extra_fields(strict_pydantic_agent):
@@ -385,20 +379,17 @@ def test_pydantic_agent_validate_input_forbids_extra_fields(strict_pydantic_agen
         "focus_areas": ["ML"],
         "target_audience": "Developers",
         "sources_required": 5,
-        "extra_field": "not allowed"  # Should be forbidden
+        "extra_field": "not allowed",  # Should be forbidden
     }
-    
+
     with pytest.raises(ValueError, match="Failed to parse dict into StrictResearchTopic"):
         strict_pydantic_agent._validate_input(input_with_extra)
 
 
 def test_pydantic_agent_validate_input_different_model_instance(pydantic_agent):
     """Test agent input validation fails with wrong Pydantic model type."""
-    wrong_model = OptionalResearchTopic(
-        topic="Test",
-        focus_areas=["Test"]
-    )
-    
+    wrong_model = OptionalResearchTopic(topic="Test", focus_areas=["Test"])
+
     with pytest.raises(ValueError, match="Expected ResearchTopic but got OptionalResearchTopic"):
         pydantic_agent._validate_input(wrong_model)
 
@@ -410,13 +401,9 @@ def test_agent_without_input_schema_handles_pydantic_model():
         model=OpenAIChat(id="gpt-4o-mini"),
         # No input_schema
     )
-    
-    model_instance = ResearchTopic(
-        topic="Test",
-        focus_areas=["Test Area"],
-        target_audience="Test Audience"
-    )
-    
+
+    model_instance = ResearchTopic(topic="Test", focus_areas=["Test Area"], target_audience="Test Audience")
+
     # Should not raise an exception and return input unchanged
     result = agent._validate_input(model_instance)
     assert result is model_instance
@@ -426,28 +413,24 @@ def test_pydantic_field_descriptions_preserved():
     """Test that Pydantic Field descriptions are preserved in the model."""
     # Check that field info is available (this is how Pydantic stores Field metadata)
     schema = ResearchTopic.model_json_schema()
-    
+
     assert schema["properties"]["focus_areas"]["description"] == "Specific areas to focus on"
-    assert schema["properties"]["target_audience"]["description"] == "Who this research is for"  
+    assert schema["properties"]["target_audience"]["description"] == "Who this research is for"
     assert schema["properties"]["sources_required"]["description"] == "Number of sources needed"
     assert schema["properties"]["sources_required"]["default"] == 5
 
 
 def test_pydantic_json_serialization():
     """Test that Pydantic models serialize to JSON properly."""
-    model = ResearchTopic(
-        topic="AI",
-        focus_areas=["ML", "NLP"],
-        target_audience="Developers",
-        sources_required=7
-    )
-    
+    model = ResearchTopic(topic="AI", focus_areas=["ML", "NLP"], target_audience="Developers", sources_required=7)
+
     # Test model_dump_json
     json_str = model.model_dump_json(indent=2, exclude_none=True)
     assert isinstance(json_str, str)
-    
+
     # Parse back and verify
     import json
+
     parsed = json.loads(json_str)
     assert parsed["topic"] == "AI"
     assert parsed["focus_areas"] == ["ML", "NLP"]
@@ -461,14 +444,14 @@ def test_pydantic_model_validation_error_messages():
         model=OpenAIChat(id="gpt-4o-mini"),
         input_schema=ResearchTopic,
     )
-    
+
     invalid_input = {
         "topic": "AI",
         "focus_areas": "not a list",  # Wrong type
-        "target_audience": "Developers"
+        "target_audience": "Developers",
         # Missing sources_required
     }
-    
+
     try:
         agent._validate_input(invalid_input)
         assert False, "Should have raised ValueError"

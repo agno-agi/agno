@@ -57,6 +57,7 @@ from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
@@ -105,7 +106,6 @@ from agno.utils.response import (
     generator_wrapper,
     get_paused_content,
 )
-from agno.utils.common import validate_typed_dict, is_typed_dict
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
@@ -616,7 +616,7 @@ class Agent:
             try:
                 # Check if the schema is a TypedDict
                 if is_typed_dict(self.input_schema):
-                    validated_dict = validate_typed_dict(input, self.input_schema)  
+                    validated_dict = validate_typed_dict(input, self.input_schema)
                     return validated_dict
                 else:
                     validated_model = self.input_schema(**input)
@@ -1105,7 +1105,6 @@ class Agent:
         # Resolve dependencies
         if run_dependencies is not None:
             self._resolve_run_dependencies(dependencies=run_dependencies)
-
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
         )
@@ -1202,7 +1201,7 @@ class Agent:
                     files=files,
                     knowledge_filters=effective_filters,
                     add_history_to_context=add_history,
-                    dependencies=dependencies,
+                    dependencies=run_dependencies,
                     add_dependencies_to_context=add_dependencies,
                     add_session_state_to_context=add_session_state,
                     **kwargs,
@@ -1283,27 +1282,62 @@ class Agent:
     async def _arun(
         self,
         run_response: RunOutput,
-        run_messages: RunMessages,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> RunOutput:
         """Run the Agent and yield the RunOutput.
 
         Steps:
-        1. Reason about the task if reasoning is enabled
-        2. Generate a response from the Model (includes running function calls)
-        3. Update the RunOutput with the model response
-        4. Update Agent Memory
-        5. Calculate session metrics
-        6. Add RunOutput to Agent Session
-        7. Save session to storage
-        8. Optional: Save output to file if save_response_to_file is set
+        1. Resolve dependencies
+        2. Prepare run messages
+        3. Reason about the task if reasoning is enabled
+        4. Generate a response from the Model (includes running function calls)
+        5. Update the RunOutput with the model response
+        6. Update Agent Memory
+        7. Calculate session metrics
+        8. Add RunOutput to Agent Session
+        9. Save session to storage
         """
-        # Resolving here for async requirement
+        # 1. Resolving here for async requirement
         if dependencies is not None:
             await self._aresolve_run_dependencies(dependencies)
+
+        # 2. Prepare run messages
+        run_messages: RunMessages = self._get_run_messages(
+            run_response=run_response,
+            input=input,
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            **kwargs,
+        )
+        if len(run_messages.messages) == 0:
+            log_error("No messages to be sent to the model.")
+
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -1311,13 +1345,13 @@ class Agent:
         register_run(run_response.run_id)  # type: ignore
 
         self.model = cast(Model, self.model)
-        # 1. Reason about the task if reasoning is enabled
+        # 3. Reason about the task if reasoning is enabled
         await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
         # Check for cancellation before model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # 2. Generate a response from the Model (includes running function calls)
+        # 4. Generate a response from the Model (includes running function calls)
         model_response: ModelResponse = await self.model.aresponse(
             messages=run_messages.messages,
             tools=self._tools_for_model,
@@ -1336,7 +1370,7 @@ class Agent:
         # If a parser model is provided, structure the response separately
         await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
 
-        # 3. Update the RunOutput with the model response
+        # 5. Update the RunOutput with the model response
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         if self.store_media:
@@ -1350,13 +1384,13 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-        # 5. Update Agent Memory
+        # 6. Update Agent Memory
         async for _ in self._amake_memories_and_summaries(
             run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
         ):
             pass
 
-        # 6. Calculate session metrics
+        # 7. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
         run_response.status = RunStatus.completed
@@ -1368,15 +1402,15 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # 6. Optional: Save output to file if save_response_to_file is set
+        # Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
-        # 7. Add RunOutput to Agent Session
+        # 8. Add RunOutput to Agent Session
         session.upsert_run(run=run_response)
 
-        # 8. Save session to storage
+        # 9. Save session to storage
         self.save_session(session=session)
 
         # Log Agent Telemetry
@@ -1392,30 +1426,61 @@ class Agent:
     async def _arun_stream(
         self,
         run_response: RunOutput,
-        run_messages: RunMessages,
         session: AgentSession,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+        session_state: Optional[Dict[str, Any]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
         yield_run_response: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
         """Run the Agent and yield the RunOutput.
 
         Steps:
-        1. Reason about the task if reasoning is enabled
-        2. Generate a response from the Model (includes running function calls)
-        3. Add the RunOutput to the Agent Session
-        4. Update Agent Memory
-        5. Calculate session metrics
-        6. Add RunOutput to Agent Session
-        7. Save session to storage
+        1. Resolve dependencies
+        2. Prepare run messages
+        3. Reason about the task if reasoning is enabled
+        4. Generate a response from the Model (includes running function calls)
+        5. Update Agent Memory
+        6. Calculate session metrics
+        7. Add RunOutput to Agent Session
+        8. Save session to storage
         """
-        run_dependencies = dependencies if dependencies is not None else self.dependencies
-        # Resolving here for async requirement
-        if run_dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=run_dependencies)
+        # 1. Resolving here for async requirement
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=dependencies)
+
+        # 2. Prepare run messages
+        run_messages: RunMessages = self._get_run_messages(
+            run_response=run_response,
+            input=input,
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            **kwargs,
+        )
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -1427,7 +1492,7 @@ class Agent:
             if stream_intermediate_steps:
                 yield self._handle_event(create_run_started_event(run_response), run_response, workflow_context)
 
-            # 1. Reason about the task if reasoning is enabled
+            # 3. Reason about the task if reasoning is enabled
             async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
                 raise_if_cancelled(run_response.run_id)  # type: ignore
                 yield item
@@ -1435,7 +1500,7 @@ class Agent:
             # Check for cancellation before model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 2. Generate a response from the Model
+            # 4. Generate a response from the Model
             if self.output_model is None:
                 async for event in self._ahandle_model_response_stream(
                     session=session,
@@ -1518,7 +1583,7 @@ class Agent:
             if run_response.metrics:
                 run_response.metrics.stop_timer()
 
-            # 8. Optional: Save output to file if save_response_to_file is set
+            # Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
                 run_response=run_response,
                 input=run_messages.user_message,
@@ -1526,10 +1591,10 @@ class Agent:
                 user_id=user_id,
             )
 
-            # 6. Add RunOutput to Agent Session
+            # 7. Add RunOutput to Agent Session
             session.upsert_run(run=run_response)
 
-            # 7. Save session to storage
+            # 8. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1671,10 +1736,6 @@ class Agent:
         # Determine run dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
-        # Resolve callable dependencies if present
-        if run_dependencies is not None:
-            self._resolve_run_dependencies(dependencies=run_dependencies)
-
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
         )
@@ -1755,51 +1816,52 @@ class Agent:
 
         for attempt in range(num_attempts):
             try:
-                # Prepare run messages
-                run_messages: RunMessages = self._get_run_messages(
-                    run_response=run_response,
-                    input=validated_input,
-                    session=agent_session,
-                    session_state=session_state,
-                    user_id=user_id,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
-                    knowledge_filters=effective_filters,
-                    add_history_to_context=add_history,
-                    dependencies=dependencies,
-                    add_dependencies_to_context=add_dependencies,
-                    add_session_state_to_context=add_session_state,
-                    metadata=metadata,
-                    **kwargs,
-                )
-                if len(run_messages.messages) == 0:
-                    log_error("No messages to be sent to the model.")
-
-                run_messages = run_messages
-
                 # Pass the new run_response to _arun
                 if stream:
                     return self._arun_stream(  # type: ignore
                         run_response=run_response,
-                        run_messages=run_messages,
+                        input=validated_input,
                         user_id=user_id,
                         session=agent_session,
+                        session_state=session_state,
+                        audio=audio,
+                        images=images,
+                        videos=videos,
+                        files=files,
+                        knowledge_filters=knowledge_filters,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        metadata=metadata,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
                         dependencies=run_dependencies,
+                        **kwargs,
                     )  # type: ignore[assignment]
                 else:
                     return self._arun(  # type: ignore
                         run_response=run_response,
-                        run_messages=run_messages,
+                        input=validated_input,
                         user_id=user_id,
                         session=agent_session,
+                        session_state=session_state,
+                        audio=audio,
+                        images=images,
+                        videos=videos,
+                        files=files,
+                        knowledge_filters=knowledge_filters,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        metadata=metadata,
                         response_format=response_format,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                        workflow_context=workflow_context,
+                        yield_run_response=yield_run_response,
                         dependencies=run_dependencies,
+                        **kwargs,
                     )
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -4087,7 +4149,7 @@ class Agent:
                 return json_response_format
 
     def _resolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
-        from inspect import signature
+        from inspect import signature, iscoroutine, iscoroutinefunction
 
         # Dependencies should already be resolved in run() method
         log_debug("Resolving dependencies")
@@ -4096,7 +4158,10 @@ class Agent:
             return
 
         for key, value in dependencies.items():
-            if callable(value):
+            if iscoroutine(value) or iscoroutinefunction(value):
+                log_warning(f"Dependency {key} is a coroutine. Use agent.arun() or agent.aprint_response() instead.")
+                continue
+            elif callable(value):
                 try:
                     sig = signature(value)
                     result = value(agent=self) if "agent" in sig.parameters else value()
@@ -4108,7 +4173,7 @@ class Agent:
                 dependencies[key] = value
 
     async def _aresolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
-        from inspect import iscoroutine, signature
+        from inspect import iscoroutine, signature, iscoroutinefunction
 
         log_debug("Resolving context (async)")
         if not isinstance(dependencies, dict):
@@ -4119,14 +4184,12 @@ class Agent:
             if not callable(value):
                 dependencies[key] = value
                 continue
-
             try:
                 sig = signature(value)
                 result = value(agent=self) if "agent" in sig.parameters else value()
 
-                if iscoroutine(result):
+                if iscoroutine(result) or iscoroutinefunction(result):
                     result = await result
-
                 dependencies[key] = result
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
@@ -5046,7 +5109,7 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
-        run_dependencies: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -5084,7 +5147,7 @@ class Agent:
             session=session,
             session_state=session_state,
             user_id=user_id,
-            dependencies=run_dependencies,
+            dependencies=dependencies,
             metadata=metadata,
             add_session_state_to_context=add_session_state_to_context,
         )
@@ -5165,7 +5228,7 @@ class Agent:
                 videos=videos,
                 files=files,
                 knowledge_filters=knowledge_filters,
-                run_dependencies=run_dependencies,
+                dependencies=dependencies,
                 add_dependencies_to_context=add_dependencies_to_context,
                 metadata=metadata,
                 **kwargs,
@@ -5180,6 +5243,7 @@ class Agent:
             try:
                 if self.input_schema and is_typed_dict(self.input_schema):
                     import json
+
                     content = json.dumps(input, indent=2, ensure_ascii=False)
                     user_message = Message(role=self.user_message_role, content=content)
                 else:
