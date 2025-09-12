@@ -2,7 +2,6 @@ import json
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
 
-from agno.agent import Agent
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
