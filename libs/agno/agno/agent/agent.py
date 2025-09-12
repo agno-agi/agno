@@ -57,6 +57,7 @@ from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
@@ -105,7 +106,6 @@ from agno.utils.response import (
     generator_wrapper,
     get_paused_content,
 )
-from agno.utils.common import validate_typed_dict, is_typed_dict
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
@@ -616,7 +616,7 @@ class Agent:
             try:
                 # Check if the schema is a TypedDict
                 if is_typed_dict(self.input_schema):
-                    validated_dict = validate_typed_dict(input, self.input_schema)  
+                    validated_dict = validate_typed_dict(input, self.input_schema)
                     return validated_dict
                 else:
                     validated_model = self.input_schema(**input)
@@ -5180,6 +5180,7 @@ class Agent:
             try:
                 if self.input_schema and is_typed_dict(self.input_schema):
                     import json
+
                     content = json.dumps(input, indent=2, ensure_ascii=False)
                     user_message = Message(role=self.user_message_role, content=content)
                 else:
