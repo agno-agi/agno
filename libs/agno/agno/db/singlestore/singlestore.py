@@ -19,6 +19,7 @@ from agno.db.singlestore.utils import (
     is_table_available,
     is_valid_table,
 )
+from agno.db.utils import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -69,6 +70,12 @@ class SingleStoreDb(BaseDb):
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
+        if id is None:
+            base_seed = db_url or str(db_engine.url) if db_engine else "singlestore"  # type: ignore
+            schema_suffix = db_schema if db_schema is not None else "ai"
+            seed = f"{base_seed}#{schema_suffix}"
+            id = generate_deterministic_id(seed)
+
         super().__init__(
             id=id,
             session_table=session_table,
