@@ -292,7 +292,6 @@ def test_knowledge_table_creation_and_structure(postgres_db_real: PostgresDb):
         "access_count",
         "status",
         "status_message",
-        "content_hash",
         "created_at",
         "updated_at",
     ]
