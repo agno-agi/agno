@@ -1,8 +1,6 @@
 import json
 import csv
 import io
-import os
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
@@ -106,7 +104,7 @@ class FileGenerationTools(Toolkit):
             if isinstance(data, str):
                 try:
                     # Try to parse as JSON to validate
-                    parsed_data = json.loads(data)
+                    json.loads(data)
                     json_content = data  # Use the original string if it's valid JSON
                 except json.JSONDecodeError:
                     # If it's not valid JSON, treat as plain text and wrap it
