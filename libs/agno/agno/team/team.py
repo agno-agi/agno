@@ -6278,7 +6278,7 @@ class Team:
             run_response.audio = []
         run_response.audio.append(audio)
 
-    def _add_file(self, file: File, run_response: RunOutput) -> None:
+    def _add_file(self, file: File, run_response: TeamRunOutput) -> None:
         """Add file to both the agent's stateful storage and the current run response"""
         # Add to run response
         if run_response.files is None:
