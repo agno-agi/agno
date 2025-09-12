@@ -16,7 +16,7 @@ class CerebrasOpenAI(OpenAILike):
     name: str = "CerebrasOpenAI"
     provider: str = "CerebrasOpenAI"
 
-    parallel_tool_calls: bool = False
+    parallel_tool_calls: Optional[bool] = None
     base_url: str = "https://api.cerebras.ai/v1"
     api_key: Optional[str] = getenv("CEREBRAS_API_KEY", None)
 
@@ -44,7 +44,6 @@ class CerebrasOpenAI(OpenAILike):
                     "type": "function",
                     "function": {
                         "name": tool["function"]["name"],
-                        "strict": True,  # Ensure strict adherence to expected outputs
                         "description": tool["function"]["description"],
                         "parameters": tool["function"]["parameters"],
                     },
@@ -52,7 +51,10 @@ class CerebrasOpenAI(OpenAILike):
                 for tool in tools
             ]
             # Cerebras requires parallel_tool_calls=False for llama-4-scout-17b-16e-instruct
-            request_params["parallel_tool_calls"] = self.parallel_tool_calls
+            if self.id == "llama-4-scout-17b-16e-instruct":
+                request_params["parallel_tool_calls"] = False
+            elif self.parallel_tool_calls is not None:
+                request_params["parallel_tool_calls"] = self.parallel_tool_calls
 
         if request_params:
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)

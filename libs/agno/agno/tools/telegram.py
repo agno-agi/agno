@@ -1,4 +1,4 @@
-import os
+from os import getenv
 from typing import Any, List, Optional, Union
 
 import httpx
@@ -10,15 +10,23 @@ from agno.utils.log import log_debug, logger
 class TelegramTools(Toolkit):
     base_url = "https://api.telegram.org"
 
-    def __init__(self, chat_id: Union[str, int], token: Optional[str] = None, **kwargs):
-        self.token = token or os.getenv("TELEGRAM_TOKEN")
+    def __init__(
+        self,
+        chat_id: Union[str, int],
+        token: Optional[str] = None,
+        enable_send_message: bool = True,
+        all: bool = False,
+        **kwargs,
+    ):
+        self.token = token or getenv("TELEGRAM_TOKEN")
         if not self.token:
             logger.error("TELEGRAM_TOKEN not set. Please set the TELEGRAM_TOKEN environment variable.")
 
         self.chat_id = chat_id
 
         tools: List[Any] = []
-        tools.append(self.send_message)
+        if all or enable_send_message:
+            tools.append(self.send_message)
 
         super().__init__(name="telegram", tools=tools, **kwargs)
 

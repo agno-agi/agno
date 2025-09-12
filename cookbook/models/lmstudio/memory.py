@@ -7,26 +7,22 @@ Steps:
 """
 
 from agno.agent import Agent
-from agno.memory.v2.db.postgres import PostgresMemoryDb
-from agno.memory.v2.memory import Memory
+from agno.db.postgres import PostgresDb
 from agno.models.lmstudio import LMStudio
-from agno.storage.agent.postgres import PostgresAgentStorage
 
+# Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
+
 agent = Agent(
     model=LMStudio(id="qwen2.5-7b-instruct-1m"),
-    # Store the memories and summary in a database
-    memory=Memory(
-        db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url),
-    ),
+    # Pass the database to the Agent
+    db=db,
+    # Enable user memories
     enable_user_memories=True,
+    # Enable session summaries
     enable_session_summaries=True,
-    # Store agent sessions in a database
-    storage=PostgresAgentStorage(
-        table_name="personalized_agent_sessions", db_url=db_url
-    ),
     # Show debug logs so, you can see the memory being created
-    # debug_mode=True,
 )
 
 # -*- Share personal information

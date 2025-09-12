@@ -20,13 +20,11 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[OpenAITools(image_model="gpt-image-1")],
     markdown=True,
-    show_tool_calls=True,
-    debug_mode=True,
 )
 
 response = agent.run(
     "Generate a photorealistic image of a cozy coffee shop interior",
 )
 
-if response.images:
-    save_base64_data(response.images[0].content, "tmp/coffee_shop.png")
+if response.images and response.images[0].content:
+    save_base64_data(str(response.images[0].content), "tmp/coffee_shop.png")
