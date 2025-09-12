@@ -165,9 +165,9 @@ class Step:
         return None
 
     def _call_custom_function(
-        self, 
-        func: Callable, 
-        step_input: StepInput, 
+        self,
+        func: Callable,
+        step_input: StepInput,
         session_state: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Call custom function with session_state support if the function accepts it"""
@@ -177,9 +177,9 @@ class Step:
             return func(step_input)
 
     async def _acall_custom_function(
-        self, 
-        func: Callable, 
-        step_input: StepInput, 
+        self,
+        func: Callable,
+        step_input: StepInput,
         session_state: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Call custom async function with session_state support if the function accepts it"""
@@ -217,7 +217,9 @@ class Step:
                         final_response = None
                         session_state_copy = copy(session_state) if session_state else None
                         try:
-                            for chunk in self._call_custom_function(self.active_executor, step_input, session_state_copy):  # type: ignore
+                            for chunk in self._call_custom_function(
+                                self.active_executor, step_input, session_state_copy
+                            ):  # type: ignore
                                 if (
                                     hasattr(chunk, "content")
                                     and chunk.content is not None
@@ -244,7 +246,7 @@ class Step:
                     else:
                         # Execute function with signature inspection for session_state support
                         session_state_copy = copy(session_state) if session_state else None
-                        result = self._call_custom_function(self.active_executor, step_input, session_state_copy) # type: ignore
+                        result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
 
                         # Merge session_state changes back
                         if session_state_copy and session_state:
@@ -329,10 +331,11 @@ class Step:
         """Check if the custom function has a session_state parameter"""
         if self._executor_type != "function":
             return False
-        
+
         try:
             from inspect import signature
-            sig = signature(self.active_executor) # type: ignore
+
+            sig = signature(self.active_executor)  # type: ignore
             return "session_state" in sig.parameters
         except Exception:
             return False
@@ -386,7 +389,7 @@ class Step:
                         content = ""
                         session_state_copy = copy(session_state) if session_state else None
                         try:
-                            iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy) # type: ignore
+                            iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
                             for event in iterator:  # type: ignore
                                 if (
                                     hasattr(event, "content")
@@ -414,8 +417,8 @@ class Step:
 
                     else:
                         session_state_copy = copy(session_state) if session_state else None
-                        result = self._call_custom_function(self.active_executor, step_input, session_state_copy) # type: ignore
-                        
+                        result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
+
                         # Merge session_state changes back
                         if session_state_copy and session_state:
                             merge_dictionaries(session_state, session_state_copy)
@@ -567,7 +570,9 @@ class Step:
                         session_state_copy = copy(session_state) if session_state else None
                         try:
                             if inspect.isgeneratorfunction(self.active_executor):
-                                iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy) # type: ignore
+                                iterator = self._call_custom_function(
+                                    self.active_executor, step_input, session_state_copy
+                                )  # type: ignore
                                 for chunk in iterator:  # type: ignore
                                     if (
                                         hasattr(chunk, "content")
@@ -581,7 +586,9 @@ class Step:
                                         final_response = chunk
                             else:
                                 if inspect.isasyncgenfunction(self.active_executor):
-                                    iterator = await self._acall_custom_function(self.active_executor, step_input, session_state_copy) # type: ignore
+                                    iterator = await self._acall_custom_function(
+                                        self.active_executor, step_input, session_state_copy
+                                    )  # type: ignore
                                     async for chunk in iterator:  # type: ignore
                                         if (
                                             hasattr(chunk, "content")
@@ -609,9 +616,11 @@ class Step:
                     else:
                         session_state_copy = copy(session_state) if session_state else None
                         if inspect.iscoroutinefunction(self.active_executor):
-                            result = await self._acall_custom_function(self.active_executor, step_input, session_state_copy) # type: ignore
+                            result = await self._acall_custom_function(
+                                self.active_executor, step_input, session_state_copy
+                            )  # type: ignore
                         else:
-                            result = self._call_custom_function(self.active_executor, step_input, session_state_copy) # type: ignore
+                            result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
 
                         # Merge session_state changes back
                         if session_state_copy and session_state:
@@ -739,7 +748,9 @@ class Step:
                     if inspect.isasyncgenfunction(self.active_executor):
                         content = ""
                         # It's an async generator - iterate over it
-                        iterator = await self._acall_custom_function(self.active_executor, step_input, session_state_copy) # type: ignore
+                        iterator = await self._acall_custom_function(
+                            self.active_executor, step_input, session_state_copy
+                        )  # type: ignore
                         async for event in iterator:  # type: ignore
                             if (
                                 hasattr(event, "content")
@@ -758,7 +769,7 @@ class Step:
                             final_response = StepOutput(content=content)
                     elif inspect.iscoroutinefunction(self.active_executor):
                         # It's a regular async function - await it
-                        result = await self._acall_custom_function(self.active_executor, step_input, session_state_copy) # type: ignore
+                        result = await self._acall_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
                         if isinstance(result, StepOutput):
                             final_response = result
                         else:
@@ -766,7 +777,7 @@ class Step:
                     elif inspect.isgeneratorfunction(self.active_executor):
                         content = ""
                         # It's a regular generator function - iterate over it
-                        iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy) # type: ignore
+                        iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
                         for event in iterator:  # type: ignore
                             if (
                                 hasattr(event, "content")
@@ -785,7 +796,7 @@ class Step:
                             final_response = StepOutput(content=content)
                     else:
                         # It's a regular function - call it directly
-                        result = self._call_custom_function(self.active_executor, step_input, session_state_copy) # type: ignore
+                        result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
                         if isinstance(result, StepOutput):
                             final_response = result
                         else:

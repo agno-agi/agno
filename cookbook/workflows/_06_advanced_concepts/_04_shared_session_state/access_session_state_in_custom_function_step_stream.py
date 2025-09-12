@@ -1,6 +1,7 @@
 from typing import Iterator, Union
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.run.workflow import WorkflowRunOutputEvent
@@ -9,7 +10,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
-from agno.db.in_memory import InMemoryDb
 
 # Define agents
 hackernews_agent = Agent(
@@ -58,7 +58,7 @@ def custom_content_planning_function(
     # Initialize content history if not present
     if "content_plans" not in session_state:
         session_state["content_plans"] = []
-    
+
     if "plan_counter" not in session_state:
         session_state["plan_counter"] = 0
 
@@ -92,7 +92,7 @@ def custom_content_planning_function(
         response_iterator = content_planner.run(
             planning_prompt, stream=True, stream_intermediate_steps=True
         )
-        
+
         # Forward all agent events
         for event in response_iterator:
             yield event
@@ -100,14 +100,13 @@ def custom_content_planning_function(
         # Get the final response
         response = content_planner.get_last_run_output()
 
-
         # Store this plan in session state
         plan_data = {
             "id": current_plan_id,
             "topic": message,
             "content": response.content if response else "No content generated",
             "timestamp": f"Plan #{current_plan_id}",
-            "has_research": bool(previous_step_content)
+            "has_research": bool(previous_step_content),
         }
         session_state["content_plans"].append(plan_data)
 
@@ -159,7 +158,7 @@ def content_summary_function(
 
 **Plan Overview:**
     """
-    
+
     for plan in plans:
         summary += f"""
 
@@ -167,14 +166,14 @@ def content_summary_function(
 - Research Available: {"✓" if plan["has_research"] else "✗"}
 - Status: Completed
         """
-    
+
     # Update session state with summary info
     session_state["session_summarized"] = True
     session_state["total_plans_summarized"] = len(plans)
-    
+
     yield StepOutput(content=summary.strip())
 
-    
+
 # Define steps using different executor types
 
 research_step = Step(
@@ -188,7 +187,7 @@ content_planning_step = Step(
 )
 
 content_summary_step = Step(
-    name="Content Summary Step", 
+    name="Content Summary Step",
     executor=content_summary_function,
 )
 
@@ -204,9 +203,9 @@ if __name__ == "__main__":
         ),
         steps=[research_step, content_planning_step, content_summary_step],
         # Initialize session state with empty content plans
-        session_state={"content_plans": [], "plan_counter": 0}
+        session_state={"content_plans": [], "plan_counter": 0},
     )
-    
+
     print("=== First Streaming Workflow Run ===")
     streaming_content_workflow.print_response(
         input="AI trends in 2024",
@@ -215,10 +214,12 @@ if __name__ == "__main__":
         stream_intermediate_steps=True,
     )
 
-    print(f"\nSession State After First Run: {streaming_content_workflow.get_session_state()}")
-    
+    print(
+        f"\nSession State After First Run: {streaming_content_workflow.get_session_state()}"
+    )
+
     print("\n" + "=" * 60 + "\n")
-    
+
     print("=== Second Streaming Workflow Run (Same Session) ===")
     streaming_content_workflow.print_response(
         input="Machine Learning automation tools",
@@ -226,5 +227,5 @@ if __name__ == "__main__":
         stream=True,
         stream_intermediate_steps=True,
     )
-    
+
     print(f"\nFinal Session State: {streaming_content_workflow.get_session_state()}")
