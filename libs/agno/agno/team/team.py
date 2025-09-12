@@ -55,6 +55,7 @@ from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutp
 from agno.session import SessionSummaryManager, TeamSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_team_memory_update_completed_event,
     create_team_memory_update_started_event,
@@ -105,7 +106,6 @@ from agno.utils.response import (
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
 from agno.utils.team import format_member_agent_task, get_member_id
-from agno.utils.common import validate_typed_dict, is_typed_dict
 from agno.utils.timer import Timer
 
 
@@ -634,7 +634,7 @@ class Team:
             try:
                 # Check if the schema is a TypedDict
                 if is_typed_dict(self.input_schema):
-                    validated_dict = validate_typed_dict(input, self.input_schema)  
+                    validated_dict = validate_typed_dict(input, self.input_schema)
                     return validated_dict
                 else:
                     validated_model = self.input_schema(**input)
@@ -4398,8 +4398,8 @@ class Team:
                 f"<additional_context>\n{self.additional_context.strip()}\n</additional_context>\n\n"
             )
 
-        if self.add_session_state_to_context:
-            system_message_content += f"<session_state>\n{session_state}\n</session_state>\n\n"
+        if self.add_session_state_to_context and session_state is not None:
+            system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
         # Add the JSON output prompt if output_schema is provided and structured_outputs is False
         if (
@@ -4411,6 +4411,9 @@ class Team:
             system_message_content += f"{self._get_json_output_prompt()}"
 
         return Message(role=self.system_message_role, content=system_message_content.strip())
+
+    def _get_formatted_session_state_for_system_message(self, session_state: Dict[str, Any]) -> str:
+        return f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
     def _get_run_messages(
         self,
@@ -4605,6 +4608,7 @@ class Team:
                 try:
                     if self.input_schema and is_typed_dict(self.input_schema):
                         import json
+
                         content = json.dumps(input_message, indent=2, ensure_ascii=False)
                         return Message(role="user", content=content)
                     else:

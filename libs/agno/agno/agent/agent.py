@@ -57,6 +57,7 @@ from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
@@ -105,7 +106,6 @@ from agno.utils.response import (
     generator_wrapper,
     get_paused_content,
 )
-from agno.utils.common import validate_typed_dict, is_typed_dict
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
@@ -616,7 +616,7 @@ class Agent:
             try:
                 # Check if the schema is a TypedDict
                 if is_typed_dict(self.input_schema):
-                    validated_dict = validate_typed_dict(input, self.input_schema)  
+                    validated_dict = validate_typed_dict(input, self.input_schema)
                     return validated_dict
                 else:
                     validated_model = self.input_schema(**input)
@@ -4856,7 +4856,7 @@ class Agent:
 
         # 3.3.15 Add the session state to the system message
         if self.add_session_state_to_context and session_state is not None:
-            system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
+            system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
         # Return the system message
         return (
@@ -4864,6 +4864,9 @@ class Agent:
             if system_message_content
             else None
         )
+
+    def _get_formatted_session_state_for_system_message(self, session_state: Dict[str, Any]) -> str:
+        return f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
     def _get_user_message(
         self,
@@ -5180,6 +5183,7 @@ class Agent:
             try:
                 if self.input_schema and is_typed_dict(self.input_schema):
                     import json
+
                     content = json.dumps(input, indent=2, ensure_ascii=False)
                     user_message = Message(role=self.user_message_role, content=content)
                 else:

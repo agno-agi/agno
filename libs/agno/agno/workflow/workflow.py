@@ -51,7 +51,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.team.team import Team
-from agno.utils.common import validate_typed_dict, is_typed_dict
+from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -222,7 +222,7 @@ class Workflow:
         """Parse and validate input against input_schema if provided"""
         if self.input_schema is None:
             return input  # Return input unchanged if no schema is set
-        
+
         if input is None:
             raise ValueError("Input required when input_schema is set")
 
@@ -255,7 +255,7 @@ class Workflow:
             try:
                 # Check if the schema is a TypedDict
                 if is_typed_dict(self.input_schema):
-                    validated_dict = validate_typed_dict(input, self.input_schema)  
+                    validated_dict = validate_typed_dict(input, self.input_schema)
                     return validated_dict
                 else:
                     validated_model = self.input_schema(**input)
