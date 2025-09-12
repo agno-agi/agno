@@ -14,7 +14,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
-
+from agno.run.workflow import WorkflowRunOutput
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -330,7 +330,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
                 session_id = str(uuid4())
 
         # Execute workflow in background with streaming
-        await workflow.arun(
+        workflow_run = await workflow.arun(
             input=user_message,
             session_id=session_id,
             user_id=user_id,
@@ -339,6 +339,10 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             background=True,
             websocket=websocket,
         )
+
+        workflow_run = cast(WorkflowRunOutput, workflow_run)
+        
+        await websocket_manager.register_workflow_websocket(workflow_run.run_id, websocket)
 
     except Exception as e:
         logger.error(f"Error executing workflow via WebSocket: {e}")
