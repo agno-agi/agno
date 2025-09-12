@@ -744,6 +744,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        debug_mode: Optional[bool] = None,
     ) -> RunOutput:
         """
         Run the Agent and return the RunOutput.
@@ -824,7 +825,8 @@ class Agent:
 
         # Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
-            self._execute_post_hooks(hooks=self.post_hooks, run_output=run_response)
+            self._execute_post_hooks(hooks=self.post_hooks, run_output=run_response, debug_mode=debug_mode)
+    
 
         # 6. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
@@ -1216,6 +1218,7 @@ class Agent:
                         files=files,
                         session=agent_session,
                         user_id=user_id,
+                        debug_mode=debug_mode,
                     )
 
                 # Prepare run messages
@@ -1320,6 +1323,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
     ) -> RunOutput:
         """Run the Agent and yield the RunOutput.
 
@@ -1354,6 +1358,7 @@ class Agent:
                 files=original_files,
                 session=session,
                 user_id=user_id,
+                debug_mode=debug_mode,
             )
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
@@ -1421,7 +1426,7 @@ class Agent:
 
         # Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
-            await self._aexecute_post_hooks(hooks=self.post_hooks, run_output=run_response)
+            await self._aexecute_post_hooks(hooks=self.post_hooks, run_output=run_response, debug_mode=debug_mode)
 
         # 6. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
@@ -1455,6 +1460,7 @@ class Agent:
         workflow_context: Optional[Dict] = None,
         yield_run_response: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
         """Run the Agent and yield the RunOutput.
 
@@ -1485,6 +1491,7 @@ class Agent:
                 files=original_files,
                 session=session,
                 user_id=user_id,
+                debug_mode=debug_mode,
             )
 
         if dependencies is not None:
@@ -1860,6 +1867,7 @@ class Agent:
                         workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
                         dependencies=run_dependencies,
+                        debug_mode=debug_mode,
                     )  # type: ignore[assignment]
                 else:
                     return self._arun(  # type: ignore
@@ -1869,6 +1877,7 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         dependencies=run_dependencies,
+                        debug_mode=debug_mode,
                     )
 
             except (InputCheckError, OutputCheckError) as e:
@@ -2738,6 +2747,7 @@ class Agent:
         self,
         hooks: Optional[List[Callable[..., Any]]],
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         """Execute multiple pre-hook functions in succession."""
@@ -2757,17 +2767,21 @@ class Agent:
                 filtered_args = self._filter_hook_args(hook, all_args)
 
                 hook(**filtered_args)
-
+                
             except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
                 log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
                 log_exception(e)
+            finally:
+                # Reset global log mode incase an agent in the pre-hook changed it
+                self._set_debug(debug_mode=debug_mode)
 
     async def _aexecute_pre_hooks(
         self,
         hooks: Optional[List[Callable[..., Any]]],
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         """Execute multiple pre-hook functions in succession (async version)."""
@@ -2794,11 +2808,15 @@ class Agent:
             except Exception as e:
                 log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
                 log_exception(e)
+            finally:
+                # Reset global log mode incase an agent in the pre-hook changed it
+                self._set_debug(debug_mode=debug_mode)
 
     def _execute_post_hooks(
         self,
         hooks: Optional[List[Callable[..., Any]]],
         run_output: RunOutput,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         """Execute multiple post-hook functions in succession."""
@@ -2818,17 +2836,20 @@ class Agent:
                 filtered_args = self._filter_hook_args(hook, all_args)
 
                 hook(**filtered_args)
-
             except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
                 log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
                 log_exception(e)
+            finally:
+                # Reset global log mode incase an agent in the pre-hook changed it
+                self._set_debug(debug_mode=debug_mode)
 
     async def _aexecute_post_hooks(
         self,
         hooks: Optional[List[Callable[..., Any]]],
         run_output: RunOutput,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         """Execute multiple post-hook functions in succession (async version)."""
@@ -2854,6 +2875,9 @@ class Agent:
             except Exception as e:
                 log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
                 log_exception(e)
+            finally:
+                # Reset global log mode incase an agent in the pre-hook changed it
+                self._set_debug(debug_mode=debug_mode)
 
     def _handle_agent_run_paused(
         self,

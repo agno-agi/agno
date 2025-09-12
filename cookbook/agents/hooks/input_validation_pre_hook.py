@@ -107,7 +107,7 @@ def main():
         response = agent.run(
             input="I'm 35 years old and want to start investing for retirement. I can save $1000 per month and have moderate risk tolerance. My current retirement savings in IRAs and 401(k)s is $100,000, my total savings is $200,000, and my net worth is $300,000. Do you have advice for me?"
         )
-        print("✅ Success! Response formatted by post-hook:")
+        print("✅ Success! Response validated by pre-hook:")
         print(response.content)
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
