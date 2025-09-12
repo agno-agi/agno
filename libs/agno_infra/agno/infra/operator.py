@@ -28,7 +28,9 @@ TEMPLATE_TO_REPO_MAP: Dict[InfraStarterTemplate, str] = {
 
 
 def create_infra_from_template(
-    name: Optional[str] = None, template: Optional[str] = None, url: Optional[str] = None
+    name: Optional[str] = None,
+    template: Optional[str] = None,
+    url: Optional[str] = None,
 ) -> Optional[InfraConfig]:
     """Creates a new AgentOS infra codebase from a template and returns the InfraConfig.
 
@@ -67,15 +69,28 @@ def create_infra_from_template(
         if template is None:
             # Get starter template from the user if template is not provided
             # Display available starter templates and ask user to select one
-            print_info("Select starter template or press Enter for default (agent-infra-docker)")
+            print_info(
+                "Select starter template or press Enter for default (agent-infra-docker)"
+            )
             for template_id, template_name in enumerate(templates, start=1):
-                print_info("  [b][{}][/b] {}".format(template_id, InfraStarterTemplate(template_name).value))
+                print_info(
+                    "  [b][{}][/b] {}".format(
+                        template_id, InfraStarterTemplate(template_name).value
+                    )
+                )
 
             # Get starter template from the user
             template_choices = [str(idx) for idx, _ in enumerate(templates, start=1)]
-            template_inp_raw = Prompt.ask("Chosen Template", choices=template_choices, default="1", show_choices=False)
+            template_inp_raw = Prompt.ask(
+                "Chosen Template",
+                choices=template_choices,
+                default="1",
+                show_choices=False,
+            )
             # Convert input to int
-            template_inp = int(template_inp_raw) if template_inp_raw is not None else None
+            template_inp = (
+                int(template_inp_raw) if template_inp_raw is not None else None
+            )
 
             if template_inp is not None:
                 template_inp_idx = template_inp - 1
@@ -83,7 +98,9 @@ def create_infra_from_template(
         elif template.lower() in InfraStarterTemplate.__members__.values():
             infra_template = InfraStarterTemplate(template)
         else:
-            raise Exception(f"{template} is not a supported template, please choose from: {templates}")
+            raise Exception(
+                f"{template} is not a supported template, please choose from: {templates}"
+            )
 
         logger.debug(f"Selected Template: {infra_template.value}")
         repo_to_clone = TEMPLATE_TO_REPO_MAP.get(infra_template)
@@ -95,10 +112,14 @@ def create_infra_from_template(
             default_infra_name = url.split("/")[-1].split(".")[0]
         else:
             # Get default_infra_name from template
-            default_infra_name = TEMPLATE_TO_NAME_MAP.get(infra_template, "agent-infra-docker")
+            default_infra_name = TEMPLATE_TO_NAME_MAP.get(
+                infra_template, "agent-infra-docker"
+            )
         logger.debug(f"Asking for infra name with default: {default_infra_name}")
         # Ask user for infra name if not provided
-        infra_dir_name = Prompt.ask("Infra Project Directory", default=default_infra_name, console=console)
+        infra_dir_name = Prompt.ask(
+            "Infra Project Directory", default=default_infra_name, console=console
+        )
 
     if repo_to_clone is None:
         logger.error("URL or Template is required")
@@ -146,7 +167,9 @@ def create_infra_from_template(
             infra_dir_path: Optional[Path] = get_infra_dir_path(infra_root_path)
             if infra_dir_path is not None:
                 infra_secrets_dir = infra_dir_path.joinpath("secrets").resolve()
-                infra_example_secrets_dir = infra_dir_path.joinpath("example_secrets").resolve()
+                infra_example_secrets_dir = infra_dir_path.joinpath(
+                    "example_secrets"
+                ).resolve()
 
                 print_info(f"Creating {str(infra_secrets_dir)}")
                 copytree(
@@ -159,21 +182,25 @@ def create_infra_from_template(
             log_warning(f"Could not create infra/secrets: {e}")
             log_warning("Please manually copy infra/example_secrets to infra/secrets")
 
-    infra_config = agno_config.create_or_update_infra_config(infra_root_path=infra_root_path, set_as_active=True)
+    infra_config = agno_config.create_or_update_infra_config(
+        infra_root_path=infra_root_path, set_as_active=True
+    )
 
     if infra_config is not None:
         relative_infra_root_path = infra_root_path.relative_to(current_dir)
         print_info("\n--------------------------------")
-        print_info(f"Done! Your new AgentOS codebase is available at: ./{str(relative_infra_root_path)} \n")
+        print_info(
+            f"Done! Your new AgentOS codebase is available at: ./{str(relative_infra_root_path)} \n"
+        )
         print_info(f"Please run `cd ./{str(relative_infra_root_path)}` and:\n")
         print_info("1. Start your AgentOS -> `ag infra up`")
         print_info("2. Stop your AgentOS -> `ag infra down`")
-        print_info("\nView your running AgentOS on https://os.agno.com")
+        print_info("\nView your AgentOS on https://os.agno.com")
         print_info("--------------------------------")
 
         return infra_config
     else:
-        print_info("Infra setup unsuccessful. Please try again.")
+        print_info("AgentOS codebase setup unsuccessful. Please try again.")
     return None
 
 
@@ -195,7 +222,9 @@ def setup_infra_config_from_dir(infra_root_path: Path) -> Optional[InfraConfig]:
         logger.debug(f"Found the `infra` configuration at: {infra_dir_path}")
     else:
         logger.debug("No infra directory found, but continuing setup")
-    infra_config = agno_config.create_or_update_infra_config(infra_root_path=infra_root_path, set_as_active=True)
+    infra_config = agno_config.create_or_update_infra_config(
+        infra_root_path=infra_root_path, set_as_active=True
+    )
     if infra_config is None:
         logger.error(f"Failed to create InfraConfig for {infra_root_path}")
         return None
@@ -214,9 +243,13 @@ def start_infra(
     force: Optional[bool] = None,
     pull: Optional[bool] = False,
 ) -> None:
-    """Start an Agno Infra. This is called from `ag infra up`"""
+    """Start an AgentOS codebase infrastructure. This is called from `ag infra up`"""
 
-    print_heading("Starting infra: {}".format(str(infra_config.infra_root_path.stem)))
+    print_heading(
+        "Starting AgentOS codebase infrastructure: {}".format(
+            str(infra_config.infra_root_path.stem)
+        )
+    )
     logger.debug(f"\ttarget_env   : {target_env}")
     logger.debug(f"\ttarget_infra : {target_infra}")
     logger.debug(f"\ttarget_group : {target_group}")
@@ -263,7 +296,9 @@ def start_infra(
             num_rgs_created += 1
         num_resources_created += _num_resources_created
         num_resources_to_create += _num_resources_to_create
-        logger.debug(f"Deployed {num_resources_created} resources in {num_rgs_created} resource groups")
+        logger.debug(
+            f"Deployed {num_resources_created} resources in {num_rgs_created} resource groups"
+        )
 
     if dry_run:
         return
@@ -271,7 +306,9 @@ def start_infra(
     if num_resources_created == 0:
         return
 
-    print_heading(f"\n--**-- ResourceGroups deployed: {num_rgs_created}/{num_rgs_to_create}\n")
+    print_heading(
+        f"\n--**-- ResourceGroups deployed: {num_rgs_created}/{num_rgs_to_create}\n"
+    )
 
     if num_resources_created != num_resources_to_create:
         logger.error("Some resources failed to create, please check logs")
@@ -334,7 +371,9 @@ def stop_infra(
             num_rgs_deleted += 1
         num_resources_deleted += _num_resources_deleted
         num_resources_to_delete += _num_resources_to_delete
-        logger.debug(f"Deleted {num_resources_deleted} resources in {num_rgs_deleted} resource groups")
+        logger.debug(
+            f"Deleted {num_resources_deleted} resources in {num_rgs_deleted} resource groups"
+        )
 
     if dry_run:
         return
@@ -342,7 +381,9 @@ def stop_infra(
     if num_resources_deleted == 0:
         return
 
-    print_heading(f"\n--**-- ResourceGroups deleted: {num_rgs_deleted}/{num_rgs_to_delete}\n")
+    print_heading(
+        f"\n--**-- ResourceGroups deleted: {num_rgs_deleted}/{num_rgs_to_delete}\n"
+    )
 
     if num_resources_to_delete != num_resources_deleted:
         logger.error("Some resources failed to delete, please check logs")
@@ -407,7 +448,9 @@ def update_infra(
             num_rgs_updated += 1
         num_resources_updated += _num_resources_updated
         num_resources_to_update += _num_resources_to_update
-        logger.debug(f"Updated {num_resources_updated} resources in {num_rgs_updated} resource groups")
+        logger.debug(
+            f"Updated {num_resources_updated} resources in {num_rgs_updated} resource groups"
+        )
 
     if dry_run:
         return
@@ -415,13 +458,17 @@ def update_infra(
     if num_resources_updated == 0:
         return
 
-    print_heading(f"\n--**-- ResourceGroups updated: {num_rgs_updated}/{num_rgs_to_update}\n")
+    print_heading(
+        f"\n--**-- ResourceGroups updated: {num_rgs_updated}/{num_rgs_to_update}\n"
+    )
 
     if num_resources_updated != num_resources_to_update:
         logger.error("Some resources failed to update, please check logs")
 
 
-def delete_infra(agno_config: AgnoCliConfig, infra_to_delete: Optional[List[Path]]) -> None:
+def delete_infra(
+    agno_config: AgnoCliConfig, infra_to_delete: Optional[List[Path]]
+) -> None:
     if infra_to_delete is None or len(infra_to_delete) == 0:
         print_heading("No infra to delete")
         return
@@ -456,33 +503,43 @@ def set_infra_as_active(infra_dir_name: Optional[str]) -> None:
         infra_root_path = Path("").resolve()
     else:
         # If the user provides a infra name manually, we find the dir for that infra
-        infra_config: Optional[InfraConfig] = agno_config.get_infra_config_by_dir_name(infra_dir_name)
+        infra_config: Optional[InfraConfig] = agno_config.get_infra_config_by_dir_name(
+            infra_dir_name
+        )
         if infra_config is None:
             logger.error(f"Could not find infra {infra_dir_name}")
             return
         infra_root_path = infra_config.infra_root_path
 
-    infra_dir_is_valid: bool = infra_root_path is not None and infra_root_path.exists() and infra_root_path.is_dir()
+    infra_dir_is_valid: bool = (
+        infra_root_path is not None
+        and infra_root_path.exists()
+        and infra_root_path.is_dir()
+    )
     if not infra_dir_is_valid:
-        logger.error("Invalid infra directory: {}".format(infra_root_path))
+        logger.error("Invalid codebase directory: {}".format(infra_root_path))
         return
 
     ######################################################
     # 1.3 Validate InfraConfig is available i.e. a Infra is available at this directory
     ######################################################
-    logger.debug(f"Checking for a infra at path: {infra_root_path}")
-    active_infra_config: Optional[InfraConfig] = agno_config.get_infra_config_by_path(infra_root_path)
+    logger.debug(f"Checking for an AgentOS codebase at path: {infra_root_path}")
+    active_infra_config: Optional[InfraConfig] = agno_config.get_infra_config_by_path(
+        infra_root_path
+    )
     if active_infra_config is None:
         # This happens when the infra is not yet setup
-        print_info(f"Could not find a infra at path: {infra_root_path}")
+        print_info(f"Could not find a AgentOS codebase at path: {infra_root_path}")
         # TODO: setup automatically for the user
-        print_info("If this infra has not been setup, please run `ag infra setup` from the infra directory")
+        # print_info("If this AgentOS codebase has not been setup, please run `ag infra setup` from the infra directory")
         return
 
     ######################################################
     ## 2. Set Infra as active
     ######################################################
-    print_heading(f"Setting infra {active_infra_config.infra_root_path.stem} as active")
+    print_heading(
+        f"Setting AgentOS codebase {active_infra_config.infra_root_path.stem} as active"
+    )
     agno_config.set_active_infra_dir(active_infra_config.infra_root_path)
-    print_info("Active infra updated")
+    print_info("Active AgentOS codebase updated")
     return

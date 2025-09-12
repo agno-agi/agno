@@ -4398,8 +4398,8 @@ class Team:
                 f"<additional_context>\n{self.additional_context.strip()}\n</additional_context>\n\n"
             )
 
-        if self.add_session_state_to_context:
-            system_message_content += f"<session_state>\n{session_state}\n</session_state>\n\n"
+        if self.add_session_state_to_context and session_state is not None:
+            system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
         # Add the JSON output prompt if output_schema is provided and structured_outputs is False
         if (
@@ -4411,6 +4411,9 @@ class Team:
             system_message_content += f"{self._get_json_output_prompt()}"
 
         return Message(role=self.system_message_role, content=system_message_content.strip())
+
+    def _get_formatted_session_state_for_system_message(self, session_state: Dict[str, Any]) -> str:
+        return f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
     def _get_run_messages(
         self,
