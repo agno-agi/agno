@@ -179,12 +179,15 @@ class WorkflowWebSocketClient:
             self.websocket = await websockets.connect(self.server_url)
             self.console.print(f"🔌 [green]Connected to {self.server_url}[/green]")
 
-            # Wait for connection confirmation, then authenticate if token provided
+            # Auto-authenticate if token provided
             if self.auth_token:
                 await self.authenticate()
             else:
                 self.console.print(
-                    "⚠️  [yellow]No authentication token provided. Some features may be restricted.[/yellow]"
+                    "⚠️  [yellow]No authentication token provided.[/yellow]"
+                )
+                self.console.print(
+                    "💡 [blue]Use 'auth' command to authenticate interactively[/blue]"
                 )
 
             return True
@@ -192,17 +195,37 @@ class WorkflowWebSocketClient:
             self.console.print(f"❌ [red]Failed to connect: {e}[/red]")
             return False
 
-    async def authenticate(self):
+    async def authenticate(self, token: str = None):
         """Send authentication token to server"""
-        if not self.auth_token:
+        auth_token = token or self.auth_token
+        
+        if not auth_token:
             self.console.print("❌ [red]No authentication token available[/red]")
             return False
 
-        auth_message = {"action": "authenticate", "token": self.auth_token}
+        auth_message = {"action": "authenticate", "token": auth_token}
 
         await self.websocket.send(json.dumps(auth_message))
         self.console.print("🔐 [blue]Sent authentication token[/blue]")
         return True
+
+    async def prompt_for_auth(self):
+        """Interactively prompt for authentication token"""
+        try:
+            token = await asyncio.get_event_loop().run_in_executor(
+                None, 
+                lambda: input("🔐 Enter authentication token: ").strip()
+            )
+            
+            if token:
+                self.auth_token = token 
+                return await self.authenticate(token)
+            else:
+                self.console.print("❌ [red]No token provided[/red]")
+                return False
+        except Exception as e:
+            self.console.print(f"❌ [red]Error getting token: {e}[/red]")
+            return False
 
     async def disconnect(self):
         """Disconnect from WebSocket server"""
@@ -288,7 +311,7 @@ class WorkflowWebSocketClient:
             session_id = f"cli-session-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
         message_data = {
-            "type": "start_workflow", 
+            "type": "start-workflow",  
             "message": workflow_message,
             "session_id": session_id,
         }
@@ -320,19 +343,25 @@ class WorkflowWebSocketClient:
         listen_task = asyncio.create_task(self.listen_for_events())
 
         self.console.print("[green]Interactive mode started. Type commands:[/green]")
+        self.console.print("  [bold]auth[/bold] - Authenticate with token")
         self.console.print("  [bold]start <message>[/bold] - Start workflow")
-        self.console.print("  [bold]ping[/bold] - Ping server")
-        if self.auth_token and not self.is_authenticated:
-            self.console.print("  [bold]auth[/bold] - Re-authenticate")
+        self.console.print("  [bold]ping[/bold] - Ping server")  
         self.console.print("  [bold]quit[/bold] - Exit")
-        if not self.is_authenticated and self.auth_token:
-            self.console.print("  [yellow]⚠️  Waiting for authentication...[/yellow]")
+        
+        # Prominent auth message if not authenticated
+        if not self.is_authenticated:
+            if not self.auth_token:
+                self.console.print()
+                self.console.print("🔒 [yellow bold]AUTHENTICATION REQUIRED[/yellow bold]")
+                self.console.print("   [yellow]Type 'auth' to authenticate with your token[/yellow]")
+            else:
+                self.console.print("   [yellow]⚠️  Waiting for authentication...[/yellow]")
         self.console.print()
 
         try:
             while self.is_running:
                 try:
-                    # Get user input
+                    # Get user input  
                     user_input = await asyncio.get_event_loop().run_in_executor(
                         None, input, "💬 Enter command: "
                     )
@@ -340,10 +369,12 @@ class WorkflowWebSocketClient:
                     if user_input.lower() in ["quit", "exit", "q"]:
                         self.is_running = False
                         break
+                    elif user_input.lower() == "auth":
+                        await self.prompt_for_auth()
                     elif user_input.lower() == "ping":
-                        if not self.is_authenticated and self.auth_token:
+                        if not self.is_authenticated:
                             self.console.print(
-                                "❌ [red]Not authenticated. Cannot send ping.[/red]"
+                                "❌ [red]Not authenticated. Use 'auth' command first.[/red]"
                             )
                             continue
                         await self.ping_server()
@@ -355,16 +386,9 @@ class WorkflowWebSocketClient:
                             self.console.print(
                                 "❌ [red]Please provide a message for the workflow[/red]"
                             )
-                    elif user_input.lower() == "auth" and self.auth_token:
-                        await self.authenticate()
                     else:
-                        auth_help = (
-                            " 'auth' to authenticate,"
-                            if self.auth_token and not self.is_authenticated
-                            else ""
-                        )
                         self.console.print(
-                            f"❌ [red]Unknown command. Use 'start <message>', 'ping',{auth_help} or 'quit'[/red]"
+                            "❌ [red]Unknown command. Use 'auth', 'start <message>', 'ping', or 'quit'[/red]"
                         )
 
                 except KeyboardInterrupt:
