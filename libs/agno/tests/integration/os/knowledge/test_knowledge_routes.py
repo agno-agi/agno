@@ -17,36 +17,36 @@ from agno.os.routers.knowledge.knowledge import attach_routes
 @pytest.fixture
 def mock_knowledge():
     """Create a real Knowledge instance with mocked dependencies and methods."""
-    from unittest.mock import Mock, patch
-    
+    from unittest.mock import Mock
+
     # Create real Knowledge instance
     knowledge = Knowledge(name="test_knowledge")
-    
+
     # Mock external dependencies
     knowledge.vector_db = Mock()
     knowledge.contents_db = Mock()
     knowledge.readers = {}
-    
+
     # Configure vector_db mock to prevent actual operations
     knowledge.vector_db.content_hash_exists.return_value = False
     knowledge.vector_db.async_insert = Mock()
     knowledge.vector_db.async_upsert = Mock()
     knowledge.vector_db.upsert_available.return_value = True
-    
+
     # Configure contents_db mock
     knowledge.contents_db.upsert_knowledge_content = Mock()
-    
+
     # Mock specific Knowledge methods that tests expect to interact with
     knowledge.patch_content = Mock()
     knowledge.get_content = Mock()
     knowledge.get_content_by_id = Mock()
-    knowledge.remove_content_by_id = Mock() 
+    knowledge.remove_content_by_id = Mock()
     knowledge.remove_all_content = Mock()
     knowledge.get_content_status = Mock()
     knowledge.get_readers = Mock()
     knowledge.get_filters = Mock()
     knowledge._load_content = Mock()
-    
+
     return knowledge
 
 
