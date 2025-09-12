@@ -19,9 +19,8 @@ knowledge = Knowledge(
 asyncio.run(
     knowledge.add_content_async(
         name="Recipes",
-        path="cookbook/data/largeFile.pdf",
-        # url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-        metadata={"doc_type": "test"},
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+        metadata={"doc_type": "recipe_book"},
     )
 )
 

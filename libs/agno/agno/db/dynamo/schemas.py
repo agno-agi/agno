@@ -218,6 +218,12 @@ KNOWLEDGE_TABLE_SCHEMA = {
             "Projection": {"ProjectionType": "ALL"},
             "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
         },
+        {
+            "IndexName": "content_hash-index",
+            "KeySchema": [{"AttributeName": "content_hash", "KeyType": "HASH"}],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
     ],
     "BillingMode": "PROVISIONED",
     "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},

@@ -27,7 +27,7 @@ asyncio.run(
     )
 )
 
-# Now add contentsDB to our Knowledge instance
+# Now add a contents_db to our Knowledge instance
 knowledge.contents_db = PostgresDb(
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     knowledge_table="knowledge_contents",

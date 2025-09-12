@@ -161,8 +161,6 @@ def validate_migration(
 if __name__ == "__main__":
     """
     Example usage:
-    """
-    """
     from agno.db.postgres.postgres import PostgresDb
     from agno.db.migrations.knowledge_content_hash import migrate, validate_migration
     
