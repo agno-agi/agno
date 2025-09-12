@@ -1,7 +1,7 @@
 """This cookbook shows how to skip content if it already exists in the knowledge base.
 Existing content is skipped by default.
 
-1. Run: `python cookbook/agent_concepts/knowledge/10_skip_if_exists.py` to run the cookbook
+1. Run: `python cookbook/agent_concepts/knowledge/11_skip_if_exists.py` to run the cookbook
 """
 
 import asyncio

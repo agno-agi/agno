@@ -14,6 +14,7 @@ from agno.db.gcs_json.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.utils import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -35,6 +36,7 @@ class GcsJsonDb(BaseDb):
         knowledge_table: Optional[str] = None,
         project: Optional[str] = None,
         credentials: Optional[Any] = None,
+        id: Optional[str] = None,
     ):
         """
         Interface for interacting with JSON files stored in Google Cloud Storage as database.
@@ -50,8 +52,15 @@ class GcsJsonDb(BaseDb):
             project (Optional[str]): GCP project ID. If None, uses default project.
             location (Optional[str]): GCS bucket location. If None, uses default location.
             credentials (Optional[Any]): GCP credentials. If None, uses default credentials.
+            id (Optional[str]): ID of the database.
         """
+        if id is None:
+            prefix_suffix = prefix or "agno/"
+            seed = f"{bucket_name}_{project}#{prefix_suffix}"
+            id = generate_deterministic_id(seed)
+
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
