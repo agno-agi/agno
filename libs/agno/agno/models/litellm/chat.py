@@ -47,7 +47,7 @@ class LiteLLM(Model):
         super().__post_init__()
 
         # Set up API key from environment variable if not already set
-        if not self.api_key:
+        if not self.client and not self.api_key:
             self.api_key = getenv("LITELLM_API_KEY")
             if not self.api_key:
                 # Check for other present valid keys, e.g. OPENAI_API_KEY if self.id is an OpenAI model

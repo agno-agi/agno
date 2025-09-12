@@ -63,6 +63,7 @@ from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
@@ -293,7 +294,7 @@ class Agent:
 
     # --- Agent Response Model Settings ---
     # Provide an input schema to validate the input
-    input_schema: Optional[Type[BaseModel]] = None
+    input_schema: Optional[Union[Type[BaseModel], type]] = None
     # Provide a response model to get the response as a Pydantic model
     output_schema: Optional[Type[BaseModel]] = None
     # Provide a secondary model to parse the response from the primary model
@@ -412,13 +413,14 @@ class Agent:
         timezone_identifier: Optional[str] = None,
         resolve_in_context: bool = True,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
+        user_message_role: str = "user",
         build_user_context: bool = True,
         retries: int = 0,
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
         parser_model: Optional[Model] = None,
         parser_model_prompt: Optional[str] = None,
-        input_schema: Optional[Type[BaseModel]] = None,
+        input_schema: Optional[Union[Type[BaseModel], type]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
         output_model: Optional[Model] = None,
@@ -513,7 +515,7 @@ class Agent:
         self.timezone_identifier = timezone_identifier
         self.resolve_in_context = resolve_in_context
         self.additional_input = additional_input
-
+        self.user_message_role = user_message_role
         self.build_user_context = build_user_context
 
         self.retries = retries
@@ -620,8 +622,6 @@ class Agent:
         if isinstance(input, BaseModel):
             if isinstance(input, self.input_schema):
                 try:
-                    # Re-validate to catch any field validation errors
-                    input.model_validate(input.model_dump())
                     return input
                 except Exception as e:
                     raise ValueError(f"BaseModel validation failed: {str(e)}")
@@ -632,8 +632,13 @@ class Agent:
         # Case 2: Message is a dict
         elif isinstance(input, dict):
             try:
-                validated_model = self.input_schema(**input)
-                return validated_model
+                # Check if the schema is a TypedDict
+                if is_typed_dict(self.input_schema):
+                    validated_dict = validate_typed_dict(input, self.input_schema)
+                    return validated_dict
+                else:
+                    validated_model = self.input_schema(**input)
+                    return validated_model
             except Exception as e:
                 raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
 
@@ -4773,7 +4778,8 @@ class Agent:
         session = self.get_session(session_id=session_id)  # type: ignore
 
         if session is None:
-            raise Exception("Session not found")
+            log_warning(f"Session {session_id} not found")
+            return []
 
         # Only filter by agent_id if this is part of a team
         return session.get_messages_from_last_n_runs(
@@ -5105,7 +5111,7 @@ class Agent:
 
         # 3.3.15 Add the session state to the system message
         if self.add_session_state_to_context and session_state is not None:
-            system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
+            system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
         # Return the system message
         return (
@@ -5113,6 +5119,9 @@ class Agent:
             if system_message_content
             else None
         )
+
+    def _get_formatted_session_state_for_system_message(self, session_state: Dict[str, Any]) -> str:
+        return f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
     def _get_user_message(
         self,
@@ -5427,7 +5436,13 @@ class Agent:
         # 4.3 If input is provided as a dict, try to validate it as a Message
         elif isinstance(input, dict):
             try:
-                user_message = Message.model_validate(input)
+                if self.input_schema and is_typed_dict(self.input_schema):
+                    import json
+
+                    content = json.dumps(input, indent=2, ensure_ascii=False)
+                    user_message = Message(role=self.user_message_role, content=content)
+                else:
+                    user_message = Message.model_validate(input)
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
 

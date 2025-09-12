@@ -538,7 +538,7 @@ class RunOutput:
 
         return _dict
 
-    def to_json(self) -> str:
+    def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
         import json
 
         try:
@@ -547,7 +547,10 @@ class RunOutput:
             logger.error("Failed to convert response to json", exc_info=True)
             raise
 
-        return json.dumps(_dict, indent=2)
+        if indent is None:
+            return json.dumps(_dict, separators=separators)
+        else:
+            return json.dumps(_dict, indent=indent, separators=separators)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunOutput":

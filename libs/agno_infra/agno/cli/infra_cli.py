@@ -32,20 +32,20 @@ Run `ag infra [COMMAND] --help` for more info.
 )
 
 
-@infra_cli.command(short_help="Create a new Agno Infra project in the current directory.")
+@infra_cli.command(short_help="Create a new AgentOS codebase in the current directory.")
 def create(
     name: Optional[str] = typer.Option(
         None,
         "-n",
         "--name",
-        help="Name of the new Agno Infra project directory (e.g. `my-infra`).",
+        help="Name of the new AgentOS codebase directory (e.g. `my-agentos-project`).",
         show_default=False,
     ),
     template: Optional[str] = typer.Option(
         None,
         "-t",
         "--template",
-        help="Starter template for the Agno Infra project.",
+        help="Starter template for the Agno AgentOS codebase.",
         show_default=False,
     ),
     url: Optional[str] = typer.Option(
@@ -63,11 +63,11 @@ def create(
     ),
 ):
     """\b
-    Create a new Agentic Infrastructure project in the current directory using a starter template
+    Create a new AgentOS Infrastructure project in the current directory using a starter template
     \b
     Examples:
-    > ag infra create -t agent-infra-docker                      -> Create an `agent-infra-docker` in the current directory
-    > ag infra create -t agent-infra-docker -n my-agent-infra    -> Create an `agent-infra-docker` named `my-agent-infra` in the current directory
+    > ag infra create -t agent-infra-docker                         -> Create an `agent-infra-docker` in the current directory
+    > ag infra create -t agent-infra-docker -n my-agentos-infra     -> Create an `agent-infra-docker` named `my-agentos-infra` in the current directory
     """
     if print_debug_log:
         set_log_level_to_debug()
@@ -77,7 +77,7 @@ def create(
     create_infra_from_template(name=name, template=template, url=url)
 
 
-@infra_cli.command(short_help="Create resources for the active Infra")
+@infra_cli.command(short_help="Start the resources for the active AgentOS codebase")
 def up(
     resource_filter: Optional[str] = typer.Argument(
         None,
@@ -128,7 +128,7 @@ def up(
     ),
 ):
     """\b
-    Create resources for the active Infra
+    Create resources for the active AgentOS codebase
     Options can be used to limit the resources to create.
       --env     : Env (dev, stg, prd)
       --infra   : Infra type (docker, aws)
@@ -202,7 +202,7 @@ def up(
 
     # Check for docker compose files
     current_dir = Path.cwd()
-    compose_files = find_compose_files(current_dir)
+    compose_files = find_compose_files(current_dir) or find_compose_files(Path(agno_config.active_infra_dir))  # type: ignore
     if infra_to_start is None and not compose_files:
         return
     elif compose_files:
@@ -273,7 +273,7 @@ def up(
     )
 
 
-@infra_cli.command(short_help="Delete resources for active Infra")
+@infra_cli.command(short_help="Delete resources for active AgentOS codebase")
 def down(
     resource_filter: Optional[str] = typer.Argument(
         None,
@@ -320,7 +320,7 @@ def down(
     ),
 ):
     """\b
-    Delete resources for the active Infra.
+    Delete resources for the active AgentOS codebase.
     Options can be used to limit the resources to delete.
       --env     : Env (dev, stg, prd)
       --infra   : Infra type (docker, aws)
@@ -389,7 +389,7 @@ def down(
 
     # Check for docker compose files
     current_dir = Path.cwd()
-    compose_files = find_compose_files(current_dir)
+    compose_files = find_compose_files(current_dir) or find_compose_files(Path(agno_config.active_infra_dir))  # type: ignore
     if infra_to_stop is None and not compose_files:
         return
     elif compose_files:
@@ -458,7 +458,7 @@ def down(
     )
 
 
-@infra_cli.command(short_help="Update resources for active Infra")
+@infra_cli.command(short_help="Update resources for active AgentOS codebase")
 def patch(
     resource_filter: Optional[str] = typer.Argument(
         None,
@@ -509,7 +509,7 @@ def patch(
     ),
 ):
     """\b
-    Update resources for the active Infra.
+    Update resources for the active AgentOS codebase.
     Options can be used to limit the resources to update.
       --env     : Env (dev, stg, prd)
       --infra   : Infra type (docker, aws)
@@ -626,7 +626,7 @@ def patch(
     )
 
 
-@infra_cli.command(short_help="Restart resources for active Infra")
+@infra_cli.command(short_help="Restart resources for active AgentOS codebase")
 def restart(
     resource_filter: Optional[str] = typer.Argument(
         None,
@@ -677,7 +677,7 @@ def restart(
     ),
 ):
     """\b
-    Restarts the active Infra. i.e. runs `ag infra down` and then `ag infra up`.
+    Restarts the active AgentOS codebase. i.e. runs `ag infra down` and then `ag infra up`.
 
     \b
     Examples:
@@ -717,7 +717,7 @@ def restart(
     )
 
 
-@infra_cli.command(short_help="Prints active Infra config")
+@infra_cli.command(short_help="Prints active AgentOS codebase config")
 def config(
     print_debug_log: bool = typer.Option(
         False,
@@ -727,7 +727,7 @@ def config(
     ),
 ):
     """\b
-    Prints the active Infra config
+    Prints the active AgentOS codebase config
 
     \b
     Examples:
@@ -762,9 +762,9 @@ def config(
     print_info(active_infra_config.model_dump_json(include={"infra_name", "infra_root_path"}, indent=2))
 
 
-@infra_cli.command(short_help="Delete Infra record")
+@infra_cli.command(short_help="Delete AgentOS codebase infra record")
 def delete(
-    infra_name: Optional[str] = typer.Option(None, "-infra", help="Name of the Infra to delete"),
+    infra_name: Optional[str] = typer.Option(None, "-infra", help="Name of the AgentOS codebase to delete"),
     print_debug_log: bool = typer.Option(
         False,
         "-d",
@@ -773,12 +773,12 @@ def delete(
     ),
 ):
     """\b
-    Deletes the Infra record from agno_infra.
+    Deletes the AgentOS codebase record from agno_infra.
     NOTE: Does not delete any physical files.
 
     \b
     Examples:
-    $ `ag infra delete`         -> Delete the active Infra from Agno
+    $ `ag infra delete`         -> Delete the active AgentOS codebase from Agno
     """
     if print_debug_log:
         set_log_level_to_debug()
@@ -799,7 +799,7 @@ def delete(
     if infra_name is not None:
         infra_config = agno_config.get_infra_config_by_dir_name(infra_name)
         if infra_config is None:
-            logger.error(f"Infra {infra_name} not found")
+            logger.error(f"AgentOS codebase {infra_name} not found")
             return
         infra_to_delete.append(infra_config.infra_root_path)
     else:

@@ -21,6 +21,7 @@ from agno.db.redis.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.utils import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 
@@ -67,6 +68,11 @@ class RedisDb(BaseDb):
         Raises:
             ValueError: If neither redis_client nor db_url is provided.
         """
+        if id is None:
+            base_seed = db_url or str(redis_client)
+            seed = f"{base_seed}#{db_prefix}"
+            id = generate_deterministic_id(seed)
+
         super().__init__(
             id=id,
             session_table=session_table,
