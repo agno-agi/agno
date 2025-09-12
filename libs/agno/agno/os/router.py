@@ -120,21 +120,25 @@ class WebSocketManager:
         # Track authentication state for each websocket
         self.authenticated_connections = {}
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, requires_auth: bool = True):
         """Accept WebSocket connection"""
         await websocket.accept()
         logger.debug("WebSocket connected")
 
-        # Mark as unauthenticated initially
-        self.authenticated_connections[websocket] = False
+        # If auth is not required, mark as authenticated immediately
+        self.authenticated_connections[websocket] = not requires_auth
 
-        # Send connection confirmation with auth requirement
+        # Send connection confirmation with auth requirement info
         await websocket.send_text(
             json.dumps(
                 {
                     "event": "connected",
-                    "message": "Connected to workflow events. Please authenticate to continue.",
-                    "requires_auth": True,
+                    "message": (
+                        "Connected to workflow events. Please authenticate to continue."
+                        if requires_auth
+                        else "Connected to workflow events. Authentication not required."
+                    ),
+                    "requires_auth": requires_auth,
                 }
             )
         )
@@ -396,7 +400,8 @@ def get_websocket_router(
     )
     async def workflow_websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for receiving real-time workflow events"""
-        await websocket_manager.connect(websocket)
+        requires_auth = bool(settings.os_security_key)
+        await websocket_manager.connect(websocket, requires_auth=requires_auth)
 
         try:
             while True:
@@ -417,8 +422,8 @@ def get_websocket_router(
                         await websocket.send_text(json.dumps({"event": "auth_error", "error": "Invalid token"}))
                         continue
 
-                # Check authentication for all other actions
-                elif not websocket_manager.is_authenticated(websocket):
+                # Check authentication for all other actions (only when required)
+                elif requires_auth and not websocket_manager.is_authenticated(websocket):
                     await websocket.send_text(
                         json.dumps(
                             {
