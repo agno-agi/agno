@@ -21,7 +21,8 @@ knowledge = Knowledge(
 asyncio.run(
     knowledge.add_content_async(
         name="CV",
-        path="cookbook/knowledge/testing_resources/cv_1.pdf",
+        # path="cookbook/knowledge/testing_resources/cv_1.pdf",
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
         metadata={"user_tag": "Engineering Candidates"},
         skip_if_exists=True,  # True by default
     )
@@ -37,7 +38,9 @@ knowledge.contents_db = PostgresDb(
 asyncio.run(
     knowledge.add_content_async(
         name="CV",
-        path="cookbook/knowledge/testing_resources/cv_1.pdf",
+        # path="cookbook/knowledge/testing_resources/cv_1.pdf",
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+
         metadata={"user_tag": "Engineering Candidates"},
         skip_if_exists=True,
     )

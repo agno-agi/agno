@@ -1388,7 +1388,6 @@ class PostgresDb(BaseDb):
                     "access_count": "access_count",
                     "status": "status",
                     "status_message": "status_message",
-                    "content_hash": "content_hash",
                     "created_at": "created_at",
                     "updated_at": "updated_at",
                     "external_id": "external_id",

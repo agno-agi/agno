@@ -4,6 +4,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector
+from agno.db.postgres.postgres import PostgresDb
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -15,6 +16,7 @@ secondary_contents_db = JsonDb(
     db_path="./agno_json_data_2", knowledge_table="secondary_knowledge"
 )
 
+contents_db = PostgresDb(db_url=db_url, knowledge_table="main_knowledge")
 # Create knowledge bases
 knowledge_base = Knowledge(
     name="Main Knowledge Base",

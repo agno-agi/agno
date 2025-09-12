@@ -21,7 +21,7 @@ class ContentStatusResponse(BaseModel):
 
 
 class ContentResponseSchema(BaseModel):
-    id: str
+    id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     type: Optional[str] = None
