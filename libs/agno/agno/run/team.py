@@ -12,6 +12,7 @@ from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.utils.log import log_error
 
 
 class TeamRunEvent(str, Enum):
@@ -488,12 +489,19 @@ class TeamRunOutput:
 
         return _dict
 
-    def to_json(self) -> str:
+    def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
         import json
 
-        _dict = self.to_dict()
+        try:
+            _dict = self.to_dict()
+        except Exception:
+            log_error("Failed to convert response to json", exc_info=True)
+            raise
 
-        return json.dumps(_dict, indent=2)
+        if indent is None:
+            return json.dumps(_dict, separators=separators)
+        else:
+            return json.dumps(_dict, indent=indent, separators=separators)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRunOutput":

@@ -27,8 +27,9 @@ from agno.os.config import (
     SessionDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
-from agno.os.router import get_base_router
+from agno.os.router import get_base_router, get_websocket_router
 from agno.os.routers.evals import get_eval_router
+from agno.os.routers.health import get_health_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
@@ -208,6 +209,8 @@ class AgentOS:
 
         # Add routes
         self.fastapi_app.include_router(get_base_router(self, settings=self.settings))
+        self.fastapi_app.include_router(get_websocket_router(self, settings=self.settings))
+        self.fastapi_app.include_router(get_health_router())
 
         for interface in self.interfaces:
             interface_router = interface.get_router()
