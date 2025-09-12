@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import streamlit as st
-from agents import EXTRACTION_PROMPT, get_vision_agent
+from agents import get_vision_agent
 from agno.media import Image
 from agno.utils.streamlit import (
     COMMON_CSS,
