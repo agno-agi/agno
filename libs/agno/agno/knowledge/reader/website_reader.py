@@ -117,9 +117,12 @@ class WebsiteReader(Reader):
         if element:
             return element.get_text(strip=True, separator=" ")
 
-        # Fallback: get full page content
-        text_content = soup.get_text(strip=True, separator=" ")
-        return text_content
+        # Fallback: get full page content but filter out minimal content
+        full_content = soup.get_text(strip=True, separator=" ")
+        if len(full_content) < 50:
+            return ""
+            
+        return full_content
 
     def crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
         """
