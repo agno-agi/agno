@@ -75,27 +75,21 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
 
         # Handle StepOutput fields that contain Message objects
         if hasattr(self, "step_results") and self.step_results is not None:
-            _dict["step_results"] = [
-                step.to_dict() if hasattr(step, 'to_dict') else step 
-                for step in self.step_results
-            ]
+            _dict["step_results"] = [step.to_dict() if hasattr(step, "to_dict") else step for step in self.step_results]
 
         if hasattr(self, "step_response") and self.step_response is not None:
             _dict["step_response"] = (
-                self.step_response.to_dict() 
-                if hasattr(self.step_response, 'to_dict') 
-                else self.step_response
+                self.step_response.to_dict() if hasattr(self.step_response, "to_dict") else self.step_response
             )
 
         if hasattr(self, "iteration_results") and self.iteration_results is not None:
             _dict["iteration_results"] = [
-                step.to_dict() if hasattr(step, 'to_dict') else step 
-                for step in self.iteration_results
+                step.to_dict() if hasattr(step, "to_dict") else step for step in self.iteration_results
             ]
 
         if hasattr(self, "all_results") and self.all_results is not None:
             _dict["all_results"] = [
-                [step.to_dict() if hasattr(step, 'to_dict') else step for step in iteration] 
+                [step.to_dict() if hasattr(step, "to_dict") else step for step in iteration]
                 for iteration in self.all_results
             ]
 
@@ -430,7 +424,7 @@ WorkflowRunOutputEvent = Union[
     CustomEvent,
 ]
 
-# Map event string to dataclass for workflow events  
+# Map event string to dataclass for workflow events
 WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_started.value: WorkflowStartedEvent,
     WorkflowRunEvent.workflow_completed.value: WorkflowCompletedEvent,
@@ -455,12 +449,14 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.custom_event.value: CustomEvent,
 }
 
+
 def workflow_run_output_event_from_dict(data: dict) -> BaseWorkflowRunOutputEvent:
     event_type = data.get("event", "")
     cls = WORKFLOW_RUN_EVENT_TYPE_REGISTRY.get(event_type)
     if not cls:
         raise ValueError(f"Unknown workflow event type: {event_type}")
     return cls.from_dict(data)  # type: ignore
+
 
 @dataclass
 class WorkflowRunOutput:
@@ -615,10 +611,12 @@ class WorkflowRunOutput:
             if "agent_id" in event:
                 # Agent event from agent step
                 from agno.run.agent import run_output_event_from_dict
+
                 event = run_output_event_from_dict(event)
             elif "team_id" in event:
                 # Team event from team step
                 from agno.run.team import team_run_output_event_from_dict
+
                 event = team_run_output_event_from_dict(event)
             else:
                 # Pure workflow event

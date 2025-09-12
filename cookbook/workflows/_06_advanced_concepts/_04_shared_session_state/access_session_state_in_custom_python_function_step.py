@@ -40,7 +40,9 @@ content_planner = Agent(
 )
 
 
-def custom_content_planning_function(step_input: StepInput, session_state: dict) -> StepOutput:
+def custom_content_planning_function(
+    step_input: StepInput, session_state: dict
+) -> StepOutput:
     """
     Custom function that does intelligent content planning with context awareness
     and maintains a content plan history in session_state
@@ -51,7 +53,7 @@ def custom_content_planning_function(step_input: StepInput, session_state: dict)
     # Initialize content history if not present
     if "content_plans" not in session_state:
         session_state["content_plans"] = []
-    
+
     if "plan_counter" not in session_state:
         session_state["plan_counter"] = 0
 
@@ -89,7 +91,7 @@ def custom_content_planning_function(step_input: StepInput, session_state: dict)
             "topic": message,
             "content": response.content,
             "timestamp": f"Plan #{current_plan_id}",
-            "has_research": bool(previous_step_content)
+            "has_research": bool(previous_step_content),
         }
         session_state["content_plans"].append(plan_data)
 
@@ -128,8 +130,7 @@ def content_summary_function(step_input: StepInput, session_state: dict) -> Step
     """
     if "content_plans" not in session_state or not session_state["content_plans"]:
         return StepOutput(
-            content="No content plans found in session state.",
-            success=False
+            content="No content plans found in session state.", success=False
         )
 
     plans = session_state["content_plans"]
@@ -143,7 +144,7 @@ def content_summary_function(step_input: StepInput, session_state: dict) -> Step
         
         **Plan Overview:**
     """
-    
+
     for plan in plans:
         summary += f"""
         
@@ -151,11 +152,11 @@ def content_summary_function(step_input: StepInput, session_state: dict) -> Step
         - Research Available: {"✓" if plan["has_research"] else "✗"}
         - Status: Completed
         """
-    
+
     # Update session state with summary info
     session_state["session_summarized"] = True
     session_state["total_plans_summarized"] = len(plans)
-    
+
     return StepOutput(content=summary.strip())
 
 
@@ -172,7 +173,7 @@ content_planning_step = Step(
 )
 
 content_summary_step = Step(
-    name="Content Summary Step", 
+    name="Content Summary Step",
     executor=content_summary_function,
 )
 
@@ -191,23 +192,25 @@ if __name__ == "__main__":
         # You can mix and match agents, teams, and even regular python functions directly as steps
         steps=[research_step, content_planning_step, content_summary_step],
         # Initialize session state with empty content plans
-        session_state={"content_plans": [], "plan_counter": 0}
+        session_state={"content_plans": [], "plan_counter": 0},
     )
-    
+
     print("=== First Workflow Run ===")
     content_creation_workflow.print_response(
         input="AI trends in 2024",
         markdown=True,
     )
 
-    print(f"\nSession State After First Run: {content_creation_workflow.get_session_state()}")
-    
+    print(
+        f"\nSession State After First Run: {content_creation_workflow.get_session_state()}"
+    )
+
     print("\n" + "=" * 60 + "\n")
-    
+
     print("=== Second Workflow Run (Same Session) ===")
     content_creation_workflow.print_response(
         input="Machine Learning automation tools",
         markdown=True,
     )
-    
+
     print(f"\nFinal Session State: {content_creation_workflow.get_session_state()}")

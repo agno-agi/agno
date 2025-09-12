@@ -1,6 +1,7 @@
 from typing import Iterator, Union
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.run.workflow import WorkflowRunOutputEvent
@@ -9,7 +10,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
-from agno.db.in_memory import InMemoryDb
 
 # Define agents
 hackernews_agent = Agent(
