@@ -469,7 +469,7 @@ class Knowledge:
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
-
+        print("Found file extension: ", file_extension)
         bytes_content = None
         if file_extension:
             async with AsyncClient() as client:
