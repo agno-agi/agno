@@ -183,10 +183,18 @@ class Step:
         session_state: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Call custom async function with session_state support if the function accepts it"""
-        if session_state is not None and self._function_has_session_state_param():
-            return await func(step_input, session_state)
+        import inspect
+
+        if inspect.isasyncgenfunction(func):
+            if session_state is not None and self._function_has_session_state_param():
+                return func(step_input, session_state)
+            else:
+                return func(step_input)
         else:
-            return await func(step_input)
+            if session_state is not None and self._function_has_session_state_param():
+                return await func(step_input, session_state)
+            else:
+                return await func(step_input)
 
     def execute(
         self,
