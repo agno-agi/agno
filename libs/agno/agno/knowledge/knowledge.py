@@ -984,7 +984,6 @@ class Knowledge:
             return hashlib.sha256(fallback.encode()).hexdigest()
 
     def _add_to_contents_db(self, content: Content):
-        print(f"Adding content to contents DB: {content.id}")
         if self.contents_db:
             created_at = content.created_at if content.created_at else int(time.time())
             updated_at = content.updated_at if content.updated_at else int(time.time())
