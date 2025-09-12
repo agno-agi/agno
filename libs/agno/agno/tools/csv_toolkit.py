@@ -150,9 +150,9 @@ class CsvTools(Toolkit):
 
             # -*- Format the SQL Query
             # Remove backticks
-            formatted_sql = sql_query.replace("`", "")
-            # If there are multiple statements, only run the first one
-            formatted_sql = formatted_sql.split(";")[0]
+        # Use parameterized query to prevent SQL injection
+        query = "SELECT * FROM {} WHERE {} = ?"
+        cursor.execute(query, (table_name, column_name, value))
             # -*- Run the SQL Query
             logger.info(f"Running query: {formatted_sql}")
             query_result = con.sql(formatted_sql)
