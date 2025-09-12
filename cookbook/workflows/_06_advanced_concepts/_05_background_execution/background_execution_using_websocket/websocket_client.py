@@ -288,7 +288,7 @@ class WorkflowWebSocketClient:
             session_id = f"cli-session-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
         message_data = {
-            "action": "start-workflow",
+            "type": "start_workflow", 
             "message": workflow_message,
             "session_id": session_id,
         }
