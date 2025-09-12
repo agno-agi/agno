@@ -1,6 +1,5 @@
 from agno.agent import Agent
 from agno.db.json import JsonDb
-from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
@@ -16,7 +15,6 @@ secondary_contents_db = JsonDb(
     db_path="./agno_json_data_2", knowledge_table="secondary_knowledge"
 )
 
-contents_db = PostgresDb(db_url=db_url, knowledge_table="main_knowledge")
 # Create knowledge bases
 knowledge_base = Knowledge(
     name="Main Knowledge Base",
