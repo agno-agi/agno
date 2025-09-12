@@ -171,7 +171,7 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
                 if st.button(
                     "💾 Save",
                     type="primary",
-                    width=True,
+                    use_container_width=True,
                     key="save_session_name",
                 ):
                     if new_name and new_name.strip():
@@ -193,7 +193,7 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
                         st.sidebar.error("Please enter a valid name")
 
             with col2:
-                if st.button("❌ Cancel", width=True, key="cancel_session_rename"):
+                if st.button("❌ Cancel", use_container_width=True, key="cancel_session_rename"):
                     st.session_state.session_edit_mode = False
                     st.rerun()
 

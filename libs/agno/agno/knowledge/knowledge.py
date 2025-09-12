@@ -503,6 +503,7 @@ class Knowledge:
             if reader is not None:
                 # TODO: We will refactor this to eventually pass authorization to all readers
                 import inspect
+
                 read_signature = inspect.signature(reader.read)
                 if reader.__class__.__name__ == "YouTubeReader":
                     read_documents = reader.read(content.url, name=name)

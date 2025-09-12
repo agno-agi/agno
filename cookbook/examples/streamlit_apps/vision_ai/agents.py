@@ -24,55 +24,11 @@ EXTRACTION_PROMPT = dedent("""
 
 def get_vision_agent(
     model_id: str = "openai:gpt-4o",
-    user_id: Optional[str] = None,
-    session_id: Optional[str] = None,
-) -> Agent:
-    """Get a Vision Analysis Agent"""
-
-    db = PostgresDb(
-        db_url=db_url,
-        session_table="sessions",
-        db_schema="ai",
-    )
-
-    agent = Agent(
-        name="Vision Analysis Agent",
-        model=get_model_with_provider(model_id),
-        db=db,
-        id="vision-analysis-agent",
-        user_id=user_id,
-        session_id=session_id,
-        instructions=dedent("""
-            You are an expert vision AI assistant specialized in image analysis and understanding.
-            
-            Your capabilities include:
-            - Detailed visual analysis of images
-            - Text extraction and OCR
-            - Object and scene recognition
-            - Context and purpose inference
-            
-            Always provide:
-            - Comprehensive and accurate descriptions
-            - Specific details rather than generic observations
-            - Well-structured responses with clear sections
-            - Professional and helpful tone
-        """),
-        markdown=True,
-        debug_mode=True,
-    )
-
-    return agent
-
-
-def get_chat_agent(
-    model_id: str = "openai:gpt-4o",
     enable_search: bool = False,
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
 ) -> Agent:
-    """Get a Chat Follow-up Agent for Vision AI"""
-
-    tools = [DuckDuckGoTools()] if enable_search else []
+    """Get a unified Vision AI Agent for both image analysis and conversation"""
 
     db = PostgresDb(
         db_url=db_url,
@@ -80,34 +36,39 @@ def get_chat_agent(
         db_schema="ai",
     )
 
+    tools = [DuckDuckGoTools()] if enable_search else []
+
     agent = Agent(
-        name="Vision Chat Agent",
+        name="Vision AI Agent",
         model=get_model_with_provider(model_id),
         db=db,
-        id="vision-chat-agent",
+        id="vision-ai-agent",
         user_id=user_id,
         session_id=session_id,
         tools=tools,
         add_history_to_context=True,
         num_history_runs=5,
         instructions=dedent("""
-            You are a helpful assistant that answers follow-up questions about images that have been analyzed.
+            You are an expert Vision AI assistant that can both analyze images and engage in conversation.
             
-            You will be provided with:
-            1. Previous image analysis results
-            2. User's follow-up questions
+            When provided with images:
+            1. **Visual Analysis**: Identify objects, people, animals, and items
+            2. **Text Content**: Extract any readable text, signs, or labels  
+            3. **Scene Description**: Describe the setting, environment, and context
+            4. **Purpose & Story**: Infer the likely purpose or story behind the image
+            5. **Technical Details**: Comment on image quality, style, and composition
             
-            Your role is to:
-            - Answer questions based on the image analysis data
-            - Provide additional insights when requested
-            - Use web search (if enabled) for additional context
-            - Maintain conversation flow and context
+            For follow-up questions:
+            - Reference previous image analyses in your conversation history
+            - Provide specific details and insights
+            - Use web search (when enabled) for additional context
+            - Maintain conversation flow and suggest related questions
             
-            Always:
-            - Reference the specific image analysis when answering
-            - Be accurate and detailed in your responses
-            - Ask for clarification if questions are ambiguous
-            - Suggest related questions that might be helpful
+            Always provide:
+            - Comprehensive and accurate responses
+            - Well-structured answers with clear sections
+            - Professional and helpful tone
+            - Specific details rather than generic observations
         """),
         markdown=True,
         debug_mode=True,

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import streamlit as st
-from agents import EXTRACTION_PROMPT, get_chat_agent, get_vision_agent
+from agents import EXTRACTION_PROMPT, get_vision_agent
 from agno.media import Image
 from agno.utils.streamlit import (
     COMMON_CSS,
@@ -29,13 +29,12 @@ st.markdown(COMMON_CSS, unsafe_allow_html=True)
 def restart_agent(model_id: str = None):
     target_model = model_id or st.session_state.get("current_model", MODELS[0])
 
-    new_agent = get_vision_agent(model_id=target_model, session_id=None)
-
-    st.session_state["agent"] = new_agent
-    st.session_state["session_id"] = new_agent.session_id
+    st.session_state["agent"] = None
+    st.session_state["session_id"] = None
     st.session_state["messages"] = []
     st.session_state["current_model"] = target_model
     st.session_state["is_new_session"] = True
+
     # Clear current image
     if "current_image" in st.session_state:
         del st.session_state["current_image"]
@@ -82,15 +81,6 @@ def main():
     )
 
     ####################################################################
-    # Initialize Agent and Session
-    ####################################################################
-    vision_agent = initialize_agent(selected_model, get_vision_agent)
-    reset_session_state(vision_agent)
-
-    if prompt := st.chat_input("👋 Ask me anything!"):
-        add_message("user", prompt)
-
-    ####################################################################
     # Vision AI Settings
     ####################################################################
     st.sidebar.markdown("#### 🔍 Analysis Settings")
@@ -112,6 +102,21 @@ def main():
         key="enable_search",
         help="Allow the agent to search for additional context",
     )
+
+    ####################################################################
+    # Initialize Agent and Session
+    ####################################################################
+    # Create unified agent with search capability
+    def get_vision_agent_with_settings(model_id: str, session_id: str = None):
+        return get_vision_agent(
+            model_id=model_id, enable_search=enable_search, session_id=session_id
+        )
+
+    vision_agent = initialize_agent(selected_model, get_vision_agent_with_settings)
+    reset_session_state(vision_agent)
+
+    if prompt := st.chat_input("👋 Ask me anything!"):
+        add_message("user", prompt)
 
     ####################################################################
     # File upload
@@ -150,22 +155,26 @@ def main():
                 custom_instructions = st.sidebar.text_area(
                     "Analysis Instructions", key="manual_instructions"
                 )
-                analysis_prompt = (
-                    custom_instructions if custom_instructions else EXTRACTION_PROMPT
-                )
+                if custom_instructions:
+                    add_message(
+                        "user",
+                        f"Analyze this image with instructions: {custom_instructions}",
+                    )
+                else:
+                    add_message("user", f"Analyze this image: {image_info['name']}")
             elif analysis_mode == "Hybrid":
                 custom_instructions = st.sidebar.text_area(
                     "Additional Instructions", key="hybrid_instructions"
                 )
-                analysis_prompt = (
-                    f"{EXTRACTION_PROMPT}\n\nAdditional Instructions:\n{custom_instructions}"
-                    if custom_instructions
-                    else EXTRACTION_PROMPT
-                )
+                if custom_instructions:
+                    add_message(
+                        "user",
+                        f"Analyze this image with additional focus: {custom_instructions}",
+                    )
+                else:
+                    add_message("user", f"Analyze this image: {image_info['name']}")
             else:
-                analysis_prompt = EXTRACTION_PROMPT
-
-            add_message("user", f"Analyze this image: {image_info['name']}")
+                add_message("user", f"Analyze this image: {image_info['name']}")
 
     ###############################################################
     # Sample Questions
@@ -210,6 +219,7 @@ def main():
                         response_container.error(error_message)
                         add_message("assistant", error_message)
         else:
+            # Use the same unified agent for all responses (maintains session)
             display_response(vision_agent, question)
 
     ####################################################################
@@ -264,10 +274,19 @@ def main():
     ####################################################################
     # Session management widgets
     ####################################################################
-    if not st.session_state.get("is_new_session", False):
-        session_selector_widget(vision_agent, selected_model, get_vision_agent)
+    is_new_session = st.session_state.get("is_new_session", False)
+    has_messages = (
+        st.session_state.get("messages") and len(st.session_state["messages"]) > 0
+    )
+
+    if not is_new_session or has_messages:
+        session_selector_widget(
+            vision_agent, selected_model, get_vision_agent_with_settings
+        )
+        if is_new_session and has_messages:
+            st.session_state["is_new_session"] = False
     else:
-        st.session_state["is_new_session"] = False
+        st.sidebar.info("🆕 New Chat - Start your conversation!")
 
     ####################################################################
     # About section
