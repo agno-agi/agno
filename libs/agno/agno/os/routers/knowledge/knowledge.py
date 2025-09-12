@@ -19,6 +19,8 @@ from agno.os.routers.knowledge.schemas import (
     ContentStatus,
     ContentStatusResponse,
     ContentUpdateSchema,
+    DocumentSchema,
+    PgVectorSearchResponseSchema,
     ReaderSchema,
 )
 from agno.os.schema import (
@@ -796,6 +798,145 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             chunkers=chunkers_dict,
             filters=knowledge.get_filters(),
         )
+
+    @router.get(
+        "/knowledge/search",
+        response_model=PgVectorSearchResponseSchema,
+        status_code=200,
+        operation_id="search_knowledge",
+        summary="Search Knowledge Base",
+        description=(
+            "Perform vector similarity search on the knowledge base using pgvector. "
+            "Returns documents ranked by relevance to the query using embeddings."
+        ),
+        responses={
+            200: {
+                "description": "Search completed successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "query": "machine learning algorithms",
+                            "documents": [
+                                {
+                                    "id": "doc-1",
+                                    "name": "ML Introduction",
+                                    "meta_data": {"category": "tutorial"},
+                                    "content": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions without being explicitly programmed for every task.",
+                                    "embedding": None,
+                                    "usage": {"tokens": 150}
+                                }
+                            ],
+                            "total_found": 5
+                        }
+                    }
+                },
+            },
+            400: {"description": "Invalid query parameter", "model": BadRequestResponse},
+            404: {"description": "Knowledge base not found", "model": NotFoundResponse},
+        },
+    )
+    def search_knowledge(
+        query: str = Query(..., description="Search query string", min_length=1),
+        limit: Optional[int] = Query(default=5, description="Maximum number of results to return", ge=1, le=100),
+        filters: Optional[str] = Query(default=None, description="JSON filters to apply to the search"),
+        include_embeddings: bool = Query(default=False, description="Include embedding vectors in response"),
+        expand_content: bool = Query(default=True, description="Try to get more complete content from the same source"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> PgVectorSearchResponseSchema:
+        """Search the knowledge base using vector similarity search."""
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        
+        # Parse filters if provided
+        parsed_filters = None
+        if filters and filters.strip():
+            try:
+                parsed_filters = json.loads(filters)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid JSON format for filters")
+        
+        try:
+            # Perform the vector search - get more results if we're expanding content
+            search_limit = limit * 3 if expand_content else limit
+            documents = knowledge.search(query=query, max_results=search_limit, filters=parsed_filters)
+            
+            # If expand_content is True, try to get related content from the same sources
+            if expand_content:
+                expanded_docs = []
+                seen_content_ids = set()
+                
+                for doc in documents:
+                    # Get the content_id to find related chunks
+                    content_id = getattr(doc, 'content_id', None)
+                    if content_id and content_id not in seen_content_ids:
+                        seen_content_ids.add(content_id)
+                        # Try to get all chunks from the same content
+                        try:
+                            # Search for documents with the same content_id
+                            related_docs = []
+                            if hasattr(knowledge.vector_db, 'table'):
+                                # For pgvector, we can do a direct query for same content_id
+                                with knowledge.vector_db.Session() as sess:
+                                    from sqlalchemy.sql.expression import select
+                                    stmt = select(
+                                        knowledge.vector_db.table.c.id,
+                                        knowledge.vector_db.table.c.name,
+                                        knowledge.vector_db.table.c.meta_data,
+                                        knowledge.vector_db.table.c.content,
+                                        knowledge.vector_db.table.c.embedding,
+                                        knowledge.vector_db.table.c.usage,
+                                    ).where(knowledge.vector_db.table.c.content_id == content_id).limit(10)
+                                    results = sess.execute(stmt).fetchall()
+                                    
+                                    # Combine content from related chunks
+                                    combined_content_parts = []
+                                    for result in results:
+                                        if result.content.strip():
+                                            combined_content_parts.append(result.content.strip())
+                                    
+                                    # Create an expanded document with combined content
+                                    if combined_content_parts:
+                                        expanded_doc = doc.__class__(
+                                            id=doc.id,
+                                            name=doc.name,
+                                            meta_data=doc.meta_data,
+                                            content=" | ".join(combined_content_parts),
+                                            embedder=doc.embedder,
+                                            embedding=doc.embedding,
+                                            usage=doc.usage
+                                        )
+                                        expanded_docs.append(expanded_doc)
+                                    else:
+                                        expanded_docs.append(doc)
+                        except Exception as e:
+                            logger.debug(f"Could not expand content for doc {doc.id}: {e}")
+                            expanded_docs.append(doc)
+                    else:
+                        expanded_docs.append(doc)
+                
+                # Limit to requested number and remove duplicates
+                documents = expanded_docs[:limit]
+            
+            # Convert documents to schema format
+            document_schemas = []
+            for doc in documents:
+                document_schemas.append(DocumentSchema(
+                    id=doc.id,
+                    name=doc.name,
+                    meta_data=doc.meta_data,
+                    content=doc.content,
+                    embedding=doc.embedding if include_embeddings else None,
+                    usage=doc.usage
+                ))
+            
+            return PgVectorSearchResponseSchema(
+                query=query,
+                documents=document_schemas,
+                total_found=len(documents)
+            )
+            
+        except Exception as e:
+            logger.error(f"Error performing knowledge search: {e}")
+            raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
     return router
 

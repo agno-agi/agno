@@ -116,3 +116,22 @@ class ConfigResponseSchema(BaseModel):
     readersForType: Optional[Dict[str, List[str]]] = None
     chunkers: Optional[Dict[str, ChunkerSchema]] = None
     filters: Optional[List[str]] = None
+
+
+class DocumentSchema(BaseModel):
+    """Schema for document representation in search results."""
+    
+    id: str
+    name: Optional[str] = None
+    meta_data: Optional[Dict[str, Any]] = None
+    content: str
+    embedding: Optional[List[float]] = None
+    usage: Optional[Dict[str, Any]] = None
+
+
+class PgVectorSearchResponseSchema(BaseModel):
+    """Response model for pgvector search results."""
+    
+    query: str
+    documents: List[DocumentSchema]
+    total_found: int
