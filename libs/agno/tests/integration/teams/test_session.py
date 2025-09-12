@@ -355,3 +355,22 @@ def test_team_with_state_shared_with_members(shared_db):
     assert session_from_storage is not None
     assert session_from_storage.session_data is not None
     assert session_from_storage.session_data["session_state"] == {"shopping_list": ["oranges"]}
+
+
+def test_add_session_state_to_context(shared_db):
+    # Create an Agent that maintains state
+    team = Team(
+        db=shared_db,
+        session_state={"shopping_list": ["oranges"]},
+        members=[],
+        markdown=True,
+        add_session_state_to_context=True,
+    )
+    response = team.run("What is in my shopping list?")
+    assert response is not None
+    assert response.messages is not None
+
+    # Check the system message
+    assert "'shopping_list': ['oranges']" in response.messages[0].content
+
+    assert "oranges" in response.content.lower()

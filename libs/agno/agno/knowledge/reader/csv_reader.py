@@ -47,7 +47,7 @@ class CSVReader(Reader):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
                 logger.info(f"Reading: {file}")
-                file_content = file.open(newline="", mode="r", encoding="utf-8")
+                file_content = file.open(newline="", mode="r", encoding=self.encoding or "utf-8")
             else:
                 logger.info(f"Reading retrieved file: {name or file.name}")
                 file.seek(0)
