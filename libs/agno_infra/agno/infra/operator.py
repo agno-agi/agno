@@ -30,7 +30,7 @@ TEMPLATE_TO_REPO_MAP: Dict[InfraStarterTemplate, str] = {
 def create_infra_from_template(
     name: Optional[str] = None, template: Optional[str] = None, url: Optional[str] = None
 ) -> Optional[InfraConfig]:
-    """Creates a new infra from a template and returns the InfraConfig.
+    """Creates a new AgentOS infra codebase from a template and returns the InfraConfig.
 
     This function clones a template or url on the users machine at the path:
         cwd/name
@@ -60,7 +60,7 @@ def create_infra_from_template(
     infra_template = InfraStarterTemplate.agent_infra_docker
     templates = list(InfraStarterTemplate.__members__.values())
 
-    print_subheading("Creating a new Agno Infra project\n")
+    print_subheading("Creating a new AgentOS codebase...\n")
 
     if repo_to_clone is None:
         # Get repo_to_clone from template
@@ -112,7 +112,7 @@ def create_infra_from_template(
         )
         return None
 
-    print_info("\nCreating your new Agno Infra project...")
+    print_info("\nCreating your new AgentOS codebase...")
     logger.debug("Cloning: {}".format(repo_to_clone))
     try:
         git.Repo.clone_from(
@@ -162,12 +162,13 @@ def create_infra_from_template(
     infra_config = agno_config.create_or_update_infra_config(infra_root_path=infra_root_path, set_as_active=True)
 
     if infra_config is not None:
+        relative_infra_root_path = infra_root_path.relative_to(current_dir)
         print_info("\n--------------------------------")
-        print_info(f"Done! Your new Agno Infra project is available at: {str(infra_root_path)} \n")
-        print_info("1. Start Infra:")
-        print_info("\tag infra up")
-        print_info("2. Stop Infra:")
-        print_info("\tag infra down")
+        print_info(f"Done! Your new AgentOS codebase is available at: ./{str(relative_infra_root_path)} \n")
+        print_info(f"Please run `cd ./{str(relative_infra_root_path)}` and:\n")
+        print_info("1. Start your AgentOS -> `ag infra up`")
+        print_info("2. Stop your AgentOS -> `ag infra down`")
+        print_info("\nView your running AgentOS on https://os.agno.com")
         print_info("--------------------------------")
 
         return infra_config
