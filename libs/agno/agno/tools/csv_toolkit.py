@@ -1,3 +1,4 @@
+from sqlalchemy import text
 import csv
 import json
 from pathlib import Path
@@ -146,7 +147,7 @@ class CsvTools(Toolkit):
                 return "Error connecting to DuckDB, please check the connection."
 
             # Create a table from the csv file
-            con.execute(f"CREATE TABLE {csv_name} AS SELECT * FROM read_csv_auto('{file_path}')")
+            con.execute(text("CREATE TABLE {csv_name} AS SELECT * FROM read_csv_auto('{file_path}', :"table_name": table_name)"), {"table_name": table_name: "table_name": table_name})
 
             # -*- Format the SQL Query
             # Remove backticks
