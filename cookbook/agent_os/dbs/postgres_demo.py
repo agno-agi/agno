@@ -1,4 +1,4 @@
-"""Example showing how to use AgentOS with Redis as database"""
+"""Example showing how to use AgentOS with a Postgres database"""
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb

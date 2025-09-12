@@ -4,7 +4,7 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile
 
 from agno.agent.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -15,7 +15,7 @@ from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
 
-def get_db(dbs: dict[str, BaseDb], db_id: Optional[str] = None) -> BaseDb:
+def get_db(dbs: dict[str, Union[BaseDb, AsyncBaseDb]], db_id: Optional[str] = None) -> Union[BaseDb, AsyncBaseDb]:
     """Return the database with the given ID, or the first database if no ID is provided."""
 
     # Raise if multiple databases are provided but no db_id is provided

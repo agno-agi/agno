@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import Field, field_validator
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from agno.aws.resource.elb.target_group import TargetGroup
 
 
+@dataclass
 class AwsApp(InfraApp):
     # -*- OS Configuration
     # Path to the OS directory inside the container

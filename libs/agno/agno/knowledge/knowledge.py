@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from httpx import AsyncClient
 
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
@@ -40,7 +40,7 @@ class Knowledge:
     name: Optional[str] = None
     description: Optional[str] = None
     vector_db: Optional[VectorDb] = None
-    contents_db: Optional[BaseDb] = None
+    contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
 
@@ -354,7 +354,7 @@ class Knowledge:
                     log_info(f"Content {content.content_hash} already exists, skipping")
                     return
 
-                self._add_to_contents_db(content)
+                await self._add_to_contents_db(content)
 
                 if content.reader:
                     # TODO: We will refactor this to eventually pass authorization to all readers
@@ -448,7 +448,7 @@ class Knowledge:
         if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
             log_info(f"Content {content.content_hash} already exists, skipping")
             return
-        self._add_to_contents_db(content)
+        await self._add_to_contents_db(content)
 
         # 2. Validate URL
         try:
@@ -458,12 +458,12 @@ class Knowledge:
             if not all([parsed_url.scheme, parsed_url.netloc]):
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Invalid URL format: {content.url}"
-                self._update_content(content)
+                await self._aupdate_content(content)
                 log_warning(f"Invalid URL format: {content.url}")
         except Exception as e:
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
-            self._update_content(content)
+            await self._aupdate_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
 
         # 3. Fetch and load content
@@ -511,7 +511,7 @@ class Knowledge:
             log_error(f"Error reading URL: {content.url} - {str(e)}")
             content.status = ContentStatus.FAILED
             content.status_message = f"Error reading URL: {content.url} - {str(e)}"
-            self._update_content(content)
+            await self._aupdate_content(content)
             return
 
         # 6. Chunk documents if needed
@@ -563,7 +563,7 @@ class Knowledge:
             log_info(f"Content {content.content_hash} already exists, skipping")
 
             return
-        self._add_to_contents_db(content)
+        await self._add_to_contents_db(content)
 
         read_documents = []
 
@@ -584,7 +584,7 @@ class Knowledge:
                 else:
                     content.status = ContentStatus.FAILED
                     content.status_message = "Text reader not available"
-                    self._update_content(content)
+                    await self._aupdate_content(content)
                     return
 
         elif isinstance(content.file_data, FileData):
@@ -621,12 +621,12 @@ class Knowledge:
                 if len(read_documents) == 0:
                     content.status = ContentStatus.FAILED
                     content.status_message = "Content could not be read"
-                    self._update_content(content)
+                    await self._aupdate_content(content)
 
         else:
             content.status = ContentStatus.FAILED
             content.status_message = "No content provided"
-            self._update_content(content)
+            await self._aupdate_content(content)
             return
 
         await self._handle_vector_db_insert(content, read_documents, upsert)
@@ -666,7 +666,7 @@ class Knowledge:
                 log_info(f"Content {content.content_hash} already exists, skipping")
                 continue
 
-            self._add_to_contents_db(content)
+            await self._add_to_contents_db(content)
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
                 continue
@@ -679,7 +679,7 @@ class Knowledge:
             else:
                 content.status = ContentStatus.FAILED
                 content.status_message = "No content found for topic"
-                self._update_content(content)
+                await self._aupdate_content(content)
 
             await self._handle_vector_db_insert(content, read_documents, upsert)
 
@@ -752,7 +752,7 @@ class Knowledge:
             if self.vector_db and self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
                 log_info(f"Content {content_hash} already exists, skipping")
                 continue
-            self._add_to_contents_db(content_entry)
+            await self._add_to_contents_db(content_entry)
 
             # 4. Select reader
             reader = content.reader
@@ -835,8 +835,7 @@ class Knowledge:
                 log_info(f"Content {content_hash} already exists, skipping")
                 continue
 
-            # 4. Add it to the contents database
-            self._add_to_contents_db(content_entry)
+            await self._add_to_contents_db(content_entry)
 
             # 5. Select reader
             reader = content.reader
@@ -871,7 +870,7 @@ class Knowledge:
             log_error("No vector database configured")
             content.status = ContentStatus.FAILED
             content.status_message = "No vector database configured"
-            self._update_content(content)
+            await self._aupdate_content(content)
             return
 
         if self.vector_db.upsert_available() and upsert:
@@ -881,7 +880,7 @@ class Knowledge:
                 log_error(f"Error upserting document: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not upsert embedding"
-                self._update_content(content)
+                await self._aupdate_content(content)
                 return
         else:
             try:
@@ -892,11 +891,11 @@ class Knowledge:
                 log_error(f"Error inserting document: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not insert embedding"
-                self._update_content(content)
+                await self._aupdate_content(content)
                 return
 
         content.status = ContentStatus.COMPLETED
-        self._update_content(content)
+        await self._aupdate_content(content)
 
     async def _load_content(
         self,
@@ -954,7 +953,7 @@ class Knowledge:
             )
             return hashlib.sha256(fallback.encode()).hexdigest()
 
-    def _add_to_contents_db(self, content: Content):
+    async def _add_to_contents_db(self, content: Content):
         if self.contents_db:
             created_at = content.created_at if content.created_at else int(time.time())
             updated_at = content.updated_at if content.updated_at else int(time.time())
@@ -984,10 +983,18 @@ class Knowledge:
                 created_at=created_at,
                 updated_at=updated_at,
             )
-            self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
+            if isinstance(self.contents_db, AsyncBaseDb):
+                await self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
+            else:
+                self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
     def _update_content(self, content: Content) -> Optional[Dict[str, Any]]:
         if self.contents_db:
+            if isinstance(self.contents_db, AsyncBaseDb):
+                raise ValueError(
+                    "update_content() is not supported with an async DB. Please use aupdate_content() instead."
+                )
+
             if not content.id:
                 log_warning("Content id is required to update Knowledge content")
                 return None
@@ -1026,8 +1033,54 @@ class Knowledge:
             log_warning(f"Contents DB not found for knowledge base: {self.name}")
             return None
 
+    async def _aupdate_content(self, content: Content) -> Optional[Dict[str, Any]]:
+        if self.contents_db:
+            if not content.id:
+                log_warning("Content id is required to update Knowledge content")
+                return None
+
+            # TODO: we shouldn't check for content here, we should trust the upsert method to handle conflicts
+            if isinstance(self.contents_db, AsyncBaseDb):
+                content_row = await self.contents_db.get_knowledge_content(content.id)
+            else:
+                content_row = self.contents_db.get_knowledge_content(content.id)
+            if content_row is None:
+                log_warning(f"Content row not found for id: {content.id}, cannot update status")
+                return None
+
+            if content.name is not None:
+                content_row.name = content.name
+            if content.description is not None:
+                content_row.description = content.description
+            if content.metadata is not None:
+                content_row.metadata = content.metadata
+            if content.status is not None:
+                content_row.status = content.status
+            if content.status_message is not None:
+                content_row.status_message = content.status_message if content.status_message else ""
+            if content.external_id is not None:
+                content_row.external_id = content.external_id
+
+            content_row.updated_at = int(time.time())
+            if isinstance(self.contents_db, AsyncBaseDb):
+                await self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
+            else:
+                self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
+
+            if self.vector_db and content.metadata:
+                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata)
+
+            if content.metadata:
+                self.add_filters(content.metadata)
+
+            return content_row.to_dict()
+
+        else:
+            log_warning(f"Contents DB not found for knowledge base: {self.name}")
+            return None
+
     async def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
-        self._add_to_contents_db(content)
+        await self._add_to_contents_db(content)
         if content_type == KnowledgeContentOrigin.PATH:
             if content.file_data is None:
                 log_warning("No file data provided")
@@ -1058,18 +1111,18 @@ class Knowledge:
                 else:
                     log_error("Vector database does not support file insertion")
                     content.status = ContentStatus.FAILED
-                    self._update_content(content)
+                    await self._aupdate_content(content)
                     return
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
-                self._update_content(content)
+                await self._aupdate_content(content)
                 return
 
             except Exception as e:
                 log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
-                self._update_content(content)
+                await self._aupdate_content(content)
                 return
 
         elif content_type == KnowledgeContentOrigin.URL:
@@ -1079,7 +1132,7 @@ class Knowledge:
                 if reader is None:
                     log_error("No URL reader available")
                     content.status = ContentStatus.FAILED
-                    self._update_content(content)
+                    await self._aupdate_content(content)
                     return
 
                 reader.chunk = False
@@ -1091,7 +1144,7 @@ class Knowledge:
                 if not read_documents:
                     log_error("No documents read from URL")
                     content.status = ContentStatus.FAILED
-                    self._update_content(content)
+                    await self._aupdate_content(content)
                     return
 
                 if self.vector_db and hasattr(self.vector_db, "insert_text"):
@@ -1102,19 +1155,19 @@ class Knowledge:
                 else:
                     log_error("Vector database does not support text insertion")
                     content.status = ContentStatus.FAILED
-                    self._update_content(content)
+                    await self._aupdate_content(content)
                     return
 
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
-                self._update_content(content)
+                await self._aupdate_content(content)
                 return
 
             except Exception as e:
                 log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
-                self._update_content(content)
+                await self._aupdate_content(content)
                 return
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
@@ -1135,11 +1188,11 @@ class Knowledge:
                 else:
                     log_error("Vector database does not support file insertion")
                     content.status = ContentStatus.FAILED
-                    self._update_content(content)
+                    await self._aupdate_content(content)
                     return
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
-                self._update_content(content)
+                await self._aupdate_content(content)
             else:
                 log_warning(f"No file data available for LightRAG upload: {content.name}")
             return
@@ -1150,13 +1203,13 @@ class Knowledge:
             if content.reader is None:
                 log_error("No reader available for topic content")
                 content.status = ContentStatus.FAILED
-                self._update_content(content)
+                await self._aupdate_content(content)
                 return
 
             if not content.topics:
                 log_error("No topics available for content")
                 content.status = ContentStatus.FAILED
-                self._update_content(content)
+                await self._aupdate_content(content)
                 return
 
             read_documents = content.reader.read(content.topics)
@@ -1172,11 +1225,11 @@ class Knowledge:
                 else:
                     log_error("Vector database does not support text insertion")
                     content.status = ContentStatus.FAILED
-                    self._update_content(content)
+                    await self._aupdate_content(content)
                     return
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
-                self._update_content(content)
+                await self._aupdate_content(content)
                 return
             else:
                 log_warning(f"No documents found for LightRAG upload: {content.name}")
@@ -1290,10 +1343,46 @@ class Knowledge:
     def patch_content(self, content: Content) -> Optional[Dict[str, Any]]:
         return self._update_content(content)
 
+    async def apatch_content(self, content: Content) -> Optional[Dict[str, Any]]:
+        return await self._aupdate_content(content)
+
     def get_content_by_id(self, content_id: str) -> Optional[Content]:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
+
+        if isinstance(self.contents_db, AsyncBaseDb):
+            raise ValueError(
+                "get_content_by_id() is not supported for async databases. Please use aget_content_by_id() instead."
+            )
+
         content_row = self.contents_db.get_knowledge_content(content_id)
+
+        if content_row is None:
+            return None
+        content = Content(
+            id=content_row.id,
+            name=content_row.name,
+            description=content_row.description,
+            metadata=content_row.metadata,
+            file_type=content_row.type,
+            size=content_row.size,
+            status=ContentStatus(content_row.status) if content_row.status else None,
+            status_message=content_row.status_message,
+            created_at=content_row.created_at,
+            updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
+            external_id=content_row.external_id,
+        )
+        return content
+
+    async def aget_content_by_id(self, content_id: str) -> Optional[Content]:
+        if self.contents_db is None:
+            raise ValueError("No contents db provided")
+
+        if isinstance(self.contents_db, AsyncBaseDb):
+            content_row = await self.contents_db.get_knowledge_content(content_id)
+        else:
+            content_row = self.contents_db.get_knowledge_content(content_id)
+
         if content_row is None:
             return None
         content = Content(
@@ -1320,6 +1409,10 @@ class Knowledge:
     ) -> Tuple[List[Content], int]:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
+
+        if isinstance(self.contents_db, AsyncBaseDb):
+            raise ValueError("get_content() is not supported for async databases. Please use aget_content() instead.")
+
         contents, count = self.contents_db.get_knowledge_contents(
             limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
         )
@@ -1343,10 +1436,81 @@ class Knowledge:
             result.append(content)
         return result, count
 
+    async def aget_content(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Content], int]:
+        if self.contents_db is None:
+            raise ValueError("No contents db provided")
+
+        if isinstance(self.contents_db, AsyncBaseDb):
+            contents, count = await self.contents_db.get_knowledge_contents(
+                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
+            )
+        else:
+            contents, count = self.contents_db.get_knowledge_contents(
+                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
+            )
+
+        result = []
+        for content_row in contents:
+            # Create Content from database row
+            content = Content(
+                id=content_row.id,
+                name=content_row.name,
+                description=content_row.description,
+                metadata=content_row.metadata,
+                size=content_row.size,
+                file_type=content_row.type,
+                status=ContentStatus(content_row.status) if content_row.status else None,
+                status_message=content_row.status_message,
+                created_at=content_row.created_at,
+                updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
+                external_id=content_row.external_id,
+            )
+            result.append(content)
+        return result, count
+
     def get_content_status(self, content_id: str) -> Tuple[Optional[ContentStatus], Optional[str]]:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
+
+        if isinstance(self.contents_db, AsyncBaseDb):
+            raise ValueError(
+                "get_content_status() is not supported for async databases. Please use aget_content_status() instead."
+            )
+
         content_row = self.contents_db.get_knowledge_content(content_id)
+        if content_row is None:
+            return None, "Content not found"
+
+        # Convert string status to enum, defaulting to PROCESSING if unknown
+        status_str = content_row.status
+        try:
+            status = ContentStatus(status_str.lower()) if status_str else ContentStatus.PROCESSING
+        except ValueError:
+            # Handle legacy or unknown statuses
+            if status_str and "failed" in status_str.lower():
+                status = ContentStatus.FAILED
+            elif status_str and "completed" in status_str.lower():
+                status = ContentStatus.COMPLETED
+            else:
+                status = ContentStatus.PROCESSING
+
+        return status, content_row.status_message
+
+    async def aget_content_status(self, content_id: str) -> Tuple[Optional[ContentStatus], Optional[str]]:
+        if self.contents_db is None:
+            raise ValueError("No contents db provided")
+
+        if isinstance(self.contents_db, AsyncBaseDb):
+            content_row = await self.contents_db.get_knowledge_content(content_id)
+        else:
+            content_row = self.contents_db.get_knowledge_content(content_id)
+
         if content_row is None:
             return None, "Content not found"
 
@@ -1380,11 +1544,35 @@ class Knowledge:
         if self.contents_db is not None:
             self.contents_db.delete_knowledge_content(content_id)
 
+    async def aremove_content_by_id(self, content_id: str):
+        if self.vector_db is not None:
+            if self.vector_db.__class__.__name__ == "LightRag":
+                # For LightRAG, get the content first to find the external_id
+                content = await self.aget_content_by_id(content_id)
+                if content and content.external_id:
+                    self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
+                else:
+                    log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
+            else:
+                self.vector_db.delete_by_content_id(content_id)
+
+        if self.contents_db is not None:
+            if isinstance(self.contents_db, AsyncBaseDb):
+                await self.contents_db.delete_knowledge_content(content_id)
+            else:
+                self.contents_db.delete_knowledge_content(content_id)
+
     def remove_all_content(self):
         contents, _ = self.get_content()
         for content in contents:
             if content.id is not None:
                 self.remove_content_by_id(content.id)
+
+    async def aremove_all_content(self):
+        contents, _ = await self.aget_content()
+        for content in contents:
+            if content.id is not None:
+                await self.aremove_content_by_id(content.id)
 
     # --- Reader Factory Integration ---
 

@@ -57,24 +57,6 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
-async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
-    """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
-    Args:
-        request: The FastAPI Request object
-        endpoint_func: The function exposing the endpoint that received the request
-
-    Returns:
-        A dictionary of kwargs
-    """
-    import inspect
-
-    form_data = await request.form()
-    sig = inspect.signature(endpoint_func)
-    known_fields = set(sig.parameters.keys())
-    kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
-    return kwargs
-
-
 def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]) -> str:
     """Parse JSON data into SSE-compliant format.
 
@@ -103,6 +85,24 @@ def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRu
     except json.JSONDecodeError:
         clean_json = event.to_json(separators=(",", ":"), indent=None)
         return f"event: message\ndata: {clean_json}\n\n"
+
+
+async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
+    """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
+    Args:
+        request: The FastAPI Request object
+        endpoint_func: The function exposing the endpoint that received the request
+
+    Returns:
+        A dictionary of kwargs
+    """
+    import inspect
+
+    form_data = await request.form()
+    sig = inspect.signature(endpoint_func)
+    known_fields = set(sig.parameters.keys())
+    kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
+    return kwargs
 
 
 class WebSocketManager:

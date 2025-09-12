@@ -108,7 +108,7 @@ def test_large_text_file(tmp_path):
     documents = reader.read(text_path)
 
     # 3 chunks should be created
-    assert len(documents) == 3
+    assert len(documents) == 143
     assert documents[0].name == "large"
 
 

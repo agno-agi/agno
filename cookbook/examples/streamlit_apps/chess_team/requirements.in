@@ -1,4 +1,4 @@
-agno==2.0.0
+agno==2.0.0rc1
 nest-asyncio
 streamlit
 python-chess

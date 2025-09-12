@@ -1,8 +1,10 @@
+from dataclasses import dataclass
 from typing import List, Optional, Union
 
 from agno.aws.app.base import AwsApp, ContainerContext  # noqa: F401
 
 
+@dataclass
 class Django(AwsApp):
     # -*- App Name
     name: str = "django"
