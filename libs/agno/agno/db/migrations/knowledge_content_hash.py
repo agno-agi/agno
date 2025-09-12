@@ -1,4 +1,4 @@
-"""Migration utility to add content_hash column to Knowledge tables"""
+"""Migration utility to add content_hash column and index to Knowledge tables"""
 
 from typing import Any, Dict, List, Optional, Union
 
@@ -16,7 +16,11 @@ def migrate(
     dry_run: bool = False,
 ):
     """
-    Add content_hash column to Knowledge table.
+    Add content_hash column and index to Knowledge table.
+
+    This migration adds:
+    1. A content_hash VARCHAR(255) column 
+    2. An index on the content_hash column for improved query performance
 
     Note: Existing records will have NULL content_hash until they are
     accessed/updated by the application, which will populate the hash.
@@ -34,26 +38,43 @@ def migrate(
         log_info("DRY RUN MODE - No changes will be made")
 
     try:
-        # Step 1: Check if content_hash column already exists
-        if _column_exists(db, table_name, "content_hash"):
-            log_info(f"content_hash column already exists in {table_name}, skipping migration")
+        # Step 1: Check if content_hash column and index already exist
+        column_exists = _column_exists(db, table_name, "content_hash")
+        index_name = f"idx_{table_name}_content_hash"
+        index_exists = _index_exists(db, table_name, index_name)
+        
+        if column_exists and index_exists:
+            log_info(f"content_hash column and index already exist in {table_name}, skipping migration")
             return
+        elif column_exists:
+            log_info(f"content_hash column already exists in {table_name}, will add index only")
+        elif index_exists:
+            log_warning(f"content_hash index exists but column doesn't in {table_name} - this shouldn't happen!")
 
-        # Step 2: Add content_hash column
-        if not dry_run:
-            _add_content_hash_column(db, table_name)
-            log_info(f"Added content_hash column to {table_name}")
-        else:
-            log_info(f"Would add content_hash column to {table_name}")
+        # Step 2: Add content_hash column if it doesn't exist
+        if not column_exists:
+            if not dry_run:
+                _add_content_hash_column(db, table_name)
+                log_info(f"Added content_hash column to {table_name}")
+            else:
+                log_info(f"Would add content_hash column to {table_name}")
 
-        # Step 3: Check existing records
+        # Step 3: Add index on content_hash column if it doesn't exist
+        if not index_exists:
+            if not dry_run:
+                _add_content_hash_index(db, table_name)
+                log_info(f"Added index on content_hash column in {table_name}")
+            else:
+                log_info(f"Would add index on content_hash column in {table_name}")
+
+        # Step 4: Check existing records
         existing_records = _get_all_knowledge_records(db, table_name)
         log_info(f"Found {len(existing_records)} existing records")
         log_info(
             "Note: Existing records will have NULL content_hash until they are accessed/updated by the application"
         )
 
-        log_info(f"Migration completed successfully. Added content_hash column to {table_name}.")
+        log_info(f"Migration completed successfully. Added content_hash column and index to {table_name}.")
 
     except Exception as e:
         log_error(f"Error during Knowledge content_hash migration: {e}")
@@ -104,6 +125,52 @@ def _add_content_hash_column(db: Union[PostgresDb, MySQLDb, SqliteDb], table_nam
         raise
 
 
+def _add_content_hash_index(db: Union[PostgresDb, MySQLDb, SqliteDb], table_name: str):
+    """Add index on content_hash column"""
+    try:
+        with db.Session() as sess:
+            # Create index on content_hash column
+            index_name = f"idx_{table_name}_content_hash"
+            create_index_query = text(f"CREATE INDEX {index_name} ON {table_name} (content_hash)")
+            sess.execute(create_index_query)
+            sess.commit()
+
+    except Exception as e:
+        log_error(f"Error adding content_hash index: {e}")
+        raise
+
+
+def _index_exists(db: Union[PostgresDb, MySQLDb, SqliteDb], table_name: str, index_name: str) -> bool:
+    """Check if an index exists on the table"""
+    try:
+        with db.Session() as sess:
+            if isinstance(db, PostgresDb):
+                query = text("""
+                    SELECT indexname 
+                    FROM pg_indexes 
+                    WHERE tablename = :table_name AND indexname = :index_name
+                """)
+                result = sess.execute(query, {"table_name": table_name, "index_name": index_name})
+                return result.fetchone() is not None
+            elif isinstance(db, MySQLDb):
+                query = text("""
+                    SELECT INDEX_NAME 
+                    FROM INFORMATION_SCHEMA.STATISTICS 
+                    WHERE TABLE_NAME = :table_name AND INDEX_NAME = :index_name
+                """)
+                result = sess.execute(query, {"table_name": table_name, "index_name": index_name})
+                return result.fetchone() is not None
+            else:  # SQLite
+                query = text(f"PRAGMA index_list({table_name})")
+                result = sess.execute(query)
+                indexes = [row[1] for row in result]  # Index name is at index 1
+                return index_name in indexes
+
+    except Exception as e:
+        log_warning(f"Could not check if index exists: {e}")
+        return False
+
+
 def _get_all_knowledge_records(db: Union[PostgresDb, MySQLDb, SqliteDb], table_name: str) -> List[Dict[str, Any]]:
     """Get all records from the knowledge table"""
     try:
@@ -132,6 +199,10 @@ def validate_migration(
         with db.Session() as sess:
             # Check if column exists
             column_exists = _column_exists(db, table_name, "content_hash")
+            
+            # Check if index exists
+            index_name = f"idx_{table_name}_content_hash"
+            index_exists = _index_exists(db, table_name, index_name)
 
             # Count total records
             total_count_result = sess.execute(text(f"SELECT COUNT(*) FROM {table_name}"))
@@ -146,10 +217,11 @@ def validate_migration(
 
             return {
                 "column_exists": column_exists,
+                "index_exists": index_exists,
                 "total_records": total_count,
                 "records_with_hash": hash_count,
                 "records_without_hash": no_hash_count,
-                "migration_complete": column_exists,  # Migration is complete if column exists
+                "migration_complete": column_exists and index_exists,  # Migration is complete if both column and index exist
                 "notes": "Existing records will have NULL content_hash until accessed/updated by the application",
             }
 
@@ -159,8 +231,8 @@ def validate_migration(
 
 
 if __name__ == "__main__":
-    """
-    Example usage:
+    
+    # Example usage:
     from agno.db.postgres.postgres import PostgresDb
     from agno.db.migrations.knowledge_content_hash import migrate, validate_migration
     
@@ -174,12 +246,12 @@ if __name__ == "__main__":
     # Run migration (dry run first to see what will happen)
     migrate(db, knowledge_table_name="knowledge_contents", dry_run=True)
     
-    # Run actual migration
+    # Run actual migration (adds both column and index)
     migrate(db, knowledge_table_name="knowledge_contents", dry_run=False)
     
-    # Validate migration (check that column was added)
+    # Validate migration (check that column and index were added)
     results = validate_migration(db, knowledge_table_name="knowledge_contents")
     print(f"Migration validation: {results}")
     print("Note: Existing records will have NULL content_hash until accessed by the application")
-    """
+    
     pass
