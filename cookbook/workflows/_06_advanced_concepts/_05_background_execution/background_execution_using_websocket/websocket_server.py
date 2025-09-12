@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict
+from typing import Dict
 
 import uvicorn
 from agno.agent import Agent
@@ -11,7 +11,6 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
 
 # === CONFIGURATION ===
 SECURITY_KEY = os.getenv("SECURITY_KEY", "your-secret-key")  # Set your key here
@@ -55,7 +54,7 @@ async def get():
         "message": "Background Workflow WebSocket Server",
         "endpoints": {
             "websocket": "/ws",
-            "start_workflow": "/workflow/start",
+            "start-workflow": "/workflow/start",
         },
         "connections": len(active_connections),
         "authenticated": len([c for c in authenticated_connections.values() if c]),
@@ -133,7 +132,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
 
                 # Handle authenticated actions
-                if action == "start_workflow":
+                if action == "start-workflow":
                     await handle_start_workflow(websocket, message_data)
                 elif action == "ping":
                     await websocket.send_text(json.dumps({"event": "pong"}))
