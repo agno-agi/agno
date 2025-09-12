@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import streamlit as st
+from agents import EXTRACTION_PROMPT, get_chat_agent, get_vision_agent
 from agno.media import Image
 from agno.utils.streamlit import (
     COMMON_CSS,
@@ -14,7 +15,6 @@ from agno.utils.streamlit import (
     reset_session_state,
     session_selector_widget,
 )
-from agents import EXTRACTION_PROMPT, get_chat_agent, get_vision_agent
 
 st.set_page_config(
     page_title="Vision AI",
@@ -24,6 +24,7 @@ st.set_page_config(
 )
 
 st.markdown(COMMON_CSS, unsafe_allow_html=True)
+
 
 def restart_agent(model_id: str = None):
     target_model = model_id or st.session_state.get("current_model", MODELS[0])
@@ -38,6 +39,7 @@ def restart_agent(model_id: str = None):
     # Clear current image
     if "current_image" in st.session_state:
         del st.session_state["current_image"]
+
 
 def on_model_change():
     selected_model = st.session_state.get("model_selector")
@@ -55,6 +57,7 @@ def on_model_change():
                     st.sidebar.error(f"Error switching to {selected_model}: {str(e)}")
         else:
             st.sidebar.error(f"Unknown model: {selected_model}")
+
 
 def main():
     ####################################################################
@@ -75,7 +78,7 @@ def main():
         index=0,
         key="model_selector",
         on_change=on_model_change,
-        help="Choose the AI model for image analysis"
+        help="Choose the AI model for image analysis",
     )
 
     ####################################################################
@@ -91,7 +94,7 @@ def main():
     # Vision AI Settings
     ####################################################################
     st.sidebar.markdown("#### 🔍 Analysis Settings")
-    
+
     analysis_mode = st.sidebar.radio(
         "Analysis Mode",
         ["Auto", "Manual", "Hybrid"],
@@ -100,14 +103,14 @@ def main():
         - **Auto**: Automatic comprehensive image analysis
         - **Manual**: Analysis based on your specific instructions  
         - **Hybrid**: Automatic analysis + your custom instructions
-        """
+        """,
     )
-    
+
     enable_search = st.sidebar.checkbox(
         "Enable Web Search",
         value=False,
         key="enable_search",
-        help="Allow the agent to search for additional context"
+        help="Allow the agent to search for additional context",
     )
 
     ####################################################################
@@ -120,33 +123,45 @@ def main():
     )
 
     if uploaded_file:
-        temp_dir = Path("tmp") 
+        temp_dir = Path("tmp")
         temp_dir.mkdir(exist_ok=True)
         image_path = temp_dir / uploaded_file.name
-        
+
         with open(image_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
-        
+
         st.session_state["current_image"] = {
             "path": str(image_path),
             "name": uploaded_file.name,
-            "analysis_mode": analysis_mode
+            "analysis_mode": analysis_mode,
         }
-        
+
         st.sidebar.image(uploaded_file, caption=uploaded_file.name, width=200)
         st.sidebar.success(f"Image '{uploaded_file.name}' uploaded")
 
     # Analysis
     if st.session_state.get("current_image") and not prompt:
-        if st.sidebar.button("🔍 Analyze Image", type="primary", use_container_width=True):
+        if st.sidebar.button(
+            "🔍 Analyze Image", type="primary", use_container_width=True
+        ):
             image_info = st.session_state["current_image"]
-            
+
             if analysis_mode == "Manual":
-                custom_instructions = st.sidebar.text_area("Analysis Instructions", key="manual_instructions")
-                analysis_prompt = custom_instructions if custom_instructions else EXTRACTION_PROMPT
+                custom_instructions = st.sidebar.text_area(
+                    "Analysis Instructions", key="manual_instructions"
+                )
+                analysis_prompt = (
+                    custom_instructions if custom_instructions else EXTRACTION_PROMPT
+                )
             elif analysis_mode == "Hybrid":
-                custom_instructions = st.sidebar.text_area("Additional Instructions", key="hybrid_instructions")
-                analysis_prompt = f"{EXTRACTION_PROMPT}\n\nAdditional Instructions:\n{custom_instructions}" if custom_instructions else EXTRACTION_PROMPT
+                custom_instructions = st.sidebar.text_area(
+                    "Additional Instructions", key="hybrid_instructions"
+                )
+                analysis_prompt = (
+                    f"{EXTRACTION_PROMPT}\n\nAdditional Instructions:\n{custom_instructions}"
+                    if custom_instructions
+                    else EXTRACTION_PROMPT
+                )
             else:
                 analysis_prompt = EXTRACTION_PROMPT
 
@@ -154,12 +169,12 @@ def main():
 
     ###############################################################
     # Sample Questions
-    ###############################################################  
+    ###############################################################
     st.sidebar.markdown("#### ❓ Sample Questions")
     if st.sidebar.button("🔍 What are the main objects?"):
         add_message("user", "What are the main objects?")
     if st.sidebar.button("📝 Is there any text to read?"):
-        add_message("user", "Is there any text to read?")  
+        add_message("user", "Is there any text to read?")
     if st.sidebar.button("🎨 Describe the colors and mood"):
         add_message("user", "Describe the colors and mood")
 
@@ -176,12 +191,12 @@ def main():
     )
     if last_message and last_message.get("role") == "user":
         question = last_message["content"]
-        
+
         images_to_include = []
         if st.session_state.get("current_image"):
             image_info = st.session_state["current_image"]
             images_to_include = [Image(filepath=image_info["path"])]
-        
+
         if images_to_include:
             with st.chat_message("assistant"):
                 response_container = st.empty()
@@ -215,13 +230,13 @@ def main():
         if has_messages:
             session_id = st.session_state.get("session_id")
             session_name = None
-            
+
             try:
                 if session_id and vision_agent:
                     session_name = vision_agent.get_session_name()
             except Exception:
                 session_name = None
-            
+
             if session_id and session_name:
                 filename = f"vision_ai_chat_{session_name}.md"
             elif session_id:
@@ -245,7 +260,6 @@ def main():
                 use_container_width=True,
                 help="No messages to export",
             )
-
 
     ####################################################################
     # Session management widgets

@@ -34,7 +34,7 @@ def get_vision_agent(
         session_table="sessions",
         db_schema="ai",
     )
-    
+
     agent = Agent(
         name="Vision Analysis Agent",
         model=get_model_with_provider(model_id),
@@ -71,7 +71,7 @@ def get_chat_agent(
     session_id: Optional[str] = None,
 ) -> Agent:
     """Get a Chat Follow-up Agent for Vision AI"""
-    
+
     tools = [DuckDuckGoTools()] if enable_search else []
 
     db = PostgresDb(
@@ -79,9 +79,9 @@ def get_chat_agent(
         session_table="sessions",
         db_schema="ai",
     )
-    
+
     agent = Agent(
-        name="Vision Chat Agent", 
+        name="Vision Chat Agent",
         model=get_model_with_provider(model_id),
         db=db,
         id="vision-chat-agent",

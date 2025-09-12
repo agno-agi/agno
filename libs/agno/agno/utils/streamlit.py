@@ -16,6 +16,7 @@ try:
 except ImportError:
     raise ImportError("`streamlit` not installed. Please install using `pip install streamlit`")
 
+
 def add_message(role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None) -> None:
     """Add a message to the session state."""
     if "messages" not in st.session_state:
