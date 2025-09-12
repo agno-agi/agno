@@ -2,7 +2,6 @@ import json
 import logging
 import math
 from typing import Dict, List, Optional
-from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, UploadFile
 
@@ -811,8 +810,7 @@ async def process_content(
     chunker: Optional[str] = None,
 ):
     """Background task to process the content"""
-    log_info(f"Processing content")
-    
+
     try:
         if reader_id:
             reader = None

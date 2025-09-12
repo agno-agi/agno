@@ -1,10 +1,10 @@
 from agno.agent import Agent
 from agno.db.json import JsonDb
+from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector
-from agno.db.postgres.postgres import PostgresDb
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 

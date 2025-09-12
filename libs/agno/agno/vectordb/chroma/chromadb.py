@@ -766,8 +766,14 @@ class ChromaDb(VectorDb):
                     updated_metadatas.append(updated_meta)
 
                 # Update the documents
+                # Filter out None values from metadata as ChromaDB doesn't accept them
+                cleaned_metadatas = []
+                for meta in updated_metadatas:
+                    cleaned_meta = {k: v for k, v in meta.items() if v is not None}
+                    cleaned_metadatas.append(cleaned_meta)
+
                 # Convert to the expected type for ChromaDB
-                chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool, None]]], updated_metadatas)
+                chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool]]], cleaned_metadatas)
                 collection.update(ids=ids, metadatas=chroma_metadatas)
                 logger.debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
 

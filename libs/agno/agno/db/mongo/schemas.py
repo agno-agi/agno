@@ -38,7 +38,6 @@ KNOWLEDGE_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {"key": "name"},
     {"key": "description"},
-    {"key": "content_hash"},
     {"key": "type"},
     {"key": "status"},
     {"key": "status_message"},

@@ -1424,29 +1424,6 @@ class DynamoDb(BaseDb):
         except Exception as e:
             log_error(f"Failed to delete knowledge content {id}: {e}")
 
-    def get_knowledge_content_by_content_hash(self, content_hash: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge row from the database.
-
-        Args:
-            content_hash (str): The content hash of the knowledge row to get.
-
-        Returns:
-            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
-        """
-        try:
-            table_name = self._get_table("knowledge")
-            response = self.client.get_item(TableName=table_name, Key={"content_hash": {"S": content_hash}})
-
-            item = response.get("Item")
-            if item:
-                return deserialize_knowledge_row(item)
-
-            return None
-
-        except Exception as e:
-            log_error(f"Failed to get knowledge content {content_hash}: {e}")
-            return None
-
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 

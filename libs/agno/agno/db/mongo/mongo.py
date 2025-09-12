@@ -1075,27 +1075,6 @@ class MongoDb(BaseDb):
             log_error(f"Error deleting knowledge content: {e}")
             raise
 
-    def get_knowledge_content_by_content_hash(self, content_hash: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge row from the database.
-
-        Args:
-            content_hash (str): The content hash of the knowledge row to get.
-        """
-        try:
-            collection = self._get_collection(table_type="knowledge")
-            if collection is None:
-                return None
-
-            result = collection.find_one({"content_hash": content_hash})
-            if result is None:
-                return None
-
-            return KnowledgeRow.model_validate(result)
-
-        except Exception as e:
-            log_error(f"Error getting knowledge content {content_hash}: {e}")
-            return None
-
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 

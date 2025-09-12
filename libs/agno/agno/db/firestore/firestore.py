@@ -1073,29 +1073,6 @@ class FirestoreDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting knowledge source: {e}")
 
-    def get_knowledge_content_by_content_hash(self, content_hash: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge row from the database.
-
-        Args:
-            content_hash (str): The content hash of the knowledge row to get.
-
-        Returns:
-            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
-        """
-        try:
-            collection_ref = self._get_collection(table_type="knowledge")
-            docs = collection_ref.where(filter=FieldFilter("content_hash", "==", content_hash)).stream()
-
-            for doc in docs:
-                data = doc.to_dict()
-                return KnowledgeRow.model_validate(data)
-
-            return None
-
-        except Exception as e:
-            log_error(f"Error getting knowledge content {content_hash}: {e}")
-            return None
-
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 

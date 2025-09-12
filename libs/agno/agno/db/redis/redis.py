@@ -1062,23 +1062,6 @@ class RedisDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting knowledge content: {e}")
 
-    def get_knowledge_content_by_content_hash(self, content_hash: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge row from the database.
-
-        Args:
-            content_hash (str): The content hash of the knowledge row to get.
-        """
-        try:
-            document_raw = self._get_record("knowledge", content_hash)
-            if document_raw is None:
-                return None
-
-            return KnowledgeRow.model_validate(document_raw)
-
-        except Exception as e:
-            log_error(f"Error getting knowledge content {content_hash}: {e}")
-            return None
-
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 

@@ -96,38 +96,40 @@ async def websocket_endpoint(websocket: WebSocket):
                     token = message_data.get("token")
                     if not token:
                         await websocket.send_text(
-                            json.dumps({
-                                "event": "auth_error", 
-                                "error": "Token is required"
-                            })
+                            json.dumps(
+                                {"event": "auth_error", "error": "Token is required"}
+                            )
                         )
                         continue
 
                     if validate_token(token):
                         authenticated_connections[connection_id] = True
                         await websocket.send_text(
-                            json.dumps({
-                                "event": "authenticated",
-                                "message": "Authentication successful. You can now send commands.",
-                            })
+                            json.dumps(
+                                {
+                                    "event": "authenticated",
+                                    "message": "Authentication successful. You can now send commands.",
+                                }
+                            )
                         )
                         print(f"🔐 Client authenticated: {connection_id}")
                     else:
                         await websocket.send_text(
-                            json.dumps({
-                                "event": "auth_error",
-                                "error": "Invalid token"
-                            })
+                            json.dumps(
+                                {"event": "auth_error", "error": "Invalid token"}
+                            )
                         )
                     continue
 
                 # Check authentication for other actions
                 if not authenticated_connections.get(connection_id, False):
                     await websocket.send_text(
-                        json.dumps({
-                            "event": "auth_required",
-                            "error": "Authentication required. Send authenticate action with valid token.",
-                        })
+                        json.dumps(
+                            {
+                                "event": "auth_required",
+                                "error": "Authentication required. Send authenticate action with valid token.",
+                            }
+                        )
                     )
                     continue
 

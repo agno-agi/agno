@@ -69,7 +69,6 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "access_count": {"type": BigInteger, "nullable": True},
     "status": {"type": lambda: String(50), "nullable": True},
     "status_message": {"type": Text, "nullable": True},
-    "content_hash": {"type": lambda: String(255), "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "external_id": {"type": lambda: String(128), "nullable": True},

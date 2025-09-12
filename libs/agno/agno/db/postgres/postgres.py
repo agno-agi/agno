@@ -1256,27 +1256,6 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Exception deleting knowledge content: {e}")
 
-    def get_knowledge_content_by_content_hash(self, content_hash: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge row from the database.
-
-        Args:
-            content_hash (str): The content hash of the knowledge row to get.
-        """
-        table = self._get_table(table_type="knowledge")
-        if table is None:
-            return None
-
-        try:
-            with self.Session() as sess, sess.begin():
-                stmt = select(table).where(table.c.content_hash == content_hash)
-                result = sess.execute(stmt).fetchone()
-                if result is None:
-                    return None
-                return KnowledgeRow.model_validate(result._mapping)
-        except Exception as e:
-            log_error(f"Error getting knowledge content {content_hash}: {e}")
-            return None
-
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 

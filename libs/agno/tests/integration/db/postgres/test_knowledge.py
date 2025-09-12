@@ -69,7 +69,6 @@ def sample_knowledge_dataset() -> KnowledgeRow:
         access_count=12,
         status="processed",
         status_message="Dataset has been processed and is ready for training",
-        content_hash="test_knowledge_dataset_1_content_hash",
         created_at=int(time.time()) - 7200,  # 2 hours ago
         updated_at=int(time.time()) - 3600,  # 1 hour ago
     )
@@ -100,7 +99,6 @@ def sample_knowledge_model() -> KnowledgeRow:
         access_count=234,
         status="deployed",
         status_message="Model is deployed and serving predictions",
-        content_hash="test_knowledge_model_1_content_hash",
         created_at=int(time.time()) - 86400,  # 1 day ago
         updated_at=int(time.time()) - 7200,  # 2 hours ago
     )
@@ -160,17 +158,6 @@ def test_upsert_knowledge_content_update(postgres_db_real: PostgresDb, sample_kn
     assert result.description == "Updated API documentation with new endpoints"
     assert result.access_count == 50
     assert result.status == "updated"
-
-
-def test_get_knowledge_content_by_content_hash(postgres_db_real: PostgresDb, sample_knowledge_document: KnowledgeRow):
-    """Test getting knowledge content by content hash"""
-    postgres_db_real.upsert_knowledge_content(sample_knowledge_document)
-
-    result = postgres_db_real.get_knowledge_content_by_content_hash(sample_knowledge_document.content_hash)
-
-    assert result is not None
-    assert isinstance(result, KnowledgeRow)
-    assert result.id == sample_knowledge_document.id
 
 
 def test_get_knowledge_content_by_id(postgres_db_real: PostgresDb, sample_knowledge_document: KnowledgeRow):

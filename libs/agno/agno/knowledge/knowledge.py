@@ -9,14 +9,12 @@ from io import BytesIO
 from os.path import basename
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast, overload
-from uuid import uuid4
 
 from httpx import AsyncClient
 
 from agno.db.base import BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.utils import generate_deterministic_id
-
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
@@ -241,7 +239,7 @@ class Knowledge:
         file_data = None
         if text_content:
             file_data = FileData(content=text_content, type="Text")
-        
+
         content = Content(
             name=name,
             description=description,
@@ -256,7 +254,7 @@ class Knowledge:
         )
         content.content_hash = self._build_content_hash(content)
         content.id = generate_deterministic_id(content.content_hash)
-        
+
         await self._load_content(content, upsert, skip_if_exists, include, exclude)
 
     @overload
@@ -343,11 +341,7 @@ class Knowledge:
         Returns:
             bool: True if should skip processing, False if should continue
         """
-        if (
-            self.vector_db
-            and self.vector_db.content_hash_exists(content_hash)
-            and skip_if_exists
-        ):
+        if self.vector_db and self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
             return True
 
         return False
@@ -367,18 +361,16 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_info(f"Adding file {path} due to include/exclude filters")
 
-                # Handle LightRAG special case - read file and upload directly
-                if self.vector_db.__class__.__name__ == "LightRag":
-                    await self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
-                    return
-
                 self._add_to_contents_db(content)
-                content_hash = self._build_content_hash(content)
-                if self._should_skip(content_hash, skip_if_exists):
+                if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
                     self._update_content(content)
                     return
 
+                # Handle LightRAG special case - read file and upload directly
+                if self.vector_db.__class__.__name__ == "LightRag":
+                    await self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
+                    return
 
                 if content.reader:
                     # TODO: We will refactor this to eventually pass authorization to all readers
@@ -464,19 +456,16 @@ class Knowledge:
         if not content.url:
             raise ValueError("No url provided")
 
-        if self.vector_db.__class__.__name__ == "LightRag":
-            await self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
-            return
-
-        # 1. Set content hash
+        # 1. Add content to contents database
         self._add_to_contents_db(content)
-
-        content_hash = self._build_content_hash(content)
-        if self._should_skip(content_hash, skip_if_exists):
+        if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
             return
 
+        if self.vector_db.__class__.__name__ == "LightRag":
+            await self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
+            return
 
         # 2. Validate URL
         try:
@@ -591,14 +580,14 @@ class Knowledge:
 
         log_info(f"Adding content from {content.name}")
 
-        if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
-            await self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
-            return
-
         self._add_to_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists):
+        if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
+            return
+
+        if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
+            await self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
             return
 
         read_documents = []
@@ -648,7 +637,6 @@ class Knowledge:
                     reader = self._select_reader(content.file_data.type)
                 name = content.name if content.name else f"content_{content.file_data.type}"
                 read_documents = reader.read(content_io, name=name)
-                print(f"Reading documents")
                 for read_document in read_documents:
                     if content.metadata:
                         read_document.meta_data.update(content.metadata)
@@ -693,14 +681,14 @@ class Knowledge:
             content.content_hash = self._build_content_hash(content)
             content.id = generate_deterministic_id(content.content_hash)
 
-            if self.vector_db.__class__.__name__ == "LightRag":
-                await self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
-                return
-            
             self._add_to_contents_db(content)
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
+                return
+
+            if self.vector_db.__class__.__name__ == "LightRag":
+                await self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
                 return
 
             if content.reader is None:
@@ -915,8 +903,7 @@ class Knowledge:
 
         if self.vector_db.upsert_available() and upsert:
             try:
-                print(f"Upserting content: {content.content_hash}")
-                await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)
+                await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
             except Exception as e:
                 log_error(f"Error upserting document: {e}")
                 content.status = ContentStatus.FAILED
@@ -925,9 +912,10 @@ class Knowledge:
                 return
         else:
             try:
-                print(f"Inserting content: {content.content_hash}")
                 await self.vector_db.async_insert(
-                    content.content_hash, documents=read_documents, filters=content.metadata
+                    content.content_hash,  # type: ignore[arg-type]
+                    documents=read_documents,
+                    filters=content.metadata,  # type: ignore[arg-type]
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {e}")
@@ -1052,8 +1040,6 @@ class Knowledge:
                 content_row.status_message = content.status_message if content.status_message else ""
             if content.external_id is not None:
                 content_row.external_id = content.external_id
-            if content.content_hash is not None:
-                content_row.content_hash = content.content_hash
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
@@ -1204,9 +1190,6 @@ class Knowledge:
 
             read_documents = content.reader.read(content.topics)
             if len(read_documents) > 0:
-                print("READ DOCUMENTS: ", len(read_documents))
-                print("READ DOCUMENTS: ", read_documents[0])
-
                 if self.vector_db and hasattr(self.vector_db, "insert_text"):
                     result = await self.vector_db.insert_text(
                         file_source=content.topics[0],

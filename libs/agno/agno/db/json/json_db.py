@@ -782,22 +782,6 @@ class JsonDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting knowledge content: {e}")
 
-    def get_knowledge_content_by_content_hash(self, content_hash: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge row from the database.
-
-        Args:
-            content_hash (str): The content hash of the knowledge row to get.
-        """
-        try:
-            knowledge_items = self._read_json_file(self.knowledge_table_name)
-            for item in knowledge_items:
-                if item.get("content_hash") == content_hash:
-                    return KnowledgeRow.model_validate(item)
-            return None
-        except Exception as e:
-            log_warning(f"Error getting knowledge content {content_hash}: {e}")
-            return None
-
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
