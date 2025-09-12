@@ -168,12 +168,12 @@ def create_infra_from_template(
         print_info(f"Please run `cd ./{str(relative_infra_root_path)}` and:\n")
         print_info("1. Start your AgentOS -> `ag infra up`")
         print_info("2. Stop your AgentOS -> `ag infra down`")
-        print_info("\nView your running AgentOS on https://os.agno.com")
+        print_info("\nView your AgentOS on https://os.agno.com")
         print_info("--------------------------------")
 
         return infra_config
     else:
-        print_info("Infra setup unsuccessful. Please try again.")
+        print_info("AgentOS codebase setup unsuccessful. Please try again.")
     return None
 
 
@@ -214,9 +214,9 @@ def start_infra(
     force: Optional[bool] = None,
     pull: Optional[bool] = False,
 ) -> None:
-    """Start an Agno Infra. This is called from `ag infra up`"""
+    """Start an AgentOS codebase infrastructure. This is called from `ag infra up`"""
 
-    print_heading("Starting infra: {}".format(str(infra_config.infra_root_path.stem)))
+    print_heading("Starting AgentOS codebase infrastructure: {}".format(str(infra_config.infra_root_path.stem)))
     logger.debug(f"\ttarget_env   : {target_env}")
     logger.debug(f"\ttarget_infra : {target_infra}")
     logger.debug(f"\ttarget_group : {target_group}")
@@ -464,25 +464,25 @@ def set_infra_as_active(infra_dir_name: Optional[str]) -> None:
 
     infra_dir_is_valid: bool = infra_root_path is not None and infra_root_path.exists() and infra_root_path.is_dir()
     if not infra_dir_is_valid:
-        logger.error("Invalid infra directory: {}".format(infra_root_path))
+        logger.error("Invalid codebase directory: {}".format(infra_root_path))
         return
 
     ######################################################
     # 1.3 Validate InfraConfig is available i.e. a Infra is available at this directory
     ######################################################
-    logger.debug(f"Checking for a infra at path: {infra_root_path}")
+    logger.debug(f"Checking for an AgentOS codebase at path: {infra_root_path}")
     active_infra_config: Optional[InfraConfig] = agno_config.get_infra_config_by_path(infra_root_path)
     if active_infra_config is None:
         # This happens when the infra is not yet setup
-        print_info(f"Could not find a infra at path: {infra_root_path}")
+        print_info(f"Could not find a AgentOS codebase at path: {infra_root_path}")
         # TODO: setup automatically for the user
-        print_info("If this infra has not been setup, please run `ag infra setup` from the infra directory")
+        # print_info("If this AgentOS codebase has not been setup, please run `ag infra setup` from the infra directory")
         return
 
     ######################################################
     ## 2. Set Infra as active
     ######################################################
-    print_heading(f"Setting infra {active_infra_config.infra_root_path.stem} as active")
+    print_heading(f"Setting AgentOS codebase {active_infra_config.infra_root_path.stem} as active")
     agno_config.set_active_infra_dir(active_infra_config.infra_root_path)
-    print_info("Active infra updated")
+    print_info("Active AgentOS codebase updated")
     return
