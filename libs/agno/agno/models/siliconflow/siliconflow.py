@@ -22,4 +22,4 @@ class Siliconflow(OpenAILike):
     name: str = "Siliconflow"
     provider: str = "Siliconflow"
     api_key: Optional[str] = getenv("SILICONFLOW_API_KEY")
-    base_url: str = "https://api.siliconflow.cn/v1"
+    base_url: str = "https://api.siliconflow.com/v1"

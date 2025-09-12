@@ -9,7 +9,7 @@ The current version of the siliconflow-chat model's Function Calling capability 
 """
 
 agent = Agent(
-    model=Siliconflow(id="Qwen/Qwen3-8B"),
+    model=Siliconflow(id="openai/gpt-oss-120b"),
     tools=[DuckDuckGoTools()],
     show_tool_calls=True,
     markdown=True,

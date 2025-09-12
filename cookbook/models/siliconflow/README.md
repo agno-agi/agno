@@ -18,7 +18,7 @@ export SILICONFLOW_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U openai duckduckgo-search duckdb yfinance agno
+pip install -U openai duckduckgo-search duckdb agno
 ```
 
 ### 4. Run basic Agent
@@ -48,4 +48,3 @@ python cookbook/models/siliconflow/tool_use.py
 ```shell
 python cookbook/models/siliconflow/structured_output.py
 ```
-

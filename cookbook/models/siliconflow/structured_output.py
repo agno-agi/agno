@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.siliconflow import Siliconflow
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -26,14 +26,14 @@ class MovieScript(BaseModel):
 
 
 json_mode_agent = Agent(
-    model=Siliconflow(id="Qwen/Qwen3-8B"),
+    model=Siliconflow(id="openai/gpt-oss-120b"),
     description="You help people write movie scripts.",
     response_model=MovieScript,
     use_json_mode=True,
 )
 
 # Get the response in a variable
-json_mode_response: RunResponse = json_mode_agent.run("New York")
+json_mode_response: RunOutput = json_mode_agent.run("New York")
 pprint(json_mode_response.content)
 
 # json_mode_agent.print_response("New York")

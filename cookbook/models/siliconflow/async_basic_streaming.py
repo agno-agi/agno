@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.models.siliconflow import Siliconflow
 
 agent = Agent(
-    model=Siliconflow(id="Qwen/Qwen3-8B"),
+    model=Siliconflow(id="openai/gpt-oss-120b"),
     markdown=True,
 )
 
