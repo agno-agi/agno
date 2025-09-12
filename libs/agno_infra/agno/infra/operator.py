@@ -168,7 +168,7 @@ def create_infra_from_template(
         print_info(f"Please run `cd ./{str(relative_infra_root_path)}` and:\n")
         print_info("1. Start your AgentOS -> `ag infra up`")
         print_info("2. Stop your AgentOS -> `ag infra down`")
-        print_info("\nView your running AgentOS on https://os.agno.com")
+        print_info("\nView your AgentOS on https://os.agno.com")
         print_info("--------------------------------")
 
         return infra_config

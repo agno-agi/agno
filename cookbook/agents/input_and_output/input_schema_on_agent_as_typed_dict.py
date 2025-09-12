@@ -1,7 +1,9 @@
-from typing import List, TypedDict, Optional
+from typing import List, Optional, TypedDict
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.hackernews import HackerNewsTools
+
 
 # Define a TypedDict schema
 class ResearchTopicDict(TypedDict):
@@ -10,13 +12,15 @@ class ResearchTopicDict(TypedDict):
     target_audience: str
     sources_required: int
 
+
 # Optional: Define a TypedDict with optional fields
 class ResearchTopicWithOptionals(TypedDict, total=False):
-    topic: str  
-    focus_areas: List[str]  
-    target_audience: str  
-    sources_required: int  
-    priority: Optional[str] 
+    topic: str
+    focus_areas: List[str]
+    target_audience: str
+    sources_required: int
+    priority: Optional[str]
+
 
 # Create agent with TypedDict input schema
 hackernews_agent = Agent(
