@@ -466,19 +466,23 @@ class Knowledge:
             self._update_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
 
-        # 3. Fetch and load content
-        async with AsyncClient() as client:
-            response = await async_fetch_with_retry(content.url, client=client)
-        bytes_content = BytesIO(response.content)
+        # 3. Fetch and load content if file has an extension
+        url_path = Path(parsed_url.path)
+        file_extension = url_path.suffix.lower()
+
+        bytes_content = None
+        if file_extension:
+            async with AsyncClient() as client:
+                response = await async_fetch_with_retry(content.url, client=client)
+            bytes_content = BytesIO(response.content)
 
         # 4. Select reader
         # If a reader was provided by the user, use it
         reader = content.reader
         name = content.name if content.name else content.url
         # Else select based on file extension
+
         if reader is None:
-            url_path = Path(parsed_url.path)
-            file_extension = url_path.suffix.lower()
             if file_extension == ".csv":
                 name = basename(parsed_url.path) or "data.csv"
                 reader = self.csv_reader
@@ -499,14 +503,19 @@ class Knowledge:
             if reader is not None:
                 # TODO: We will refactor this to eventually pass authorization to all readers
                 import inspect
-
                 read_signature = inspect.signature(reader.read)
                 if reader.__class__.__name__ == "YouTubeReader":
                     read_documents = reader.read(content.url, name=name)
                 elif "password" in read_signature.parameters and content.auth and content.auth.password:
-                    read_documents = reader.read(bytes_content, name=name, password=content.auth.password)
+                    if bytes_content:
+                        read_documents = reader.read(bytes_content, name=name, password=content.auth.password)
+                    else:
+                        read_documents = reader.read(content.url, name=name, password=content.auth.password)
                 else:
-                    read_documents = reader.read(bytes_content, name=name)
+                    if bytes_content:
+                        read_documents = reader.read(bytes_content, name=name)
+                    else:
+                        read_documents = reader.read(content.url, name=name)
         except Exception as e:
             log_error(f"Error reading URL: {content.url} - {str(e)}")
             content.status = ContentStatus.FAILED
