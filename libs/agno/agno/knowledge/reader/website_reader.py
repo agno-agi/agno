@@ -106,18 +106,35 @@ class WebsiteReader(Reader):
             """
             Check if the tag matches any of the relevant tags or class names
             """
-            if tag.name in ["article", "main"]:
+            if not isinstance(tag, Tag):
+                return False
+                
+            if tag.name in ["article", "main", "section"]:
                 return True
-            if any(cls in ["content", "main-content", "post-content"] for cls in tag.get("class", [])):  # type: ignore
+                
+            classes = tag.get("class", [])
+            content_classes = ["content", "main-content", "post-content", "entry-content", "article-body"]
+            if any(cls in content_classes for cls in classes):
                 return True
+                
+            # Check for common content IDs
+            tag_id = tag.get("id", "")
+            if tag_id in ["content", "main", "article"]:
+                return True
+                
             return False
 
-        # Use a single call to 'find' with a custom function to match tags or classes
+        # Try to find main content element
         element = soup.find(match)
         if element:
+            # Remove common unwanted elements from the found content
+            for unwanted in element.find_all(['script', 'style', 'nav', 'header', 'footer']):
+                unwanted.decompose()
             return element.get_text(strip=True, separator=" ")
 
         # Fallback: get full page content
+        for unwanted in soup.find_all(['script', 'style', 'nav', 'header', 'footer']):
+            unwanted.decompose()
         return soup.get_text(strip=True, separator=" ")
 
     def crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
