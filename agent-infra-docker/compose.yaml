@@ -1,0 +1,47 @@
+services:
+  pgvector:
+    image: agnohq/pgvector:16
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${DB_USER:-ai}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ai}
+      POSTGRES_DB: ${DB_NAME:-ai}
+    networks:
+      - agent-os
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_NAME:-agent-os}:${IMAGE_TAG:-latest}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DB_HOST: pgvector
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-ai}
+      DB_PASS: ${DB_PASSWORD:-ai}
+      DB_DATABASE: ${DB_NAME:-ai}
+      WAIT_FOR_DB: "True"
+      PRINT_ENV_ON_LOAD: "True"
+    networks:
+      - agent-os
+    depends_on:
+      - pgvector
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  agent-os:
+
+volumes:
+  pgdata:

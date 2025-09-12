@@ -48,9 +48,8 @@ def log_config_not_available_msg() -> None:
 
 
 def log_active_infra_not_available() -> None:
-    logger.error("Could not find an active infra. You can:")
-    logger.error("- Run `ag infra setup` to setup a infra at the current path")
-    logger.error("- Run `ag infra create` to create a new infra")
+    logger.error("Could not find an active AgentOS codebase. You can:")
+    logger.error("- Run `ag infra create` to create a new AgentOS codebase")
 
 
 def print_available_infra(avl_infra_list) -> None:
