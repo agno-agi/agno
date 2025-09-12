@@ -19,7 +19,7 @@ def migrate(
     Add content_hash column and index to Knowledge table.
 
     This migration adds:
-    1. A content_hash VARCHAR(255) column 
+    1. A content_hash VARCHAR(255) column
     2. An index on the content_hash column for improved query performance
 
     Note: Existing records will have NULL content_hash until they are
@@ -42,7 +42,7 @@ def migrate(
         column_exists = _column_exists(db, table_name, "content_hash")
         index_name = f"idx_{table_name}_content_hash"
         index_exists = _index_exists(db, table_name, index_name)
-        
+
         if column_exists and index_exists:
             log_info(f"content_hash column and index already exist in {table_name}, skipping migration")
             return
@@ -199,7 +199,7 @@ def validate_migration(
         with db.Session() as sess:
             # Check if column exists
             column_exists = _column_exists(db, table_name, "content_hash")
-            
+
             # Check if index exists
             index_name = f"idx_{table_name}_content_hash"
             index_exists = _index_exists(db, table_name, index_name)
@@ -221,7 +221,8 @@ def validate_migration(
                 "total_records": total_count,
                 "records_with_hash": hash_count,
                 "records_without_hash": no_hash_count,
-                "migration_complete": column_exists and index_exists,  # Migration is complete if both column and index exist
+                "migration_complete": column_exists
+                and index_exists,  # Migration is complete if both column and index exist
                 "notes": "Existing records will have NULL content_hash until accessed/updated by the application",
             }
 
@@ -231,27 +232,26 @@ def validate_migration(
 
 
 if __name__ == "__main__":
-    
     # Example usage:
-    from agno.db.postgres.postgres import PostgresDb
     from agno.db.migrations.knowledge_content_hash import migrate, validate_migration
-    
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+    from agno.db.postgres.postgres import PostgresDb
+
+    db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
     # Initialize your database
     db = PostgresDb(
         db_url=db_url,
     )
-    
+
     # Run migration (dry run first to see what will happen)
     migrate(db, knowledge_table_name="knowledge_contents", dry_run=True)
-    
+
     # Run actual migration (adds both column and index)
     migrate(db, knowledge_table_name="knowledge_contents", dry_run=False)
-    
+
     # Validate migration (check that column and index were added)
     results = validate_migration(db, knowledge_table_name="knowledge_contents")
     print(f"Migration validation: {results}")
     print("Note: Existing records will have NULL content_hash until accessed by the application")
-    
+
     pass
