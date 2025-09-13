@@ -6,7 +6,7 @@ from typing import Any, List, Optional
 
 import requests
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
 
 
@@ -39,14 +39,15 @@ class ZoomTools(Toolkit):
                 "ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, and ZOOM_CLIENT_SECRET must be set either through parameters or environment variables."
             )
 
-        tools: List[Any] = []
-
-        tools.append(self.schedule_meeting)
-        tools.append(self.get_upcoming_meetings)
-        tools.append(self.list_meetings)
-        tools.append(self.get_meeting_recordings)
-        tools.append(self.delete_meeting)
-        tools.append(self.get_meeting)
+        tools: List[Any] = [
+            self.get_access_token,
+            self.schedule_meeting,
+            self.get_upcoming_meetings,
+            self.list_meetings,
+            self.get_meeting_recordings,
+            self.delete_meeting,
+            self.get_meeting,
+        ]
 
         super().__init__(name="zoom_tool", tools=tools, **kwargs)
 

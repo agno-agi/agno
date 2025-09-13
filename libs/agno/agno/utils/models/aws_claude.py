@@ -53,7 +53,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     try:
         # Case 1: Image is a URL
         if image.url is not None:
-            content_bytes = image.image_url_content
+            content_bytes = image.get_content_bytes()  # type: ignore
 
         # Case 2: Image is a local file path
         elif image.filepath is not None:

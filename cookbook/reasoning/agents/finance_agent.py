@@ -14,7 +14,6 @@ reasoning_agent = Agent(
     ],
     instructions="Use tables to display data",
     use_json_mode=True,
-    show_tool_calls=True,
     reasoning=True,
     markdown=True,
 )

@@ -51,6 +51,7 @@ def _prepare_command(command: str) -> list[str]:
         "deno",
         "java",
         "ruby",
+        "docker",
     }
 
     executable = parts[0].split("/")[-1]
@@ -365,7 +366,7 @@ class MultiMCPTools(Toolkit):
         *,
         env: Optional[dict[str, str]] = None,
         server_params_list: Optional[
-            List[Union[SSEClientParams, StdioServerParameters, StreamableHTTPClientParams]]
+            list[Union[SSEClientParams, StdioServerParameters, StreamableHTTPClientParams]]
         ] = None,
         timeout_seconds: int = 5,
         client=None,
@@ -531,7 +532,6 @@ class MultiMCPTools(Toolkit):
                 session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
                 self._active_contexts.append(session)
                 await self.initialize(session)
-
             # Handle Streamable HTTP connections
             elif isinstance(server_params, StreamableHTTPClientParams):
                 client_connection = await self._async_exit_stack.enter_async_context(

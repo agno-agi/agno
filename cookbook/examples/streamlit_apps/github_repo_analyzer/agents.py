@@ -2,26 +2,33 @@ from textwrap import dedent
 from typing import Optional
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
 from agno.tools.github import GithubTools
+from agno.utils.streamlit import get_model_from_id
 
 
-def get_github_agent(debug_mode: bool = True) -> Optional[Agent]:
-    """
-    Args:
-        repo_name: Optional repository name ("owner/repo"). If None, agent relies on user query.
-        debug_mode: Whether to enable debug mode for tool calls.
-    """
+def get_github_agent(
+    model_id: str = "openai:gpt-4o",
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> Agent:
+    """Get a GitHub Repository Analyzer Agent"""
 
-    return Agent(
-        model=OpenAIChat(id="gpt-4.1"),
+    agent = Agent(
+        name="GitHub Repository Analyzer",
+        model=get_model_from_id(model_id),
+        id="github-repo-analyzer",
+        user_id=user_id,
+        session_id=session_id,
+        tools=[
+            GithubTools(),
+        ],
         description=dedent("""
             You are an expert Code Reviewing Agent specializing in analyzing GitHub repositories,
             with a strong focus on detailed code reviews for Pull Requests.
             Use your tools to answer questions accurately and provide insightful analysis.
         """),
-        instructions=dedent(f"""\
-        **Core Task:** Analyze GitHub repositories and answer user questions based on the available tools and conversation history.
+        instructions=dedent("""\
+        **Task:** Analyze GitHub repositories and answer user questions based on the available tools and conversation history.
 
         **Repository Context Management:**
         1.  **Context Persistence:** Once a target repository (owner/repo) is identified (either initially or from a user query like 'analyze owner/repo'), **MAINTAIN THAT CONTEXT** for all subsequent questions in the current conversation unless the user clearly specifies a *different* repository.
@@ -52,26 +59,9 @@ def get_github_agent(debug_mode: bool = True) -> Optional[Agent]:
         *   Analyze Patch: Evaluate based on functionality, best practices, style, clarity, efficiency.
         *   Present Review: Structure clearly, cite lines/code, be constructive.
         """),
-        tools=[
-            GithubTools(
-                get_repository=True,
-                search_repositories=True,
-                get_pull_request=True,
-                get_pull_request_changes=True,
-                list_branches=True,
-                get_pull_request_count=True,
-                get_pull_requests=True,
-                get_pull_request_comments=True,
-                get_pull_request_with_details=True,
-                list_issues=True,
-                get_issue=True,
-                update_file=True,
-                get_file_content=True,
-                get_directory_content=True,
-                search_code=True,
-            ),
-        ],
         markdown=True,
-        debug_mode=debug_mode,
-        add_history_to_messages=True,
+        debug_mode=True,
+        add_history_to_context=True,
     )
+
+    return agent
