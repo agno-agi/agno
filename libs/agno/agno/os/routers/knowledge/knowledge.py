@@ -565,10 +565,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                         "FixedSizeChunker",
                                     ],
                                 },
-                                "web_search": {
-                                    "id": "web_search",
-                                    "name": "WebSearchReader",
-                                    "description": "Reads web_search files",
+                                "web_page": {
+                                    "id": "web_page",
+                                    "name": "WebPageReader",
+                                    "description": "Reads web_page files",
                                     "chunkers": [
                                         "AgenticChunker",
                                         "DocumentChunker",
@@ -681,11 +681,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                     "website",
                                     "firecrawl",
                                     "youtube",
-                                    "web_search",
+                                    "web_page",
                                     "gcs",
                                 ],
                                 "youtube": ["youtube"],
-                                "text": ["web_search"],
+                                "text": ["web_page"],
                                 "topic": ["arxiv"],
                                 "file": ["csv", "gcs"],
                                 ".csv": ["csv"],

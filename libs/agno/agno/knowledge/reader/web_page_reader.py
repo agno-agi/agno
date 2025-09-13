@@ -26,8 +26,8 @@ except ImportError:
 
 
 @dataclass
-class WebSearchReader(Reader):
-    """Reader that uses web search to find content for a given query"""
+class WebPageReader(Reader):
+    """Reader that uses web pages to find content for a given query"""
 
     search_timeout: int = 10
 
@@ -54,7 +54,7 @@ class WebSearchReader(Reader):
 
     @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
-        """Get the list of supported chunking strategies for Web Search readers."""
+        """Get the list of supported chunking strategies for Web Page readers."""
         return [
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
@@ -240,7 +240,7 @@ class WebSearchReader(Reader):
             "url": url,
             "search_title": search_result.get("title", ""),
             "search_description": search_result.get("description", ""),
-            "source": "web_search",
+            "source": "web_page",
             "search_engine": self.search_engine,
         }
 
@@ -251,7 +251,7 @@ class WebSearchReader(Reader):
         if not query:
             raise ValueError("Query cannot be empty")
 
-        log_debug(f"Starting web search reader for query: {query}")
+        log_debug(f"Starting web page reader for query: {query}")
 
         # Perform web search
         search_results = self._perform_web_search(query)
@@ -302,7 +302,7 @@ class WebSearchReader(Reader):
         if not query:
             raise ValueError("Query cannot be empty")
 
-        log_debug(f"Starting async web search reader for query: {query}")
+        log_debug(f"Starting async web page reader for query: {query}")
 
         # Perform web search (synchronous operation)
         search_results = self._perform_web_search(query)

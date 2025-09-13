@@ -1,16 +1,12 @@
 import json
 from pathlib import Path
 from textwrap import dedent
-from typing import Optional
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
-from agno.models.google import Gemini
-from agno.models.groq import Groq
-from agno.models.openai import OpenAIChat
 from agno.tools.file import FileTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.sql import SQLTools

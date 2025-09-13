@@ -146,16 +146,16 @@ class ReaderFactory:
         return WikipediaReader(**config)
 
     @classmethod
-    def _get_web_search_reader(cls, **kwargs) -> Reader:
-        """Get Web Search reader instance."""
-        from agno.knowledge.reader.web_search_reader import WebSearchReader
+    def _get_web_page_reader(cls, **kwargs) -> Reader:
+        """Get Web Page reader instance."""
+        from agno.knowledge.reader.web_page_reader import WebPageReader
 
         config: Dict[str, Any] = {
-            "name": "Web Search Reader",
+            "name": "Web Page Reader",
             "description": "Executes web searches and processes results with relevance ranking and content extraction",
         }
         config.update(kwargs)
-        return WebSearchReader(**config)
+        return WebPageReader(**config)
 
     @classmethod
     def _get_reader_method(cls, reader_key: str) -> Callable[[], Reader]:
@@ -228,7 +228,7 @@ class ReaderFactory:
                 reader_keys.append(reader_key)
 
         # Define priority order for URL readers
-        url_reader_priority = ["url", "website", "firecrawl", "pdf_url", "csv_url", "youtube", "web_search"]
+        url_reader_priority = ["url", "website", "firecrawl", "pdf_url", "csv_url", "youtube", "web_page"]
 
         # Sort with URL readers in priority order, others alphabetically
         def sort_key(reader_key):
