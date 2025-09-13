@@ -337,6 +337,8 @@ class RunInput:
             result["videos"] = [vid.to_dict() for vid in self.videos]
         if self.audios:
             result["audios"] = [aud.to_dict() for aud in self.audios]
+        if self.files:
+            result["files"] = [file.to_dict() for file in self.files]
 
         return result
 
@@ -392,6 +394,7 @@ class RunOutput:
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
+    files: Optional[List[File]] = None  # Files attached to the response
     response_audio: Optional[Audio] = None  # Model audio response
 
     # Input media and messages from user
@@ -446,6 +449,7 @@ class RunOutput:
                 "images",
                 "videos",
                 "audio",
+                "files",
                 "response_audio",
                 "input",
                 "citations",
@@ -507,6 +511,14 @@ class RunOutput:
                     _dict["audio"].append(aud.to_dict())
                 else:
                     _dict["audio"].append(aud)
+
+        if self.files is not None:
+            _dict["files"] = []
+            for file in self.files:
+                if isinstance(file, File):
+                    _dict["files"].append(file.to_dict())
+                else:
+                    _dict["files"].append(file)
 
         if self.response_audio is not None:
             if isinstance(self.response_audio, Audio):
@@ -576,6 +588,9 @@ class RunOutput:
         audio = data.pop("audio", [])
         audio = [Audio.model_validate(audio) for audio in audio] if audio else None
 
+        files = data.pop("files", [])
+        files = [File.model_validate(file) for file in files] if files else None
+
         response_audio = data.pop("response_audio", None)
         response_audio = Audio.model_validate(response_audio) if response_audio else None
 
@@ -613,6 +628,7 @@ class RunOutput:
             images=images,
             audio=audio,
             videos=videos,
+            files=files,
             response_audio=response_audio,
             input=input_obj,
             events=events,

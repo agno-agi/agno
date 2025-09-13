@@ -74,6 +74,7 @@ class Message(BaseModel):
     audio_output: Optional[Audio] = None
     image_output: Optional[Image] = None
     video_output: Optional[Video] = None
+    file_output: Optional[File] = None
 
     # The thinking content from the model
     redacted_reasoning_content: Optional[str] = None
@@ -152,6 +153,8 @@ class Message(BaseModel):
             message_dict["audio"] = [aud.to_dict() for aud in self.audio]
         if self.videos:
             message_dict["videos"] = [vid.to_dict() for vid in self.videos]
+        if self.files:
+            message_dict["files"] = [file.to_dict() for file in self.files]
         if self.audio_output:
             message_dict["audio_output"] = self.audio_output.to_dict()
 

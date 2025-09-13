@@ -1083,13 +1083,13 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
-            images=images, videos=videos, audios=audio
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
         )
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=file_artifacts
         )
 
         # Read existing session from database
@@ -1716,13 +1716,13 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
-            images=images, videos=videos, audios=audio
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
         )
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=file_artifacts
         )
 
         # Read existing session from storage
@@ -3066,6 +3066,10 @@ class Agent:
         if model_response.audios is not None:
             for audio in model_response.audios:
                 self._add_audio(audio, run_response)  # Generated audio go to run_response.audio
+
+        if model_response.files is not None:
+            for file in model_response.files:
+                self._add_file(file, run_response)  # Generated files go to run_response.files
 
     def _update_run_response(self, model_response: ModelResponse, run_response: RunOutput, run_messages: RunMessages):
         # Handle structured outputs
@@ -5727,6 +5731,13 @@ class Agent:
             run_response.audio = []
         run_response.audio.append(audio)
 
+    def _add_file(self, file: File, run_response: RunOutput) -> None:
+        """Add file to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.files is None:
+            run_response.files = []
+        run_response.files.append(file)
+
     ###########################################################################
     # Reasoning
     ###########################################################################
@@ -7210,6 +7221,7 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         audios: Optional[Sequence[Audio]] = None,
+        files: Optional[Sequence[File]] = None,
     ) -> tuple:
         """Convert raw Image/Video/Audio objects - now unified, so just return as-is."""
         # With unified classes, no conversion needed - just ensure IDs are set
@@ -7244,7 +7256,16 @@ class Agent:
                     aud.id = str(uuid4())
                 audio_list.append(aud)
 
-        return image_list, video_list, audio_list
+        file_list = None
+        if files:
+            file_list = []
+            for file in files:
+                if not file.id:
+                    from uuid import uuid4
+                    file.id = str(uuid4())
+                file_list.append(file)
+
+        return image_list, video_list, audio_list, file_list
 
     def cli_app(
         self,
