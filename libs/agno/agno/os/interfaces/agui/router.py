@@ -36,10 +36,12 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
         messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
+        session_id = run_input.thread_id
+
         # Request streaming response from agent
         response_stream = agent.arun(
             input=messages,
-            session_id=run_input.thread_id,
+            session_id=session_id,
             stream=True,
             stream_intermediate_steps=True,
         )
@@ -47,6 +49,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
         # Stream the response content in AG-UI format
         async for event in async_stream_agno_response_as_agui_events(
             state_holder=agent,
+            session_id=session_id,
             response_stream=response_stream,  # type: ignore
         ):
             yield event
@@ -68,21 +71,25 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
         messages = convert_agui_messages_to_agno_messages(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
+        session_id = input.thread_id
+
         # Request streaming response from team
         response_stream = team.arun(
             input=messages,
-            session_id=input.thread_id,
+            session_id=session_id,
             stream=True,
             stream_intermediate_steps=True,
         )
 
         # Stream the response content in AG-UI format
         async for event in async_stream_agno_response_as_agui_events(
-            state_holder=team, response_stream=response_stream
+            state_holder=team,
+            session_id=session_id,
+            response_stream=response_stream
         ):
             yield event
 
-        yield StateSnapshotEvent(snapshot=team.get_session_state())
+        yield StateSnapshotEvent(snapshot=team.get_session_state(session_id))
         yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=input.thread_id, run_id=run_id)
 
     except Exception as e:

@@ -344,6 +344,7 @@ def _generate_state_patch(old_state: dict, new_state: dict):
 # Async version - thin wrapper
 async def async_stream_agno_response_as_agui_events(
     state_holder: Agent | Team,
+    session_id: str,
     response_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]],
 ) -> AsyncIterator[BaseEvent]:
     """
@@ -355,7 +356,8 @@ async def async_stream_agno_response_as_agui_events(
     event_buffer = EventBuffer()
 
     # Emit initial state snapshot
-    last_state = state_holder.get_session_state().copy()
+    # TODO: Fix session state not existing here
+    last_state = state_holder.get_session_state(session_id).copy()
     yield StateSnapshotEvent(snapshot=last_state)
 
     async for chunk in response_stream:
@@ -376,7 +378,7 @@ async def async_stream_agno_response_as_agui_events(
                     yield emit_event
 
             # Get current agent/team state
-            current_state = state_holder.get_session_state().copy()
+            current_state = state_holder.get_session_state(session_id).copy()
 
             # Generate state patch
             patch = _generate_state_patch(last_state, current_state)
