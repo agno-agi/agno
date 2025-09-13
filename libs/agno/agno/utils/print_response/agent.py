@@ -112,7 +112,9 @@ def print_response_stream(
                 if response_event.event == RunEvent.run_content:  # type: ignore
                     if hasattr(response_event, "content"):
                         if isinstance(response_event.content, str):
-                            _response_content += response_event.content
+                            # Don't accumulate text content, parser_model will replace it
+                            if not (agent.parser_model is not None and agent.output_schema is not None):
+                                _response_content += response_event.content
                         elif agent.output_schema is not None and isinstance(response_event.content, BaseModel):
                             try:
                                 response_content_batch = JSON(  # type: ignore
@@ -289,7 +291,9 @@ async def aprint_response_stream(
 
                 if resp.event == RunEvent.run_content:  # type: ignore
                     if isinstance(resp.content, str):
-                        _response_content += resp.content
+                        # Don't accumulate text content, parser_model will replace it
+                        if not (agent.parser_model is not None and agent.output_schema is not None):
+                            _response_content += resp.content
                     elif agent.output_schema is not None and isinstance(resp.content, BaseModel):
                         try:
                             response_content_batch = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore

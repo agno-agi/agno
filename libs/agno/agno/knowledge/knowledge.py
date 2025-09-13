@@ -9,12 +9,12 @@ from io import BytesIO
 from os.path import basename
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast, overload
-from uuid import uuid4
 
 from httpx import AsyncClient
 
 from agno.db.base import BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.utils import generate_deterministic_id
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
@@ -241,7 +241,6 @@ class Knowledge:
             file_data = FileData(content=text_content, type="Text")
 
         content = Content(
-            id=str(uuid4()),
             name=name,
             description=description,
             path=path,
@@ -253,6 +252,8 @@ class Knowledge:
             reader=reader,
             auth=auth,
         )
+        content.content_hash = self._build_content_hash(content)
+        content.id = generate_deterministic_id(content.content_hash)
 
         await self._load_content(content, upsert, skip_if_exists, include, exclude)
 
@@ -329,6 +330,22 @@ class Knowledge:
             )
         )
 
+    def _should_skip(self, content_hash: str, skip_if_exists: bool) -> bool:
+        """
+        Handle the skip_if_exists logic for content that already exists in the vector database.
+
+        Args:
+            content_hash: The content hash string to check for existence
+            skip_if_exists: Whether to skip if content already exists
+
+        Returns:
+            bool: True if should skip processing, False if should continue
+        """
+        if self.vector_db and self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
+            return True
+
+        return False
+
     async def _load_from_path(
         self,
         content: Content,
@@ -344,17 +361,16 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_info(f"Adding file {path} due to include/exclude filters")
 
+                self._add_to_contents_db(content)
+                if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+                    content.status = ContentStatus.COMPLETED
+                    self._update_content(content)
+                    return
+
                 # Handle LightRAG special case - read file and upload directly
                 if self.vector_db.__class__.__name__ == "LightRag":
                     await self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
                     return
-
-                content.content_hash = self._build_content_hash(content)
-                if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-                    log_info(f"Content {content.content_hash} already exists, skipping")
-                    return
-
-                self._add_to_contents_db(content)
 
                 if content.reader:
                     # TODO: We will refactor this to eventually pass authorization to all readers
@@ -407,15 +423,16 @@ class Knowledge:
                     log_debug(f"Skipping file {file_path} due to include/exclude filters")
                     continue
 
-                id = str(uuid4())
                 file_content = Content(
-                    id=id,
                     name=content.name,
                     path=str(file_path),
                     metadata=content.metadata,
                     description=content.description,
                     reader=content.reader,
                 )
+                file_content.content_hash = self._build_content_hash(file_content)
+                file_content.id = generate_deterministic_id(file_content.content_hash)
+
                 await self._load_from_path(file_content, upsert, skip_if_exists, include, exclude)
         else:
             log_warning(f"Invalid path: {path}")
@@ -439,16 +456,16 @@ class Knowledge:
         if not content.url:
             raise ValueError("No url provided")
 
+        # 1. Add content to contents database
+        self._add_to_contents_db(content)
+        if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+            content.status = ContentStatus.COMPLETED
+            self._update_content(content)
+            return
+
         if self.vector_db.__class__.__name__ == "LightRag":
             await self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
             return
-
-        # 1. Set content hash
-        content.content_hash = self._build_content_hash(content)
-        if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-            log_info(f"Content {content.content_hash} already exists, skipping")
-            return
-        self._add_to_contents_db(content)
 
         # 2. Validate URL
         try:
@@ -466,19 +483,23 @@ class Knowledge:
             self._update_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
 
-        # 3. Fetch and load content
-        async with AsyncClient() as client:
-            response = await async_fetch_with_retry(content.url, client=client)
-        bytes_content = BytesIO(response.content)
+        # 3. Fetch and load content if file has an extension
+        url_path = Path(parsed_url.path)
+        file_extension = url_path.suffix.lower()
+
+        bytes_content = None
+        if file_extension:
+            async with AsyncClient() as client:
+                response = await async_fetch_with_retry(content.url, client=client)
+            bytes_content = BytesIO(response.content)
 
         # 4. Select reader
         # If a reader was provided by the user, use it
         reader = content.reader
         name = content.name if content.name else content.url
         # Else select based on file extension
+
         if reader is None:
-            url_path = Path(parsed_url.path)
-            file_extension = url_path.suffix.lower()
             if file_extension == ".csv":
                 name = basename(parsed_url.path) or "data.csv"
                 reader = self.csv_reader
@@ -504,9 +525,15 @@ class Knowledge:
                 if reader.__class__.__name__ == "YouTubeReader":
                     read_documents = reader.read(content.url, name=name)
                 elif "password" in read_signature.parameters and content.auth and content.auth.password:
-                    read_documents = reader.read(bytes_content, name=name, password=content.auth.password)
+                    if bytes_content:
+                        read_documents = reader.read(bytes_content, name=name, password=content.auth.password)
+                    else:
+                        read_documents = reader.read(content.url, name=name, password=content.auth.password)
                 else:
-                    read_documents = reader.read(bytes_content, name=name)
+                    if bytes_content:
+                        read_documents = reader.read(bytes_content, name=name)
+                    else:
+                        read_documents = reader.read(content.url, name=name)
         except Exception as e:
             log_error(f"Error reading URL: {content.url} - {str(e)}")
             content.status = ContentStatus.FAILED
@@ -554,16 +581,15 @@ class Knowledge:
 
         log_info(f"Adding content from {content.name}")
 
+        self._add_to_contents_db(content)
+        if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+            content.status = ContentStatus.COMPLETED
+            self._update_content(content)
+            return
+
         if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
             await self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
             return
-
-        content.content_hash = self._build_content_hash(content)
-        if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-            log_info(f"Content {content.content_hash} already exists, skipping")
-
-            return
-        self._add_to_contents_db(content)
 
         read_documents = []
 
@@ -612,7 +638,6 @@ class Knowledge:
                     reader = self._select_reader(content.file_data.type)
                 name = content.name if content.name else f"content_{content.file_data.type}"
                 read_documents = reader.read(content_io, name=name)
-
                 for read_document in read_documents:
                     if content.metadata:
                         read_document.meta_data.update(content.metadata)
@@ -644,9 +669,7 @@ class Knowledge:
             return
 
         for topic in content.topics:
-            id = str(uuid4())
             content = Content(
-                id=id,
                 name=topic,
                 metadata=content.metadata,
                 reader=content.reader,
@@ -656,30 +679,37 @@ class Knowledge:
                 ),
                 topics=[topic],
             )
+            content.content_hash = self._build_content_hash(content)
+            content.id = generate_deterministic_id(content.content_hash)
+
+            self._add_to_contents_db(content)
+            if self._should_skip(content.content_hash, skip_if_exists):
+                content.status = ContentStatus.COMPLETED
+                self._update_content(content)
+                return
 
             if self.vector_db.__class__.__name__ == "LightRag":
                 await self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
                 return
 
-            content.content_hash = self._build_content_hash(content)
-            if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-                log_info(f"Content {content.content_hash} already exists, skipping")
-                continue
-
-            self._add_to_contents_db(content)
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
+                content.status = ContentStatus.FAILED
+                content.status_message = "No reader available for topic"
+                self._update_content(content)
                 continue
+
             read_documents = content.reader.read(topic)
             if len(read_documents) > 0:
                 for read_document in read_documents:
-                    read_document.content_id = id
+                    read_document.content_id = content.id
                     if read_document.content:
                         read_document.size = len(read_document.content.encode("utf-8"))
             else:
                 content.status = ContentStatus.FAILED
                 content.status_message = "No content found for topic"
                 self._update_content(content)
+                continue
 
             await self._handle_vector_db_insert(content, read_documents, upsert)
 
@@ -735,11 +765,9 @@ class Knowledge:
 
         for s3_object in objects_to_read:
             # 2. Setup Content object
-            id = str(uuid4())
             content_name = content.name or ""
             content_name += "_" + (s3_object.name or "")
             content_entry = Content(
-                id=id,
                 name=content_name,
                 description=content.description,
                 status=ContentStatus.PROCESSING,
@@ -748,11 +776,13 @@ class Knowledge:
             )
 
             # 3. Hash content and add it to the contents database
-            content_hash = self._build_content_hash(content_entry)
-            if self.vector_db and self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
-                log_info(f"Content {content_hash} already exists, skipping")
-                continue
+            content_entry.content_hash = self._build_content_hash(content_entry)
+            content_entry.id = generate_deterministic_id(content_entry.content_hash)
             self._add_to_contents_db(content_entry)
+            if self._should_skip(content_entry.content_hash, skip_if_exists):
+                content_entry.status = ContentStatus.COMPLETED
+                self._update_content(content_entry)
+                return
 
             # 4. Select reader
             reader = content.reader
@@ -818,10 +848,8 @@ class Knowledge:
 
         for gcs_object in objects_to_read:
             # 2. Setup Content object
-            id = str(uuid4())
             name = (content.name or "content") + "_" + gcs_object.name
             content_entry = Content(
-                id=id,
                 name=name,
                 description=content.description,
                 status=ContentStatus.PROCESSING,
@@ -830,15 +858,15 @@ class Knowledge:
             )
 
             # 3. Hash content and add it to the contents database
-            content_hash = self._build_content_hash(content_entry)
-            if self.vector_db and self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
-                log_info(f"Content {content_hash} already exists, skipping")
-                continue
-
-            # 4. Add it to the contents database
+            content_entry.content_hash = self._build_content_hash(content_entry)
+            content_entry.id = generate_deterministic_id(content_entry.content_hash)
             self._add_to_contents_db(content_entry)
+            if self._should_skip(content_entry.content_hash, skip_if_exists):
+                content_entry.status = ContentStatus.COMPLETED
+                self._update_content(content_entry)
+                return
 
-            # 5. Select reader
+            # 4. Select reader
             reader = content.reader
             if reader is None:
                 if gcs_object.name.endswith(".pdf"):
@@ -866,7 +894,7 @@ class Knowledge:
                 read_document.content_id = content.id
             await self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
-    async def _handle_vector_db_insert(self, content, read_documents, upsert):
+    async def _handle_vector_db_insert(self, content: Content, read_documents, upsert):
         if not self.vector_db:
             log_error("No vector database configured")
             content.status = ContentStatus.FAILED
@@ -876,7 +904,7 @@ class Knowledge:
 
         if self.vector_db.upsert_available() and upsert:
             try:
-                await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)
+                await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
             except Exception as e:
                 log_error(f"Error upserting document: {e}")
                 content.status = ContentStatus.FAILED
@@ -886,7 +914,9 @@ class Knowledge:
         else:
             try:
                 await self.vector_db.async_insert(
-                    content.content_hash, documents=read_documents, filters=content.metadata
+                    content.content_hash,  # type: ignore[arg-type]
+                    documents=read_documents,
+                    filters=content.metadata,  # type: ignore[arg-type]
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {e}")
@@ -1010,7 +1040,6 @@ class Knowledge:
                 content_row.status_message = content.status_message if content.status_message else ""
             if content.external_id is not None:
                 content_row.external_id = content.external_id
-
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
@@ -1161,9 +1190,6 @@ class Knowledge:
 
             read_documents = content.reader.read(content.topics)
             if len(read_documents) > 0:
-                print("READ DOCUMENTS: ", len(read_documents))
-                print("READ DOCUMENTS: ", read_documents[0])
-
                 if self.vector_db and hasattr(self.vector_db, "insert_text"):
                     result = await self.vector_db.insert_text(
                         file_source=content.topics[0],

@@ -1,5 +1,5 @@
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -8,6 +8,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
     WebSocket,
 )
@@ -17,13 +18,12 @@ from pydantic import BaseModel
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.schema import (
     AgentResponse,
     AgentSummaryResponse,
     BadRequestResponse,
     ConfigResponse,
-    HealthResponse,
     InterfaceResponse,
     InternalServerErrorResponse,
     Model,
@@ -45,9 +45,10 @@ from agno.os.utils import (
     process_image,
     process_video,
 )
-from agno.run.agent import RunErrorEvent, RunOutput
+from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
-from agno.run.workflow import WorkflowErrorEvent
+from agno.run.team import TeamRunOutputEvent
+from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput, WorkflowRunOutputEvent
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.workflow import Workflow
@@ -56,11 +57,29 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
-def format_sse_event(json_data: str) -> str:
+async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
+    """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
+    Args:
+        request: The FastAPI Request object
+        endpoint_func: The function exposing the endpoint that received the request
+
+    Returns:
+        A dictionary of kwargs
+    """
+    import inspect
+
+    form_data = await request.form()
+    sig = inspect.signature(endpoint_func)
+    known_fields = set(sig.parameters.keys())
+    kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
+    return kwargs
+
+
+def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]) -> str:
     """Parse JSON data into SSE-compliant format.
 
     Args:
-        json_data: JSON string containing the event data
+        event_dict: Dictionary containing the event data
 
     Returns:
         SSE-formatted response:
@@ -75,20 +94,22 @@ def format_sse_event(json_data: str) -> str:
     """
     try:
         # Parse the JSON to extract the event type
-        data = json.loads(json_data)
-        event_type = data.get("event", "message")
+        event_type = event.event or "message"
 
-        # Format as SSE: event: <event_type>\ndata: <json_data>\n\n
-        return f"event: {event_type}\ndata: {json_data}\n\n"
-    except (json.JSONDecodeError, KeyError):
-        # Fallback to generic message event if parsing fails
-        return f"event: message\ndata: {json_data}\n\n"
+        # Serialize to valid JSON with double quotes and no newlines
+        clean_json = event.to_json(separators=(",", ":"), indent=None)
+
+        return f"event: {event_type}\ndata: {clean_json}\n\n"
+    except json.JSONDecodeError:
+        clean_json = event.to_json(separators=(",", ":"), indent=None)
+        return f"event: message\ndata: {clean_json}\n\n"
 
 
 class WebSocketManager:
     """Manages WebSocket connections for workflow runs"""
 
     active_connections: Dict[str, WebSocket]  # {run_id: websocket}
+    authenticated_connections: Dict[WebSocket, bool]  # {websocket: is_authenticated}
 
     def __init__(
         self,
@@ -96,21 +117,50 @@ class WebSocketManager:
     ):
         # Store active connections: {run_id: websocket}
         self.active_connections = active_connections or {}
+        # Track authentication state for each websocket
+        self.authenticated_connections = {}
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, requires_auth: bool = True):
         """Accept WebSocket connection"""
         await websocket.accept()
         logger.debug("WebSocket connected")
 
-        # Send connection confirmation
+        # If auth is not required, mark as authenticated immediately
+        self.authenticated_connections[websocket] = not requires_auth
+
+        # Send connection confirmation with auth requirement info
         await websocket.send_text(
             json.dumps(
                 {
                     "event": "connected",
-                    "message": "Connected to workflow events",
+                    "message": (
+                        "Connected to workflow events. Please authenticate to continue."
+                        if requires_auth
+                        else "Connected to workflow events. Authentication not required."
+                    ),
+                    "requires_auth": requires_auth,
                 }
             )
         )
+
+    async def authenticate_websocket(self, websocket: WebSocket):
+        """Mark a WebSocket connection as authenticated"""
+        self.authenticated_connections[websocket] = True
+        logger.debug("WebSocket authenticated")
+
+        # Send authentication confirmation
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "event": "authenticated",
+                    "message": "Authentication successful. You can now send commands.",
+                }
+            )
+        )
+
+    def is_authenticated(self, websocket: WebSocket) -> bool:
+        """Check if a WebSocket connection is authenticated"""
+        return self.authenticated_connections.get(websocket, False)
 
     async def register_workflow_websocket(self, run_id: str, websocket: WebSocket):
         """Register a workflow run with its WebSocket connection"""
@@ -120,8 +170,25 @@ class WebSocketManager:
     async def disconnect_by_run_id(self, run_id: str):
         """Remove WebSocket connection by run_id"""
         if run_id in self.active_connections:
+            websocket = self.active_connections[run_id]
             del self.active_connections[run_id]
+            # Clean up authentication state
+            if websocket in self.authenticated_connections:
+                del self.authenticated_connections[websocket]
             logger.debug(f"WebSocket disconnected for run_id: {run_id}")
+
+    async def disconnect_websocket(self, websocket: WebSocket):
+        """Remove WebSocket connection and clean up all associated state"""
+        # Remove from authenticated connections
+        if websocket in self.authenticated_connections:
+            del self.authenticated_connections[websocket]
+
+        # Remove from active connections
+        runs_to_remove = [run_id for run_id, ws in self.active_connections.items() if ws == websocket]
+        for run_id in runs_to_remove:
+            del self.active_connections[run_id]
+
+        logger.debug("WebSocket disconnected and cleaned up")
 
     async def get_websocket_for_run(self, run_id: str) -> Optional[WebSocket]:
         """Get WebSocket connection for a workflow run"""
@@ -143,6 +210,7 @@ async def agent_response_streamer(
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
+    **kwargs: Any,
 ) -> AsyncGenerator:
     try:
         run_response = agent.arun(
@@ -155,9 +223,10 @@ async def agent_response_streamer(
             files=files,
             stream=True,
             stream_intermediate_steps=True,
+            **kwargs,
         )
         async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk.to_json())
+            yield format_sse_event(run_response_chunk)  # type: ignore
 
     except Exception as e:
         import traceback
@@ -166,7 +235,7 @@ async def agent_response_streamer(
         error_response = RunErrorEvent(
             content=str(e),
         )
-        yield format_sse_event(error_response.to_json())
+        yield format_sse_event(error_response)
 
 
 async def agent_continue_response_streamer(
@@ -186,7 +255,7 @@ async def agent_continue_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in continue_response:
-            yield format_sse_event(run_response_chunk.to_json())
+            yield format_sse_event(run_response_chunk)  # type: ignore
 
     except Exception as e:
         import traceback
@@ -195,7 +264,7 @@ async def agent_continue_response_streamer(
         error_response = RunErrorEvent(
             content=str(e),
         )
-        yield format_sse_event(error_response.to_json())
+        yield format_sse_event(error_response)
         return
 
 
@@ -208,6 +277,7 @@ async def team_response_streamer(
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
+    **kwargs: Any,
 ) -> AsyncGenerator:
     """Run the given team asynchronously and yield its response"""
     try:
@@ -221,9 +291,10 @@ async def team_response_streamer(
             files=files,
             stream=True,
             stream_intermediate_steps=True,
+            **kwargs,
         )
         async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk.to_json())
+            yield format_sse_event(run_response_chunk)  # type: ignore
 
     except Exception as e:
         import traceback
@@ -232,7 +303,7 @@ async def team_response_streamer(
         error_response = TeamRunErrorEvent(
             content=str(e),
         )
-        yield format_sse_event(error_response.to_json())
+        yield format_sse_event(error_response)
         return
 
 
@@ -263,7 +334,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
                 session_id = str(uuid4())
 
         # Execute workflow in background with streaming
-        await workflow.arun(
+        workflow_result = await workflow.arun(
             input=user_message,
             session_id=session_id,
             user_id=user_id,
@@ -272,6 +343,10 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             background=True,
             websocket=websocket,
         )
+
+        workflow_run_output = cast(WorkflowRunOutput, workflow_result)
+
+        await websocket_manager.register_workflow_websocket(workflow_run_output.run_id, websocket)  # type: ignore
 
     except Exception as e:
         logger.error(f"Error executing workflow via WebSocket: {e}")
@@ -296,7 +371,7 @@ async def workflow_response_streamer(
         )
 
         async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk.to_json())
+            yield format_sse_event(run_response_chunk)  # type: ignore
 
     except Exception as e:
         import traceback
@@ -305,8 +380,79 @@ async def workflow_response_streamer(
         error_response = WorkflowErrorEvent(
             error=str(e),
         )
-        yield format_sse_event(error_response.to_json())
+        yield format_sse_event(error_response)
         return
+
+
+def get_websocket_router(
+    os: "AgentOS",
+    settings: AgnoAPISettings = AgnoAPISettings(),
+) -> APIRouter:
+    """
+    Create WebSocket router without HTTP authentication dependencies.
+    WebSocket endpoints handle authentication internally via message-based auth.
+    """
+    ws_router = APIRouter()
+
+    @ws_router.websocket(
+        "/workflows/ws",
+        name="workflow_websocket",
+    )
+    async def workflow_websocket_endpoint(websocket: WebSocket):
+        """WebSocket endpoint for receiving real-time workflow events"""
+        requires_auth = bool(settings.os_security_key)
+        await websocket_manager.connect(websocket, requires_auth=requires_auth)
+
+        try:
+            while True:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+                action = message.get("action")
+
+                # Handle authentication first
+                if action == "authenticate":
+                    token = message.get("token")
+                    if not token:
+                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
+                        continue
+
+                    if validate_websocket_token(token, settings):
+                        await websocket_manager.authenticate_websocket(websocket)
+                    else:
+                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Invalid token"}))
+                        continue
+
+                # Check authentication for all other actions (only when required)
+                elif requires_auth and not websocket_manager.is_authenticated(websocket):
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "event": "auth_required",
+                                "error": "Authentication required. Send authenticate action with valid token.",
+                            }
+                        )
+                    )
+                    continue
+
+                # Handle authenticated actions
+                elif action == "ping":
+                    await websocket.send_text(json.dumps({"event": "pong"}))
+
+                elif action == "start-workflow":
+                    # Handle workflow execution directly via WebSocket
+                    await handle_workflow_via_websocket(websocket, message, os)
+
+                else:
+                    await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
+
+        except Exception as e:
+            if "1012" not in str(e):
+                logger.error(f"WebSocket error: {e}")
+        finally:
+            # Clean up the websocket connection
+            await websocket_manager.disconnect_websocket(websocket)
+
+    return ws_router
 
 
 def get_base_router(
@@ -321,7 +467,6 @@ def get_base_router(
     - Agent management and execution
     - Team collaboration and coordination
     - Workflow automation and orchestration
-    - Real-time WebSocket communications
 
     All endpoints include detailed documentation, examples, and proper error handling.
     """
@@ -337,24 +482,6 @@ def get_base_router(
     )
 
     # -- Main Routes ---
-
-    @router.get(
-        "/health",
-        tags=["Core"],
-        operation_id="health_check",
-        summary="Health Check",
-        description="Check the health status of the AgentOS API. Returns a simple status indicator.",
-        response_model=HealthResponse,
-        responses={
-            200: {
-                "description": "API is healthy and operational",
-                "content": {"application/json": {"example": {"status": "ok"}}},
-            }
-        },
-    )
-    async def health_check() -> HealthResponse:
-        return HealthResponse(status="ok")
-
     @router.get(
         "/config",
         response_model=ConfigResponse,
@@ -538,12 +665,15 @@ def get_base_router(
     )
     async def create_agent_run(
         agent_id: str,
+        request: Request,
         message: str = Form(...),
         stream: bool = Form(False),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
     ):
+        kwargs = await _get_request_kwargs(request, create_agent_run)
+
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -620,6 +750,7 @@ def get_base_router(
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
                     files=input_files if input_files else None,
+                    **kwargs,
                 ),
                 media_type="text/event-stream",
             )
@@ -635,6 +766,7 @@ def get_base_router(
                     videos=base64_videos if base64_videos else None,
                     files=input_files if input_files else None,
                     stream=False,
+                    **kwargs,
                 ),
             )
             return run_response.to_dict()
@@ -880,6 +1012,7 @@ def get_base_router(
     )
     async def create_team_run(
         team_id: str,
+        request: Request,
         message: str = Form(...),
         stream: bool = Form(True),
         monitor: bool = Form(True),
@@ -887,7 +1020,10 @@ def get_base_router(
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
     ):
-        logger.debug(f"Creating team run: {message} {session_id} {monitor} {user_id} {team_id} {files}")
+        kwargs = await _get_request_kwargs(request, create_team_run)
+
+        logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
+
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -962,6 +1098,7 @@ def get_base_router(
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
                     files=document_files if document_files else None,
+                    **kwargs,
                 ),
                 media_type="text/event-stream",
             )
@@ -975,6 +1112,7 @@ def get_base_router(
                 videos=base64_videos if base64_videos else None,
                 files=document_files if document_files else None,
                 stream=False,
+                **kwargs,
             )
             return run_response.to_dict()
 
@@ -1192,35 +1330,6 @@ def get_base_router(
 
     # -- Workflow routes ---
 
-    @router.websocket(
-        "/workflows/ws",
-        name="workflow_websocket",
-    )
-    async def workflow_websocket_endpoint(websocket: WebSocket):
-        """WebSocket endpoint for receiving real-time workflow events"""
-        await websocket_manager.connect(websocket)
-
-        try:
-            while True:
-                data = await websocket.receive_text()
-                message = json.loads(data)
-                action = message.get("action")
-
-                if action == "ping":
-                    await websocket.send_text(json.dumps({"event": "pong"}))
-
-                elif action == "start-workflow":
-                    # Handle workflow execution directly via WebSocket
-                    await handle_workflow_via_websocket(websocket, message, os)
-        except Exception as e:
-            if "1012" not in str(e):
-                logger.error(f"WebSocket error: {e}")
-        finally:
-            # Clean up any run_ids associated with this websocket
-            runs_to_remove = [run_id for run_id, ws in websocket_manager.active_connections.items() if ws == websocket]
-            for run_id in runs_to_remove:
-                await websocket_manager.disconnect_by_run_id(run_id)
-
     @router.get(
         "/workflows",
         response_model=List[WorkflowSummaryResponse],
@@ -1328,12 +1437,14 @@ def get_base_router(
     )
     async def create_workflow_run(
         workflow_id: str,
+        request: Request,
         message: str = Form(...),
         stream: bool = Form(True),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
-        **kwargs: Any,
     ):
+        kwargs = await _get_request_kwargs(request, create_workflow_run)
+
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
