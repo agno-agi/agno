@@ -1,9 +1,16 @@
 import streamlit as st
-from agents import generate_podcast
+from agents import generate_podcast, generate_podcast_agent
 from agno.utils.streamlit import (
     COMMON_CSS,
     MODELS,
     about_section,
+    add_message,
+    display_chat_messages,
+    display_response,
+    export_chat_history,
+    initialize_agent,
+    reset_session_state,
+    session_selector_widget,
 )
 
 st.set_page_config(
@@ -15,6 +22,33 @@ st.set_page_config(
 
 # Add custom CSS
 st.markdown(COMMON_CSS, unsafe_allow_html=True)
+
+
+def restart_agent(model_id: str = None):
+    target_model = model_id or st.session_state.get("current_model", "openai:gpt-4o")
+    
+    new_agent = generate_podcast_agent(model_id=target_model, session_id=None)
+    
+    st.session_state["agent"] = new_agent
+    st.session_state["session_id"] = new_agent.session_id
+    st.session_state["messages"] = []
+    st.session_state["current_model"] = target_model
+    st.session_state["is_new_session"] = True
+
+
+def on_model_change():
+    selected_model = st.session_state.get("model_selector")
+    if selected_model:
+        new_model_id = selected_model
+        current_model = st.session_state.get("current_model")
+        
+        if current_model and current_model != new_model_id:
+            try:
+                st.session_state["is_loading_session"] = False
+                # Start new chat
+                restart_agent(model_id=new_model_id)
+            except Exception as e:
+                st.sidebar.error(f"Error switching to {selected_model}: {str(e)}")
 
 
 def main():
@@ -30,14 +64,24 @@ def main():
     ####################################################################
     # Model selector (filter for OpenAI models only)
     ####################################################################
-    openai_models = [model for model in MODELS if model in ["gpt-4o", "o3-mini", "gpt-5"]]
+    openai_models = [model for model in MODELS if model in ["gpt-4o", "o3-mini", "gpt-5", "gemini-2.5-pro"]]
     selected_model = st.sidebar.selectbox(
         "Select Model",
         options=openai_models,
         index=0,
         key="model_selector",
+        on_change=on_model_change,
         help="Only OpenAI models support audio generation"
     )
+
+    ####################################################################
+    # Initialize Agent and Session
+    ####################################################################
+    podcast_agent = initialize_agent(selected_model, generate_podcast_agent)
+    reset_session_state(podcast_agent)
+
+    if prompt := st.chat_input("💬 Ask about podcasts or request a specific topic!"):
+        add_message("user", prompt)
 
     ####################################################################
     # Voice Selection
@@ -52,16 +96,6 @@ def main():
     )
 
     ####################################################################
-    # Topic Input
-    ####################################################################
-    st.sidebar.markdown("#### 📖 Podcast Topic")
-    topic = st.sidebar.text_area(
-        "Enter Topic",
-        placeholder="e.g., The Future of AI in Healthcare",
-        help="Describe the topic you want your podcast to cover"
-    )
-
-    ####################################################################
     # Sample Topics
     ####################################################################
     st.sidebar.markdown("#### 🔥 Suggested Topics")
@@ -69,22 +103,62 @@ def main():
         "🎭 Impact of AI on Creativity",
         "💡 Future of Renewable Energy",
         "🏥 AI in Healthcare Revolution",
-        "🚀 Space Exploration Updates",
+        "� Space Exploration Updates",
         "🌱 Climate Change Solutions",
         "💻 Quantum Computing Explained",
     ]
 
+    # Handle sample topic selection
     for sample_topic in sample_topics:
         if st.sidebar.button(sample_topic, key=f"topic_{sample_topic}", use_container_width=True):
-            st.session_state["selected_topic"] = sample_topic[2:]  # Remove emoji
+            add_message("user", sample_topic[2:])  # Remove emoji and add to chat
             st.rerun()
 
-    # Use selected topic if available
-    if "selected_topic" in st.session_state:
-        topic = st.session_state["selected_topic"]
-        # Clear the selected topic to avoid persistence
-        if "selected_topic" in st.session_state:
-            del st.session_state["selected_topic"]
+    ####################################################################
+    # Utility buttons
+    ####################################################################
+    st.sidebar.markdown("#### 🛠️ Utilities")
+    col1, col2 = st.sidebar.columns([1, 1])
+    with col1:
+        if st.sidebar.button("🔄 New Chat", use_container_width=True):
+            restart_agent()
+            st.rerun()
+
+    with col2:
+        has_messages = (
+            st.session_state.get("messages") and len(st.session_state["messages"]) > 0
+        )
+
+        if has_messages:
+            session_id = st.session_state.get("session_id")
+            if session_id:
+                try:
+                    session_name = podcast_agent.get_session_name()
+                    if session_name:
+                        filename = f"podcast_chat_{session_name}.md"
+                    else:
+                        filename = f"podcast_chat_{session_id}.md"
+                except Exception:
+                    filename = f"podcast_chat_{session_id}.md"
+            else:
+                filename = "podcast_chat_new.md"
+
+            if st.sidebar.download_button(
+                "💾 Export Chat",
+                export_chat_history("Podcast Generator"),
+                file_name=filename,
+                mime="text/markdown",
+                use_container_width=True,
+                help=f"Export {len(st.session_state['messages'])} messages",
+            ):
+                st.sidebar.success("Chat history exported!")
+        else:
+            st.sidebar.button(
+                "💾 Export Chat",
+                disabled=True,
+                use_container_width=True,
+                help="No messages to export",
+            )
 
     ####################################################################
     # Generate Podcast
@@ -92,10 +166,13 @@ def main():
     st.sidebar.markdown("#### 🎬 Generate")
     
     if st.sidebar.button("🎙️ Create Podcast", type="primary", use_container_width=True):
-        if topic:
+        # Get the latest user message as the topic
+        user_messages = [msg for msg in st.session_state.get("messages", []) if msg.get("role") == "user"]
+        if user_messages:
+            latest_topic = user_messages[-1]["content"]
             with st.spinner("⏳ Generating podcast... This may take up to 2 minutes..."):
                 try:
-                    audio_path = generate_podcast(topic, selected_voice, f"openai:{selected_model}")
+                    audio_path = generate_podcast(latest_topic, selected_voice, selected_model)
                     
                     if audio_path:
                         st.success("✅ Podcast generated successfully!")
@@ -108,7 +185,7 @@ def main():
                             st.download_button(
                                 "⬇️ Download Podcast",
                                 audio_file,
-                                file_name=f"podcast_{topic[:30].replace(' ', '_')}.wav",
+                                file_name=f"podcast_{latest_topic[:30].replace(' ', '_')}.wav",
                                 mime="audio/wav",
                                 use_container_width=True
                             )
@@ -118,25 +195,39 @@ def main():
                 except Exception as e:
                     st.error(f"❌ Error generating podcast: {str(e)}")
         else:
-            st.sidebar.warning("⚠️ Please enter a topic before generating.")
+            st.sidebar.warning("⚠️ Please enter a topic in the chat first.")
 
     ####################################################################
-    # Current Topic Display
+    # Getting Started Guide
     ####################################################################
-    if topic:
-        st.markdown("### 📝 Current Topic")
-        st.info(f"**Topic:** {topic}")
-        st.markdown("Click 'Create Podcast' in the sidebar to generate your AI podcast!")
-    else:
+    if not st.session_state.get("messages"):
         st.markdown("### 🎯 How to Get Started")
         st.markdown("""
         1. **Choose a Model** - Select your preferred AI model
         2. **Pick a Voice** - Choose from 6 realistic AI voices  
-        3. **Enter a Topic** - Describe what you want your podcast to cover
+        3. **Enter a Topic** - Type your podcast topic in the chat below or click a suggested topic
         4. **Generate** - Click 'Create Podcast' and wait for the magic!
-        
-        💡 **Tip:** Try the suggested topics for quick inspiration!
         """)
+
+    ####################################################################
+    # Display Chat Messages
+    ####################################################################
+    display_chat_messages()
+
+    ####################################################################
+    # Generate response for user message
+    ####################################################################
+    last_message = (
+        st.session_state["messages"][-1] if st.session_state["messages"] else None
+    )
+    if last_message and last_message.get("role") == "user":
+        question = last_message["content"]
+        display_response(podcast_agent, question)
+
+    ####################################################################
+    # Session management widgets
+    ####################################################################
+    session_selector_widget(podcast_agent, selected_model, generate_podcast_agent)
 
     ####################################################################
     # Features Section
