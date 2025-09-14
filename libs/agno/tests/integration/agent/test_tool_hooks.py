@@ -84,7 +84,7 @@ def test_confirmation_hook_allows_mul_tool():
     with patch.object(type(logger), "info", wraps=logger.info) as mock_info:
         response: RunOutput = agent.run("Compute 4 * 5")
 
-        mock_info.assert_any_call("This tool is  allowed to be called")
+        mock_info.assert_any_call("This tool is allowed to be called")
         assert response.tools is not None
         assert response.tools[0].tool_name == "mul"
         assert response.tools[0].result == "20"
