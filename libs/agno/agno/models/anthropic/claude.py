@@ -51,7 +51,7 @@ except ImportError as e:
     ) from e
 
 
-@dataclass
+@dataclass(repr=False)
 class Claude(Model):
     """
     A class representing Anthropic Claude model.

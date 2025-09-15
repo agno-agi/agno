@@ -97,7 +97,7 @@ def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional
             m.stop_after_tool_call = True
 
 
-@dataclass
+@dataclass(repr=False)
 class Model(ABC):
     # ID of the model to use.
     id: str
@@ -143,6 +143,63 @@ class Model(ABC):
 
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
+
+    # Security: Define sensitive fields that should be masked in representations
+    _sensitive_fields = {
+        'api_key', 'token', 'password', 'secret', 'auth_token', 
+        'bearer_token', 'access_token', 'refresh_token', 'api_secret',
+        'private_key', 'client_secret', 'apikey'
+    }
+
+    def _mask_sensitive_value(self, key: str, value: Any) -> str:
+        """
+        Mask sensitive field values for safe logging and representation.
+        
+        Args:
+            key: The field name
+            value: The field value
+            
+        Returns:
+            Masked representation of the value if sensitive, otherwise str(value)
+        """
+        if value is None:
+            return 'None'
+            
+        key_lower = key.lower()
+        
+        # Check if this field should be masked
+        if any(sensitive in key_lower for sensitive in self._sensitive_fields):
+            if isinstance(value, str) and len(value) > 8:
+                # Show first 3 and last 3 characters with masking in between
+                return f"'{value[:3]}...{value[-3:]}'"
+            elif isinstance(value, str):
+                # For shorter strings, mask more aggressively
+                return f"'{'*' * len(value)}'"
+            else:
+                return "'[MASKED]'"
+        
+        # For non-sensitive fields, return normal string representation
+        return repr(value)
+
+    def __repr__(self) -> str:
+        """
+        Secure representation that masks sensitive fields like API keys.
+        
+        This overrides the default dataclass __repr__ to prevent API key exposure
+        in logs, tracebacks, and debugging output.
+        """
+        try:
+            # Get all field names and values from the dataclass
+            items = []
+            for field_name, field_value in self.__dict__.items():
+                masked_value = self._mask_sensitive_value(field_name, field_value)
+                items.append(f"{field_name}={masked_value}")
+            
+            return f"{self.__class__.__name__}({', '.join(items)})"
+            
+        except Exception:
+            # Fallback to safe representation if anything goes wrong
+            return f"{self.__class__.__name__}(id='{getattr(self, 'id', 'unknown')}', provider='{getattr(self, 'provider', 'unknown')}')"
 
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:

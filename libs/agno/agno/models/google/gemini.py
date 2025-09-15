@@ -46,7 +46,7 @@ except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
 
 
-@dataclass
+@dataclass(repr=False)
 class Gemini(Model):
     """
     Gemini model class for Google's Generative AI models.

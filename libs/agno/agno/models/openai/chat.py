@@ -33,7 +33,7 @@ except (ImportError, ModuleNotFoundError):
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
 
-@dataclass
+@dataclass(repr=False)
 class OpenAIChat(Model):
     """
     A class for interacting with OpenAI models using the Chat completions API.
