@@ -4,7 +4,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
 
 reasoning_agent = Agent(
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     tools=[
         ReasoningTools(add_instructions=True),
         DuckDuckGoTools(enable_news=True),
