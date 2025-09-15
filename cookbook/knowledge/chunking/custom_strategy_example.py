@@ -11,24 +11,24 @@ from agno.vectordb.pgvector import PgVector
 class CustomSeparatorChunking(ChunkingStrategy):
     """
     Example implementation of a custom chunking strategy.
-    
+
     This demonstrates how you can implement your own chunking strategy by:
     1. Inheriting from ChunkingStrategy
     2. Implementing the chunk() method
     3. Using the inherited clean_text() method
     4. Adding your own custom logic and parameters
-    
+
     You can extend this pattern for your specific needs:
     - Different splitting logic (regex patterns, AI-based splitting, etc.)
     - Custom parameters (max_words, min_length, overlap, etc.)
     - Domain-specific chunking (code blocks, tables, sections, etc.)
     - Custom metadata and chunk enrichment
     """
-    
+
     def __init__(self, separator: str = "---", **kwargs):
         """
         Initialize your custom chunking strategy.
-        
+
         Args:
             separator: The string pattern to split documents on
             **kwargs: Additional parameters for your custom logic
@@ -38,7 +38,7 @@ class CustomSeparatorChunking(ChunkingStrategy):
     def chunk(self, document: Document) -> List[Document]:
         """
         Implement your custom chunking logic.
-        
+
         This method receives a Document and must return a list of chunked Documents.
         You can implement any splitting logic here - this example uses simple separator splitting.
         """
@@ -49,20 +49,22 @@ class CustomSeparatorChunking(ChunkingStrategy):
         for i, chunk_content in enumerate(chunks):
             # Use the inherited clean_text method for consistent text processing
             chunk_content = self.clean_text(chunk_content)
-            
+
             if chunk_content:  # Only create non-empty chunks
                 # Preserve original metadata and add chunk-specific info
                 meta_data = document.meta_data.copy()
                 meta_data["chunk"] = i + 1
                 meta_data["separator_used"] = self.separator  # Your custom metadata
                 meta_data["chunking_strategy"] = "custom_separator"
-                
-                result.append(Document(
-                    id=f"{document.id}_{i+1}" if document.id else None,
-                    name=document.name,
-                    meta_data=meta_data,
-                    content=chunk_content
-                ))
+
+                result.append(
+                    Document(
+                        id=f"{document.id}_{i + 1}" if document.id else None,
+                        name=document.name,
+                        meta_data=meta_data,
+                        content=chunk_content,
+                    )
+                )
         return result
 
 
@@ -76,7 +78,7 @@ knowledge = Knowledge(
 # Use your custom chunking strategy with any reader
 # You can customize the separator based on your document structure:
 # - "###" for markdown headers
-# - "||" for data separators  
+# - "||" for data separators
 # - "\n\n" for paragraph breaks
 # - "---" for section dividers
 # - Any custom pattern that fits your content

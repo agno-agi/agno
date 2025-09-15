@@ -1348,6 +1348,7 @@ class SqliteDb(BaseDb):
                         "linked_to": knowledge_row.linked_to,
                         "access_count": knowledge_row.access_count,
                         "status": knowledge_row.status,
+                        "status_message": knowledge_row.status_message,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
                         "external_id": knowledge_row.external_id,

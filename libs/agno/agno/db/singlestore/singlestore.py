@@ -163,10 +163,10 @@ class SingleStoreDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
+        table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
         try:
             table_schema = get_table_schema_definition(table_type)
 
-            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
             log_debug(f"Creating table {table_ref} with schema: {table_schema}")
 
             columns: List[Column] = []

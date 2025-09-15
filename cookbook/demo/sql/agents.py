@@ -168,7 +168,7 @@ sql_agent = Agent(
     enable_user_memories=True,
     knowledge=agent_knowledge,
     tools=[
-        SQLTools(db_url=db_url, list_tables=False),
+        SQLTools(db_url=db_url, enable_list_tables=False),
         FileTools(base_dir=output_dir),
         ReasoningTools(add_instructions=True, add_few_shot=True),
     ],

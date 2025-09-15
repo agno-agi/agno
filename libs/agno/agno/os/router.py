@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.schema import (
     AgentResponse,
     AgentSummaryResponse,
@@ -48,7 +48,7 @@ from agno.os.utils import (
 from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutputEvent
-from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutputEvent
+from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput, WorkflowRunOutputEvent
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.workflow import Workflow
@@ -109,6 +109,7 @@ class WebSocketManager:
     """Manages WebSocket connections for workflow runs"""
 
     active_connections: Dict[str, WebSocket]  # {run_id: websocket}
+    authenticated_connections: Dict[WebSocket, bool]  # {websocket: is_authenticated}
 
     def __init__(
         self,
@@ -116,21 +117,50 @@ class WebSocketManager:
     ):
         # Store active connections: {run_id: websocket}
         self.active_connections = active_connections or {}
+        # Track authentication state for each websocket
+        self.authenticated_connections = {}
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, requires_auth: bool = True):
         """Accept WebSocket connection"""
         await websocket.accept()
         logger.debug("WebSocket connected")
 
-        # Send connection confirmation
+        # If auth is not required, mark as authenticated immediately
+        self.authenticated_connections[websocket] = not requires_auth
+
+        # Send connection confirmation with auth requirement info
         await websocket.send_text(
             json.dumps(
                 {
                     "event": "connected",
-                    "message": "Connected to workflow events",
+                    "message": (
+                        "Connected to workflow events. Please authenticate to continue."
+                        if requires_auth
+                        else "Connected to workflow events. Authentication not required."
+                    ),
+                    "requires_auth": requires_auth,
                 }
             )
         )
+
+    async def authenticate_websocket(self, websocket: WebSocket):
+        """Mark a WebSocket connection as authenticated"""
+        self.authenticated_connections[websocket] = True
+        logger.debug("WebSocket authenticated")
+
+        # Send authentication confirmation
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "event": "authenticated",
+                    "message": "Authentication successful. You can now send commands.",
+                }
+            )
+        )
+
+    def is_authenticated(self, websocket: WebSocket) -> bool:
+        """Check if a WebSocket connection is authenticated"""
+        return self.authenticated_connections.get(websocket, False)
 
     async def register_workflow_websocket(self, run_id: str, websocket: WebSocket):
         """Register a workflow run with its WebSocket connection"""
@@ -140,8 +170,25 @@ class WebSocketManager:
     async def disconnect_by_run_id(self, run_id: str):
         """Remove WebSocket connection by run_id"""
         if run_id in self.active_connections:
+            websocket = self.active_connections[run_id]
             del self.active_connections[run_id]
+            # Clean up authentication state
+            if websocket in self.authenticated_connections:
+                del self.authenticated_connections[websocket]
             logger.debug(f"WebSocket disconnected for run_id: {run_id}")
+
+    async def disconnect_websocket(self, websocket: WebSocket):
+        """Remove WebSocket connection and clean up all associated state"""
+        # Remove from authenticated connections
+        if websocket in self.authenticated_connections:
+            del self.authenticated_connections[websocket]
+
+        # Remove from active connections
+        runs_to_remove = [run_id for run_id, ws in self.active_connections.items() if ws == websocket]
+        for run_id in runs_to_remove:
+            del self.active_connections[run_id]
+
+        logger.debug("WebSocket disconnected and cleaned up")
 
     async def get_websocket_for_run(self, run_id: str) -> Optional[WebSocket]:
         """Get WebSocket connection for a workflow run"""
@@ -287,7 +334,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
                 session_id = str(uuid4())
 
         # Execute workflow in background with streaming
-        await workflow.arun(
+        workflow_result = await workflow.arun(
             input=user_message,
             session_id=session_id,
             user_id=user_id,
@@ -296,6 +343,10 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             background=True,
             websocket=websocket,
         )
+
+        workflow_run_output = cast(WorkflowRunOutput, workflow_result)
+
+        await websocket_manager.register_workflow_websocket(workflow_run_output.run_id, websocket)  # type: ignore
 
     except Exception as e:
         logger.error(f"Error executing workflow via WebSocket: {e}")
@@ -333,6 +384,77 @@ async def workflow_response_streamer(
         return
 
 
+def get_websocket_router(
+    os: "AgentOS",
+    settings: AgnoAPISettings = AgnoAPISettings(),
+) -> APIRouter:
+    """
+    Create WebSocket router without HTTP authentication dependencies.
+    WebSocket endpoints handle authentication internally via message-based auth.
+    """
+    ws_router = APIRouter()
+
+    @ws_router.websocket(
+        "/workflows/ws",
+        name="workflow_websocket",
+    )
+    async def workflow_websocket_endpoint(websocket: WebSocket):
+        """WebSocket endpoint for receiving real-time workflow events"""
+        requires_auth = bool(settings.os_security_key)
+        await websocket_manager.connect(websocket, requires_auth=requires_auth)
+
+        try:
+            while True:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+                action = message.get("action")
+
+                # Handle authentication first
+                if action == "authenticate":
+                    token = message.get("token")
+                    if not token:
+                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
+                        continue
+
+                    if validate_websocket_token(token, settings):
+                        await websocket_manager.authenticate_websocket(websocket)
+                    else:
+                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Invalid token"}))
+                        continue
+
+                # Check authentication for all other actions (only when required)
+                elif requires_auth and not websocket_manager.is_authenticated(websocket):
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "event": "auth_required",
+                                "error": "Authentication required. Send authenticate action with valid token.",
+                            }
+                        )
+                    )
+                    continue
+
+                # Handle authenticated actions
+                elif action == "ping":
+                    await websocket.send_text(json.dumps({"event": "pong"}))
+
+                elif action == "start-workflow":
+                    # Handle workflow execution directly via WebSocket
+                    await handle_workflow_via_websocket(websocket, message, os)
+
+                else:
+                    await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
+
+        except Exception as e:
+            if "1012" not in str(e):
+                logger.error(f"WebSocket error: {e}")
+        finally:
+            # Clean up the websocket connection
+            await websocket_manager.disconnect_websocket(websocket)
+
+    return ws_router
+
+
 def get_base_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -345,7 +467,6 @@ def get_base_router(
     - Agent management and execution
     - Team collaboration and coordination
     - Workflow automation and orchestration
-    - Real-time WebSocket communications
 
     All endpoints include detailed documentation, examples, and proper error handling.
     """
@@ -1208,35 +1329,6 @@ def get_base_router(
         return TeamResponse.from_team(team)
 
     # -- Workflow routes ---
-
-    @router.websocket(
-        "/workflows/ws",
-        name="workflow_websocket",
-    )
-    async def workflow_websocket_endpoint(websocket: WebSocket):
-        """WebSocket endpoint for receiving real-time workflow events"""
-        await websocket_manager.connect(websocket)
-
-        try:
-            while True:
-                data = await websocket.receive_text()
-                message = json.loads(data)
-                action = message.get("action")
-
-                if action == "ping":
-                    await websocket.send_text(json.dumps({"event": "pong"}))
-
-                elif action == "start-workflow":
-                    # Handle workflow execution directly via WebSocket
-                    await handle_workflow_via_websocket(websocket, message, os)
-        except Exception as e:
-            if "1012" not in str(e):
-                logger.error(f"WebSocket error: {e}")
-        finally:
-            # Clean up any run_ids associated with this websocket
-            runs_to_remove = [run_id for run_id, ws in websocket_manager.active_connections.items() if ws == websocket]
-            for run_id in runs_to_remove:
-                await websocket_manager.disconnect_by_run_id(run_id)
 
     @router.get(
         "/workflows",
