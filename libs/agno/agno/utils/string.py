@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import uuid
 from typing import Optional, Type
 
 from pydantic import BaseModel, ValidationError
@@ -188,3 +189,16 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
                     logger.warning("All parsing attempts failed.")
 
     return structured_output
+
+
+def generate_deterministic_id(seed: str) -> str:
+    """
+    Generate a deterministic UUID5 based on a seed string.
+
+    Args:
+        seed (str): The seed string to generate the UUID from.
+
+    Returns:
+        str: A deterministic UUID5 string.
+    """
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, seed))

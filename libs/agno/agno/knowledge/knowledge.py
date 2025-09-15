@@ -14,7 +14,7 @@ from httpx import AsyncClient
 
 from agno.db.base import BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.db.utils import generate_deterministic_id
+from agno.utils.string import generate_deterministic_id
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory

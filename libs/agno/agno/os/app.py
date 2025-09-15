@@ -30,6 +30,7 @@ from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router, get_websocket_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
+from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
@@ -38,6 +39,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import generate_id
 from agno.team.team import Team
 from agno.workflow.workflow import Workflow
+from agno.utils.string import generate_deterministic_id
 
 
 @asynccontextmanager
@@ -92,7 +94,7 @@ class AgentOS:
 
         self.interfaces = interfaces or []
 
-        self.os_id: Optional[str] = os_id
+        self.os_id = os_id
         self.name = name
         self.version = version
         self.description = description
@@ -147,6 +149,9 @@ class AgentOS:
                 # TODO: track MCP tools in workflow members
                 if not workflow.id:
                     workflow.id = generate_id(workflow.name)
+
+        if not self.os_id:
+            self.os_id = generate_deterministic_id(self.name) if self.name else str(uuid4())
 
         if self.telemetry:
             from agno.api.os import OSLaunch, log_os_telemetry
@@ -211,6 +216,7 @@ class AgentOS:
         self.fastapi_app.include_router(get_base_router(self, settings=self.settings))
         self.fastapi_app.include_router(get_websocket_router(self, settings=self.settings))
         self.fastapi_app.include_router(get_health_router())
+        self.fastapi_app.include_router(get_home_router(self))
 
         for interface in self.interfaces:
             interface_router = interface.get_router()
@@ -226,7 +232,6 @@ class AgentOS:
 
         # Add middleware (only if app is not set)
         if not self._app_set:
-
             @self.fastapi_app.exception_handler(HTTPException)
             async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
                 return JSONResponse(
@@ -457,13 +462,6 @@ class AgentOS:
         for router in routers:
             self.fastapi_app.include_router(router)
 
-    def set_os_id(self) -> str:
-        # If os_id is already set, keep it instead of overriding with UUID
-        if self.os_id is None:
-            self.os_id = str(uuid4())
-
-        return self.os_id
-
     def serve(
         self,
         app: Union[str, FastAPI],
@@ -485,13 +483,16 @@ class AgentOS:
         from rich.align import Align
         from rich.console import Console, Group
 
-        aligned_endpoint = Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]")
-        connection_endpoint = f"\n\n[bold dark_orange]Running on:[/bold dark_orange] http://{host}:{port}"
+        panel_group = []
+        panel_group.append(Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]"))
+        panel_group.append(Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}"))
+        if bool(self.settings.os_security_key):
+            panel_group.append(Align.center(f"\n\n[bold chartreuse3]:lock: Security Enabled[/bold chartreuse3]"))
 
         console = Console()
         console.print(
             Panel(
-                Group(aligned_endpoint, connection_endpoint),
+                Group(*panel_group),
                 title="AgentOS",
                 expand=False,
                 border_style="dark_orange",

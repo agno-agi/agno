@@ -8,7 +8,6 @@ def get_health_router() -> APIRouter:
 
     @router.get(
         "/health",
-        tags=["Core"],
         operation_id="health_check",
         summary="Health Check",
         description="Check the health status of the AgentOS API. Returns a simple status indicator.",

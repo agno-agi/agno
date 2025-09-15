@@ -16,7 +16,8 @@ from agno.db.firestore.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields, generate_deterministic_id, serialize_session_json_fields
+from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
+from agno.utils.string import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 
