@@ -6,7 +6,7 @@ from agno.models.openai.like import OpenAILike
 
 
 @dataclass
-class v0(OpenAILike):
+class V0(OpenAILike):
     """
     Class for interacting with the v0 API.
 

@@ -18,8 +18,7 @@ finance_agent = Agent(
         "Use tables to display data where possible.",
         "Always call the tool before you answer.",
     ],
-    add_datetime_to_instructions=True,
-    show_tool_calls=True,  # Uncomment to see tool calls in the response
+    add_datetime_to_context=True,
     markdown=True,
 )
 

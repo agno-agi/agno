@@ -12,8 +12,7 @@ REM Get current directory
 SET "CURR_DIR=%~dp0"
 SET "REPO_ROOT=%CURR_DIR%\.."
 SET "AGNO_DIR=%REPO_ROOT%\libs\agno"
-SET "AGNO_DOCKER_DIR=%REPO_ROOT%\libs\infra\agno_docker"
-SET "AGNO_AWS_DIR=%REPO_ROOT%\libs\infra\agno_aws"
+SET "AGNO_INFRA_DIR=%REPO_ROOT%\libs\agno_infra"
 SET "VENV_DIR=%REPO_ROOT%\.venv"
 
 REM Function to print headings
@@ -37,19 +36,12 @@ pip install -r "%AGNO_DIR%\requirements.txt"
 CALL :print_heading "Installing agno in editable mode with tests dependencies"
 pip install -e "%AGNO_DIR%[tests]"
 
-CALL :print_heading "Installing agno-docker"
-ECHO [INFO] Installing dependencies from %AGNO_DOCKER_DIR%\requirements.txt
-pip install -r "%AGNO_DOCKER_DIR%\requirements.txt"
+CALL :print_heading "Installing agno-os"
+ECHO [INFO] Installing dependencies from %AGNO_INFRA_DIR%\requirements.txt
+pip install -r "%AGNO_INFRA_DIR%\requirements.txt"
 
-CALL :print_heading "Installing agno-docker in editable mode with dev dependencies"
-pip install -e "%AGNO_DOCKER_DIR%[dev]"
-
-CALL :print_heading "Installing agno-aws"
-ECHO [INFO] Installing dependencies from %AGNO_AWS_DIR%\requirements.txt
-pip install -r "%AGNO_AWS_DIR%\requirements.txt"
-
-CALL :print_heading "Installing agno-aws in editable mode with dev dependencies"
-pip install -e "%AGNO_AWS_DIR%[dev]"
+CALL :print_heading "Installing agno-os in editable mode with dev dependencies"
+pip install -e "%AGNO_INFRA_DIR%[dev]"
 
 CALL :print_heading "pip list"
 pip list

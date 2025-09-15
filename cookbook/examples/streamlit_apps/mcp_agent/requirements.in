@@ -1,11 +1,11 @@
-agno
+agno==2.0.0
 anthropic
 google-genai
 groq
-lancedb
 mcp
+lancedb
 nest_asyncio
 openai
+psycopg[binary]
 sqlalchemy
 streamlit
-tantivy

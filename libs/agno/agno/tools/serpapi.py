@@ -15,7 +15,9 @@ class SerpApiTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        search_youtube: bool = False,
+        enable_search_google: bool = True,
+        enable_search_youtube: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("SERP_API_KEY")
@@ -23,8 +25,9 @@ class SerpApiTools(Toolkit):
             logger.warning("No Serpapi API key provided")
 
         tools: List[Any] = []
-        tools.append(self.search_google)
-        if search_youtube:
+        if all or enable_search_google:
+            tools.append(self.search_google)
+        if all or enable_search_youtube:
             tools.append(self.search_youtube)
 
         super().__init__(name="serpapi_tools", tools=tools, **kwargs)

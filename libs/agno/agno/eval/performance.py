@@ -3,11 +3,12 @@ import gc
 import tracemalloc
 from dataclasses import dataclass, field
 from os import getenv
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 from uuid import uuid4
 
-from agno.api.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
+from agno.db.base import BaseDb
+from agno.db.schemas.evals import EvalType
+from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
 from agno.utils.log import log_debug, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.timer import Timer
 
@@ -195,7 +196,7 @@ class PerformanceEval:
     # Evaluation UUID
     eval_id: str = field(default_factory=lambda: str(uuid4()))
     # Number of warm-up runs (not included in final stats)
-    warmup_runs: int = 10
+    warmup_runs: Optional[int] = 10
     # Number of measured iterations
     num_iterations: int = 50
     # Result of the evaluation
@@ -210,12 +211,23 @@ class PerformanceEval:
     # Number of memory allocations to track
     top_n_memory_allocations: int = 5
 
+    # Agent and Team information
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+    model_id: Optional[str] = None
+    model_provider: Optional[str] = None
+
     # If set, results will be saved in the given file path
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
-    # Log the results to the Agno platform. On by default.
-    monitoring: bool = getenv("AGNO_MONITOR", "true").lower() == "true"
+    # The database to store Evaluation results
+    db: Optional[BaseDb] = None
+
+    # Telemetry settings
+    # telemetry=True logs minimal telemetry for analytics
+    # This helps us improve our Evals and provide better support
+    telemetry: bool = True
 
     def _measure_time(self) -> float:
         """Measure execution time for a single run."""
@@ -495,12 +507,13 @@ class PerformanceEval:
         console = Console()
         with Live(console=console, transient=True) as live_log:
             # 1. Do optional warm-up runs.
-            for i in range(self.warmup_runs):
-                status = Status(f"Warm-up run {i + 1}/{self.warmup_runs}...", spinner="dots", speed=1.0)
-                live_log.update(status)
-                self.func()  # Simply run the function without measuring
-                self._set_log_level()  # Set log level incase function changed it
-                status.stop()
+            if self.warmup_runs is not None:
+                for i in range(self.warmup_runs):
+                    status = Status(f"Warm-up run {i + 1}/{self.warmup_runs}...", spinner="dots", speed=1.0)
+                    live_log.update(status)
+                    self.func()  # Simply run the function without measuring
+                    self._set_log_level()  # Set log level incase function changed it
+                    status.stop()
 
             # 2. Measure runtime
             if self.measure_runtime:
@@ -570,13 +583,33 @@ class PerformanceEval:
             self.result.print_summary(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
 
         # 7. Log results to the Agno platform if requested
-        if self.monitoring:
+        if self.db:
+            eval_input = {
+                "num_iterations": self.num_iterations,
+                "warmup_runs": self.warmup_runs,
+            }
+
             log_eval_run(
+                db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=self._parse_eval_run_data(),
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
-                evaluated_entity_name=self.func.__name__,
+                evaluated_component_name=self.func.__name__,
+                agent_id=self.agent_id,
+                team_id=self.team_id,
+                model_id=self.model_id,
+                model_provider=self.model_provider,
+                eval_input=eval_input,
+            )
+
+        if self.telemetry:
+            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
+
+            create_eval_run_telemetry(
+                eval_run=EvalRunCreate(
+                    run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
+                ),
             )
 
         log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
@@ -617,12 +650,13 @@ class PerformanceEval:
         console = Console()
         with Live(console=console, transient=True) as live_log:
             # 1. Do optional warm-up runs.
-            for i in range(self.warmup_runs):
-                status = Status(f"Warm-up run {i + 1}/{self.warmup_runs}...", spinner="dots", speed=1.0)
-                live_log.update(status)
-                await self.func()  # Simply run the function without measuring
-                self._set_log_level()  # Set log level incase function changed it
-                status.stop()
+            if self.warmup_runs is not None:
+                for i in range(self.warmup_runs):
+                    status = Status(f"Warm-up run {i + 1}/{self.warmup_runs}...", spinner="dots", speed=1.0)
+                    live_log.update(status)
+                    await self.func()  # Simply run the function without measuring
+                    self._set_log_level()  # Set log level incase function changed it
+                    status.stop()
 
             # 2. Measure runtime
             if self.measure_runtime:
@@ -692,14 +726,45 @@ class PerformanceEval:
             self.result.print_summary(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
 
         # 7. Log results to the Agno platform if requested
-        if self.monitoring:
-            await async_log_eval_run(
+        if self.db:
+            eval_input = {
+                "num_iterations": self.num_iterations,
+                "warmup_runs": self.warmup_runs,
+            }
+
+            await async_log_eval(
+                db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=self._parse_eval_run_data(),
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
-                evaluated_entity_name=self.func.__name__,
+                evaluated_component_name=self.func.__name__,
+                agent_id=self.agent_id,
+                team_id=self.team_id,
+                model_id=self.model_id,
+                model_provider=self.model_provider,
+                eval_input=eval_input,
+            )
+
+        if self.telemetry:
+            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
+
+            await async_create_eval_run_telemetry(
+                eval_run=EvalRunCreate(
+                    run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
+                ),
             )
 
         log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result
+
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the evaluation"""
+        return {
+            "model_id": self.model_id,
+            "model_provider": self.model_provider,
+            "num_iterations": self.num_iterations,
+            "warmup_runs": self.warmup_runs,
+            "measure_memory": self.measure_memory,
+            "measure_runtime": self.measure_runtime,
+        }

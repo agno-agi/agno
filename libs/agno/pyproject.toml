@@ -1,10 +1,10 @@
 [project]
 name = "agno"
-version = "1.8.1"
+version = "2.0.4"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
-license = { file = "LICENSE" }
+license-files = ["LICENSE"]
 authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
 ]
@@ -41,13 +41,14 @@ dependencies = [
   "python-multipart",
   "pyyaml",
   "rich",
-  "tomli",
   "typer",
   "typing-extensions",
 ]
 
 [project.optional-dependencies]
 dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
+
+os = ["fastapi", "uvicorn"]
 
 # Models integration test dependencies
 integration-tests = [
@@ -132,7 +133,8 @@ redis = ["redis"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb==0.20.0", "tantivy"]
+lancedb = ["lancedb>=0.24.0", "tantivy"]
+pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 couchbase = ["couchbase"]
 cassandra = ["cassio"]
@@ -143,6 +145,7 @@ milvusdb = ["pymilvus>=2.5.10"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
 surrealdb = ["surrealdb>=1.0.4"]
+upstash = ["upstash-vector"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -150,6 +153,7 @@ docx = ["python-docx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
+chonkie = ["chonkie[st]", "chonkie"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
@@ -166,10 +170,12 @@ performance = ["memory_profiler"]
 cookbooks = ["inquirer", "email_validator"]
 
 # Dependencies for Docker
-docker = ["agno-docker"]
+docker = ["agno-infra[docker]"]
 
 # Dependencies for AWS
-aws = ["agno-aws", "agno-docker"]
+aws = ["agno-infra[aws]", "agno-infra[docker]"]
+
+infra = ["agno-infra"]
 
 # All models
 models = [
@@ -254,7 +260,8 @@ vectordbs = [
   "agno[milvusdb]",
   "agno[clickhouse]",
   "agno[pinecone]",
-  "agno[surrealdb]"
+  "agno[surrealdb]",
+  "agno[upstash]",
 ]
 
 # All knowledge
@@ -263,7 +270,8 @@ knowledge = [
   "agno[docx]",
   "agno[text]",
   "agno[csv]",
-  "agno[markdown]"
+  "agno[markdown]",
+  "agno[chonkie]"
 ]
 
 # All embedders
@@ -286,10 +294,6 @@ tests = [
     "twine",
     "build",
 ]
-
-[project.scripts]
-ag = "agno.cli.entrypoint:agno_cli"
-agno = "agno.cli.entrypoint:agno_cli"
 
 [project.urls]
 homepage = "https://agno.com"
@@ -331,6 +335,7 @@ module = [
   "ag_ui.*",
   "agentql.*",
   "aioboto3.*",
+  "aiohttp.*",
   "aiofiles.*",
   "altair.*",
   "anthropic.*",
@@ -367,6 +372,7 @@ module = [
   "exa_py.*",
   "fastapi.*",
   "fastembed.*",
+  "fastmcp.*",
   "filetype.*",
   "firecrawl.*",
   "github.*",

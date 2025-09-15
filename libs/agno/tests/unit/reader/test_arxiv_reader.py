@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 import arxiv
 import pytest
 
-from agno.document.reader.arxiv_reader import ArxivReader
+from agno.knowledge.reader.arxiv_reader import ArxivReader
 
 
 @pytest.fixture
