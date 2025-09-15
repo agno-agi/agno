@@ -499,7 +499,7 @@ class Step:
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
 
-                        final_response = active_executor_run_response # type: ignore
+                        final_response = active_executor_run_response  # type: ignore
 
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
@@ -877,7 +877,7 @@ class Step:
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
 
-                        final_response = active_executor_run_response # type: ignore
+                        final_response = active_executor_run_response  # type: ignore
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 

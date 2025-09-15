@@ -38,9 +38,9 @@ from agno.os.routers.session import get_session_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import generate_id
 from agno.team.team import Team
+from agno.utils.log import logger
 from agno.utils.string import generate_deterministic_id
 from agno.workflow.workflow import Workflow
-from agno.utils.log import logger
 
 
 @asynccontextmanager
@@ -299,16 +299,16 @@ class AgentOS:
 
     def _get_existing_route_paths(self) -> Dict[str, List[str]]:
         """Get all existing route paths and methods from the FastAPI app.
-        
+
         Returns:
             Dict[str, List[str]]: Dictionary mapping paths to list of HTTP methods
         """
         if not self.fastapi_app:
             return {}
-            
-        existing_paths = {}
+
+        existing_paths: Dict[str, Any] = {}
         for route in self.fastapi_app.routes:
-            if hasattr(route, 'path') and hasattr(route, 'methods'):
+            if hasattr(route, "path") and hasattr(route, "methods"):
                 path = route.path
                 methods = list(route.methods) if route.methods else []
                 if path in existing_paths:
@@ -319,58 +319,54 @@ class AgentOS:
 
     def _add_router(self, router: APIRouter) -> None:
         """Add a router to the FastAPI app, avoiding route conflicts.
-        
+
         Args:
             router: The APIRouter to add
         """
         if not self.fastapi_app:
             return
-            
+
         # Get existing routes
         existing_paths = self._get_existing_route_paths()
-        
+
         # Check for conflicts
         conflicts = []
         conflicting_routes = []
-        
+
         for route in router.routes:
-            if hasattr(route, 'path') and hasattr(route, 'methods'):
+            if hasattr(route, "path") and hasattr(route, "methods"):
                 full_path = route.path
                 route_methods = list(route.methods) if route.methods else []
-                
+
                 if full_path in existing_paths:
                     conflicting_methods = set(route_methods) & set(existing_paths[full_path])
                     if conflicting_methods:
-                        conflicts.append({
-                            'path': full_path,
-                            'methods': list(conflicting_methods),
-                            'route': route
-                        })
+                        conflicts.append({"path": full_path, "methods": list(conflicting_methods), "route": route})
                         conflicting_routes.append(route)
-        
+
         if conflicts and self._app_set:
             if self.replace_routes:
                 # Skip conflicting AgentOS routes, prefer user's existing routes
                 for conflict in conflicts:
-                    methods_str = ', '.join(conflict['methods'])
+                    methods_str = ", ".join(conflict["methods"])
                     logger.debug(
                         f"Skipping conflicting AgentOS route: {methods_str} {conflict['path']} - "
                         f"Using existing custom route instead"
                     )
-                
+
                 # Create a new router without the conflicting routes
                 filtered_router = APIRouter()
                 for route in router.routes:
                     if route not in conflicting_routes:
                         filtered_router.routes.append(route)
-                
+
                 # Use the filtered router if it has any routes left
                 if filtered_router.routes:
                     self.fastapi_app.include_router(filtered_router)
             else:
                 # Log warnings but still add all routes (AgentOS routes will override)
                 for conflict in conflicts:
-                    methods_str = ', '.join(conflict['methods'])
+                    methods_str = ", ".join(conflict["methods"])
                     logger.warning(
                         f"Route conflict detected: {methods_str} {conflict['path']} - "
                         f"AgentOS route will override existing custom route"

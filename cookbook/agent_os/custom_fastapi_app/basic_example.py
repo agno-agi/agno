@@ -62,6 +62,7 @@ async def get_customers():
         },
     ]
 
+
 # Setup our AgentOS app by passing your FastAPI app
 # Use route_prefix to avoid conflicts with your custom routes
 agent_os = AgentOS(

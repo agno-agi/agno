@@ -56,7 +56,11 @@ app.add_middleware(
 # Custom landing page (conflicts with AgentOS home route)
 @app.get("/")
 async def get_custom_home():
-    return {"message": "Custom FastAPI App", "note": "Using replace_routes=True to preserve custom routes"}
+    return {
+        "message": "Custom FastAPI App",
+        "note": "Using replace_routes=True to preserve custom routes",
+    }
+
 
 # Custom health endpoint (conflicts with AgentOS health route)
 @app.get("/health")
