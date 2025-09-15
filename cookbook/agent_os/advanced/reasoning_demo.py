@@ -90,7 +90,7 @@ agno_docs = Knowledge(
         search_type=SearchType.hybrid,
     ),
 )
-# agno_docs.add_content(name="Agno Docs", url="https://www.paulgraham.com/read.html")
+agno_docs.add_content(name="Agno Docs", url="https://www.paulgraham.com/read.html")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,
