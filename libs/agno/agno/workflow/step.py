@@ -499,7 +499,7 @@ class Step:
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
 
-                        final_response = self._process_step_output(active_executor_run_response)  # type: ignore
+                        final_response = active_executor_run_response # type: ignore
 
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
@@ -513,6 +513,7 @@ class Step:
                 use_workflow_logger()
 
                 # Yield the step output
+                final_response = self._process_step_output(final_response)
                 yield final_response
 
                 # Emit StepCompletedEvent
@@ -876,7 +877,7 @@ class Step:
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
 
-                        final_response = self._process_step_output(active_executor_run_response)  # type: ignore
+                        final_response = active_executor_run_response # type: ignore
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
@@ -888,6 +889,7 @@ class Step:
                 use_workflow_logger()
 
                 # Yield the final response
+                final_response = self._process_step_output(final_response)
                 yield final_response
 
                 if stream_intermediate_steps and workflow_run_response:
