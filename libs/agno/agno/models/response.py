@@ -29,11 +29,15 @@ class ToolExecution:
     result: Optional[str] = None
     metrics: Optional[Metrics] = None
 
+    # In the case where a tool call creates a run of an agent/team/workflow
+    child_run_id: Optional[str] = None
+
     # If True, the agent will stop executing after this tool call.
     stop_after_tool_call: bool = False
 
     created_at: int = int(time())
 
+    # User control flow requirements
     requires_confirmation: Optional[bool] = None
     confirmed: Optional[bool] = None
     confirmation_note: Optional[str] = None
@@ -66,6 +70,7 @@ class ToolExecution:
             tool_args=data.get("tool_args"),
             tool_call_error=data.get("tool_call_error"),
             result=data.get("result"),
+            child_run_id=data.get("child_run_id"),
             stop_after_tool_call=data.get("stop_after_tool_call", False),
             requires_confirmation=data.get("requires_confirmation"),
             confirmed=data.get("confirmed"),

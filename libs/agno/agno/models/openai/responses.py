@@ -56,6 +56,9 @@ class OpenAIResponses(Model):
     truncation: Optional[Literal["auto", "disabled"]] = None
     user: Optional[str] = None
     service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
+    extra_headers: Optional[Any] = None
+    extra_query: Optional[Any] = None
+    extra_body: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -202,6 +205,9 @@ class OpenAIResponses(Model):
             "truncation": self.truncation,
             "user": self.user,
             "service_tier": self.service_tier,
+            "extra_headers": self.extra_headers,
+            "extra_query": self.extra_query,
+            "extra_body": self.extra_body,
         }
         # Populate the reasoning parameter
         base_params = self._set_reasoning_request_param(base_params)
