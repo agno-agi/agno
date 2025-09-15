@@ -13,7 +13,7 @@ except ImportError:
 class DuckDuckGoTools(Toolkit):
     """
     DuckDuckGo is a toolkit for searching using DuckDuckGo easily.
-    It uses the meta-search library DDGS, so it also has access to other search engines.
+    It uses the meta-search library DDGS, so it also has access to other backends.
     Args:
         enable_search (bool): Enable DDGS search function.
         enable_news (bool): Enable DDGS news function.
@@ -21,7 +21,7 @@ class DuckDuckGoTools(Toolkit):
         fixed_max_results (Optional[int]): A fixed number of maximum results.
         proxy (Optional[str]): Proxy to be used in the search request.
         timeout (Optional[int]): The maximum number of seconds to wait for a response.
-        search_engine (Optional[str]): The search engine to be used in the search request.
+        backend (Optional[str]): The backend to be used in the search request.
 
     """
 
@@ -30,7 +30,7 @@ class DuckDuckGoTools(Toolkit):
         enable_search: bool = True,
         enable_news: bool = True,
         all: bool = False,
-        search_engine: str = "auto",
+        backend: str = "duckduckgo",
         modifier: Optional[str] = None,
         fixed_max_results: Optional[int] = None,
         proxy: Optional[str] = None,
@@ -43,7 +43,7 @@ class DuckDuckGoTools(Toolkit):
         self.fixed_max_results: Optional[int] = fixed_max_results
         self.modifier: Optional[str] = modifier
         self.verify_ssl: bool = verify_ssl
-        self.search_engine: str = search_engine
+        self.backend: str = backend
 
         tools: List[Any] = []
         if all or enable_search:
@@ -66,9 +66,9 @@ class DuckDuckGoTools(Toolkit):
         actual_max_results = self.fixed_max_results or max_results
         search_query = f"{self.modifier} {query}" if self.modifier else query
 
-        log_debug(f"Searching DDG for: {search_query} using search engine: {self.search_engine}")
+        log_debug(f"Searching DDG for: {search_query} using backend: {self.backend}")
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.text(query=search_query, max_results=actual_max_results, backend=self.search_engine)
+            results = ddgs.text(query=search_query, max_results=actual_max_results, backend=self.backend)
 
         return json.dumps(results, indent=2)
 
@@ -84,8 +84,8 @@ class DuckDuckGoTools(Toolkit):
         """
         actual_max_results = self.fixed_max_results or max_results
 
-        log_debug(f"Searching DDG news for: {query} using search engine: {self.search_engine}")
+        log_debug(f"Searching DDG news for: {query} using backend: {self.backend}")
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.news(query=query, max_results=actual_max_results, backend=self.search_engine)
+            results = ddgs.news(query=query, max_results=actual_max_results, backend=self.backend)
 
         return json.dumps(results, indent=2)

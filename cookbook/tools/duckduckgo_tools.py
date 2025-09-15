@@ -24,12 +24,12 @@ agent_all = Agent(model=OpenAIChat(id="gpt-4o"), tools=[DuckDuckGoTools(all=True
 # )
 
 # Example 4: Specify the search engine
-# google_agent = Agent(
-#     model=OpenAIChat(id="gpt-4o"),
-#     tools=[
-#         DuckDuckGoTools(enable_search=True, enable_news=False, search_engine="yandex")
-#     ],
-#     add_datetime_to_context=True,
-# )
+yandex_agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        DuckDuckGoTools(enable_search=True, enable_news=False, backend="yandex")
+    ],
+    add_datetime_to_context=True,
+)
 
-# google_agent.print_response("What's happening in AI?", markdown=True, debug_mode=True)
+yandex_agent.print_response("What's happening in AI?", markdown=True, debug_mode=True)
