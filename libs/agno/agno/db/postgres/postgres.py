@@ -18,9 +18,9 @@ from agno.db.postgres.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.utils.string import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_deterministic_id
 
 try:
     from sqlalchemy import Index, String, UniqueConstraint, func, update

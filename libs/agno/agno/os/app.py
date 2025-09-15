@@ -4,7 +4,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from rich import box
 from rich.panel import Panel
@@ -38,8 +38,9 @@ from agno.os.routers.session import get_session_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import generate_id
 from agno.team.team import Team
-from agno.workflow.workflow import Workflow
 from agno.utils.string import generate_deterministic_id
+from agno.workflow.workflow import Workflow
+from agno.utils.log import logger
 
 
 @asynccontextmanager
@@ -72,8 +73,30 @@ class AgentOS:
         fastapi_app: Optional[FastAPI] = None,
         lifespan: Optional[Any] = None,
         enable_mcp: bool = False,
+        replace_routes: bool = False,
         telemetry: bool = True,
     ):
+        """Initialize AgentOS.
+
+        Args:
+            os_id: Unique identifier for this AgentOS instance
+            name: Name of the AgentOS instance
+            description: Description of the AgentOS instance
+            version: Version of the AgentOS instance
+            agents: List of agents to include in the OS
+            teams: List of teams to include in the OS
+            workflows: List of workflows to include in the OS
+            interfaces: List of interfaces to include in the OS
+            config: Configuration file path or AgentOSConfig instance
+            settings: API settings for the OS
+            fastapi_app: Optional custom FastAPI app to use instead of creating a new one
+            lifespan: Optional lifespan context manager for the FastAPI app
+            enable_mcp: Whether to enable MCP (Model Context Protocol)
+            replace_routes: If True and using a custom fastapi_app, skip AgentOS routes that
+                          conflict with existing routes, preferring the user's custom routes.
+                          If False (default), AgentOS routes will override conflicting custom routes.
+            telemetry: Whether to enable telemetry
+        """
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
 
@@ -98,6 +121,8 @@ class AgentOS:
         self.name = name
         self.version = version
         self.description = description
+
+        self.replace_routes = replace_routes
 
         self.telemetry = telemetry
 
@@ -212,15 +237,15 @@ class AgentOS:
             else:
                 self.fastapi_app = self._make_app(lifespan=self.lifespan)
 
-        # Add routes
-        self.fastapi_app.include_router(get_base_router(self, settings=self.settings))
-        self.fastapi_app.include_router(get_websocket_router(self, settings=self.settings))
-        self.fastapi_app.include_router(get_health_router())
-        self.fastapi_app.include_router(get_home_router(self))
+        # Add routes with conflict detection
+        self._add_router(get_base_router(self, settings=self.settings))
+        self._add_router(get_websocket_router(self, settings=self.settings))
+        self._add_router(get_health_router())
+        self._add_router(get_home_router(self))
 
         for interface in self.interfaces:
             interface_router = interface.get_router()
-            self.fastapi_app.include_router(interface_router)
+            self._add_router(interface_router)
 
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
@@ -232,6 +257,7 @@ class AgentOS:
 
         # Add middleware (only if app is not set)
         if not self._app_set:
+
             @self.fastapi_app.exception_handler(HTTPException)
             async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
                 return JSONResponse(
@@ -270,6 +296,89 @@ class AgentOS:
         app = self.get_app()
 
         return app.routes
+
+    def _get_existing_route_paths(self) -> Dict[str, List[str]]:
+        """Get all existing route paths and methods from the FastAPI app.
+        
+        Returns:
+            Dict[str, List[str]]: Dictionary mapping paths to list of HTTP methods
+        """
+        if not self.fastapi_app:
+            return {}
+            
+        existing_paths = {}
+        for route in self.fastapi_app.routes:
+            if hasattr(route, 'path') and hasattr(route, 'methods'):
+                path = route.path
+                methods = list(route.methods) if route.methods else []
+                if path in existing_paths:
+                    existing_paths[path].extend(methods)
+                else:
+                    existing_paths[path] = methods
+        return existing_paths
+
+    def _add_router(self, router: APIRouter) -> None:
+        """Add a router to the FastAPI app, avoiding route conflicts.
+        
+        Args:
+            router: The APIRouter to add
+        """
+        if not self.fastapi_app:
+            return
+            
+        # Get existing routes
+        existing_paths = self._get_existing_route_paths()
+        
+        # Check for conflicts
+        conflicts = []
+        conflicting_routes = []
+        
+        for route in router.routes:
+            if hasattr(route, 'path') and hasattr(route, 'methods'):
+                full_path = route.path
+                route_methods = list(route.methods) if route.methods else []
+                
+                if full_path in existing_paths:
+                    conflicting_methods = set(route_methods) & set(existing_paths[full_path])
+                    if conflicting_methods:
+                        conflicts.append({
+                            'path': full_path,
+                            'methods': list(conflicting_methods),
+                            'route': route
+                        })
+                        conflicting_routes.append(route)
+        
+        if conflicts and self._app_set:
+            if self.replace_routes:
+                # Skip conflicting AgentOS routes, prefer user's existing routes
+                for conflict in conflicts:
+                    methods_str = ', '.join(conflict['methods'])
+                    logger.debug(
+                        f"Skipping conflicting AgentOS route: {methods_str} {conflict['path']} - "
+                        f"Using existing custom route instead"
+                    )
+                
+                # Create a new router without the conflicting routes
+                filtered_router = APIRouter()
+                for route in router.routes:
+                    if route not in conflicting_routes:
+                        filtered_router.routes.append(route)
+                
+                # Use the filtered router if it has any routes left
+                if filtered_router.routes:
+                    self.fastapi_app.include_router(filtered_router)
+            else:
+                # Log warnings but still add all routes (AgentOS routes will override)
+                for conflict in conflicts:
+                    methods_str = ', '.join(conflict['methods'])
+                    logger.warning(
+                        f"Route conflict detected: {methods_str} {conflict['path']} - "
+                        f"AgentOS route will override existing custom route"
+                    )
+                self.fastapi_app.include_router(router)
+        else:
+            # No conflicts, add router normally
+            self.fastapi_app.include_router(router)
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
         """Get the telemetry data for the OS"""
@@ -460,7 +569,7 @@ class AgentOS:
         ]
 
         for router in routers:
-            self.fastapi_app.include_router(router)
+            self._add_router(router)
 
     def serve(
         self,
@@ -485,9 +594,11 @@ class AgentOS:
 
         panel_group = []
         panel_group.append(Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]"))
-        panel_group.append(Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}"))
+        panel_group.append(
+            Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}")
+        )
         if bool(self.settings.os_security_key):
-            panel_group.append(Align.center(f"\n\n[bold chartreuse3]:lock: Security Enabled[/bold chartreuse3]"))
+            panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: Security Enabled[/bold chartreuse3]"))
 
         console = Console()
         console.print(

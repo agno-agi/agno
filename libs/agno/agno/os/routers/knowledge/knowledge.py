@@ -5,7 +5,6 @@ from typing import Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, UploadFile
 
-from agno.utils.string import generate_deterministic_id
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
@@ -34,6 +33,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.utils.log import log_debug, log_info
+from agno.utils.string import generate_deterministic_id
 
 logger = logging.getLogger(__name__)
 

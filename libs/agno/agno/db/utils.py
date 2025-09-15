@@ -86,5 +86,3 @@ def deserialize_session_json_fields(session: dict) -> dict:
             session["runs"] = json.loads(session["runs"])
 
     return session
-
-

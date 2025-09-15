@@ -1,6 +1,9 @@
-
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter
+
+if TYPE_CHECKING:
+    from agno.os.app import AgentOS
 
 
 def get_home_router(os: "AgentOS") -> APIRouter:
@@ -29,13 +32,13 @@ def get_home_router(os: "AgentOS") -> APIRouter:
                                     "description": "AI Agent Operating System API",
                                     "os_id": "demo-os",
                                     "version": "1.0.0",
-                                }
+                                },
                             }
                         }
                     }
-                }
+                },
             }
-        }
+        },
     )
     async def get_api_info():
         """Get basic API information and available capabilities"""
@@ -43,7 +46,7 @@ def get_home_router(os: "AgentOS") -> APIRouter:
             "name": "AgentOS API",
             "description": os.description or "AI Agent Operating System API",
             "os_id": os.os_id or "agno-agentos",
-            "version": os.version or "1.0.0"
+            "version": os.version or "1.0.0",
         }
 
     return router

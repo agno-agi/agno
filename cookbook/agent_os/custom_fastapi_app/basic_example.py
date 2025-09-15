@@ -1,5 +1,5 @@
 """
-Example AgentOS app with a custom FastAPI app.
+Example AgentOS app with a custom FastAPI app with basic routes.
 
 You can also run this using the FastAPI cli (pip install fastapi["standard"]):
 ```
@@ -62,8 +62,8 @@ async def get_customers():
         },
     ]
 
-
 # Setup our AgentOS app by passing your FastAPI app
+# Use route_prefix to avoid conflicts with your custom routes
 agent_os = AgentOS(
     description="Example app with custom routers",
     agents=[web_research_agent],
@@ -78,10 +78,10 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    """Run our AgentOS.
+    """Run your AgentOS.
 
-    You can see the docs at:
-    http://localhost:7777/docs
+    With this setup:
+    - API docs: http://localhost:7777/docs
 
     """
-    agent_os.serve(app="custom_fastapi_app:app", reload=True)
+    agent_os.serve(app="basic_example:app", reload=True)
