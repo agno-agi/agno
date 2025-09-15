@@ -15,8 +15,8 @@ class DuckDuckGoTools(Toolkit):
     DuckDuckGo is a toolkit for searching using DuckDuckGo easily.
     It uses the meta-search library DDGS, so it also has access to other search engines.
     Args:
-        search (bool): Enable DDGS search function.
-        news (bool): Enable DDGS news function.
+        enable_search (bool): Enable DDGS search function.
+        enable_news (bool): Enable DDGS news function.
         modifier (Optional[str]): A modifier to be used in the search request.
         fixed_max_results (Optional[int]): A fixed number of maximum results.
         proxy (Optional[str]): Proxy to be used in the search request.
