@@ -365,6 +365,8 @@ class File(BaseModel):
         return [
             "application/pdf",
             "application/x-javascript",
+            "application/json",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "text/javascript",
             "application/x-python",
             "text/x-python",
