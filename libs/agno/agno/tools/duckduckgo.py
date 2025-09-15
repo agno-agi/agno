@@ -21,7 +21,7 @@ class DuckDuckGoTools(Toolkit):
         fixed_max_results (Optional[int]): A fixed number of maximum results.
         proxy (Optional[str]): Proxy to be used in the search request.
         timeout (Optional[int]): The maximum number of seconds to wait for a response.
-        backend (Optional[str]): The search engine to be used in the search request.
+        search_engine (Optional[str]): The search engine to be used in the search request.
 
     """
 
