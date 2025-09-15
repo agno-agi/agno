@@ -17,11 +17,10 @@
 # ```
 
 import pytest
-from surrealdb import Surreal
-
-from agno.debug import enable_debug_mode
 from agno.memory.v2.db.schema import MemoryRow
 from agno.memory.v2.db.surrealdb import SurrealMemoryDb
+
+from agno.debug import enable_debug_mode
 
 enable_debug_mode()
 
@@ -36,9 +35,10 @@ SURREALDB_DATABASE = "test"
 @pytest.fixture
 def memory_db():
     """Create a SurrealDB memory database for testing."""
-    client = Surreal(url=SURREALDB_URL)
-    client.signin({"username": SURREALDB_USER, "password": SURREALDB_PASSWORD})
-    client.use(namespace=SURREALDB_NAMESPACE, database=SURREALDB_DATABASE)
+    # client = Surreal(url=SURREALDB_URL)
+    # client.signin({"username": SURREALDB_USER, "password": SURREALDB_PASSWORD})
+    # client.use(namespace=SURREALDB_NAMESPACE, database=SURREALDB_DATABASE)
+    client = build_client(SURREALDB_URL, SURREALDB_USER, SURREALDB_PASSWORD, SURREALDB_NAMESPACE, SURREALDB_DATABASE)
     db = SurrealMemoryDb(client=client)
     db.drop_table()
     db.create()
