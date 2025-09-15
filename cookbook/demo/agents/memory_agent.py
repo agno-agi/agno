@@ -1,4 +1,3 @@
-from typing import Optional
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb

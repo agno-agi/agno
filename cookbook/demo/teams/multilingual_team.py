@@ -2,7 +2,6 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 
