@@ -12,14 +12,15 @@ except ImportError:
 
 class DuckDuckGoTools(Toolkit):
     """
-    DuckDuckGo is a toolkit for searching DuckDuckGo easily.
+    DuckDuckGo is a toolkit for searching using DDGS easily.
     Args:
-        search (bool): Enable DuckDuckGo search function.
-        news (bool): Enable DuckDuckGo news function.
+        search (bool): Enable DDGS search function.
+        news (bool): Enable DDGS news function.
         modifier (Optional[str]): A modifier to be used in the search request.
         fixed_max_results (Optional[int]): A fixed number of maximum results.
         proxy (Optional[str]): Proxy to be used in the search request.
         timeout (Optional[int]): The maximum number of seconds to wait for a response.
+        backend (Optional[str]): The search engine to be used in the search request.
 
     """
 
@@ -28,6 +29,7 @@ class DuckDuckGoTools(Toolkit):
         enable_search: bool = True,
         enable_news: bool = True,
         all: bool = False,
+        search_engine: str = "auto",
         modifier: Optional[str] = None,
         fixed_max_results: Optional[int] = None,
         proxy: Optional[str] = None,
@@ -40,6 +42,7 @@ class DuckDuckGoTools(Toolkit):
         self.fixed_max_results: Optional[int] = fixed_max_results
         self.modifier: Optional[str] = modifier
         self.verify_ssl: bool = verify_ssl
+        self.search_engine: str = search_engine
 
         tools: List[Any] = []
         if all or enable_search:
@@ -50,38 +53,38 @@ class DuckDuckGoTools(Toolkit):
         super().__init__(name="duckduckgo", tools=tools, **kwargs)
 
     def duckduckgo_search(self, query: str, max_results: int = 5) -> str:
-        """Use this function to search DuckDuckGo for a query.
+        """Use this function to search DDGS for a query.
 
         Args:
             query(str): The query to search for.
             max_results (optional, default=5): The maximum number of results to return.
 
         Returns:
-            The result from DuckDuckGo.
+            The result from DDGS.
         """
         actual_max_results = self.fixed_max_results or max_results
         search_query = f"{self.modifier} {query}" if self.modifier else query
 
-        log_debug(f"Searching DDG for: {search_query}")
+        log_debug(f"Searching DDG for: {search_query} using search engine: {self.search_engine}")
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.text(query=search_query, max_results=actual_max_results)
+            results = ddgs.text(query=search_query, max_results=actual_max_results, backend=self.search_engine)
 
         return json.dumps(results, indent=2)
 
     def duckduckgo_news(self, query: str, max_results: int = 5) -> str:
-        """Use this function to get the latest news from DuckDuckGo.
+        """Use this function to get the latest news from DDGS.
 
         Args:
             query(str): The query to search for.
             max_results (optional, default=5): The maximum number of results to return.
 
         Returns:
-            The latest news from DuckDuckGo.
+            The latest news from DDGS.
         """
         actual_max_results = self.fixed_max_results or max_results
 
-        log_debug(f"Searching DDG news for: {query}")
+        log_debug(f"Searching DDG news for: {query} using search engine: {self.search_engine}")
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.news(query=query, max_results=actual_max_results)
+            results = ddgs.news(query=query, max_results=actual_max_results, backend=self.search_engine)
 
         return json.dumps(results, indent=2)
