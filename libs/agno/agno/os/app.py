@@ -224,6 +224,28 @@ class AgentOS:
         if self.enable_mcp and self.mcp_app:
             self.fastapi_app.mount("/", self.mcp_app)
 
+        # Add default root route if no MCP is mounted
+        if not self.enable_mcp:
+            @self.fastapi_app.get("/", include_in_schema=False)
+            async def root():
+                return {
+                    "message": "Agno AgentOS is running successfully!",
+                    "status": "healthy",
+                    "name": self.name or "Agno AgentOS",
+                    "version": self.version or "1.0.0",
+                    "description": self.description or "An agent operating system.",
+                    "usage": {
+                        "connect_to_os": "Use http://localhost:7777 when connecting to this AgentOS instance",
+                        "api_documentation": "Visit http://localhost:7777/docs to explore and test the API endpoints"
+                    },
+                    "endpoints": {
+                        "docs": "/docs - Interactive API Documentation (Swagger UI)",
+                        "redoc": "/redoc - Alternative API Documentation",
+                        "config": "/config - AgentOS Configuration",
+                        "health": "/health - Health Check Status"
+                    }
+                }
+
         # Add middleware (only if app is not set)
         if not self._app_set:
 

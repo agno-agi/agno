@@ -145,3 +145,30 @@ def test_create_workflow_run_with_kwargs(test_workflow: Workflow, test_os_client
         call_args = mock_arun.call_args
         assert call_args.kwargs["extra_field"] == "foo"
         assert call_args.kwargs["extra_field_two"] == "bar"
+
+
+def test_root_endpoint(test_os_client: TestClient):
+    """Test that the root endpoint returns helpful information instead of 404."""
+    response = test_os_client.get("/")
+    assert response.status_code == 200
+    
+    data = response.json()
+    assert "message" in data
+    assert "status" in data
+    assert "name" in data
+    assert "version" in data
+    assert "usage" in data
+    assert "endpoints" in data
+    
+    # Verify the response contains expected information
+    assert data["status"] == "healthy"
+    assert "Agno AgentOS is running successfully!" in data["message"]
+    
+    # Check usage guidance
+    assert "http://localhost:7777" in data["usage"]["connect_to_os"]
+    assert "http://localhost:7777/docs" in data["usage"]["api_documentation"]
+    
+    # Check endpoints
+    assert "/docs" in data["endpoints"]["docs"]
+    assert "/config" in data["endpoints"]["config"]
+    assert "/health" in data["endpoints"]["health"]
