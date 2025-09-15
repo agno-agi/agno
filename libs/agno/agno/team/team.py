@@ -5811,12 +5811,12 @@ class Team:
     ###########################################################################
     # Session Management
     ###########################################################################
-    def _read_session(self, session_id: str) -> Optional[TeamSession]:
+    def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[TeamSession]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            session = self.db.get_session(session_id=session_id, session_type=SessionType.TEAM)
+            session = self.db.get_session(session_id=session_id, session_type=SessionType.TEAM, user_id=user_id)
             return session  # type: ignore
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
@@ -5901,7 +5901,7 @@ class Team:
         # Try to load from database
         team_session = None
         if self.db is not None and self.parent_team_id is None and self.workflow_id is None:
-            team_session = cast(TeamSession, self._read_session(session_id=session_id))
+            team_session = cast(TeamSession, self._read_session(session_id=session_id, user_id=user_id))
 
         # Create new session if none found
         if team_session is None:

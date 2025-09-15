@@ -4204,12 +4204,12 @@ class Agent:
         return agent_data
 
     # -*- Session Database Functions
-    def _read_session(self, session_id: str) -> Optional[AgentSession]:
+    def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)  # type: ignore
+            return self.db.get_session(session_id=session_id, session_type=SessionType.AGENT, user_id=user_id)  # type: ignore
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
             return None
@@ -4287,7 +4287,7 @@ class Agent:
         if self.db is not None and self.team_id is None and self.workflow_id is None:
             log_debug(f"Reading AgentSession: {session_id}")
 
-            agent_session = cast(AgentSession, self._read_session(session_id=session_id))
+            agent_session = cast(AgentSession, self._read_session(session_id=session_id, user_id=user_id))
 
         if agent_session is None:
             # Creating new session if none found
@@ -4374,12 +4374,13 @@ class Agent:
     def get_session(
         self,
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[AgentSession]:
         """Load an AgentSession from database or cache.
 
         Args:
             session_id: The session_id to load from storage.
-
+            user_id: The user_id to load from storage.
         Returns:
             AgentSession: The AgentSession loaded from the database/cache or None if not found.
         """
@@ -4395,7 +4396,7 @@ class Agent:
 
         # Load and return the session from the database
         if self.db is not None:
-            agent_session = cast(AgentSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+            agent_session = cast(AgentSession, self._read_session(session_id=session_id_to_load, user_id=user_id))  # type: ignore
 
             # Cache the session if relevant
             if agent_session is not None and self.cache_session:
