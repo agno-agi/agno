@@ -1700,17 +1700,17 @@ class PostgresDb(BaseDb):
         if v1_table_type == "agent_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "team_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "workflow_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "memories":
             for memory in memories:
