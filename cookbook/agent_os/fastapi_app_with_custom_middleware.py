@@ -70,9 +70,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         self.request_count = 0
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        import logging
-        
-        logger = logging.getLogger("agno.middleware")
         self.request_count += 1
         start_time = time.time()
         
@@ -199,4 +196,4 @@ if __name__ == "__main__":
     - 429 errors when rate limit exceeded
     """
     import uvicorn
-    uvicorn.run("test:app", host="localhost", port=7777, reload=True)
+    uvicorn.run("fastapi_app_with_custom_middleware:app", host="localhost", port=7777, reload=True)

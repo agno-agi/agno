@@ -118,4 +118,4 @@ if __name__ == "__main__":
     
     Middleware pattern: (MiddlewareClass, params_dict)
     """
-    agent_os.serve(app="test:app", port=7777, reload=True)
+    agent_os.serve(app="fastapi_app_with_jwt:app", port=7777, reload=True)
