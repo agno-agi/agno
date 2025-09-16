@@ -24,28 +24,79 @@ def convert_v1_metrics_to_v2(metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
     field_mappings = {
         "time": "duration",
         "audio_tokens": "audio_total_tokens",
+        "input_audio_tokens": "audio_input_tokens",
+        "output_audio_tokens": "audio_output_tokens",
+        "cached_tokens": "cache_read_tokens",
     }
+    
+    # Fields to remove (deprecated in v2)
+    deprecated_fields = [
+        "prompt_tokens",
+        "completion_tokens", 
+        "prompt_tokens_details",
+        "completion_tokens_details"
+    ]
     
     # Apply field mappings
     for old_field, new_field in field_mappings.items():
         if old_field in v2_metrics:
             v2_metrics[new_field] = v2_metrics.pop(old_field)
     
+    # Remove deprecated fields
+    for field in deprecated_fields:
+        v2_metrics.pop(field, None)
+    
     return v2_metrics
 
 
-def convert_session_data_metrics(session_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Convert any metrics found in session_data from v1 to v2 format."""
+def convert_any_metrics_in_data(data: Any) -> Any:
+    """Recursively find and convert any metrics dictionaries in the data structure."""
+    if isinstance(data, dict):
+        # Check if this looks like a metrics dictionary
+        if _is_metrics_dict(data):
+            return convert_v1_metrics_to_v2(data)
+        
+        # Otherwise, recursively process all values
+        converted_dict = {}
+        for key, value in data.items():
+            converted_dict[key] = convert_any_metrics_in_data(value)
+        return converted_dict
+    
+    elif isinstance(data, list):
+        return [convert_any_metrics_in_data(item) for item in data]
+    
+    else:
+        # Not a dict or list, return as-is
+        return data
+
+
+def _is_metrics_dict(data: Dict[str, Any]) -> bool:
+    """Check if a dictionary looks like a metrics dictionary based on common field names."""
+    if not isinstance(data, dict):
+        return False
+    
+    # Common metrics field names (both v1 and v2)
+    metrics_indicators = {
+        "input_tokens", "output_tokens", "total_tokens",
+        "time", "duration", 
+        "audio_tokens", "audio_total_tokens", "audio_input_tokens", "audio_output_tokens",
+        "cached_tokens", "cache_read_tokens", "cache_write_tokens",
+        "reasoning_tokens", "prompt_tokens", "completion_tokens",
+        "time_to_first_token", "provider_metrics", "additional_metrics"
+    }
+    
+    # If the dict has at least 2 metrics-related fields, consider it a metrics dict
+    matching_fields = sum(1 for field in data.keys() if field in metrics_indicators)
+    return matching_fields >= 2
+
+
+def convert_session_data_comprehensively(session_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Comprehensively convert any metrics found anywhere in session_data from v1 to v2 format."""
     if not session_data:
         return session_data
     
-    session_data_copy = session_data.copy()
-    
-    # Convert session metrics if present
-    if "session_metrics" in session_data_copy:
-        session_data_copy["session_metrics"] = convert_v1_metrics_to_v2(session_data_copy["session_metrics"])
-    
-    return session_data_copy
+    # Use the recursive converter to find and fix all metrics
+    return convert_any_metrics_in_data(session_data)
 
 
 def migrate(
@@ -118,9 +169,9 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
             "agent_data": item.get("agent_data"),
             "session_id": item.get("session_id"),
             "user_id": item.get("user_id"),
-            "session_data": convert_session_data_metrics(item.get("session_data")),
-            "metadata": item.get("extra_data"),
-            "runs": item.get("memory", {}).get("runs"),
+            "session_data": convert_session_data_comprehensively(item.get("session_data")),
+            "metadata": convert_any_metrics_in_data(item.get("extra_data")),
+            "runs": convert_any_metrics_in_data(item.get("memory", {}).get("runs")),
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
@@ -141,9 +192,9 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
             "team_data": item.get("team_data"),
             "session_id": item.get("session_id"),
             "user_id": item.get("user_id"),
-            "session_data": convert_session_data_metrics(item.get("session_data")),
-            "metadata": item.get("extra_data"),
-            "runs": item.get("memory", {}).get("runs"),
+            "session_data": convert_session_data_comprehensively(item.get("session_data")),
+            "metadata": convert_any_metrics_in_data(item.get("extra_data")),
+            "runs": convert_any_metrics_in_data(item.get("memory", {}).get("runs")),
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
@@ -164,13 +215,13 @@ def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSe
             "workflow_data": item.get("workflow_data"),
             "session_id": item.get("session_id"),
             "user_id": item.get("user_id"),
-            "session_data": convert_session_data_metrics(item.get("session_data")),
-            "metadata": item.get("extra_data"),
+            "session_data": convert_session_data_comprehensively(item.get("session_data")),
+            "metadata": convert_any_metrics_in_data(item.get("extra_data")),
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
             # Workflow v2 specific fields
             "workflow_name": item.get("workflow_name"),
-            "runs": item.get("runs"),
+            "runs": convert_any_metrics_in_data(item.get("runs")),
         }
         workflow_session = WorkflowSession.from_dict(session)
         if workflow_session is not None:

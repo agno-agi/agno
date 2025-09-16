@@ -13,14 +13,14 @@ from agno.db.postgres.postgres import PostgresDb
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # The schema and names of your v1 tables. Leave the names of tables you don't need to migrate blank.
-v1_tables_schema = ""
-v1_agent_sessions_table_name = ""
+v1_tables_schema = "ai"
+v1_agent_sessions_table_name = "agent_sessions"
 v1_team_sessions_table_name = ""
 v1_workflow_sessions_table_name = ""
 v1_memories_table_name = ""
 
 # Names for the v2 tables
-v2_sessions_table_name = ""
+v2_sessions_table_name = "sessions_v2"  # Use a new table name for v2
 v2_memories_table_name = ""
 
 
