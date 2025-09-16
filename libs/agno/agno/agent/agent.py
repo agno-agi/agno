@@ -3333,13 +3333,6 @@ class Agent:
                     ) + model_response_event.reasoning_content
                     run_response.reasoning_content = model_response.reasoning_content
 
-                if model_response_event.reasoning_content is not None:
-                    if not model_response.reasoning_content:
-                        model_response.reasoning_content = model_response_event.reasoning_content
-                    else:
-                        model_response.reasoning_content += model_response_event.reasoning_content
-                    run_response.reasoning_content = model_response.reasoning_content
-
                 if model_response_event.redacted_reasoning_content is not None:
                     if not model_response.reasoning_content:
                         model_response.reasoning_content = model_response_event.redacted_reasoning_content
