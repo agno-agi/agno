@@ -85,7 +85,7 @@ async def chat_with_agent(
     # Run agent with user context
     result = await research_agent.arun(
         input=message,
-        user_id=user_id,  # This gets passed to the agent
+        user_id=user_id,
         stream=False,
     )
     
@@ -124,4 +124,4 @@ if __name__ == "__main__":
     2. GET /user/profile - Protected route (requires JWT)
     3. POST /agents/research/chat - Chat with agent (requires JWT)
     """
-    agent_os.serve(app="fastapi_app_with_jwt:app", port=7777, reload=True)
+    agent_os.serve(app="test:app", port=7777, reload=True)
