@@ -30,9 +30,9 @@ from agno.db.dynamo.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error
+from agno.utils.string import generate_id
 
 try:
     import boto3  # type: ignore[import-untyped]
@@ -75,7 +75,7 @@ class DynamoDb(BaseDb):
         """
         if id is None:
             seed = str(db_client) if db_client else f"{region_name}_{aws_access_key_id}"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,
