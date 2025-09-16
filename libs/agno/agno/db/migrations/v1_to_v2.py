@@ -1,5 +1,6 @@
 """Migration utility to migrate your Agno tables from v1 to v2"""
 
+import json
 from typing import Any, Dict, List, Optional, Union
 
 from sqlalchemy import text
@@ -8,6 +9,7 @@ from agno.db.mysql.mysql import MySQLDb
 from agno.db.postgres.postgres import PostgresDb
 from agno.db.schemas.memory import UserMemory
 from agno.db.sqlite.sqlite import SqliteDb
+from agno.db.mongo.mongo import MongoDb
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.utils.log import log_error
 
@@ -52,6 +54,9 @@ def convert_v1_metrics_to_v2(metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
 def convert_any_metrics_in_data(data: Any) -> Any:
     """Recursively find and convert any metrics dictionaries in the data structure."""
     if isinstance(data, dict):
+        # First filter out deprecated v1 fields
+        data = filter_deprecated_v1_fields(data)
+        
         # Check if this looks like a metrics dictionary
         if _is_metrics_dict(data):
             return convert_v1_metrics_to_v2(data)
@@ -59,7 +64,11 @@ def convert_any_metrics_in_data(data: Any) -> Any:
         # Otherwise, recursively process all values
         converted_dict = {}
         for key, value in data.items():
-            converted_dict[key] = convert_any_metrics_in_data(value)
+            # Special handling for 'metrics' keys - always convert their values
+            if key == "metrics" and isinstance(value, dict):
+                converted_dict[key] = convert_v1_metrics_to_v2(value)
+            else:
+                converted_dict[key] = convert_any_metrics_in_data(value)
         return converted_dict
     
     elif isinstance(data, list):
@@ -85,7 +94,14 @@ def _is_metrics_dict(data: Dict[str, Any]) -> bool:
         "time_to_first_token", "provider_metrics", "additional_metrics"
     }
     
-    # If the dict has at least 2 metrics-related fields, consider it a metrics dict
+    # Deprecated v1 fields that are strong indicators this is a metrics dict
+    deprecated_v1_indicators = {"time", "audio_tokens", "cached_tokens", "prompt_tokens", "completion_tokens"}
+    
+    # If we find any deprecated v1 field, it's definitely a metrics dict that needs conversion
+    if any(field in data for field in deprecated_v1_indicators):
+        return True
+    
+    # Otherwise, if the dict has at least 2 metrics-related fields, consider it a metrics dict
     matching_fields = sum(1 for field in data.keys() if field in metrics_indicators)
     return matching_fields >= 2
 
@@ -99,24 +115,63 @@ def convert_session_data_comprehensively(session_data: Optional[Dict[str, Any]])
     return convert_any_metrics_in_data(session_data)
 
 
+def safe_get_runs_from_memory(memory_data: Any) -> Any:
+    """Safely extract runs data from memory field, handling various data types."""
+    if memory_data is None:
+        return None
+    
+    # If memory_data is a string, try to parse it as JSON
+    if isinstance(memory_data, str):
+        try:
+            memory_dict = json.loads(memory_data)
+            if isinstance(memory_dict, dict):
+                return memory_dict.get("runs")
+        except (json.JSONDecodeError, AttributeError):
+            # If JSON parsing fails, memory_data might just be a string value
+            return None
+    
+    # If memory_data is already a dict, access runs directly
+    elif isinstance(memory_data, dict):
+        return memory_data.get("runs")
+    
+    # For any other type, return None
+    return None
+
+
+def filter_deprecated_v1_fields(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove v1-only fields that don't exist in v2 models."""
+    if not isinstance(data, dict):
+        return data
+    
+    # Fields that existed in v1 but were removed in v2
+    deprecated_fields = {
+        "team_session_id",  # RunOutput v1 field, removed in v2
+        "formatted_tool_calls",  # RunOutput v1 field, removed in v2
+        # Add other deprecated fields here as needed
+    }
+    
+    # Create a copy and remove deprecated fields
+    filtered_data = {k: v for k, v in data.items() if k not in deprecated_fields}
+    return filtered_data
+
+
 def migrate(
-    db: Union[PostgresDb, MySQLDb, SqliteDb],
+    db: Union[PostgresDb, MySQLDb, SqliteDb, MongoDb],
     v1_db_schema: str,
     agent_sessions_table_name: Optional[str] = None,
     team_sessions_table_name: Optional[str] = None,
     workflow_sessions_table_name: Optional[str] = None,
     memories_table_name: Optional[str] = None,
 ):
-    """Given a PostgresDb and table names, parse and migrate the tables' content to the corresponding v2 tables.
+    """Given a database connection and table/collection names, parse and migrate the content to corresponding v2 tables/collections.
 
     Args:
-        db: The database to migrate
-        v1_db_schema: The schema of the v1 tables
-        agent_sessions_table_name: The name of the agent sessions table. If not provided, the agent sessions table will not be migrated.
-        team_sessions_table_name: The name of the team sessions table. If not provided, the team sessions table will not be migrated.
-        workflow_sessions_table_name: The name of the workflow sessions table. If not provided, the workflow sessions table will not be migrated.
-        workflow_v2_sessions_table_name: The name of the workflow v2 sessions table. If not provided, the workflow v2 sessions table will not be migrated.
-        memories_table_name: The name of the memories table. If not provided, the memories table will not be migrated.
+        db: The database to migrate (PostgresDb, MySQLDb, SqliteDb, or MongoDb)
+        v1_db_schema: The schema of the v1 tables (leave empty for SQLite and MongoDB)
+        agent_sessions_table_name: The name of the agent sessions table/collection. If not provided, agent sessions will not be migrated.
+        team_sessions_table_name: The name of the team sessions table/collection. If not provided, team sessions will not be migrated.
+        workflow_sessions_table_name: The name of the workflow sessions table/collection. If not provided, workflow sessions will not be migrated.
+        memories_table_name: The name of the memories table/collection. If not provided, memories will not be migrated.
     """
     if agent_sessions_table_name:
         db.migrate_table_from_v1_to_v2(
@@ -151,7 +206,13 @@ def get_all_table_content(db, db_schema: str, table_name: str) -> list[dict[str,
     """Get all content from the given table"""
     try:
         with db.Session() as sess:
-            result = sess.execute(text(f"SELECT * FROM {db_schema}.{table_name}"))
+            # Handle empty schema by omitting the schema prefix (needed for SQLite)
+            if db_schema and db_schema.strip():
+                sql_query = f"SELECT * FROM {db_schema}.{table_name}"
+            else:
+                sql_query = f"SELECT * FROM {table_name}"
+            
+            result = sess.execute(text(sql_query))
             return [row._asdict() for row in result]
 
     except Exception as e:
@@ -171,7 +232,7 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
             "user_id": item.get("user_id"),
             "session_data": convert_session_data_comprehensively(item.get("session_data")),
             "metadata": convert_any_metrics_in_data(item.get("extra_data")),
-            "runs": convert_any_metrics_in_data(item.get("memory", {}).get("runs")),
+            "runs": convert_any_metrics_in_data(safe_get_runs_from_memory(item.get("memory"))),
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
@@ -194,7 +255,7 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
             "user_id": item.get("user_id"),
             "session_data": convert_session_data_comprehensively(item.get("session_data")),
             "metadata": convert_any_metrics_in_data(item.get("extra_data")),
-            "runs": convert_any_metrics_in_data(item.get("memory", {}).get("runs")),
+            "runs": convert_any_metrics_in_data(safe_get_runs_from_memory(item.get("memory"))),
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
