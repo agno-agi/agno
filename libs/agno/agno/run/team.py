@@ -519,7 +519,7 @@ class TeamRunOutput:
         events = final_events
 
         messages = data.pop("messages", None)
-        messages = [Message.model_validate(message) for message in messages] if messages else None
+        messages = [Message.from_dict(message) for message in messages] if messages else None
 
         member_responses = data.pop("member_responses", [])
         parsed_member_responses: List[Union["TeamRunOutput", RunOutput]] = []
@@ -532,7 +532,7 @@ class TeamRunOutput:
 
         additional_input = data.pop("additional_input", None)
         if additional_input is not None:
-            additional_input = [Message.model_validate(message) for message in additional_input]
+            additional_input = [Message.from_dict(message) for message in additional_input]
 
         reasoning_steps = data.pop("reasoning_steps", None)
         if reasoning_steps is not None:
@@ -540,7 +540,7 @@ class TeamRunOutput:
 
         reasoning_messages = data.pop("reasoning_messages", None)
         if reasoning_messages is not None:
-            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
+            reasoning_messages = [Message.from_dict(message) for message in reasoning_messages]
 
         references = data.pop("references", None)
         if references is not None:
