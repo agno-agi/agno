@@ -389,6 +389,7 @@ module = [
   "imghdr.*",
   "infinity_client.*",
   "jira.*",
+  "jwt.*",
   "kubernetes.*",
   "lancedb.*",
   "langchain_core.*",
