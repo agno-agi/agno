@@ -7,7 +7,7 @@
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reranker import CohereReranker
+from agno.knowledge.reranker.cohere import CohereReranker
 from agno.models.openai import OpenAIChat
 from agno.vectordb.lancedb import LanceDb, SearchType
 
@@ -37,5 +37,4 @@ agent = Agent(
 
 if __name__ == "__main__":
     # Load the knowledge base, comment after first run
-    # agent.knowledge.load(recreate=True)
     agent.print_response("What are Agno's key features?")
