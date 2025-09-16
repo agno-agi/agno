@@ -1,10 +1,7 @@
 """
-Example AgentOS app with custom JWT middleware for user authentication.
+Clean AgentOS middleware example using the tuple pattern.
 
-This example shows how to:
-1. Set up JWT middleware to extract user_id from tokens
-2. Access user_id in custom routes
-3. Pass user_id to agent runs
+This shows the cleanest DX for AgentOS middleware configuration.
 """
 
 import jwt
@@ -14,7 +11,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.middleware import JWTMiddleware, get_current_user_id
+from agno.os.middleware import get_current_user_id, JWTMiddleware
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 from fastapi import FastAPI, HTTPException, Request, Form
@@ -24,6 +21,14 @@ JWT_SECRET = "a-string-secret-at-least-256-bits-long"
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+
+JWT_MIDDLEWARE = (JWTMiddleware, {
+    "secret_key": JWT_SECRET,
+    "algorithm": "HS256",
+    "token_prefix": "Bearer",
+    "user_id_claim": "user_id",
+    "auto_error": False,
+})
 
 # Create agent
 research_agent = Agent(
@@ -46,7 +51,6 @@ app = FastAPI(
 @app.post("/auth/login")
 async def login(username: str = Form(...), password: str = Form(...)):
     """Login endpoint that returns JWT token"""
-    # In real app, validate credentials against database
     if username == "demo" and password == "password":
         payload = {
             "user_id": "user_123",
@@ -73,43 +77,31 @@ async def get_user_profile(request: Request):
     }
 
 @app.post("/agents/research/chat")
-async def chat_with_agent(
-    request: Request,
-    message: str = Form(...),
-):
-    """Custom route that passes user_id to agent"""
+async def chat(request: Request):
+    """Protected route that shows user information from JWT"""
     user_id = get_current_user_id(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated")
-    
-    # Run agent with user context
     result = await research_agent.arun(
-        input=message,
+        input="What is the capital of France?",
         user_id=user_id,
         stream=False,
     )
-    
     return {
-        "response": result.content,
         "user_id": user_id,
+        "message": result.content,
         "run_id": result.run_id,
+        "authenticated": True
     }
 
-# Setup JWT middleware 
-app.add_middleware(
-    JWTMiddleware,
-    secret_key=JWT_SECRET,
-    algorithm="HS256",
-    token_prefix="Bearer",
-    user_id_claim="user_id",
-    auto_error=False,
-)
-
-# Setup AgentOS with custom middleware
+# Clean AgentOS setup with tuple middleware pattern! ✨
 agent_os = AgentOS(
-    description="JWT Protected AgentOS example",
+    description="JWT Protected AgentOS with clean tuple middleware",
     agents=[research_agent],
     fastapi_app=app,
+    middleware=[
+        JWT_MIDDLEWARE,
+    ],
 )
 
 # Get the final app
@@ -117,11 +109,13 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     """
-    Run the JWT protected AgentOS.
+    Run the JWT protected AgentOS using clean tuple middleware pattern.
     
     Test endpoints:
     1. POST /auth/login - Login to get JWT token
-    2. GET /user/profile - Protected route (requires JWT)
-    3. POST /agents/research/chat - Chat with agent (requires JWT)
+    2. GET /user/profile - Protected route (requires JWT)  
+    3. Standard AgentOS routes (with JWT support)
+    
+    Middleware pattern: (MiddlewareClass, params_dict)
     """
     agent_os.serve(app="test:app", port=7777, reload=True)

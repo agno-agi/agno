@@ -1,11 +1,10 @@
 import jwt
 from typing import Optional, Dict, Any, List
-from fastapi import HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 import logging
 
 logger = logging.getLogger(__name__)
-
 
 class JWTMiddleware(BaseHTTPMiddleware):
     """
@@ -24,7 +23,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
         secret_key: str,
         algorithm: str = "HS256",
         token_prefix: str = "Bearer",
-        optional_routes: Optional[List[str]] = None,
         user_id_claim: str = "user_id",
         auto_error: bool = False,
     ):
@@ -32,16 +30,10 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.secret_key = secret_key
         self.algorithm = algorithm
         self.token_prefix = token_prefix
-        self.optional_routes = optional_routes or []
         self.user_id_claim = user_id_claim
         self.auto_error = auto_error
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        # Check if this route should skip JWT validation
-        path = request.url.path
-        if self._should_skip_route(path):
-            return await call_next(request)
-
         # Extract token from Authorization header
         authorization: str = request.headers.get("Authorization", "")
         
@@ -89,26 +81,17 @@ class JWTMiddleware(BaseHTTPMiddleware):
             
         return await call_next(request)
 
-
+# Helper functions
 def get_current_user_id(request: Request) -> Optional[str]:
-    """
-    Helper function to get current user ID from request.
-    Use this in your route handlers.
-    """
+    """Helper function to get current user ID from request."""
     return getattr(request.state, "user_id", None)
 
 
 def get_jwt_payload(request: Request) -> Optional[Dict[str, Any]]:
-    """
-    Helper function to get full JWT payload from request.
-    Use this in your route handlers.
-    """
+    """Helper function to get full JWT payload from request."""
     return getattr(request.state, "jwt_payload", None)
 
 
 def is_authenticated(request: Request) -> bool:
-    """
-    Helper function to check if request is authenticated.
-    Use this in your route handlers.
-    """
+    """Helper function to check if request is authenticated."""
     return getattr(request.state, "authenticated", False)
