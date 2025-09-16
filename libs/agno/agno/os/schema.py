@@ -765,6 +765,7 @@ class TeamSessionDetailSchema(BaseModel):
     team_data: Optional[dict]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
+    total_tokens: Optional[int]
 
     @classmethod
     def from_session(cls, session: TeamSession) -> "TeamSessionDetailSchema":
@@ -833,6 +834,7 @@ class RunSchema(BaseModel):
     content: Optional[Union[str, dict]]
     run_response_format: Optional[str]
     reasoning_content: Optional[str]
+    reasoning_steps: Optional[List[dict]]
     metrics: Optional[dict]
     messages: Optional[List[dict]]
     tools: Optional[List[dict]]
@@ -852,6 +854,7 @@ class RunSchema(BaseModel):
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
             reasoning_content=run_dict.get("reasoning_content", ""),
+            reasoning_steps=run_dict.get("reasoning_steps", []),
             metrics=run_dict.get("metrics", {}),
             messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
             tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
@@ -868,6 +871,7 @@ class TeamRunSchema(BaseModel):
     team_id: Optional[str]
     content: Optional[Union[str, dict]]
     reasoning_content: Optional[str]
+    reasoning_steps: Optional[List[dict]]
     run_input: Optional[str]
     run_response_format: Optional[str]
     metrics: Optional[dict]
@@ -888,6 +892,7 @@ class TeamRunSchema(BaseModel):
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
             reasoning_content=run_dict.get("reasoning_content", ""),
+            reasoning_steps=run_dict.get("reasoning_steps", []),
             metrics=run_dict.get("metrics", {}),
             messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
             tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
@@ -910,6 +915,8 @@ class WorkflowRunSchema(BaseModel):
     step_executor_runs: Optional[list[dict]]
     metrics: Optional[dict]
     created_at: Optional[int]
+    reasoning_content: Optional[str]
+    reasoning_steps: Optional[List[dict]]
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
@@ -926,6 +933,8 @@ class WorkflowRunSchema(BaseModel):
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),
             created_at=run_response["created_at"],
+            reasoning_content=run_response.get("reasoning_content", ""),
+            reasoning_steps=run_response.get("reasoning_steps", []),
         )
 
 
