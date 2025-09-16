@@ -18,9 +18,10 @@ from agno.db.sqlite.utils import (
     is_table_available,
     is_valid_table,
 )
-from agno.db.utils import deserialize_session_json_fields, generate_deterministic_id, serialize_session_json_fields
+from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 try:
     from sqlalchemy import Column, MetaData, Table, and_, func, select, text, update
@@ -70,7 +71,7 @@ class SqliteDb(BaseDb):
         """
         if id is None:
             seed = db_url or db_file or str(db_engine.url) if db_engine else "sqlite:///agno.db"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,

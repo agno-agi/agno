@@ -16,9 +16,10 @@ from agno.db.mongo.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields, generate_deterministic_id, serialize_session_json_fields
+from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.string import generate_id
 
 try:
     from pymongo import MongoClient, ReturnDocument
@@ -63,7 +64,7 @@ class MongoDb(BaseDb):
             base_seed = db_url or str(db_client)
             db_name_suffix = db_name if db_name is not None else "agno"
             seed = f"{base_seed}#{db_name_suffix}"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,
