@@ -1,6 +1,5 @@
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.web_search_reader import WebSearchReader
 from agno.models.openai import OpenAIChat

@@ -1,5 +1,4 @@
 import asyncio
-
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
