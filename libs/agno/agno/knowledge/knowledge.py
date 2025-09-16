@@ -304,7 +304,7 @@ class Knowledge:
             text_content: Optional text content to add directly
             metadata: Optional metadata dictionary
             topics: Optional list of topics
-            config: Optional cloud storage configuration
+            remote_content: Optional cloud storage configuration
             reader: Optional custom reader for processing the content
             include: Optional list of file patterns to include
             exclude: Optional list of file patterns to exclude
