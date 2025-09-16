@@ -224,7 +224,7 @@ class Message(BaseModel):
                 else:
                     data["video_output"] = Video(**vid_data)
                 
-                return cls(**data)
+        return cls(**data)
 
     def to_dict(self) -> Dict[str, Any]:
         """Returns the message as a dictionary."""
