@@ -104,7 +104,7 @@ from agno.utils.response import (
     generator_wrapper,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model_str
+from agno.utils.string import generate_id_from_name, parse_response_model_str
 from agno.utils.team import format_member_agent_task, get_member_id
 from agno.utils.timer import Timer
 
@@ -580,10 +580,7 @@ class Team:
         If the name is not provided, generate a random UUID.
         """
         if self.id is None:
-            if self.name is not None:
-                self.id = self.name.lower().replace(" ", "-")
-            else:
-                self.id = str(uuid4())
+            self.id = generate_id_from_name(self.name)
 
     def _set_debug(self, debug_mode: Optional[bool] = None) -> None:
         if self.debug_mode or debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
@@ -659,8 +656,6 @@ class Team:
             member.set_id()
 
         elif isinstance(member, Team):
-            if member.id is None:
-                member.id = str(uuid4())
             member.parent_team_id = self.id
             for sub_member in member.members:
                 self._initialize_member(sub_member, debug_mode=debug_mode)
