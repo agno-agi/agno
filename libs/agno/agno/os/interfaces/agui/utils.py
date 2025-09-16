@@ -265,7 +265,7 @@ def _create_completion_events(
 
 
 def _emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseEvent]:
-    """Simplified event logic that emits events without complex buffering to prevent infinite loops."""
+    """Process an event and return events to actually emit."""
     events_to_emit: List[BaseEvent] = [event]
 
     # Update the event buffer state for tracking purposes
