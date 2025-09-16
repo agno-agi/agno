@@ -181,8 +181,50 @@ class Message(BaseModel):
                 else:
                     reconstructed_videos.append(vid_data)
             data["videos"] = reconstructed_videos
-        
-        return cls(**data)
+
+        if "audio_output" in data and data["audio_output"]:
+            aud_data = data["audio_output"]
+            if isinstance(aud_data, dict):
+                if "content" in aud_data and isinstance(aud_data["content"], str):
+                    data["audio_output"] = Audio.from_base64(
+                        aud_data["content"],
+                        id=aud_data.get("id"),
+                        mime_type=aud_data.get("mime_type"),
+                        transcript=aud_data.get("transcript"),
+                        expires_at=aud_data.get("expires_at"),
+                        sample_rate=aud_data.get("sample_rate", 24000),
+                        channels=aud_data.get("channels", 1)
+                    )
+                else:
+                    data["audio_output"] = Audio(**aud_data)
+
+        if "image_output" in data and data["image_output"]:
+            img_data = data["image_output"]
+            if isinstance(img_data, dict):
+                if "content" in img_data and isinstance(img_data["content"], str):
+                    data["image_output"] = Image.from_base64(
+                        img_data["content"],
+                        id=img_data.get("id"),
+                        mime_type=img_data.get("mime_type"),
+                        format=img_data.get("format")
+                    )
+                else:
+                    data["image_output"] = Image(**img_data)
+
+        if "video_output" in data and data["video_output"]:
+            vid_data = data["video_output"]
+            if isinstance(vid_data, dict):
+                if "content" in vid_data and isinstance(vid_data["content"], str):
+                    data["video_output"] = Video.from_base64(
+                        vid_data["content"],
+                        id=vid_data.get("id"),
+                        mime_type=vid_data.get("mime_type"),
+                        format=vid_data.get("format")
+                    )
+                else:
+                    data["video_output"] = Video(**vid_data)
+                
+                return cls(**data)
 
     def to_dict(self) -> Dict[str, Any]:
         """Returns the message as a dictionary."""
