@@ -22,7 +22,7 @@ v1_memories_table_name = ""
 # Names for the v2 tables
 v2_sessions_table_name = "sessions_v2"  # Use a new table name for v2
 v2_memories_table_name = ""
-
+ 
 
 # --- Set your database connection ---
 
