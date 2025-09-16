@@ -96,7 +96,7 @@ class WebSearchReader(Reader):
                     results.append(
                         {
                             "title": result.get("title", ""),
-                            "url": result.get("link", ""),
+                            "url": result.get("href", ""),
                             "description": result.get("body", ""),
                         }
                     )
