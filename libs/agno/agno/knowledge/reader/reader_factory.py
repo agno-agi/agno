@@ -228,7 +228,11 @@ class ReaderFactory:
                 reader_keys.append(reader_key)
 
         # Define priority order for URL readers
-        url_reader_priority = ["website", "firecrawl", "pdf_url", "csv_url", "youtube", "web_search"]
+        url_reader_priority = [
+            "website",
+            "firecrawl",
+            "youtube",
+        ]
 
         # Sort with URL readers in priority order, others alphabetically
         def sort_key(reader_key):
