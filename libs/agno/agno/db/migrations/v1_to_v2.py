@@ -12,6 +12,42 @@ from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.utils.log import log_error
 
 
+def convert_v1_metrics_to_v2(metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert v1 metrics dictionary to v2 format by mapping old field names to new ones."""
+    if not isinstance(metrics_dict, dict):
+        return metrics_dict
+    
+    # Create a copy to avoid modifying the original
+    v2_metrics = metrics_dict.copy()
+    
+    # Map v1 field names to v2 field names
+    field_mappings = {
+        "time": "duration",
+        "audio_tokens": "audio_total_tokens",
+    }
+    
+    # Apply field mappings
+    for old_field, new_field in field_mappings.items():
+        if old_field in v2_metrics:
+            v2_metrics[new_field] = v2_metrics.pop(old_field)
+    
+    return v2_metrics
+
+
+def convert_session_data_metrics(session_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Convert any metrics found in session_data from v1 to v2 format."""
+    if not session_data:
+        return session_data
+    
+    session_data_copy = session_data.copy()
+    
+    # Convert session metrics if present
+    if "session_metrics" in session_data_copy:
+        session_data_copy["session_metrics"] = convert_v1_metrics_to_v2(session_data_copy["session_metrics"])
+    
+    return session_data_copy
+
+
 def migrate(
     db: Union[PostgresDb, MySQLDb, SqliteDb],
     v1_db_schema: str,
@@ -82,7 +118,7 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
             "agent_data": item.get("agent_data"),
             "session_id": item.get("session_id"),
             "user_id": item.get("user_id"),
-            "session_data": item.get("session_data"),
+            "session_data": convert_session_data_metrics(item.get("session_data")),
             "metadata": item.get("extra_data"),
             "runs": item.get("memory", {}).get("runs"),
             "created_at": item.get("created_at"),
@@ -105,7 +141,7 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
             "team_data": item.get("team_data"),
             "session_id": item.get("session_id"),
             "user_id": item.get("user_id"),
-            "session_data": item.get("session_data"),
+            "session_data": convert_session_data_metrics(item.get("session_data")),
             "metadata": item.get("extra_data"),
             "runs": item.get("memory", {}).get("runs"),
             "created_at": item.get("created_at"),
@@ -128,7 +164,7 @@ def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSe
             "workflow_data": item.get("workflow_data"),
             "session_id": item.get("session_id"),
             "user_id": item.get("user_id"),
-            "session_data": item.get("session_data"),
+            "session_data": convert_session_data_metrics(item.get("session_data")),
             "metadata": item.get("extra_data"),
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
