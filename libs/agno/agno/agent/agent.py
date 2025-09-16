@@ -145,6 +145,10 @@ class Agent:
     add_session_summary_to_context: Optional[bool] = None
     # Session summary manager
     session_summary_manager: Optional[SessionSummaryManager] = None
+    # Session sharing configuration
+    # False: Each user gets isolated sessions (private sessions)
+    # True: Multiple users can participate in same session (shared sessions)
+    multi_user_session: bool = False
 
     # --- Agent Dependencies ---
     # Dependencies available for tools and prompt functions
@@ -361,6 +365,7 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
+        multi_user_session: bool = False,
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
         store_media: bool = True,
@@ -440,6 +445,7 @@ class Agent:
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context
         self.add_session_state_to_context = add_session_state_to_context
+        self.multi_user_session = multi_user_session
 
         self.db = db
 
@@ -4209,7 +4215,10 @@ class Agent:
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return self.db.get_session(session_id=session_id, session_type=SessionType.AGENT, user_id=user_id)  # type: ignore
+
+            lookup_user_id = None if self.multi_user_session else user_id
+
+            return self.db.get_session(session_id=session_id, session_type=SessionType.AGENT, user_id=lookup_user_id)  # type: ignore
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
             return None
