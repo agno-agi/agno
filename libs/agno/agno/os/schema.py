@@ -922,6 +922,7 @@ class WorkflowRunSchema(BaseModel):
     reasoning_content: Optional[str]
     reasoning_steps: Optional[List[dict]]
     references: Optional[List[dict]]
+
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
         run_input = get_run_input(run_response, is_workflow_run=True)
