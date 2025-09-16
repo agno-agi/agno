@@ -47,7 +47,7 @@ You can use [Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-
 
 1. Clone the project: `git clone https://github.com/ag-ui-protocol/ag-ui.git`
 2. Follow the instructions [here](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo) to learn how to install the needed dependencies and run the project.
-3. Set the environment variable: `AGNO_URL=http://localhost:9001`. This is where your Agno Agent is running.
+3. Set the environment variable: `AGNO_URL=http:/localhost:9001`. This is where your Agno Agent is running.
 
 ### Configure Dojo for Agno Connection
 
