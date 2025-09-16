@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Example demonstrating dynamic agent/workflow addition to AgentOS at runtime.
 
