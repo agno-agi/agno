@@ -44,7 +44,7 @@ if __name__ == "__main__":
     """Run your AgentOS.
 
     You can see the configuration and available apps at:
-    http://localhost:7777/config
+    http://localhost:9001/config
     
     Use Port 9001 for Dojo compatibility.
     """

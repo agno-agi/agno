@@ -16,7 +16,7 @@ chat_agent = Agent(
     tools=[DuckDuckGoTools()],
 )
 
-# Setup our AgentOS app
+# Setup your AgentOS app
 agent_os = AgentOS(
     agents=[chat_agent],
     interfaces=[AGUI(agent=chat_agent)],
@@ -25,7 +25,7 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    """Run our AgentOS.
+    """Run your AgentOS.
 
     You can see the configuration and available apps at:
     http://localhost:9001/config
