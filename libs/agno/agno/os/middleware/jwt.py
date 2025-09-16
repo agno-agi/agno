@@ -1,6 +1,6 @@
 import jwt
-from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException, Request, Response
+from typing import Optional, Dict, Any
+from fastapi import HTTPException, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 import logging
 
