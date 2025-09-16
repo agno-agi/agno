@@ -2,9 +2,7 @@ import jwt
 from typing import Optional, Dict, Any
 from fastapi import HTTPException, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-import logging
-
-logger = logging.getLogger(__name__)
+from agno.utils.log import log_debug
 
 class JWTMiddleware(BaseHTTPMiddleware):
     """
@@ -67,7 +65,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.user_id = user_id
             request.state.authenticated = True
             
-            logger.debug(f"JWT decoded successfully for user: {user_id}")
+            log_debug(f"JWT decoded successfully for user: {user_id}")
             
         except jwt.ExpiredSignatureError:
             if self.auto_error:
