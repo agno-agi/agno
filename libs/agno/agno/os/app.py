@@ -158,12 +158,15 @@ class AgentOS:
 
     def _add_custom_middleware(self):
         """Add custom middleware to the FastAPI app using clean tuple pattern"""
+        if not self.fastapi_app:
+            raise RuntimeError("FastAPI app must be created before adding middleware")
+
         for middleware_item in self.middleware:
             if isinstance(middleware_item, tuple) and len(middleware_item) == 2:
                 # Handle (middleware_class, params_dict) tuples - preferred pattern
                 middleware_class, params = middleware_item
                 if isinstance(middleware_class, type) and issubclass(middleware_class, BaseHTTPMiddleware):
-                    self.fastapi_app.add_middleware(middleware_class, **params)
+                    self.fastapi_app.add_middleware(middleware_class, **params) # type: ignore
                 else:
                     raise ValueError(f"First element of tuple must be a BaseHTTPMiddleware subclass, got: {middleware_class}")
             else:
