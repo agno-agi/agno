@@ -45,6 +45,7 @@ if __name__ == "__main__":
 
     You can see the configuration and available apps at:
     http://localhost:7777/config
-
+    
+    Use Port 9001 for Dojo compatibility.
     """
-    agent_os.serve(app="research_team:app", reload=True)
+    agent_os.serve(app="research_team:app", reload=True, port=9001)
