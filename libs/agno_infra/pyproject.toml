@@ -1,6 +1,6 @@
 [project]
 name = "agno-infra"
-version = "1.0.2"
+version = "1.0.3"
 description = "A lightweight framework and CLI for managing Agentic Infrastructure"
 requires-python = ">=3.7,<4"
 readme = "README.md"
