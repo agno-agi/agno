@@ -27,7 +27,6 @@ if __name__ == "__main__":
 
 That's it! Your Agent is now exposed in an AG-UI compatible way, and can be used in any AG-UI compatible front-end.
 
-
 ## Usage example
 
 ### Setup
@@ -48,7 +47,7 @@ You can use [Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-
 
 1. Clone the project: `git clone https://github.com/ag-ui-protocol/ag-ui.git`
 2. Follow the instructions [here](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo) to learn how to install the needed dependencies and run the project.
-3. Set the environment variable: `AGNO_URL=http://localhost:9001`
+3. Set the environment variable: `AGNO_URL=http://localhost:9001`. This is where your Agno Agent is running.
 
 ### Configure Dojo for Agno Connection
 
@@ -73,11 +72,7 @@ Edit `ag-ui/typescript-sdk/apps/dojo/src/agents.ts` and update the Agno agent UR
 },
 ```
 
-5. You can now run your Dojo! It will show our Agno agent as one of the available options.
-### Chat with your Agent
-
-If you are running Dojo as your frontend, you can now go to http://localhost:3000 in your browser and chat with your Agno Agent.
-
+4. You can now go to http://localhost:3000 in your browser and chat with your Agno Agent. The agent will be available as one of the available options.
 
 ## Examples
 
