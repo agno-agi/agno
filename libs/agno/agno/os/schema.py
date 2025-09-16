@@ -840,6 +840,7 @@ class RunSchema(BaseModel):
     tools: Optional[List[dict]]
     events: Optional[List[dict]]
     created_at: Optional[datetime]
+    references: Optional[List[dict]]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -859,6 +860,7 @@ class RunSchema(BaseModel):
             messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
             tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
+            references=run_dict.get("references", []),
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
             else None,
@@ -879,6 +881,7 @@ class TeamRunSchema(BaseModel):
     messages: Optional[List[dict]]
     events: Optional[List[dict]]
     created_at: Optional[datetime]
+    references: Optional[List[dict]]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -900,6 +903,7 @@ class TeamRunSchema(BaseModel):
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
             else None,
+            references=run_dict.get("references", []),
         )
 
 
@@ -917,7 +921,7 @@ class WorkflowRunSchema(BaseModel):
     created_at: Optional[int]
     reasoning_content: Optional[str]
     reasoning_steps: Optional[List[dict]]
-
+    references: Optional[List[dict]]
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
         run_input = get_run_input(run_response, is_workflow_run=True)
@@ -935,6 +939,7 @@ class WorkflowRunSchema(BaseModel):
             created_at=run_response["created_at"],
             reasoning_content=run_response.get("reasoning_content", ""),
             reasoning_steps=run_response.get("reasoning_steps", []),
+            references=run_response.get("references", []),
         )
 
 
