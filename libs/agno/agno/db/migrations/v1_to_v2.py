@@ -5,11 +5,11 @@ from typing import Any, Dict, List, Optional, Union
 
 from sqlalchemy import text
 
+from agno.db.mongo.mongo import MongoDb
 from agno.db.mysql.mysql import MySQLDb
 from agno.db.postgres.postgres import PostgresDb
 from agno.db.schemas.memory import UserMemory
 from agno.db.sqlite.sqlite import SqliteDb
-from agno.db.mongo.mongo import MongoDb
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.utils.log import log_error
 
@@ -18,10 +18,10 @@ def convert_v1_metrics_to_v2(metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Convert v1 metrics dictionary to v2 format by mapping old field names to new ones."""
     if not isinstance(metrics_dict, dict):
         return metrics_dict
-    
+
     # Create a copy to avoid modifying the original
     v2_metrics = metrics_dict.copy()
-    
+
     # Map v1 field names to v2 field names
     field_mappings = {
         "time": "duration",
@@ -30,24 +30,19 @@ def convert_v1_metrics_to_v2(metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
         "output_audio_tokens": "audio_output_tokens",
         "cached_tokens": "cache_read_tokens",
     }
-    
+
     # Fields to remove (deprecated in v2)
-    deprecated_fields = [
-        "prompt_tokens",
-        "completion_tokens", 
-        "prompt_tokens_details",
-        "completion_tokens_details"
-    ]
-    
+    deprecated_fields = ["prompt_tokens", "completion_tokens", "prompt_tokens_details", "completion_tokens_details"]
+
     # Apply field mappings
     for old_field, new_field in field_mappings.items():
         if old_field in v2_metrics:
             v2_metrics[new_field] = v2_metrics.pop(old_field)
-    
+
     # Remove deprecated fields
     for field in deprecated_fields:
         v2_metrics.pop(field, None)
-    
+
     return v2_metrics
 
 
@@ -56,11 +51,11 @@ def convert_any_metrics_in_data(data: Any) -> Any:
     if isinstance(data, dict):
         # First filter out deprecated v1 fields
         data = filter_deprecated_v1_fields(data)
-        
+
         # Check if this looks like a metrics dictionary
         if _is_metrics_dict(data):
             return convert_v1_metrics_to_v2(data)
-        
+
         # Otherwise, recursively process all values
         converted_dict = {}
         for key, value in data.items():
@@ -70,10 +65,10 @@ def convert_any_metrics_in_data(data: Any) -> Any:
             else:
                 converted_dict[key] = convert_any_metrics_in_data(value)
         return converted_dict
-    
+
     elif isinstance(data, list):
         return [convert_any_metrics_in_data(item) for item in data]
-    
+
     else:
         # Not a dict or list, return as-is
         return data
@@ -83,24 +78,36 @@ def _is_metrics_dict(data: Dict[str, Any]) -> bool:
     """Check if a dictionary looks like a metrics dictionary based on common field names."""
     if not isinstance(data, dict):
         return False
-    
+
     # Common metrics field names (both v1 and v2)
     metrics_indicators = {
-        "input_tokens", "output_tokens", "total_tokens",
-        "time", "duration", 
-        "audio_tokens", "audio_total_tokens", "audio_input_tokens", "audio_output_tokens",
-        "cached_tokens", "cache_read_tokens", "cache_write_tokens",
-        "reasoning_tokens", "prompt_tokens", "completion_tokens",
-        "time_to_first_token", "provider_metrics", "additional_metrics"
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "time",
+        "duration",
+        "audio_tokens",
+        "audio_total_tokens",
+        "audio_input_tokens",
+        "audio_output_tokens",
+        "cached_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "reasoning_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+        "time_to_first_token",
+        "provider_metrics",
+        "additional_metrics",
     }
-    
+
     # Deprecated v1 fields that are strong indicators this is a metrics dict
     deprecated_v1_indicators = {"time", "audio_tokens", "cached_tokens", "prompt_tokens", "completion_tokens"}
-    
+
     # If we find any deprecated v1 field, it's definitely a metrics dict that needs conversion
     if any(field in data for field in deprecated_v1_indicators):
         return True
-    
+
     # Otherwise, if the dict has at least 2 metrics-related fields, consider it a metrics dict
     matching_fields = sum(1 for field in data.keys() if field in metrics_indicators)
     return matching_fields >= 2
@@ -110,7 +117,7 @@ def convert_session_data_comprehensively(session_data: Optional[Dict[str, Any]])
     """Comprehensively convert any metrics found anywhere in session_data from v1 to v2 format."""
     if not session_data:
         return session_data
-    
+
     # Use the recursive converter to find and fix all metrics
     return convert_any_metrics_in_data(session_data)
 
@@ -119,7 +126,7 @@ def safe_get_runs_from_memory(memory_data: Any) -> Any:
     """Safely extract runs data from memory field, handling various data types."""
     if memory_data is None:
         return None
-    
+
     # If memory_data is a string, try to parse it as JSON
     if isinstance(memory_data, str):
         try:
@@ -129,11 +136,11 @@ def safe_get_runs_from_memory(memory_data: Any) -> Any:
         except (json.JSONDecodeError, AttributeError):
             # If JSON parsing fails, memory_data might just be a string value
             return None
-    
+
     # If memory_data is already a dict, access runs directly
     elif isinstance(memory_data, dict):
         return memory_data.get("runs")
-    
+
     # For any other type, return None
     return None
 
@@ -142,14 +149,14 @@ def filter_deprecated_v1_fields(data: Dict[str, Any]) -> Dict[str, Any]:
     """Remove v1-only fields that don't exist in v2 models."""
     if not isinstance(data, dict):
         return data
-    
+
     # Fields that existed in v1 but were removed in v2
     deprecated_fields = {
         "team_session_id",  # RunOutput v1 field, removed in v2
         "formatted_tool_calls",  # RunOutput v1 field, removed in v2
         # Add other deprecated fields here as needed
     }
-    
+
     # Create a copy and remove deprecated fields
     filtered_data = {k: v for k, v in data.items() if k not in deprecated_fields}
     return filtered_data
@@ -203,20 +210,33 @@ def migrate(
 
 
 def get_all_table_content(db, db_schema: str, table_name: str) -> list[dict[str, Any]]:
-    """Get all content from the given table"""
+    """Get all content from the given table/collection"""
     try:
-        with db.Session() as sess:
-            # Handle empty schema by omitting the schema prefix (needed for SQLite)
-            if db_schema and db_schema.strip():
-                sql_query = f"SELECT * FROM {db_schema}.{table_name}"
-            else:
-                sql_query = f"SELECT * FROM {table_name}"
-            
-            result = sess.execute(text(sql_query))
-            return [row._asdict() for row in result]
+        # Check if this is a MongoDB instance
+        if hasattr(db, "database") and hasattr(db, "db_client"):
+            # MongoDB implementation
+            collection = db.database[table_name]
+            # Convert MongoDB documents to dictionaries and handle ObjectId
+            documents = list(collection.find({}))
+            # Convert ObjectId to string for compatibility
+            for doc in documents:
+                if "_id" in doc:
+                    doc["_id"] = str(doc["_id"])
+            return documents
+        else:
+            # SQL database implementation (PostgreSQL, MySQL, SQLite)
+            with db.Session() as sess:
+                # Handle empty schema by omitting the schema prefix (needed for SQLite)
+                if db_schema and db_schema.strip():
+                    sql_query = f"SELECT * FROM {db_schema}.{table_name}"
+                else:
+                    sql_query = f"SELECT * FROM {table_name}"
+
+                result = sess.execute(text(sql_query))
+                return [row._asdict() for row in result]
 
     except Exception as e:
-        log_error(f"Error getting all content from table {table_name}: {e}")
+        log_error(f"Error getting all content from table/collection {table_name}: {e}")
         return []
 
 
