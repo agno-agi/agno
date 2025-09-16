@@ -40,7 +40,7 @@ pip install ag-ui-protocol
 
 ### Run your backend
 
-Now you need to run an agent with AGUI interface. You can run the `cookbook/apps/agui/basic.py` example!
+Now you need to run an agent with AGUI interface. You can run the [Basic Chat Agent](./basic.py) example!
 
 ## Run your frontend
 
