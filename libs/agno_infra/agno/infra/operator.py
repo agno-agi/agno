@@ -28,7 +28,9 @@ TEMPLATE_TO_REPO_MAP: Dict[InfraStarterTemplate, str] = {
 
 
 def create_infra_from_template(
-    name: Optional[str] = None, template: Optional[str] = None, url: Optional[str] = None
+    name: Optional[str] = None,
+    template: Optional[str] = None,
+    url: Optional[str] = None,
 ) -> Optional[InfraConfig]:
     """Creates a new AgentOS infra codebase from a template and returns the InfraConfig.
 
@@ -73,7 +75,12 @@ def create_infra_from_template(
 
             # Get starter template from the user
             template_choices = [str(idx) for idx, _ in enumerate(templates, start=1)]
-            template_inp_raw = Prompt.ask("Chosen Template", choices=template_choices, default="1", show_choices=False)
+            template_inp_raw = Prompt.ask(
+                "Chosen Template",
+                choices=template_choices,
+                default="1",
+                show_choices=False,
+            )
             # Convert input to int
             template_inp = int(template_inp_raw) if template_inp_raw is not None else None
 
