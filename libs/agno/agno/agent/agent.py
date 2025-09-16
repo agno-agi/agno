@@ -107,7 +107,7 @@ from agno.utils.response import (
     get_paused_content,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model_str
+from agno.utils.string import generate_id_from_name, parse_response_model_str
 from agno.utils.timer import Timer
 
 
@@ -545,10 +545,7 @@ class Agent:
 
     def set_id(self) -> None:
         if self.id is None:
-            if self.name is not None:
-                self.id = self.name.lower().replace(" ", "-")
-            else:
-                self.id = str(uuid4())
+            self.id = generate_id_from_name(self.name)
 
     def _set_debug(self, debug_mode: Optional[bool] = None) -> None:
         # If the default debug mode is set, or passed on run, or via environment variable, set the debug mode to True
@@ -3334,13 +3331,6 @@ class Agent:
                     model_response.reasoning_content = (
                         model_response.reasoning_content or ""
                     ) + model_response_event.reasoning_content
-                    run_response.reasoning_content = model_response.reasoning_content
-
-                if model_response_event.reasoning_content is not None:
-                    if not model_response.reasoning_content:
-                        model_response.reasoning_content = model_response_event.reasoning_content
-                    else:
-                        model_response.reasoning_content += model_response_event.reasoning_content
                     run_response.reasoning_content = model_response.reasoning_content
 
                 if model_response_event.redacted_reasoning_content is not None:

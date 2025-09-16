@@ -51,7 +51,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    """Run our AgentOS.
+    """Run your AgentOS.
 
     You can see test your AgentOS at:
     http://localhost:7777/docs

@@ -20,9 +20,7 @@ news_agent = Agent(
 # Example 4: Specify the search engine
 yandex_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        DuckDuckGoTools(enable_search=True, enable_news=False, backend="yandex")
-    ],
+    tools=[DuckDuckGoTools(enable_search=True, enable_news=False, backend="yandex")],
     add_datetime_to_context=True,
 )
 
