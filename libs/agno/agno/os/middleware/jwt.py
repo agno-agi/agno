@@ -6,7 +6,7 @@ from agno.utils.log import log_debug
 
 class JWTMiddleware(BaseHTTPMiddleware):
     """
-    JWT Middleware for extracting user information from JWT tokens.
+    JWT Middleware for validating tokens and extracting user information from JWT tokens.
     
     This middleware:
     1. Extracts JWT token from Authorization header
