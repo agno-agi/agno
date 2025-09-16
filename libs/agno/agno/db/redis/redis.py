@@ -23,7 +23,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
-from agno.utils.string import generate_deterministic_id
+from agno.utils.string import generate_id
 
 try:
     from redis import Redis
@@ -71,7 +71,7 @@ class RedisDb(BaseDb):
         if id is None:
             base_seed = db_url or str(redis_client)
             seed = f"{base_seed}#{db_prefix}"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,

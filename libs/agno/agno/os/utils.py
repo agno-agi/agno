@@ -1,5 +1,4 @@
 from typing import Any, Callable, Dict, List, Optional, Union
-from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile
 
@@ -261,10 +260,3 @@ def _generate_schema_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
         schema["required"] = required
 
     return schema
-
-
-def generate_id(name: Optional[str] = None) -> str:
-    if name:
-        return name.lower().replace(" ", "-").replace("_", "-")
-    else:
-        return str(uuid4())

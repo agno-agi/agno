@@ -1,15 +1,15 @@
 """
 Example AgentOS app with a custom FastAPI app with conflicting routes.
 
-This example demonstrates the `replace_routes=True` functionality which allows your
+This example demonstrates the `replace_routes=False` functionality which allows your
 custom routes to take precedence over conflicting AgentOS routes.
 
-When `replace_routes=True`:
+When `replace_routes=False`:
 - Your custom routes (/, /health) will be preserved
 - Conflicting AgentOS routes will be skipped
 - Non-conflicting AgentOS routes will still be added
 
-When `replace_routes=False` (default):
+When `replace_routes=True` (default):
 - AgentOS routes will override your custom routes
 - Warnings will be logged about the conflicts
 """
@@ -69,12 +69,12 @@ async def get_custom_health():
 
 
 # Setup our AgentOS app by passing your FastAPI app
-# Use replace_routes=True to preserve your custom routes over AgentOS routes
+# Use replace_routes=False to preserve your custom routes over AgentOS routes
 agent_os = AgentOS(
     description="Example app with route replacement",
     agents=[web_research_agent],
     fastapi_app=app,
-    replace_routes=True,  # Skip conflicting AgentOS routes, keep your custom routes
+    replace_routes=False,  # Skip conflicting AgentOS routes, keep your custom routes
 )
 
 app = agent_os.get_app()

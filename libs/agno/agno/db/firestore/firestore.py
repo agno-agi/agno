@@ -19,7 +19,7 @@ from agno.db.schemas.memory import UserMemory
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
-from agno.utils.string import generate_deterministic_id
+from agno.utils.string import generate_id
 
 try:
     from google.cloud.firestore import Client, FieldFilter  # type: ignore[import-untyped]
@@ -59,7 +59,7 @@ class FirestoreDb(BaseDb):
         """
         if id is None:
             seed = project_id or str(db_client)
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,

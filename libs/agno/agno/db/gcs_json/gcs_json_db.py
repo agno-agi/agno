@@ -16,7 +16,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.string import generate_deterministic_id
+from agno.utils.string import generate_id
 
 try:
     from google.cloud import storage as gcs  # type: ignore
@@ -57,7 +57,7 @@ class GcsJsonDb(BaseDb):
         if id is None:
             prefix_suffix = prefix or "agno/"
             seed = f"{bucket_name}_{project}#{prefix_suffix}"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,
