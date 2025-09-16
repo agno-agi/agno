@@ -156,7 +156,7 @@ markdown = ["unstructured", "markdown", "aiofiles"]
 chonkie = ["chonkie[st]", "chonkie"]
 
 # Dependencies for AG-UI integration
-agui = ["ag-ui-protocol"]
+agui = ["ag-ui-protocol", "jsonpatch"]
 
 # Dependencies for Embedders
 huggingface = [
