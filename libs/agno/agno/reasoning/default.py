@@ -5,8 +5,8 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 from agno.models.base import Model
 from agno.reasoning.step import ReasoningSteps
+from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.toolkit import Toolkit
 
 
 def get_default_reasoning_agent(
@@ -15,13 +15,12 @@ def get_default_reasoning_agent(
     max_steps: int,
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
     use_json_mode: bool = False,
-    monitoring: bool = False,
     telemetry: bool = True,
     debug_mode: bool = False,
     debug_level: Literal[1, 2] = 1,
     session_state: Optional[Dict[str, Any]] = None,
-    context: Optional[Dict[str, Any]] = None,
-    extra_data: Optional[Dict[str, Any]] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional["Agent"]:  # type: ignore  # noqa: F821
     from agno.agent import Agent
 
@@ -83,18 +82,14 @@ def get_default_reasoning_agent(
         - Only create a single instance of ReasoningSteps for your response.\
         """),
         tools=tools,
-        show_tool_calls=False,
-        response_model=ReasoningSteps,
+        output_schema=ReasoningSteps,
         use_json_mode=use_json_mode,
-        monitoring=monitoring,
         telemetry=telemetry,
         debug_mode=debug_mode,
         debug_level=debug_level,
         session_state=session_state,
-        context=context,
-        extra_data=extra_data,
+        dependencies=dependencies,
+        metadata=metadata,
     )
-
-    agent.model.show_tool_calls = False  # type: ignore
 
     return agent

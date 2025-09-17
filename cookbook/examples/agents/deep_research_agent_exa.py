@@ -4,7 +4,6 @@ This example demonstrates how to use the Exa research tool for complex,
 structured research tasks with automatic citation tracking.
 """
 
-import json
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -29,7 +28,6 @@ agent = Agent(
 
         Present the findings exactly as provided by the research tool.
     """),
-    show_tool_calls=True,
 )
 
 # Example 1: Basic research with simple string

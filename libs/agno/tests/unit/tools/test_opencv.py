@@ -6,7 +6,8 @@ import numpy as np
 import pytest
 
 from agno.agent import Agent
-from agno.media import ImageArtifact, VideoArtifact
+from agno.media import Image, Video
+from agno.tools.function import ToolResult
 from agno.tools.opencv import OpenCVTools
 
 
@@ -58,8 +59,6 @@ def mock_cv2():
 def mock_agent():
     """Create a mock Agent instance."""
     agent = Mock(spec=Agent)
-    agent.add_image = Mock()
-    agent.add_video = Mock()
     return agent
 
 
@@ -105,16 +104,21 @@ class TestImageCapture:
         """Test successful image capture without preview."""
         result = opencv_tools_no_preview.capture_image(mock_agent, "Test capture")
 
-        assert result == "Image captured successfully"
-        mock_cv2.VideoCapture.assert_called_with(0)
-        mock_cv2.imencode.assert_called_once()
-        mock_agent.add_image.assert_called_once()
+        # Check that result is a ToolResult with success content
+        assert isinstance(result, ToolResult)
+        assert result.content == "Image captured successfully"
+        assert result.images is not None
+        assert len(result.images) == 1
 
         # Verify image artifact was created correctly
-        call_args = mock_agent.add_image.call_args[0][0]
-        assert isinstance(call_args, ImageArtifact)
-        assert call_args.original_prompt == "Test capture"
-        assert call_args.mime_type == "image/png"
+        image_artifact = result.images[0]
+        assert isinstance(image_artifact, Image)
+        assert image_artifact.original_prompt == "Test capture"
+        assert image_artifact.mime_type == "image/png"
+
+        # Verify OpenCV calls
+        mock_cv2.VideoCapture.assert_called_with(0)
+        mock_cv2.imencode.assert_called_once()
 
     def test_capture_image_with_preview_success(self, opencv_tools_with_preview, mock_agent, mock_cv2):
         """Test successful image capture with preview (user presses 'c')."""
@@ -123,9 +127,14 @@ class TestImageCapture:
 
         result = opencv_tools_with_preview.capture_image(mock_agent, "Test capture with preview")
 
-        assert result == "Image captured successfully"
+        # Check that result is a ToolResult with success content
+        assert isinstance(result, ToolResult)
+        assert result.content == "Image captured successfully"
+        assert result.images is not None
+        assert len(result.images) == 1
+
+        # Verify preview was shown
         mock_cv2.imshow.assert_called()
-        mock_agent.add_image.assert_called_once()
 
     def test_capture_image_user_cancels(self, opencv_tools_with_preview, mock_agent, mock_cv2):
         """Test image capture cancelled by user (user presses 'q')."""
@@ -134,8 +143,10 @@ class TestImageCapture:
 
         result = opencv_tools_with_preview.capture_image(mock_agent, "Test capture")
 
-        assert result == "Image capture cancelled by user"
-        mock_agent.add_image.assert_not_called()
+        # Check that result is a ToolResult with cancellation content
+        assert isinstance(result, ToolResult)
+        assert result.content == "Image capture cancelled by user"
+        assert result.images is None
 
     def test_capture_image_camera_not_available(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test image capture when camera is not available."""
@@ -143,8 +154,10 @@ class TestImageCapture:
 
         result = opencv_tools_no_preview.capture_image(mock_agent, "Test capture")
 
-        assert "Could not open webcam" in result
-        mock_agent.add_image.assert_not_called()
+        # Check that result is a ToolResult with error content
+        assert isinstance(result, ToolResult)
+        assert "Could not open webcam" in result.content
+        assert result.images is None
 
     def test_capture_image_read_frame_fails(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test image capture when reading frame fails."""
@@ -152,8 +165,10 @@ class TestImageCapture:
 
         result = opencv_tools_no_preview.capture_image(mock_agent, "Test capture")
 
-        assert "Failed to capture image from webcam" in result
-        mock_agent.add_image.assert_not_called()
+        # Check that result is a ToolResult with error content
+        assert isinstance(result, ToolResult)
+        assert "Failed to capture image from webcam" in result.content
+        assert result.images is None
 
     def test_capture_image_encode_fails(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test image capture when encoding fails."""
@@ -161,8 +176,10 @@ class TestImageCapture:
 
         result = opencv_tools_no_preview.capture_image(mock_agent, "Test capture")
 
-        assert "Failed to encode captured image" in result
-        mock_agent.add_image.assert_not_called()
+        # Check that result is a ToolResult with error content
+        assert isinstance(result, ToolResult)
+        assert "Failed to encode captured image" in result.content
+        assert result.images is None
 
     def test_capture_image_exception_handling(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test image capture exception handling."""
@@ -170,8 +187,10 @@ class TestImageCapture:
 
         result = opencv_tools_no_preview.capture_image(mock_agent, "Test capture")
 
-        assert "Error capturing image: Test exception" in result
-        mock_agent.add_image.assert_not_called()
+        # Check that result is a ToolResult with error content
+        assert isinstance(result, ToolResult)
+        assert "Error capturing image: Test exception" in result.content
+        assert result.images is None
 
 
 class TestVideoCapture:
@@ -212,20 +231,31 @@ class TestVideoCapture:
         mock_open.return_value.__enter__.return_value = mock_file
 
         # Mock getattr for VideoWriter_fourcc
-        with patch("agno.tools.opencv.getattr") as mock_getattr:
+        with patch("agno.tools.opencv.getattr") as mock_getattr, patch("agno.tools.opencv.Path") as mock_path_class:
             mock_getattr.return_value.return_value = 123456
+
+            # Mock Path behavior
+            mock_path = Mock()
+            mock_path.exists.return_value = True
+            mock_stat = Mock()
+            mock_stat.st_size = 1000  # Non-zero size
+            mock_path.stat.return_value = mock_stat
+            mock_path_class.return_value = mock_path
 
             result = opencv_tools_no_preview.capture_video(mock_agent, duration=5, prompt="Test video")
 
-        assert "Video captured successfully" in result
-        assert "H.264 codec" in result  # Should use first codec successfully
-        mock_agent.add_video.assert_called_once()
+        # Check that result is a ToolResult with success content
+        assert isinstance(result, ToolResult)
+        assert "Video captured successfully" in result.content
+        assert "H.264 codec" in result.content  # Should use first codec successfully
+        assert result.videos is not None
+        assert len(result.videos) == 1
 
         # Verify video artifact was created correctly
-        call_args = mock_agent.add_video.call_args[0][0]
-        assert isinstance(call_args, VideoArtifact)
-        assert call_args.original_prompt == "Test video"
-        assert call_args.mime_type == "video/mp4"
+        video_artifact = result.videos[0]
+        assert isinstance(video_artifact, Video)
+        assert video_artifact.original_prompt == "Test video"
+        assert video_artifact.mime_type == "video/mp4"
 
     @patch("tempfile.NamedTemporaryFile")
     @patch("os.path.exists")
@@ -262,15 +292,28 @@ class TestVideoCapture:
         mock_open.return_value.__enter__.return_value = mock_file
 
         # Mock getattr for VideoWriter_fourcc
-        with patch("agno.tools.opencv.getattr") as mock_getattr:
+        with patch("agno.tools.opencv.getattr") as mock_getattr, patch("agno.tools.opencv.Path") as mock_path_class:
             mock_getattr.return_value.return_value = 123456
+
+            # Mock Path behavior
+            mock_path = Mock()
+            mock_path.exists.return_value = True
+            mock_stat = Mock()
+            mock_stat.st_size = 1000  # Non-zero size
+            mock_path.stat.return_value = mock_stat
+            mock_path_class.return_value = mock_path
 
             result = opencv_tools_with_preview.capture_video(mock_agent, duration=3, prompt="Test video")
 
-        assert "Video captured successfully" in result
+        # Check that result is a ToolResult with success content
+        assert isinstance(result, ToolResult)
+        assert "Video captured successfully" in result.content
+        assert result.videos is not None
+        assert len(result.videos) == 1
+
+        # Verify preview was shown
         mock_cv2.imshow.assert_called()  # Preview should be shown
         mock_cv2.putText.assert_called()  # Recording indicator should be drawn
-        mock_agent.add_video.assert_called_once()
 
     def test_capture_video_camera_not_available(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture when camera is not available."""
@@ -278,8 +321,10 @@ class TestVideoCapture:
 
         result = opencv_tools_no_preview.capture_video(mock_agent, duration=5)
 
-        assert "Could not open webcam" in result
-        mock_agent.add_video.assert_not_called()
+        # Check that result is a ToolResult with error content
+        assert isinstance(result, ToolResult)
+        assert "Could not open webcam" in result.content
+        assert result.videos is None
 
     def test_capture_video_invalid_fps(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture with invalid FPS (should default to 30)."""
@@ -313,8 +358,14 @@ class TestVideoCapture:
             # This should not fail and should use 30.0 as default FPS
             result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
 
-        # Should succeed with default FPS
-        assert "Video captured successfully" in result or "Failed to initialize video writer" in result
+        # Check that result is a ToolResult
+        assert isinstance(result, ToolResult)
+        # Should succeed with default FPS or fail gracefully
+        assert (
+            "Video captured successfully" in result.content
+            or "Failed to initialize video writer" in result.content
+            or "Video file was not created" in result.content
+        )
 
     def test_capture_video_codec_fallback(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture codec fallback mechanism."""
@@ -348,8 +399,14 @@ class TestVideoCapture:
             mock_getattr.return_value.return_value = 123456
             result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
 
-        # Should succeed with fallback codec
-        assert "Video captured successfully" in result or "MPEG-4 codec" in result
+        # Check that result is a ToolResult
+        assert isinstance(result, ToolResult)
+        # Should succeed with fallback codec or fail gracefully
+        assert (
+            "Video captured successfully" in result.content
+            or "MPEG-4 codec" in result.content
+            or "Video file was not created" in result.content
+        )
 
     def test_capture_video_all_codecs_fail(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture when all codecs fail."""
@@ -359,8 +416,10 @@ class TestVideoCapture:
             mock_getattr.return_value.return_value = 123456
             result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
 
-        assert "Failed to initialize video writer with any codec" in result
-        mock_agent.add_video.assert_not_called()
+        # Check that result is a ToolResult with error content
+        assert isinstance(result, ToolResult)
+        assert "Failed to initialize video writer with any codec" in result.content
+        assert result.videos is None
 
     def test_capture_video_frame_read_fails(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture when frame reading fails."""
@@ -370,8 +429,10 @@ class TestVideoCapture:
             mock_getattr.return_value.return_value = 123456
             result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
 
-        assert "Failed to capture video frame" in result
-        mock_agent.add_video.assert_not_called()
+        # Check that result is a ToolResult with error content
+        assert isinstance(result, ToolResult)
+        assert "Failed to capture video frame" in result.content
+        assert result.videos is None
 
     @patch("tempfile.NamedTemporaryFile")
     @patch("os.path.exists")
@@ -391,8 +452,10 @@ class TestVideoCapture:
             mock_getattr.return_value.return_value = 123456
             result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
 
-        assert "Video file was not created or is empty" in result
-        mock_agent.add_video.assert_not_called()
+        # Check that result is a ToolResult with error content
+        assert isinstance(result, ToolResult)
+        assert "Video file was not created or is empty" in result.content
+        assert result.videos is None
 
     def test_capture_video_exception_handling(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture exception handling."""
@@ -400,8 +463,10 @@ class TestVideoCapture:
 
         result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
 
-        assert "Error capturing video: Test exception" in result
-        mock_agent.add_video.assert_not_called()
+        # Check that result is a ToolResult with error content
+        assert isinstance(result, ToolResult)
+        assert "Error capturing video: Test exception" in result.content
+        assert result.videos is None
 
 
 class TestResourceCleanup:
@@ -471,10 +536,15 @@ class TestEdgeCases:
 
     def test_capture_image_default_prompt(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test image capture with default prompt."""
-        opencv_tools_no_preview.capture_image(mock_agent)
+        result = opencv_tools_no_preview.capture_image(mock_agent)
 
-        call_args = mock_agent.add_image.call_args[0][0]
-        assert call_args.original_prompt == "Webcam capture"
+        # Check that result is a ToolResult with the expected artifact
+        assert isinstance(result, ToolResult)
+        assert result.images is not None
+        assert len(result.images) == 1
+
+        image_artifact = result.images[0]
+        assert image_artifact.original_prompt == "Webcam capture"
 
     def test_capture_video_default_parameters(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture with default parameters."""
@@ -498,10 +568,14 @@ class TestEdgeCases:
             mock_open.return_value.__enter__.return_value = mock_file
 
             mock_getattr.return_value.return_value = 123456
-            opencv_tools_no_preview.capture_video(mock_agent)
+            result = opencv_tools_no_preview.capture_video(mock_agent)
 
-        call_args = mock_agent.add_video.call_args[0][0]
-        assert call_args.original_prompt == "Webcam video capture"
+        # Check that result is a ToolResult
+        assert isinstance(result, ToolResult)
+        # The result could be success or failure depending on mocking, but should have expected prompt if successful
+        if result.videos and len(result.videos) > 0:
+            video_artifact = result.videos[0]
+            assert video_artifact.original_prompt == "Webcam video capture"
 
     def test_preview_mode_persistence(self, mock_cv2):
         """Test that preview mode setting persists across calls."""

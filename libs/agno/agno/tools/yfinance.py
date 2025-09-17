@@ -1,4 +1,5 @@
 import json
+from typing import Any, List
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
@@ -12,52 +13,24 @@ except ImportError:
 class YFinanceTools(Toolkit):
     """
     YFinanceTools is a toolkit for getting financial data from Yahoo Finance.
-    Args:
-        stock_price (bool): Whether to get the current stock price.
-        company_info (bool): Whether to get company information.
-        stock_fundamentals (bool): Whether to get stock fundamentals.
-        income_statements (bool): Whether to get income statements.
-        key_financial_ratios (bool): Whether to get key financial ratios.
-        analyst_recommendations (bool): Whether to get analyst recommendations.
-        company_news (bool): Whether to get company news.
-        technical_indicators (bool): Whether to get technical indicators.
-        historical_prices (bool): Whether to get historical prices.
-        enable_all (bool): Whether to enable all tools.
+    Includes all available financial data tools.
     """
 
     def __init__(
         self,
-        stock_price: bool = True,
-        company_info: bool = False,
-        stock_fundamentals: bool = False,
-        income_statements: bool = False,
-        key_financial_ratios: bool = False,
-        analyst_recommendations: bool = False,
-        company_news: bool = False,
-        technical_indicators: bool = False,
-        historical_prices: bool = False,
-        enable_all: bool = False,
         **kwargs,
     ):
-        tools = []
-        if stock_price or enable_all:
-            tools.append(self.get_current_stock_price)
-        if company_info or enable_all:
-            tools.append(self.get_company_info)
-        if stock_fundamentals or enable_all:
-            tools.append(self.get_stock_fundamentals)
-        if income_statements or enable_all:
-            tools.append(self.get_income_statements)
-        if key_financial_ratios or enable_all:
-            tools.append(self.get_key_financial_ratios)
-        if analyst_recommendations or enable_all:
-            tools.append(self.get_analyst_recommendations)
-        if company_news or enable_all:
-            tools.append(self.get_company_news)
-        if technical_indicators or enable_all:
-            tools.append(self.get_technical_indicators)
-        if historical_prices or enable_all:
-            tools.append(self.get_historical_stock_prices)
+        tools: List[Any] = [
+            self.get_current_stock_price,
+            self.get_company_info,
+            self.get_stock_fundamentals,
+            self.get_income_statements,
+            self.get_key_financial_ratios,
+            self.get_analyst_recommendations,
+            self.get_company_news,
+            self.get_technical_indicators,
+            self.get_historical_stock_prices,
+        ]
 
         super().__init__(name="yfinance_tools", tools=tools, **kwargs)
 

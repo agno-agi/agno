@@ -3,7 +3,7 @@ from typing import Optional
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
@@ -16,13 +16,13 @@ def test_tool_use():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
 
 
@@ -32,7 +32,6 @@ def test_tool_use_stream():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
@@ -45,7 +44,7 @@ def test_tool_use_stream():
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -62,13 +61,13 @@ async def test_async_tool_use():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("What is the current price of TSLA?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant" and msg.tool_calls is not None)
     assert response.content is not None
 
 
@@ -79,22 +78,17 @@ async def test_async_tool_use_stream():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
-    )
-
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
     )
 
     responses = []
     tool_call_seen = False
 
-    async for chunk in response_stream:
+    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
         responses.append(chunk)
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
-        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -114,9 +108,8 @@ def test_tool_use_with_native_structured_outputs():
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
-        response_model=StockPrice,
+        output_schema=StockPrice,
         telemetry=False,
-        monitoring=False,
     )
     response = agent.run("What is the current price of TSLA?")
     assert isinstance(response.content, StockPrice)
@@ -131,13 +124,13 @@ def test_parallel_tool_calls():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and AAPL?")
 
     # Verify tool usage
-    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
+    assert response.messages is not None
+    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls is not None]
     assert len(tool_calls) >= 1  # At least one message has tool calls
     assert sum(len(calls) for calls in tool_calls) == 2  # Total of 2 tool calls made
     assert response.content is not None
@@ -150,13 +143,13 @@ def test_multiple_tool_calls():
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and what is the latest news about it?")
 
     # Verify tool usage
-    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
+    assert response.messages is not None
+    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls is not None]
     assert len(tool_calls) >= 1  # At least one message has tool calls
     assert sum(len(calls) for calls in tool_calls) == 2  # Total of 2 tool calls made
     assert response.content is not None
@@ -172,13 +165,13 @@ def test_tool_call_custom_tool_no_parameters():
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Tokyo?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
     assert "70" in response.content
 
@@ -201,13 +194,13 @@ def test_tool_call_custom_tool_untyped_parameters():
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Paris?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
     assert "70" in response.content
 
@@ -231,13 +224,13 @@ def test_tool_call_custom_tool_optional_parameters(model: str):
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Paris?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
     assert "70" in response.content
 
@@ -249,7 +242,6 @@ def test_tool_call_list_parameters():
         instructions="Use a single tool call if possible",
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -257,10 +249,11 @@ def test_tool_call_list_parameters():
     )
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     tool_calls = []
     for msg in response.messages:
-        if msg.tool_calls:
+        if msg.tool_calls is not None:
             tool_calls.extend(msg.tool_calls)
     for call in tool_calls:
         assert call["function"]["name"] in ["search_exa", "get_contents", "exa_answer"]

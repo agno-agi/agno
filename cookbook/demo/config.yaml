@@ -1,0 +1,10 @@
+chat:
+  quick_prompts:
+    web-search-agent:
+      - "What can you do?"
+      - "What is currently happening in France?"
+      - "What is the latest news on the stock market?"
+    agno-assist:
+      - "What can you do?"
+      - "What is the latest news on Agno?"
+      - "Tell me about Agno's AgentOS"

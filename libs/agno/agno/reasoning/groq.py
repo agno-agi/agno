@@ -12,7 +12,7 @@ def is_groq_reasoning_model(reasoning_model: Model) -> bool:
 
 
 def get_groq_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
-    from agno.run.response import RunResponse
+    from agno.run.agent import RunOutput
 
     # Update system message role to "system"
     for message in messages:
@@ -20,7 +20,7 @@ def get_groq_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Opt
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunResponse = reasoning_agent.run(messages=messages)
+        reasoning_agent_response: RunOutput = reasoning_agent.run(messages=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
@@ -42,7 +42,7 @@ def get_groq_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Opt
 
 
 async def aget_groq_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
-    from agno.run.response import RunResponse
+    from agno.run.agent import RunOutput
 
     # Update system message role to "system"
     for message in messages:
@@ -50,7 +50,7 @@ async def aget_groq_reasoning(reasoning_agent: "Agent", messages: List[Message])
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunResponse = await reasoning_agent.arun(messages=messages)
+        reasoning_agent_response: RunOutput = await reasoning_agent.arun(messages=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None

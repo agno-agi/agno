@@ -1,12 +1,12 @@
-import base64
-import os
 from os import getenv
-from typing import Optional
+from pathlib import Path
+from typing import Any, List, Optional
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import AudioArtifact
+from agno.media import Audio
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error
 
 try:
@@ -25,11 +25,21 @@ class GroqTools(Toolkit):
         translation_model: str = "whisper-large-v3",
         tts_model: str = "playai-tts",
         tts_voice: str = "Chip-PlayAI",
+        enable_transcribe_audio: bool = True,
+        enable_translate_audio: bool = True,
+        enable_generate_speech: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(
-            name="groq_tools", tools=[self.transcribe_audio, self.translate_audio, self.generate_speech], **kwargs
-        )
+        tools: List[Any] = []
+        if all or enable_transcribe_audio:
+            tools.append(self.transcribe_audio)
+        if all or enable_translate_audio:
+            tools.append(self.translate_audio)
+        if all or enable_generate_speech:
+            tools.append(self.generate_speech)
+
+        super().__init__(name="groq_tools", tools=tools, **kwargs)
 
         self.api_key = api_key or getenv("GROQ_API_KEY")
         if not self.api_key:
@@ -52,7 +62,7 @@ class GroqTools(Toolkit):
         log_debug(f"Transcribing audio from {audio_source} using Groq model {self.transcription_model}")
         try:
             # Check if the audio source as a local file or a URL
-            if not os.path.exists(audio_source):
+            if not Path(audio_source).exists():
                 log_debug(f"Audio source '{audio_source}' not found locally, attempting as URL.")
                 transcription_text = self.client.audio.transcriptions.create(
                     url=audio_source,
@@ -63,7 +73,7 @@ class GroqTools(Toolkit):
                 log_debug(f"Transcribing local file: {audio_source}")
                 with open(audio_source, "rb") as audio_file:
                     transcription_text = self.client.audio.transcriptions.create(
-                        file=(os.path.basename(audio_source), audio_file.read()),
+                        file=(Path(audio_source).name, audio_file.read()),
                         model=self.transcription_model,
                         response_format="text",
                     )
@@ -83,7 +93,7 @@ class GroqTools(Toolkit):
         """
         log_debug(f"Translating audio from {audio_source} to English using Groq model {self.translation_model}")
         try:
-            if not os.path.exists(audio_source):
+            if not Path(audio_source).exists():
                 log_debug(f"Audio source '{audio_source}' not found locally.")
                 translation = self.client.audio.translations.create(
                     url=audio_source,
@@ -94,7 +104,7 @@ class GroqTools(Toolkit):
                 log_debug(f"Translating local file: {audio_source}")
                 with open(audio_source, "rb") as audio_file:
                     translation = self.client.audio.translations.create(
-                        file=(os.path.basename(audio_source), audio_file.read()),
+                        file=(Path(audio_source).name, audio_file.read()),
                         model=self.translation_model,
                         response_format="text",
                     )
@@ -109,14 +119,13 @@ class GroqTools(Toolkit):
         self,
         agent: Agent,
         text_input: str,
-    ) -> str:
+    ) -> ToolResult:
         """Generate speech from text using Groq's Text-to-Speech API.
-        Adds the generated audio as an AudioArtifact to the agent.
 
         Args:
             text_input: The text to synthesize into speech.
         Returns:
-            str: A success message with the audio artifact ID or an error message.
+            ToolResult: Contains the generated audio artifact or error message.
         """
         log_debug(
             f"Generating speech for text: '{text_input[:50]}...' using Groq model {self.tts_model}, voice {self.tts_voice}"
@@ -133,19 +142,17 @@ class GroqTools(Toolkit):
             log_debug(f"Groq TTS Response: {response}")
 
             audio_data: bytes = response.read()
-            base64_encoded_audio = base64.b64encode(audio_data).decode("utf-8")
 
             media_id = str(uuid4())
-            agent.add_audio(
-                AudioArtifact(
-                    id=media_id,
-                    base64_audio=base64_encoded_audio,
-                    mime_type="audio/wav",
-                )
+            audio_artifact = Audio(
+                id=media_id,
+                content=audio_data,
+                mime_type="audio/wav",
             )
+
             log_debug(f"Successfully generated speech artifact with ID: {media_id}")
-            return f"Speech generated successfully with ID: {media_id}"
+            return ToolResult(content=f"Speech generated successfully with ID: {media_id}", audios=[audio_artifact])
 
         except Exception as e:
             log_error(f"Failed to generate speech with Groq: {str(e)}")
-            return f"Failed to generate speech with Groq: {str(e)}"
+            return ToolResult(content=f"Failed to generate speech with Groq: {str(e)}")

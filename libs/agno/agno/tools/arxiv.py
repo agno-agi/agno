@@ -18,15 +18,20 @@ except ImportError:
 
 class ArxivTools(Toolkit):
     def __init__(
-        self, search_arxiv: bool = True, read_arxiv_papers: bool = True, download_dir: Optional[Path] = None, **kwargs
+        self,
+        enable_search_arxiv: bool = True,
+        enable_read_arxiv_papers: bool = True,
+        all: bool = False,
+        download_dir: Optional[Path] = None,
+        **kwargs,
     ):
         self.client: arxiv.Client = arxiv.Client()
         self.download_dir: Path = download_dir or Path(__file__).parent.joinpath("arxiv_pdfs")
 
         tools: List[Any] = []
-        if search_arxiv:
+        if all or enable_search_arxiv:
             tools.append(self.search_arxiv_and_return_articles)
-        if read_arxiv_papers:
+        if all or enable_read_arxiv_papers:
             tools.append(self.read_arxiv_papers)
 
         super().__init__(name="arxiv_tools", tools=tools, **kwargs)

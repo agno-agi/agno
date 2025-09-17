@@ -1,28 +1,37 @@
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse
-from agno.models.aimlapi import AIMLApi
-from agno.storage.sqlite import SqliteStorage
+from agno.agent import Agent, RunOutput
+from agno.db.sqlite import SqliteDb
+from agno.models.aimlapi import AIMLAPI
 
 
-def _assert_metrics(response: RunResponse):
-    input_tokens = response.metrics.get("input_tokens", [])
-    output_tokens = response.metrics.get("output_tokens", [])
-    total_tokens = response.metrics.get("total_tokens", [])
+def _assert_metrics(response: RunOutput):
+    assert response.metrics is not None
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
-    assert sum(input_tokens) > 0
-    assert sum(output_tokens) > 0
-    assert sum(total_tokens) > 0
-    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
+    # Assert main token fields
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert total_tokens > 0
+    assert total_tokens == input_tokens + output_tokens
+
+    # Assert time fields
+    assert response.metrics.time_to_first_token is not None
+    assert response.metrics.time_to_first_token > 0
+    assert response.metrics.duration is not None
+    assert response.metrics.duration > 0
 
 
 def test_basic():
-    agent = Agent(model=AIMLApi(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=AIMLAPI(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
-    response: RunResponse = agent.run("Tell me, why is the sky blue in 2 sentences")
+    response: RunOutput = agent.run("Tell me, why is the sky blue in 2 sentences")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
@@ -30,7 +39,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=AIMLApi(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=AIMLAPI(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     response_stream = agent.run("Tell me, why is the sky blue in 2 sentences", stream=True)
 
@@ -42,16 +51,15 @@ def test_basic_stream():
     for response in responses:
         assert response.content is not None
 
-    _assert_metrics(agent.run_response)
-
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=AIMLApi(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=AIMLAPI(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     response = await agent.arun("Tell me, why is the sky blue in 2 sentences")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
@@ -59,24 +67,19 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=AIMLApi(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=AIMLAPI(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Tell me, why is the sky blue in 2 sentences", stream=True)
-
-    async for response in response_stream:
+    async for response in agent.arun("Tell me, why is the sky blue in 2 sentences", stream=True):
         assert response.content is not None
-
-    _assert_metrics(agent.run_response)
 
 
 def test_with_memory():
     agent = Agent(
-        model=AIMLApi(id="gpt-4o-mini"),
-        add_history_to_messages=True,
-        num_history_responses=5,
+        db=SqliteDb(db_file="tmp/test_with_memory.db"),
+        model=AIMLAPI(id="gpt-4o-mini"),
+        add_history_to_context=True,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # First interaction
@@ -85,6 +88,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
+    assert response2.content is not None
     assert "John Smith" in response2.content
 
     # Verify memories were created
@@ -96,19 +100,18 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_response_model():
+def test_output_schema():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AIMLApi(id="gpt-4o-mini"),
+        model=AIMLAPI(id="gpt-4o-mini"),
         markdown=True,
         # use_json_mode=True, if gemini-like / deepseek
         telemetry=False,
-        monitoring=False,
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -127,11 +130,10 @@ def test_json_response_mode():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AIMLApi(id="gpt-4o-mini"),
+        model=AIMLAPI(id="gpt-4o-mini"),
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -150,12 +152,11 @@ def test_structured_outputs_deprecated():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AIMLApi(id="gpt-4o-mini"),
+        model=AIMLAPI(id="gpt-4o-mini"),
         structured_outputs=False,  # They don't support native structured outputs
         # use_json_mode=True, if gemini-like / deepseek
         telemetry=False,
-        monitoring=False,
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -169,17 +170,23 @@ def test_structured_outputs_deprecated():
 
 def test_history():
     agent = Agent(
-        model=AIMLApi(id="gpt-4o-mini"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        model=AIMLAPI(id="gpt-4o-mini"),
+        db=SqliteDb(db_file="tmp/aimlapi/test_basic.db"),
+        add_history_to_context=True,
         telemetry=False,
-        monitoring=False,
     )
-    agent.run("Hello")
-    assert len(agent.run_response.messages) == 2
-    agent.run("Hello 2")
-    assert len(agent.run_response.messages) == 4
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
-    agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 2
+
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 4
+
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 6
+
+    run_output = agent.run("Hello 4")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 8

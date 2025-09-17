@@ -2,36 +2,37 @@ from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
-from agno.memory.v2.db.postgres import PostgresMemoryDb
-from agno.memory.v2.memory import Memory
-from agno.models.openai import OpenAIChat
-from agno.storage.agent.postgres import PostgresAgentStorage
+from agno.db.postgres import PostgresDb
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
+from agno.models.anthropic import Claude
 from agno.tools.dalle import DalleTools
 from agno.tools.eleven_labs import ElevenLabsTools
 from agno.vectordb.pgvector import PgVector, SearchType
 
-# ************* Database Connection *************
+# ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url, id="agno_assist_db")
 # *******************************
 
-# ************* Paths *************
-cwd = Path(__file__).parent
-knowledge_dir = cwd.joinpath("knowledge")
-output_dir = cwd.joinpath("output")
 
-# Create the output directory if it does not exist
+# ************* Output Paths *************
+cwd = Path(__file__).parent
+output_dir = cwd.joinpath("output")
 output_dir.mkdir(parents=True, exist_ok=True)
 # *******************************
 
-# ************* Description & Instructions *************
-description = dedent("""\
-    You are AgnoAssist, an advanced AI Agent specialized in the Agno framework.
-    Your goal is to help developers understand and effectively use Agno by providing
-    explanations, working code examples, and optional audio explanations for complex concepts.""")
 
-instructions = dedent("""\
+# ************* Description & Instructions *************
+description = dedent(
+    """\
+    You are AgnoAssist, an advanced AI Agent specialized in the Agno framework.
+    Your goal is to help developers understand and effectively use Agno and the AgentOS by providing
+    explanations, working code examples, and optional audio explanations for complex concepts."""
+)
+
+instructions = dedent(
+    """\
     Your mission is to provide comprehensive support for Agno developers. Follow these steps to ensure the best possible response:
 
     1. **Analyze the request**
@@ -48,7 +49,7 @@ instructions = dedent("""\
         - Continue searching until you have found all the information you need or you have exhausted all the search terms
 
     After the iterative search process, determine if you need to create an Agent.
-    If you do, ask the user if they want you to create the Agent and run it.
+    If you do, ask the user if they want you to create an Agent for them.
 
     3. **Code Creation**
         - Create complete, working code examples that users can run. For example:
@@ -62,12 +63,10 @@ instructions = dedent("""\
         response = agent.run("What's happening in France?")
         ```
         - You must remember to use agent.run() and NOT agent.print_response()
-        - This way you can capture the response and return it to the user
         - Remember to:
             * Build the complete agent implementation
             * Include all necessary imports and setup
             * Add comprehensive comments explaining the implementation
-            * Test the agent with example queries
             * Ensure all dependencies are listed
             * Include error handling and best practices
             * Add type hints and documentation
@@ -93,39 +92,35 @@ instructions = dedent("""\
     - Knowledge base and memory management
     - Tool integration
     - Model support and configuration
-    - Best practices and common patterns""")
+    - Best practices and common patterns"""
+)
 # *******************************
 
-# Create the agent
+
+knowledge = Knowledge(
+    vector_db=PgVector(
+        db_url=db_url,
+        table_name="agno_assist_knowledge",
+        search_type=SearchType.hybrid,
+        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    ),
+    contents_db=db,
+)
+
+# Setup our Agno Agent
 agno_assist = Agent(
     name="Agno Assist",
-    agent_id="agno-assist",
-    model=OpenAIChat(id="gpt-4o"),
+    id="agno-assist",
+    model=Claude(id="claude-sonnet-4-0"),
     description=description,
     instructions=instructions,
-    memory=Memory(
-        model=OpenAIChat(id="gpt-4.1"),
-        db=PostgresMemoryDb(table_name="user_memories", db_url=db_url),
-        delete_memories=True,
-        clear_memories=True,
-    ),
+    db=db,
+    enable_user_memories=True,
     enable_agentic_memory=True,
-    knowledge=UrlKnowledge(
-        urls=["https://docs.agno.com/llms-full.txt"],
-        vector_db=PgVector(
-            db_url=db_url,
-            table_name="agno_assist_knowledge",
-            search_type=SearchType.hybrid,
-            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-        ),
-    ),
+    knowledge=knowledge,
     search_knowledge=True,
-    storage=PostgresAgentStorage(
-        db_url=db_url,
-        table_name="agno_assist_sessions",
-    ),
-    add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_history_to_context=True,
+    add_datetime_to_context=True,
     markdown=True,
     tools=[
         ElevenLabsTools(
@@ -136,3 +131,7 @@ agno_assist = Agent(
         DalleTools(model="dall-e-3", size="1792x1024", quality="hd", style="vivid"),
     ],
 )
+
+if __name__ == "__main__":
+    knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
+    # agno_assist.print_response("What is Agno?")
