@@ -383,6 +383,29 @@ class File(BaseModel):
             "text/rtf",
         ]
 
+    @classmethod  
+    def from_base64(
+        cls,
+        base64_content: str,
+        id: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        filename: Optional[str] = None,
+        name: Optional[str] = None,
+        format: Optional[str] = None,
+    ) -> "File":
+        """Create File from base64 encoded content"""
+        import base64
+        
+        content_bytes = base64.b64decode(base64_content)
+        return cls(
+            content=content_bytes,
+            id=id,
+            mime_type=mime_type,
+            filename=filename,
+            name=name,
+            format=format,
+        )
+
     @property
     def file_url_content(self) -> Optional[Tuple[bytes, str]]:
         import httpx
@@ -423,10 +446,14 @@ class File(BaseModel):
         response_dict = {
             "id": self.id,
             "url": self.url,
+            "filepath": str(self.filepath) if self.filepath else None,
             "content": content_normalised,
             "mime_type": self.mime_type,
             "file_type": self.file_type,
             "filename": self.filename,
             "size": self.size,
+            "external": self.external, 
+            "format": self.format,     
+            "name": self.name,         
         }
         return {k: v for k, v in response_dict.items() if v is not None}

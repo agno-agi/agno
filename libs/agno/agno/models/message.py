@@ -189,6 +189,29 @@ class Message(BaseModel):
                     reconstructed_videos.append(vid_data)
             data["videos"] = reconstructed_videos
 
+        # Handle file reconstruction properly  
+        if "files" in data and data["files"]:
+            reconstructed_files = []
+            for i, file_data in enumerate(data["files"]):
+                if isinstance(file_data, dict):
+                    # If content is base64, decode it back to bytes
+                    if "content" in file_data and isinstance(file_data["content"], str):
+                        reconstructed_files.append(
+                            File.from_base64(
+                                file_data["content"],
+                                id=file_data.get("id"),
+                                mime_type=file_data.get("mime_type"),
+                                filename=file_data.get("filename"),
+                                name=file_data.get("name"),
+                                format=file_data.get("format"),
+                            )
+                        )
+                    else:
+                        reconstructed_files.append(File(**file_data))
+                else:
+                    reconstructed_files.append(file_data)
+            data["files"] = reconstructed_files
+
         if "audio_output" in data and data["audio_output"]:
             aud_data = data["audio_output"]
             if isinstance(aud_data, dict):

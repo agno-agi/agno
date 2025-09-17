@@ -732,7 +732,7 @@ def get_base_router(
                     # Process document files
                     try:
                         file_content = await file.read()
-                        input_files.append(FileMedia(content=file_content))
+                        input_files.append(FileMedia(content=file_content, filename=file.filename, mime_type=file.content_type))
                     except Exception as e:
                         log_error(f"Error processing file {file.filename}: {e}")
                         continue
