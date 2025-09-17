@@ -1,8 +1,6 @@
 from types import ModuleType, SimpleNamespace
 import sys
 
-import pytest
-
 from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.document.base import Document
 
