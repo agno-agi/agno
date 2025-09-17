@@ -848,7 +848,15 @@ class Team:
         else:
             self._scrub_media_from_run_output(run_response)
 
-        # 3. Update Team Memory
+        run_response.status = RunStatus.completed
+
+        # Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
+
+        # 3. Add the RunOutput to Team Session
+        session.upsert_run(run_response=run_response)
+
+        # 4. Update Team Memory
         response_iterator = self._make_memories_and_summaries(
             run_response=run_response,
             run_messages=run_messages,
@@ -856,14 +864,6 @@ class Team:
             user_id=user_id,
         )
         deque(response_iterator, maxlen=0)
-
-        run_response.status = RunStatus.completed
-
-        # Parse team response model
-        self._convert_response_to_structured_format(run_response=run_response)
-
-        # 4. Add the RunOutput to Team Session
-        session.upsert_run(run_response=run_response)
 
         # 5. Calculate session metrics
         self._update_session_metrics(session=session)
@@ -973,18 +973,18 @@ class Team:
                 session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             )
 
-            # 3. Update Team Memory
+            run_response.status = RunStatus.completed
+
+            # 3. Add the run to Team Session
+            session.upsert_run(run_response=run_response)
+
+            # 4. Update Team Memory
             yield from self._make_memories_and_summaries(
                 run_response=run_response,
                 run_messages=run_messages,
                 session=session,
                 user_id=user_id,
             )
-
-            run_response.status = RunStatus.completed
-
-            # 4. Add the run to memory
-            session.upsert_run(run_response=run_response)
 
             # 5. Calculate session metrics
             self._update_session_metrics(session=session)
@@ -1430,7 +1430,15 @@ class Team:
         else:
             self._scrub_media_from_run_output(run_response)
 
-        # 5. Update Team Memory
+        run_response.status = RunStatus.completed
+
+        # Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
+
+        # 5. Add the run to memory
+        session.upsert_run(run_response=run_response)
+
+        # 6. Update Team Memory
         async for _ in self._amake_memories_and_summaries(
             run_response=run_response,
             session=session,
@@ -1438,14 +1446,6 @@ class Team:
             user_id=user_id,
         ):
             pass
-
-        run_response.status = RunStatus.completed
-
-        # Parse team response model
-        self._convert_response_to_structured_format(run_response=run_response)
-
-        # 6. Add the run to memory
-        session.upsert_run(run_response=run_response)
 
         # 7. Calculate session metrics
         self._update_session_metrics(session=session)
@@ -1594,6 +1594,11 @@ class Team:
             ):
                 yield event
 
+            run_response.status = RunStatus.completed
+
+            # 5. Add the run to Team Session
+            session.upsert_run(run_response=run_response)
+
             # 6. Update Team Memory
             async for event in self._amake_memories_and_summaries(
                 run_response=run_response,
@@ -1603,19 +1608,14 @@ class Team:
             ):
                 yield event
 
-            run_response.status = RunStatus.completed
-
-            # 7. Add the run to memory
-            session.upsert_run(run_response=run_response)
-
-            # 8. Calculate session metrics
+            # 7. Calculate session metrics
             self._update_session_metrics(session=session)
 
             completed_event = self._handle_event(
                 create_team_run_completed_event(from_run_response=run_response), run_response, workflow_context
             )
 
-            # 9. Save session to storage
+            # 8. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:

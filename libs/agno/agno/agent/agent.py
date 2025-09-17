@@ -2174,14 +2174,7 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-        # 4. Update Agent Memory
-        response_iterator = self._make_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        )
-        # Consume the response iterator to ensure the memory is updated before the run is completed
-        deque(response_iterator, maxlen=0)
-
-        # 5. Calculate session metrics
+        # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
         run_response.status = RunStatus.completed
@@ -2193,13 +2186,20 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # 5. Save output to file if save_response_to_file is set
+        # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
-        # 6. Add the run to memory
+        # 5. Add the run to memory
         session.upsert_run(run=run_response)
+
+        # 6. Update Agent Memory
+        response_iterator = self._make_memories_and_summaries(
+            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+        )
+        # Consume the response iterator to ensure the memory is updated before the run is completed
+        deque(response_iterator, maxlen=0)
 
         # 7. Save session to storage
         self.save_session(session=session)
@@ -2258,12 +2258,7 @@ class Agent:
             )
             return
 
-        # 4. Update Agent Memory
-        yield from self._make_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        )
-
-        # 5. Calculate session metrics
+        # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
         run_response.status = RunStatus.completed
@@ -2274,13 +2269,18 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # 5. Save output to file if save_response_to_file is set
+        # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
-        # 6. Add the run to memory
+        # 5. Add the run to memory
         session.upsert_run(run=run_response)
+
+        # 6. Update Agent Memory
+        yield from self._make_memories_and_summaries(
+            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+        )
 
         # 7. Save session to storage
         self.save_session(session=session)
@@ -2560,13 +2560,7 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-        # 4. Update Agent Memory
-        async for _ in self._amake_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        ):
-            pass
-
-        # 5. Calculate session metrics
+        # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
         run_response.status = RunStatus.completed
@@ -2578,14 +2572,21 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # 7. Save output to file if save_response_to_file is set
+        # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
+        # 5. Add the run to memory
         session.upsert_run(run=run_response)
 
-        # 6. Save session to storage
+        # 6. Update Agent Memory
+        async for _ in self._amake_memories_and_summaries(
+            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+        ):
+            pass
+
+        # 7. Save session to storage
         self.save_session(session=session)
 
         # Log Agent Telemetry
@@ -2641,9 +2642,6 @@ class Agent:
         ):
             yield event
 
-        # 3. Add the run to memory
-        session.upsert_run(run=run_response)
-
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             for item in self._handle_agent_run_paused_stream(
@@ -2652,13 +2650,7 @@ class Agent:
                 yield item
             return
 
-        # 4. Update Agent Memory
-        async for event in self._amake_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        ):
-            yield event
-
-        # 5. Calculate session metrics
+        # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
         run_response.status = RunStatus.completed
@@ -2669,14 +2661,21 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # 6. Save output to file if save_response_to_file is set
+        # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
+        # 5. Add the run to memory
         session.upsert_run(run=run_response)
 
-        # 6. Save session to storage
+        # 6. Update Agent Memory
+        async for event in self._amake_memories_and_summaries(
+            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+        ):
+            yield event
+
+        # 7. Save session to storage
         self.save_session(session=session)
 
         if stream_intermediate_steps:

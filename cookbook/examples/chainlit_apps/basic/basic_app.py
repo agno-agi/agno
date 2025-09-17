@@ -1,12 +1,11 @@
 import chainlit as cl
-
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai.chat import OpenAIChat
 
-
 # Global variables
 agent = None
+
 
 @cl.on_chat_start
 async def on_chat_start():

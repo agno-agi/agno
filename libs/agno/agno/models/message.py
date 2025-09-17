@@ -128,12 +128,14 @@ class Message(BaseModel):
                 if isinstance(img_data, dict):
                     # If content is base64, decode it back to bytes
                     if "content" in img_data and isinstance(img_data["content"], str):
-                        reconstructed_images.append(Image.from_base64(
-                            img_data["content"],
-                            id=img_data.get("id"),
-                            mime_type=img_data.get("mime_type"),
-                            format=img_data.get("format")
-                        ))
+                        reconstructed_images.append(
+                            Image.from_base64(
+                                img_data["content"],
+                                id=img_data.get("id"),
+                                mime_type=img_data.get("mime_type"),
+                                format=img_data.get("format"),
+                            )
+                        )
                     else:
                         # Regular image (filepath/url)
                         reconstructed_images.append(Image(**img_data))
@@ -141,22 +143,24 @@ class Message(BaseModel):
                     reconstructed_images.append(img_data)
             data["images"] = reconstructed_images
 
-        # Handle audio reconstruction properly  
+        # Handle audio reconstruction properly
         if "audio" in data and data["audio"]:
             reconstructed_audio = []
             for i, aud_data in enumerate(data["audio"]):
                 if isinstance(aud_data, dict):
                     # If content is base64, decode it back to bytes
                     if "content" in aud_data and isinstance(aud_data["content"], str):
-                        reconstructed_audio.append(Audio.from_base64(
-                            aud_data["content"],
-                            id=aud_data.get("id"),
-                            mime_type=aud_data.get("mime_type"),
-                            transcript=aud_data.get("transcript"),
-                            expires_at=aud_data.get("expires_at"),
-                            sample_rate=aud_data.get("sample_rate", 24000),
-                            channels=aud_data.get("channels", 1)
-                        ))
+                        reconstructed_audio.append(
+                            Audio.from_base64(
+                                aud_data["content"],
+                                id=aud_data.get("id"),
+                                mime_type=aud_data.get("mime_type"),
+                                transcript=aud_data.get("transcript"),
+                                expires_at=aud_data.get("expires_at"),
+                                sample_rate=aud_data.get("sample_rate", 24000),
+                                channels=aud_data.get("channels", 1),
+                            )
+                        )
                     else:
                         reconstructed_audio.append(Audio(**aud_data))
                 else:
@@ -170,12 +174,14 @@ class Message(BaseModel):
                 if isinstance(vid_data, dict):
                     # If content is base64, decode it back to bytes
                     if "content" in vid_data and isinstance(vid_data["content"], str):
-                        reconstructed_videos.append(Video.from_base64(
-                            vid_data["content"],
-                            id=vid_data.get("id"),
-                            mime_type=vid_data.get("mime_type"),
-                            format=vid_data.get("format")
-                        ))
+                        reconstructed_videos.append(
+                            Video.from_base64(
+                                vid_data["content"],
+                                id=vid_data.get("id"),
+                                mime_type=vid_data.get("mime_type"),
+                                format=vid_data.get("format"),
+                            )
+                        )
                     else:
                         reconstructed_videos.append(Video(**vid_data))
                 else:
@@ -193,7 +199,7 @@ class Message(BaseModel):
                         transcript=aud_data.get("transcript"),
                         expires_at=aud_data.get("expires_at"),
                         sample_rate=aud_data.get("sample_rate", 24000),
-                        channels=aud_data.get("channels", 1)
+                        channels=aud_data.get("channels", 1),
                     )
                 else:
                     data["audio_output"] = Audio(**aud_data)
@@ -206,7 +212,7 @@ class Message(BaseModel):
                         img_data["content"],
                         id=img_data.get("id"),
                         mime_type=img_data.get("mime_type"),
-                        format=img_data.get("format")
+                        format=img_data.get("format"),
                     )
                 else:
                     data["image_output"] = Image(**img_data)
@@ -219,11 +225,11 @@ class Message(BaseModel):
                         vid_data["content"],
                         id=vid_data.get("id"),
                         mime_type=vid_data.get("mime_type"),
-                        format=vid_data.get("format")
+                        format=vid_data.get("format"),
                     )
                 else:
                     data["video_output"] = Video(**vid_data)
-                
+
         return cls(**data)
 
     def to_dict(self) -> Dict[str, Any]:
