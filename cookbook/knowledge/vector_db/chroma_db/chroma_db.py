@@ -4,7 +4,6 @@ from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.chroma import ChromaDb
 
-
 # Create Knowledge Instance with ChromaDB
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
@@ -24,7 +23,6 @@ asyncio.run(
 
 # Create and use the agent
 agent = Agent(knowledge=knowledge)
-
 
 
 agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)

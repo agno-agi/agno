@@ -1,7 +1,7 @@
 import asyncio
+import json
 from hashlib import md5
 from typing import Any, Dict, List, Mapping, Optional, Union, cast
-import json
 
 try:
     from chromadb import Client as ChromaDbClient
@@ -64,15 +64,15 @@ class ChromaDb(VectorDb):
     def _flatten_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Union[str, int, float, bool]]:
         """
         Flatten nested metadata to ChromaDB-compatible format.
-        
+
         Args:
             metadata: Dictionary that may contain nested structures
-            
+
         Returns:
             Flattened dictionary with only primitive values
         """
         flattened = {}
-        
+
         def _flatten_recursive(obj: Any, prefix: str = "") -> None:
             if isinstance(obj, dict):
                 if len(obj) == 0:
@@ -95,7 +95,7 @@ class ChromaDb(VectorDb):
                 except (TypeError, ValueError):
                     # If it can't be serialized, convert to string
                     flattened[prefix] = str(obj)
-        
+
         _flatten_recursive(metadata)
         return flattened
 
@@ -808,7 +808,7 @@ class ChromaDb(VectorDb):
                         meta_dict: Dict[str, Any] = {}
                     else:
                         meta_dict = dict(current_meta)  # Convert Mapping to dict
-                    
+
                     # Update with flattened metadata
                     meta_dict.update(flattened_new_metadata)
                     updated_metadatas.append(meta_dict)

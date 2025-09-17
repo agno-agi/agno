@@ -49,6 +49,7 @@ def test_tool_use_stream():
     for r in responses:
         full_content += r.content or "" or ""
 
+
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
@@ -90,6 +91,7 @@ async def test_async_tool_use_stream():
     full_content = ""
     for r in responses:
         full_content += r.content or "" or ""
+
 
 def test_multiple_tool_calls():
     agent = Agent(
