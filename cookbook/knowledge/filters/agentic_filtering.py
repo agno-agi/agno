@@ -5,7 +5,7 @@ from agno.utils.media import (
     download_knowledge_filters_sample_data,
 )
 from agno.vectordb.lancedb import LanceDb
-
+from agno.models.openai import OpenAIChat
 # Download all sample sales files and get their paths
 downloaded_csv_paths = download_knowledge_filters_sample_data(
     num_files=4, file_extension=SampleDataFileExtension.CSV
@@ -67,16 +67,19 @@ knowledge.add_contents(
                 "report_type": "quarterly_earnings",
             },
         },
-    ]
+    ],
+    skip_if_exists=True
 )
 # Step 2: Query the knowledge base with Agent using filters from query automatically
 # -----------------------------------------------------------------------------------
 
 # Enable agentic filtering
 agent = Agent(
+    model=OpenAIChat("gpt-5-mini"),
     knowledge=knowledge,
     search_knowledge=True,
     enable_agentic_knowledge_filters=True,
+    debug_mode=True
 )
 
 agent.print_response(
