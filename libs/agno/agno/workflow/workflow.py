@@ -1896,6 +1896,7 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -1912,6 +1913,7 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -1927,11 +1929,14 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: bool = False,
         stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
 
         input = self._validate_input(input)
+        if background:
+            raise RuntimeError("Background execution is not supported for sync run()")
 
         self._set_debug()
 
