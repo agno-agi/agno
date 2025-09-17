@@ -651,7 +651,7 @@ def get_base_router(
                 "content": {
                     "text/event-stream": {
                         "examples": {
-                            "event_strea": {
+                            "event_stream": {
                                 "summary": "Example event stream response",
                                 "value": 'event: RunStarted\ndata: {"content": "Hello!", "run_id": "123..."}\n\n',
                             }
