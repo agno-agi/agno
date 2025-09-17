@@ -5,9 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from agno.agent import Agent
 from agno.media import File
-from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, logger
