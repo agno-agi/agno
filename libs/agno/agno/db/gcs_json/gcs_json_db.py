@@ -226,6 +226,8 @@ class GcsJsonDb(BaseDb):
                         return TeamSession.from_dict(session_data)
                     elif session_type == SessionType.WORKFLOW:
                         return WorkflowSession.from_dict(session_data)
+                    else:
+                        raise ValueError(f"Invalid session type: {session_type}")
 
             return None
 

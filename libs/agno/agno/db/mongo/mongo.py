@@ -285,12 +285,14 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT.value:
+            if session_type == SessionType.AGENT:
                 return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM.value:
+            elif session_type == SessionType.TEAM:
                 return TeamSession.from_dict(session)
-            else:
+            elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception reading session: {e}")

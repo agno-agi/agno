@@ -268,7 +268,7 @@ class DynamoDb(BaseDb):
 
             session = deserialize_from_dynamodb_item(item)
 
-            if session_type and session.get("session_type") != session_type.value:
+            if session.get("session_type") != session_type.value:
                 return None
             if user_id and session.get("user_id") != user_id:
                 return None
@@ -283,8 +283,10 @@ class DynamoDb(BaseDb):
                 return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM:
                 return TeamSession.from_dict(session)
-            else:
+            elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Failed to get session {session_id}: {e}")
