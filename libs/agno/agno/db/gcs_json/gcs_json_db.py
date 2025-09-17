@@ -185,7 +185,7 @@ class GcsJsonDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: Optional[SessionType] = None,
+        session_type: SessionType,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
@@ -193,7 +193,7 @@ class GcsJsonDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to read.
-            session_type (Optional[SessionType]): The type of the session to read.
+            session_type (SessionType): The type of the session to read.
             user_id (Optional[str]): The ID of the user to read the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
@@ -235,7 +235,7 @@ class GcsJsonDb(BaseDb):
 
     def get_sessions(
         self,
-        session_type: Optional[SessionType] = None,
+        session_type: SessionType,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -250,7 +250,7 @@ class GcsJsonDb(BaseDb):
         """Get all sessions from the GCS JSON file with filtering and pagination.
 
         Args:
-            session_type (Optional[SessionType]): The type of the sessions to read.
+            session_type (SessionType): The type of the sessions to read.
             user_id (Optional[str]): The ID of the user to read the sessions for.
             component_id (Optional[str]): The ID of the component to read the sessions for.
             session_name (Optional[str]): The name of the session to read.

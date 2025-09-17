@@ -431,8 +431,8 @@ class SingleStoreDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to read.
+            session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -480,7 +480,7 @@ class SingleStoreDb(BaseDb):
 
     def get_sessions(
         self,
-        session_type: Optional[SessionType] = None,
+        session_type: SessionType,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -496,7 +496,7 @@ class SingleStoreDb(BaseDb):
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
         Args:
-            session_type (Optional[SessionType]): The type of session to filter by. Defaults to None.
+            session_type (SessionType): The type of session to filter by.
             user_id (Optional[str]): The ID of the user to filter by.
             component_id (Optional[str]): The ID of the agent / workflow to filter by.
             session_name (Optional[str]): The name of the session to filter by.

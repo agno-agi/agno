@@ -236,7 +236,7 @@ class DynamoDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: Optional[SessionType] = None,
+        session_type: SessionType,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -245,7 +245,7 @@ class DynamoDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
-            session_type (Optional[SessionType]): The type of session to get.
+            session_type (SessionType): The type of session to get.
             user_id (Optional[str]): The ID of the user to get the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 

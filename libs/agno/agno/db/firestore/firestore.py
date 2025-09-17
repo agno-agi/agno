@@ -242,8 +242,8 @@ class FirestoreDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
+            session_type (SessionType): The type of session to get.
             user_id (Optional[str]): The ID of the user to get the session for.
-            session_type (Optional[SessionType]): The type of session to get.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -290,7 +290,7 @@ class FirestoreDb(BaseDb):
 
     def get_sessions(
         self,
-        session_type: Optional[SessionType] = None,
+        session_type: SessionType,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -305,7 +305,7 @@ class FirestoreDb(BaseDb):
         """Get all sessions.
 
         Args:
-            session_type (Optional[SessionType]): The type of session to get.
+            session_type (SessionType): The type of session to get.
             user_id (Optional[str]): The ID of the user to get the session for.
             component_id (Optional[str]): The ID of the component to get the session for.
             session_name (Optional[str]): The name of the session to filter by.
