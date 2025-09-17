@@ -5,14 +5,14 @@ The tool can generate files from agent responses and make them available for dow
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.file_generation import FileGenerationTools
-from agno.db.sqlite import SqliteDb
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     db=SqliteDb(db_file="tmp/test.db"),
-    tools=[FileGenerationTools(output_directory="tmp")],  
+    tools=[FileGenerationTools(output_directory="tmp")],
     description="You are a helpful assistant that can generate files in various formats.",
     instructions=[
         "When asked to create files, use the appropriate file generation tools.",
@@ -21,6 +21,7 @@ agent = Agent(
     ],
     markdown=True,
 )
+
 
 def example_json_generation():
     """Example: Generate a JSON file"""
@@ -36,6 +37,7 @@ def example_json_generation():
                 print(f"File location: {file.url}")
     print()
 
+
 def example_csv_generation():
     """Example: Generate a CSV file"""
     print("=== CSV File Generation Example ===")
@@ -49,6 +51,7 @@ def example_csv_generation():
             if file.url:
                 print(f"File location: {file.url}")
     print()
+
 
 def example_pdf_generation():
     """Example: Generate a PDF file"""
@@ -64,6 +67,7 @@ def example_pdf_generation():
                 print(f"File location: {file.url}")
     print()
 
+
 def example_text_generation():
     """Example: Generate a text file"""
     print("=== Text File Generation Example ===")
@@ -77,6 +81,7 @@ def example_text_generation():
             if file.url:
                 print(f"File location: {file.url}")
     print()
+
 
 if __name__ == "__main__":
     print("File Generation Tool Cookbook Examples")

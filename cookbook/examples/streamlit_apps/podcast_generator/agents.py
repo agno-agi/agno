@@ -3,13 +3,14 @@ from textwrap import dedent
 from typing import Optional
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
 from agno.db.postgres import PostgresDb
+from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.audio import write_audio_to_file
 from agno.utils.streamlit import get_model_with_provider
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
 
 def generate_podcast_agent(
     model_id: str = "openai:gpt-4o",
@@ -18,11 +19,11 @@ def generate_podcast_agent(
     session_id: Optional[str] = None,
 ) -> Agent:
     """Create a Podcast Generator Agent"""
-    
+
     os.makedirs("tmp", exist_ok=True)
-    
+
     model = get_model_with_provider(model_id)
-    
+
     # If using OpenAI, configure for audio output
     if model_id.startswith("openai:"):
         model = OpenAIChat(
@@ -30,7 +31,7 @@ def generate_podcast_agent(
             modalities=["text", "audio"],
             audio={"voice": voice, "format": "wav"},
         )
-    
+
     db = PostgresDb(
         db_url=db_url,
         session_table="sessions",
@@ -84,40 +85,42 @@ def generate_podcast_agent(
     return agent
 
 
-def generate_podcast(topic: str, voice: str = "alloy", model_id: str = "openai:gpt-4o") -> Optional[str]:
+def generate_podcast(
+    topic: str, voice: str = "alloy", model_id: str = "openai:gpt-4o"
+) -> Optional[str]:
     """
     Generate a podcast script and convert it to audio.
-    
+
     Args:
         topic (str): The topic of the podcast
         voice (str): Voice model for OpenAI TTS. Options: ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
         model_id (str): Model to use for script generation
-        
+
     Returns:
         str: Path to the generated audio file, or None if generation failed
     """
     try:
         # Create the podcast generator agent
         agent = generate_podcast_agent(model_id=model_id, voice=voice)
-        
+
         # Generate the podcast script
         response = agent.run(f"Write a podcast script for the topic: {topic}")
-        
+
         audio_file_path = "tmp/generated_podcast.wav"
-        
+
         # If the model supports audio output and audio was generated
-        if hasattr(response, 'response_audio') and response.response_audio is not None:
+        if hasattr(response, "response_audio") and response.response_audio is not None:
             audio_content = response.response_audio.content
-            
+
             if audio_content:
                 write_audio_to_file(
                     audio=audio_content,
                     filename=audio_file_path,
                 )
                 return audio_file_path
-                
+
         return None
-        
+
     except Exception as e:
         print(f"Error generating podcast: {e}")
         return None

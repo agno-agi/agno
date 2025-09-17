@@ -26,9 +26,9 @@ st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
 def restart_agent(model_id: str = None):
     target_model = model_id or st.session_state.get("current_model", "openai:gpt-4o")
-    
+
     new_agent = generate_podcast_agent(model_id=target_model, session_id=None)
-    
+
     st.session_state["agent"] = new_agent
     st.session_state["session_id"] = new_agent.session_id
     st.session_state["messages"] = []
@@ -41,7 +41,7 @@ def on_model_change():
     if selected_model:
         new_model_id = selected_model
         current_model = st.session_state.get("current_model")
-        
+
         if current_model and current_model != new_model_id:
             try:
                 st.session_state["is_loading_session"] = False
@@ -55,7 +55,9 @@ def main():
     ####################################################################
     # App header
     ####################################################################
-    st.markdown("<h1 class='main-title'>🎙️ Podcast Generator</h1>", unsafe_allow_html=True)
+    st.markdown(
+        "<h1 class='main-title'>🎙️ Podcast Generator</h1>", unsafe_allow_html=True
+    )
     st.markdown(
         "<p class='subtitle'>Create engaging AI podcasts on any topic</p>",
         unsafe_allow_html=True,
@@ -64,14 +66,18 @@ def main():
     ####################################################################
     # Model selector (filter for OpenAI models only)
     ####################################################################
-    openai_models = [model for model in MODELS if model in ["gpt-4o", "o3-mini", "gpt-5", "gemini-2.5-pro"]]
+    openai_models = [
+        model
+        for model in MODELS
+        if model in ["gpt-4o", "o3-mini", "gpt-5", "gemini-2.5-pro"]
+    ]
     selected_model = st.sidebar.selectbox(
         "Select Model",
         options=openai_models,
         index=0,
         key="model_selector",
         on_change=on_model_change,
-        help="Only OpenAI models support audio generation"
+        help="Only OpenAI models support audio generation",
     )
 
     ####################################################################
@@ -92,7 +98,7 @@ def main():
         "Choose Voice",
         options=voice_options,
         index=0,
-        help="Select the AI voice for your podcast"
+        help="Select the AI voice for your podcast",
     )
 
     ####################################################################
@@ -110,7 +116,9 @@ def main():
 
     # Handle sample topic selection
     for sample_topic in sample_topics:
-        if st.sidebar.button(sample_topic, key=f"topic_{sample_topic}", use_container_width=True):
+        if st.sidebar.button(
+            sample_topic, key=f"topic_{sample_topic}", use_container_width=True
+        ):
             add_message("user", sample_topic[2:])  # Remove emoji and add to chat
             st.rerun()
 
@@ -164,22 +172,30 @@ def main():
     # Generate Podcast
     ####################################################################
     st.sidebar.markdown("#### 🎬 Generate")
-    
+
     if st.sidebar.button("🎙️ Create Podcast", type="primary", use_container_width=True):
         # Get the latest user message as the topic
-        user_messages = [msg for msg in st.session_state.get("messages", []) if msg.get("role") == "user"]
+        user_messages = [
+            msg
+            for msg in st.session_state.get("messages", [])
+            if msg.get("role") == "user"
+        ]
         if user_messages:
             latest_topic = user_messages[-1]["content"]
-            with st.spinner("⏳ Generating podcast... This may take up to 2 minutes..."):
+            with st.spinner(
+                "⏳ Generating podcast... This may take up to 2 minutes..."
+            ):
                 try:
-                    audio_path = generate_podcast(latest_topic, selected_voice, selected_model)
-                    
+                    audio_path = generate_podcast(
+                        latest_topic, selected_voice, selected_model
+                    )
+
                     if audio_path:
                         st.success("✅ Podcast generated successfully!")
-                        
+
                         st.subheader("🎧 Your AI Podcast")
                         st.audio(audio_path, format="audio/wav")
-                        
+
                         # Download button
                         with open(audio_path, "rb") as audio_file:
                             st.download_button(
@@ -187,11 +203,11 @@ def main():
                                 audio_file,
                                 file_name=f"podcast_{latest_topic[:30].replace(' ', '_')}.wav",
                                 mime="audio/wav",
-                                use_container_width=True
+                                use_container_width=True,
                             )
                     else:
                         st.error("❌ Failed to generate podcast. Please try again.")
-                        
+
                 except Exception as e:
                     st.error(f"❌ Error generating podcast: {str(e)}")
         else:
@@ -234,9 +250,9 @@ def main():
     ####################################################################
     st.markdown("---")
     st.markdown("### 🌟 Features")
-    
+
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
         st.markdown("""
         **🔬 AI Research**
@@ -244,7 +260,7 @@ def main():
         - Credible source analysis
         - Latest information gathering
         """)
-    
+
     with col2:
         st.markdown("""
         **📝 Script Generation**
@@ -252,7 +268,7 @@ def main():
         - Professional structure
         - Conversational tone
         """)
-    
+
     with col3:
         st.markdown("""
         **🎵 Audio Creation**

@@ -1127,7 +1127,11 @@ class Team:
 
         # Create RunInput to capture the original user input
         run_input = TeamRunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=file_artifacts
+            input_content=input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
         )
 
         # Read existing session from database
@@ -1745,7 +1749,11 @@ class Team:
 
         # Create RunInput to capture the original user input
         run_input = TeamRunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=file_artifacts
+            input_content=input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
         )
 
         team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
@@ -3160,6 +3168,7 @@ class Team:
             for file in files:
                 if not file.id:
                     from uuid import uuid4
+
                     file.id = str(uuid4())
                 file_list.append(file)
 

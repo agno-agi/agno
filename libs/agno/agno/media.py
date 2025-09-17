@@ -383,7 +383,7 @@ class File(BaseModel):
             "text/rtf",
         ]
 
-    @classmethod  
+    @classmethod
     def from_base64(
         cls,
         base64_content: str,
@@ -395,7 +395,7 @@ class File(BaseModel):
     ) -> "File":
         """Create File from base64 encoded content"""
         import base64
-        
+
         content_bytes = base64.b64decode(base64_content)
         return cls(
             content=content_bytes,
@@ -424,6 +424,7 @@ class File(BaseModel):
         content_normalised: Union[str, bytes] = self.content
         if content_normalised and isinstance(content_normalised, bytes):
             from base64 import b64encode
+
             try:
                 if self.mime_type and self.mime_type.startswith("text/"):
                     content_normalised = content_normalised.decode("utf-8")
@@ -442,7 +443,7 @@ class File(BaseModel):
 
     def to_dict(self) -> Dict[str, Any]:
         content_normalised = self._normalise_content()
-        
+
         response_dict = {
             "id": self.id,
             "url": self.url,
@@ -452,8 +453,8 @@ class File(BaseModel):
             "file_type": self.file_type,
             "filename": self.filename,
             "size": self.size,
-            "external": self.external, 
-            "format": self.format,     
-            "name": self.name,         
+            "external": self.external,
+            "format": self.format,
+            "name": self.name,
         }
         return {k: v for k, v in response_dict.items() if v is not None}

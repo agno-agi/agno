@@ -1,6 +1,6 @@
-import json
 import csv
 import io
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
@@ -12,9 +12,10 @@ from agno.utils.log import log_debug, logger
 
 try:
     from reportlab.lib.pagesizes import letter
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
     PDF_AVAILABLE = True
 except ImportError:
     PDF_AVAILABLE = False
@@ -37,7 +38,7 @@ class FileGenerationTools(Toolkit):
         self.enable_pdf_generation = enable_pdf_generation and PDF_AVAILABLE
         self.enable_txt_generation = enable_txt_generation
         self.output_directory = Path(output_directory) if output_directory else None
-        
+
         # Create output directory if specified
         if self.output_directory:
             self.output_directory.mkdir(parents=True, exist_ok=True)
@@ -63,14 +64,14 @@ class FileGenerationTools(Toolkit):
         """Save file to disk if output_directory is set. Return file path or None."""
         if not self.output_directory:
             return None
-            
+
         file_path = self.output_directory / filename
-        
+
         if isinstance(content, str):
-            file_path.write_text(content, encoding='utf-8')
+            file_path.write_text(content, encoding="utf-8")
         else:
             file_path.write_bytes(content)
-            
+
         log_debug(f"File saved to: {file_path}")
         return str(file_path)
 
@@ -86,7 +87,7 @@ class FileGenerationTools(Toolkit):
         """
         try:
             log_debug(f"Generating JSON file with data: {type(data)}")
-            
+
             # Handle different input types
             if isinstance(data, str):
                 try:
@@ -101,8 +102,8 @@ class FileGenerationTools(Toolkit):
             # Generate filename if not provided
             if not filename:
                 filename = f"generated_file_{str(uuid4())[:8]}.json"
-            elif not filename.endswith('.json'):
-                filename += '.json'
+            elif not filename.endswith(".json"):
+                filename += ".json"
 
             # Save file to disk (if output_directory is set)
             file_path = self._save_file_to_disk(json_content, filename)
@@ -114,8 +115,8 @@ class FileGenerationTools(Toolkit):
                 mime_type="application/json",
                 file_type="json",
                 filename=filename,
-                size=len(json_content.encode('utf-8')),
-                url=f"file://{file_path}" if file_path else None
+                size=len(json_content.encode("utf-8")),
+                url=f"file://{file_path}" if file_path else None,
             )
 
             log_debug("JSON file generated successfully")
@@ -124,17 +125,19 @@ class FileGenerationTools(Toolkit):
                 success_msg += f" File saved to: {file_path}"
             else:
                 success_msg += " File is available in response."
-                
-            return ToolResult(
-                content=success_msg,
-                files=[file_artifact]
-            )
+
+            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.error(f"Failed to generate JSON file: {e}")
             return ToolResult(content=f"Error generating JSON file: {e}")
 
-    def generate_csv_file(self, data: Union[List[List], List[Dict], str], filename: Optional[str] = None, headers: Optional[List[str]] = None) -> ToolResult:
+    def generate_csv_file(
+        self,
+        data: Union[List[List], List[Dict], str],
+        filename: Optional[str] = None,
+        headers: Optional[List[str]] = None,
+    ) -> ToolResult:
         """Generate a CSV file from the provided data.
 
         Args:
@@ -147,16 +150,16 @@ class FileGenerationTools(Toolkit):
         """
         try:
             log_debug(f"Generating CSV file with data: {type(data)}")
-            
+
             # Create CSV content
             output = io.StringIO()
-            
+
             if isinstance(data, str):
                 # If it's already a CSV string, use it directly
                 csv_content = data
             elif isinstance(data, list) and len(data) > 0:
                 writer = csv.writer(output)
-                
+
                 if isinstance(data[0], dict):
                     # List of dictionaries - use keys as headers
                     if data:
@@ -164,9 +167,9 @@ class FileGenerationTools(Toolkit):
                         writer.writerow(fieldnames)
                         for row in data:
                             if isinstance(row, dict):
-                                writer.writerow([row.get(field, '') for field in fieldnames])
+                                writer.writerow([row.get(field, "") for field in fieldnames])
                             else:
-                                writer.writerow([str(row)] + [''] * (len(fieldnames) - 1))
+                                writer.writerow([str(row)] + [""] * (len(fieldnames) - 1))
                 elif isinstance(data[0], list):
                     # List of lists
                     if headers:
@@ -178,7 +181,7 @@ class FileGenerationTools(Toolkit):
                         writer.writerow(headers)
                     for item in data:
                         writer.writerow([str(item)])
-                
+
                 csv_content = output.getvalue()
             else:
                 csv_content = ""
@@ -186,8 +189,8 @@ class FileGenerationTools(Toolkit):
             # Generate filename if not provided
             if not filename:
                 filename = f"generated_file_{str(uuid4())[:8]}.csv"
-            elif not filename.endswith('.csv'):
-                filename += '.csv'
+            elif not filename.endswith(".csv"):
+                filename += ".csv"
 
             # Save file to disk (if output_directory is set)
             file_path = self._save_file_to_disk(csv_content, filename)
@@ -199,8 +202,8 @@ class FileGenerationTools(Toolkit):
                 mime_type="text/csv",
                 file_type="csv",
                 filename=filename,
-                size=len(csv_content.encode('utf-8')),
-                url=f"file://{file_path}" if file_path else None
+                size=len(csv_content.encode("utf-8")),
+                url=f"file://{file_path}" if file_path else None,
             )
 
             log_debug("CSV file generated successfully")
@@ -209,17 +212,16 @@ class FileGenerationTools(Toolkit):
                 success_msg += f" File saved to: {file_path}"
             else:
                 success_msg += " File is available in response."
-                
-            return ToolResult(
-                content=success_msg,
-                files=[file_artifact]
-            )
+
+            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.error(f"Failed to generate CSV file: {e}")
             return ToolResult(content=f"Error generating CSV file: {e}")
 
-    def generate_pdf_file(self, content: str, filename: Optional[str] = None, title: Optional[str] = None) -> ToolResult:
+    def generate_pdf_file(
+        self, content: str, filename: Optional[str] = None, title: Optional[str] = None
+    ) -> ToolResult:
         """Generate a PDF file from the provided content.
 
         Args:
@@ -231,36 +233,38 @@ class FileGenerationTools(Toolkit):
             ToolResult: Result containing the generated PDF file as a FileArtifact.
         """
         if not PDF_AVAILABLE:
-            return ToolResult(content="PDF generation is not available. Please install reportlab: pip install reportlab")
+            return ToolResult(
+                content="PDF generation is not available. Please install reportlab: pip install reportlab"
+            )
 
         try:
             log_debug(f"Generating PDF file with content length: {len(content)}")
-            
+
             # Create PDF content in memory
             buffer = io.BytesIO()
-            doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=1*inch)
-            
+            doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=1 * inch)
+
             # Get styles
             styles = getSampleStyleSheet()
-            title_style = styles['Title']
-            normal_style = styles['Normal']
-            
+            title_style = styles["Title"]
+            normal_style = styles["Normal"]
+
             # Build story (content elements)
             story = []
-            
+
             if title:
                 story.append(Paragraph(title, title_style))
                 story.append(Spacer(1, 20))
-            
+
             # Split content into paragraphs and add to story
-            paragraphs = content.split('\n\n')
+            paragraphs = content.split("\n\n")
             for para in paragraphs:
                 if para.strip():
                     # Clean the paragraph text for PDF
-                    clean_para = para.strip().replace('<', '&lt;').replace('>', '&gt;')
+                    clean_para = para.strip().replace("<", "&lt;").replace(">", "&gt;")
                     story.append(Paragraph(clean_para, normal_style))
                     story.append(Spacer(1, 10))
-            
+
             # Build PDF
             doc.build(story)
             pdf_content = buffer.getvalue()
@@ -269,8 +273,8 @@ class FileGenerationTools(Toolkit):
             # Generate filename if not provided
             if not filename:
                 filename = f"generated_file_{str(uuid4())[:8]}.pdf"
-            elif not filename.endswith('.pdf'):
-                filename += '.pdf'
+            elif not filename.endswith(".pdf"):
+                filename += ".pdf"
 
             # Save file to disk (if output_directory is set)
             file_path = self._save_file_to_disk(pdf_content, filename)
@@ -283,7 +287,7 @@ class FileGenerationTools(Toolkit):
                 file_type="pdf",
                 filename=filename,
                 size=len(pdf_content),
-                url=f"file://{file_path}" if file_path else None
+                url=f"file://{file_path}" if file_path else None,
             )
 
             log_debug("PDF file generated successfully")
@@ -292,11 +296,8 @@ class FileGenerationTools(Toolkit):
                 success_msg += f" File saved to: {file_path}"
             else:
                 success_msg += " File is available in response."
-                
-            return ToolResult(
-                content=success_msg,
-                files=[file_artifact]
-            )
+
+            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.error(f"Failed to generate PDF file: {e}")
@@ -318,8 +319,8 @@ class FileGenerationTools(Toolkit):
             # Generate filename if not provided
             if not filename:
                 filename = f"generated_file_{str(uuid4())[:8]}.txt"
-            elif not filename.endswith('.txt'):
-                filename += '.txt'
+            elif not filename.endswith(".txt"):
+                filename += ".txt"
 
             # Save file to disk (if output_directory is set)
             file_path = self._save_file_to_disk(content, filename)
@@ -331,8 +332,8 @@ class FileGenerationTools(Toolkit):
                 mime_type="text/plain",
                 file_type="txt",
                 filename=filename,
-                size=len(content.encode('utf-8')),
-                url=f"file://{file_path}" if file_path else None
+                size=len(content.encode("utf-8")),
+                url=f"file://{file_path}" if file_path else None,
             )
 
             log_debug("Text file generated successfully")
@@ -341,11 +342,8 @@ class FileGenerationTools(Toolkit):
                 success_msg += f" File saved to: {file_path}"
             else:
                 success_msg += " File is available in response."
-                
-            return ToolResult(
-                content=success_msg,
-                files=[file_artifact]
-            )
+
+            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.error(f"Failed to generate text file: {e}")
