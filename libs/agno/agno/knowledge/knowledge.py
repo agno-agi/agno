@@ -14,13 +14,13 @@ from httpx import AsyncClient
 
 from agno.db.base import BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.db.utils import generate_deterministic_id
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.remote_content.remote_content import GCSContent, RemoteContent, S3Content
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 from agno.vectordb import VectorDb
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
@@ -74,6 +74,8 @@ class Knowledge:
     async def add_contents_async(self, *args, **kwargs) -> None:
         if args and isinstance(args[0], list):
             arguments = args[0]
+            upsert = kwargs.get("upsert", False)
+            skip_if_exists = kwargs.get("skip_if_exists", False)
             for argument in arguments:
                 await self.add_content_async(
                     name=argument.get("name"),
@@ -85,8 +87,8 @@ class Knowledge:
                     reader=argument.get("reader"),
                     include=argument.get("include"),
                     exclude=argument.get("exclude"),
-                    upsert=argument.get("upsert", False),
-                    skip_if_exists=argument.get("skip_if_exists", False),
+                    upsert=argument.get("upsert", upsert),
+                    skip_if_exists=argument.get("skip_if_exists", skip_if_exists),
                     remote_content=argument.get("remote_content", None),
                 )
 
@@ -102,7 +104,6 @@ class Knowledge:
             upsert = kwargs.get("upsert", False)
             skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
-
             for path in paths:
                 await self.add_content_async(
                     name=name,
@@ -253,7 +254,7 @@ class Knowledge:
             auth=auth,
         )
         content.content_hash = self._build_content_hash(content)
-        content.id = generate_deterministic_id(content.content_hash)
+        content.id = generate_id(content.content_hash)
 
         await self._load_content(content, upsert, skip_if_exists, include, exclude)
 
@@ -304,7 +305,7 @@ class Knowledge:
             text_content: Optional text content to add directly
             metadata: Optional metadata dictionary
             topics: Optional list of topics
-            config: Optional cloud storage configuration
+            remote_content: Optional cloud storage configuration
             reader: Optional custom reader for processing the content
             include: Optional list of file patterns to include
             exclude: Optional list of file patterns to exclude
@@ -431,7 +432,7 @@ class Knowledge:
                     reader=content.reader,
                 )
                 file_content.content_hash = self._build_content_hash(file_content)
-                file_content.id = generate_deterministic_id(file_content.content_hash)
+                file_content.id = generate_id(file_content.content_hash)
 
                 await self._load_from_path(file_content, upsert, skip_if_exists, include, exclude)
         else:
@@ -680,7 +681,7 @@ class Knowledge:
                 topics=[topic],
             )
             content.content_hash = self._build_content_hash(content)
-            content.id = generate_deterministic_id(content.content_hash)
+            content.id = generate_id(content.content_hash)
 
             self._add_to_contents_db(content)
             if self._should_skip(content.content_hash, skip_if_exists):
@@ -777,7 +778,7 @@ class Knowledge:
 
             # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
-            content_entry.id = generate_deterministic_id(content_entry.content_hash)
+            content_entry.id = generate_id(content_entry.content_hash)
             self._add_to_contents_db(content_entry)
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
@@ -859,7 +860,7 @@ class Knowledge:
 
             # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
-            content_entry.id = generate_deterministic_id(content_entry.content_hash)
+            content_entry.id = generate_id(content_entry.content_hash)
             self._add_to_contents_db(content_entry)
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED

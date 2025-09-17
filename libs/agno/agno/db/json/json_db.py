@@ -17,9 +17,9 @@ from agno.db.json.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 
 class JsonDb(BaseDb):
@@ -47,7 +47,7 @@ class JsonDb(BaseDb):
         """
         if id is None:
             seed = db_path or "agno_json_db"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,
@@ -168,7 +168,7 @@ class JsonDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: Optional[SessionType] = None,
+        session_type: SessionType,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
@@ -176,7 +176,7 @@ class JsonDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to read.
-            session_type (Optional[SessionType]): The type of the session to read.
+            session_type (SessionType): The type of the session to read.
             user_id (Optional[str]): The ID of the user to read the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
@@ -208,8 +208,10 @@ class JsonDb(BaseDb):
                         return AgentSession.from_dict(session)
                     elif session_type == SessionType.TEAM:
                         return TeamSession.from_dict(session)
-                    else:
+                    elif session_type == SessionType.WORKFLOW:
                         return WorkflowSession.from_dict(session)
+                    else:
+                        raise ValueError(f"Invalid session type: {session_type}")
 
             return None
 
@@ -338,8 +340,10 @@ class JsonDb(BaseDb):
                         return AgentSession.from_dict(session)
                     elif session_type == SessionType.TEAM:
                         return TeamSession.from_dict(session)
-                    else:
+                    elif session_type == SessionType.WORKFLOW:
                         return WorkflowSession.from_dict(session)
+                    else:
+                        raise ValueError(f"Invalid session type: {session_type}")
 
             return None
 

@@ -192,3 +192,119 @@ def test_convert_schema_dict_field_case_insensitive_type():
     placeholder = result.properties["example_key"]
     # Should convert to uppercase for Gemini
     assert placeholder.type == "INTEGER"
+
+
+def test_convert_schema_dict_field_union_types():
+    """Test Dict field with union types from Zod schemas"""
+    dict_schema = {
+        "type": "object",
+        "additionalProperties": {"type": ["string", "number", "boolean"]},
+        "description": "Mixed value dictionary",
+    }
+
+    result = convert_schema(dict_schema)
+
+    assert result is not None
+    assert result.type == "OBJECT"
+
+    # Should use first type from union
+    placeholder = result.properties["example_key"]
+    assert placeholder.type == "STRING"
+
+    # Should document the union types in description
+    assert "supports union types: string, number, boolean" in placeholder.description
+    # Should preserve the original description when provided
+    assert result.description == "Mixed value dictionary"
+
+
+def test_convert_schema_dict_field_union_types_with_null():
+    """Test Dict field with nullable union types"""
+    dict_schema = {
+        "type": "object",
+        "additionalProperties": {"type": ["string", "null"]},
+        "description": "Nullable string dictionary",
+    }
+
+    result = convert_schema(dict_schema)
+
+    assert result is not None
+    placeholder = result.properties["example_key"]
+    assert placeholder.type == "STRING"
+    assert "supports union types: string, null" in placeholder.description
+
+
+def test_convert_schema_dict_field_union_empty_list():
+    """Test Dict field with empty union type list"""
+    dict_schema = {"type": "object", "additionalProperties": {"type": []}, "description": "Empty union dictionary"}
+
+    result = convert_schema(dict_schema)
+
+    assert result is not None
+    placeholder = result.properties["example_key"]
+    assert placeholder.type == "STRING"  # Fallback to STRING
+    assert "supports union types:" in placeholder.description
+
+
+def test_convert_schema_array_with_empty_items():
+    """Test array schema with empty items definition"""
+    array_schema = {
+        "type": "array",
+        "items": {},  # Empty items
+        "description": "Array with any items",
+    }
+
+    result = convert_schema(array_schema)
+
+    assert result is not None
+    assert result.type == "ARRAY"
+    assert result.items is not None
+    assert result.items.type == "STRING"  # Default for empty items
+    assert result.description == "Array with any items"
+
+
+def test_convert_schema_top_level_nullable_type():
+    """Test top-level nullable types like ['string', 'null']"""
+    nullable_schema = {"type": ["string", "null"], "description": "Nullable string field"}
+
+    result = convert_schema(nullable_schema)
+
+    assert result is not None
+    assert result.type == "STRING"  # First non-null type
+    assert result.description == "Nullable string field"
+
+
+def test_convert_schema_top_level_union_type():
+    """Test top-level union types like ['string', 'number']"""
+    union_schema = {"type": ["string", "number", "boolean"], "description": "Multi-type field"}
+
+    result = convert_schema(union_schema)
+
+    assert result is not None
+    assert result.type == "STRING"  # First type in union
+    assert result.description == "Multi-type field"
+
+
+def test_convert_schema_top_level_only_null():
+    """Test top-level with only null types"""
+    null_schema = {"type": ["null"], "description": "Only null field"}
+
+    result = convert_schema(null_schema)
+
+    # Should return None for only-null schemas
+    assert result is None
+
+
+def test_convert_schema_dict_union_with_number_first():
+    """Test Dict field where number comes first in union"""
+    dict_schema = {
+        "type": "object",
+        "additionalProperties": {"type": ["number", "string"]},
+        "description": "Number-first union dictionary",
+    }
+
+    result = convert_schema(dict_schema)
+
+    assert result is not None
+    placeholder = result.properties["example_key"]
+    assert placeholder.type == "NUMBER"  # First type in union
+    assert "supports union types: number, string" in placeholder.description

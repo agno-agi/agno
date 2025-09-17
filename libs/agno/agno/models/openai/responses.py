@@ -1088,4 +1088,10 @@ class OpenAIResponses(Model):
         metrics.output_tokens = response_usage.output_tokens or 0
         metrics.total_tokens = response_usage.total_tokens or 0
 
+        if input_tokens_details := response_usage.input_tokens_details:
+            metrics.cache_read_tokens = input_tokens_details.cached_tokens
+
+        if output_tokens_details := response_usage.output_tokens_details:
+            metrics.reasoning_tokens = output_tokens_details.reasoning_tokens
+
         return metrics

@@ -21,9 +21,9 @@ from agno.db.redis.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.string import generate_id
 
 try:
     from redis import Redis
@@ -71,7 +71,7 @@ class RedisDb(BaseDb):
         if id is None:
             base_seed = db_url or str(redis_client)
             seed = f"{base_seed}#{db_prefix}"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,
@@ -300,8 +300,8 @@ class RedisDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
+            session_type (SessionType): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
-            session_type (Optional[SessionType]): The type of session to filter by.
 
         Returns:
             Optional[Union[AgentSession, TeamSession, WorkflowSession]]: The session if found, None otherwise.

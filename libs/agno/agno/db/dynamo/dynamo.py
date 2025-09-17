@@ -30,9 +30,9 @@ from agno.db.dynamo.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error
+from agno.utils.string import generate_id
 
 try:
     import boto3  # type: ignore[import-untyped]
@@ -75,7 +75,7 @@ class DynamoDb(BaseDb):
         """
         if id is None:
             seed = str(db_client) if db_client else f"{region_name}_{aws_access_key_id}"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,
@@ -181,7 +181,7 @@ class DynamoDb(BaseDb):
 
     # --- Sessions ---
 
-    def delete_session(self, session_id: Optional[str] = None, session_type: Optional[SessionType] = None) -> bool:
+    def delete_session(self, session_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
@@ -236,7 +236,7 @@ class DynamoDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: Optional[SessionType] = None,
+        session_type: SessionType,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -245,7 +245,7 @@ class DynamoDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
-            session_type (Optional[SessionType]): The type of session to get.
+            session_type (SessionType): The type of session to get.
             user_id (Optional[str]): The ID of the user to get the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
@@ -268,7 +268,7 @@ class DynamoDb(BaseDb):
 
             session = deserialize_from_dynamodb_item(item)
 
-            if session_type and session.get("session_type") != session_type.value:
+            if session.get("session_type") != session_type.value:
                 return None
             if user_id and session.get("user_id") != user_id:
                 return None
@@ -283,8 +283,10 @@ class DynamoDb(BaseDb):
                 return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM:
                 return TeamSession.from_dict(session)
-            else:
+            elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Failed to get session {session_id}: {e}")
