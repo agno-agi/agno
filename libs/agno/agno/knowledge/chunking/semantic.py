@@ -47,7 +47,7 @@ class SemanticChunking(ChunkingStrategy):
                     # Some versions may accept an embedder object directly
                     params["embedder"] = self.embedder
                 else:
-                    # Fallback to model id for older versions
+                    # Fallback to model id
                     params["embedding_model"] = getattr(self.embedder, "id", None) or "text-embedding-3-small"
 
                 self.chunker = SemanticChunker(**params)
