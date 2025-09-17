@@ -195,8 +195,8 @@ class Gemini(Model):
 
             # Get the normalized schema for Gemini
             normalized_schema = get_response_schema_for_provider(response_format, "gemini")
-            gemini_schema = convert_schema(normalized_schema)
-            config["response_schema"] = gemini_schema
+            # gemini_schema = convert_schema(normalized_schema)
+            config["response_schema"] = response_format
 
         # Add thinking configuration
         thinking_config_params = {}
