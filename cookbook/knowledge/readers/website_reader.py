@@ -1,8 +1,9 @@
 from agno.agent import Agent
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.website_reader import WebsiteReader
-from agno.vectordb.pgvector import PgVector
 from agno.models.openai import OpenAIChat
+from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -12,11 +13,12 @@ knowledge = Knowledge(
     vector_db=PgVector(
         table_name="website_documents",
         db_url=db_url,
+        embedder=OpenAIEmbedder(),
     ),
 )
 # Load the knowledge
 knowledge.add_content(
-    url="https://docs.agno.com/introduction",
+    url="https://en.wikipedia.org/wiki/OpenAI",
     reader=WebsiteReader(),
 )
 

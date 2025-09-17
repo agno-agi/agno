@@ -198,7 +198,7 @@ class WorkflowWebSocketClient:
     async def authenticate(self, token: str = None):
         """Send authentication token to server"""
         auth_token = token or self.auth_token
-        
+
         if not auth_token:
             self.console.print("❌ [red]No authentication token available[/red]")
             return False
@@ -213,12 +213,11 @@ class WorkflowWebSocketClient:
         """Interactively prompt for authentication token"""
         try:
             token = await asyncio.get_event_loop().run_in_executor(
-                None, 
-                lambda: input("🔐 Enter authentication token: ").strip()
+                None, lambda: input("🔐 Enter authentication token: ").strip()
             )
-            
+
             if token:
-                self.auth_token = token 
+                self.auth_token = token
                 return await self.authenticate(token)
             else:
                 self.console.print("❌ [red]No token provided[/red]")
@@ -311,7 +310,7 @@ class WorkflowWebSocketClient:
             session_id = f"cli-session-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
         message_data = {
-            "type": "start-workflow",  
+            "type": "start-workflow",
             "message": workflow_message,
             "session_id": session_id,
         }
@@ -345,23 +344,29 @@ class WorkflowWebSocketClient:
         self.console.print("[green]Interactive mode started. Type commands:[/green]")
         self.console.print("  [bold]auth[/bold] - Authenticate with token")
         self.console.print("  [bold]start <message>[/bold] - Start workflow")
-        self.console.print("  [bold]ping[/bold] - Ping server")  
+        self.console.print("  [bold]ping[/bold] - Ping server")
         self.console.print("  [bold]quit[/bold] - Exit")
-        
+
         # Prominent auth message if not authenticated
         if not self.is_authenticated:
             if not self.auth_token:
                 self.console.print()
-                self.console.print("🔒 [yellow bold]AUTHENTICATION REQUIRED[/yellow bold]")
-                self.console.print("   [yellow]Type 'auth' to authenticate with your token[/yellow]")
+                self.console.print(
+                    "🔒 [yellow bold]AUTHENTICATION REQUIRED[/yellow bold]"
+                )
+                self.console.print(
+                    "   [yellow]Type 'auth' to authenticate with your token[/yellow]"
+                )
             else:
-                self.console.print("   [yellow]⚠️  Waiting for authentication...[/yellow]")
+                self.console.print(
+                    "   [yellow]⚠️  Waiting for authentication...[/yellow]"
+                )
         self.console.print()
 
         try:
             while self.is_running:
                 try:
-                    # Get user input  
+                    # Get user input
                     user_input = await asyncio.get_event_loop().run_in_executor(
                         None, input, "💬 Enter command: "
                     )

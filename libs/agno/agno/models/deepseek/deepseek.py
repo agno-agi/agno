@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
@@ -23,7 +23,7 @@ class DeepSeek(OpenAILike):
     name: str = "DeepSeek"
     provider: str = "DeepSeek"
 
-    api_key: Optional[str] = getenv("DEEPSEEK_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("DEEPSEEK_API_KEY"))
     base_url: str = "https://api.deepseek.com"
 
     # Their support for structured outputs is currently broken

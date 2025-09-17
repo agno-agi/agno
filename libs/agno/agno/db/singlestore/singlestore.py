@@ -19,9 +19,9 @@ from agno.db.singlestore.utils import (
     is_table_available,
     is_valid_table,
 )
-from agno.db.utils import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 try:
     from sqlalchemy import Index, UniqueConstraint, and_, func, update
@@ -74,7 +74,7 @@ class SingleStoreDb(BaseDb):
             base_seed = db_url or str(db_engine.url) if db_engine else "singlestore"  # type: ignore
             schema_suffix = db_schema if db_schema is not None else "ai"
             seed = f"{base_seed}#{schema_suffix}"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,
@@ -163,10 +163,10 @@ class SingleStoreDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
+        table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
         try:
             table_schema = get_table_schema_definition(table_type)
 
-            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
             log_debug(f"Creating table {table_ref} with schema: {table_schema}")
 
             columns: List[Column] = []

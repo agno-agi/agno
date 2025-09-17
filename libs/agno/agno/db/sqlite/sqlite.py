@@ -18,9 +18,10 @@ from agno.db.sqlite.utils import (
     is_table_available,
     is_valid_table,
 )
-from agno.db.utils import deserialize_session_json_fields, generate_deterministic_id, serialize_session_json_fields
+from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 try:
     from sqlalchemy import Column, MetaData, Table, and_, func, select, text, update
@@ -70,7 +71,7 @@ class SqliteDb(BaseDb):
         """
         if id is None:
             seed = db_url or db_file or str(db_engine.url) if db_engine else "sqlite:///agno.db"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,
@@ -1348,6 +1349,7 @@ class SqliteDb(BaseDb):
                         "linked_to": knowledge_row.linked_to,
                         "access_count": knowledge_row.access_count,
                         "status": knowledge_row.status,
+                        "status_message": knowledge_row.status_message,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
                         "external_id": knowledge_row.external_id,
@@ -1665,17 +1667,17 @@ class SqliteDb(BaseDb):
         if v1_table_type == "agent_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "team_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "workflow_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "memories":
             for memory in memories:
