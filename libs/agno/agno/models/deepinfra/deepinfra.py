@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Optional
 
@@ -22,7 +22,7 @@ class DeepInfra(OpenAILike):
     name: str = "DeepInfra"
     provider: str = "DeepInfra"
 
-    api_key: Optional[str] = getenv("DEEPINFRA_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("DEEPINFRA_API_KEY"))
     base_url: str = "https://api.deepinfra.com/v1/openai"
 
     supports_native_structured_outputs: bool = False
