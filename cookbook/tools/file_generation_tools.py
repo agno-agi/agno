@@ -12,7 +12,7 @@ from agno.db.sqlite import SqliteDb
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     db=SqliteDb(db_file="tmp/test.db"),
-    tools=[FileGenerationTools(save_to_tmp=True)],  
+    tools=[FileGenerationTools(output_directory="tmp")],  
     description="You are a helpful assistant that can generate files in various formats.",
     instructions=[
         "When asked to create files, use the appropriate file generation tools.",
@@ -86,6 +86,3 @@ if __name__ == "__main__":
     example_csv_generation()
     example_pdf_generation()
     example_text_generation()
-
-    print("All examples completed!")
-    print(f"Files are saved in: {agent.tools[0].tmp_dir}")

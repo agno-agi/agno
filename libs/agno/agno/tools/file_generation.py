@@ -30,12 +30,7 @@ class FileGenerationTools(Toolkit):
         enable_csv_generation: bool = True,
         enable_pdf_generation: bool = True,
         enable_txt_generation: bool = True,
-        save_to_tmp: bool = True,
-        # TODO: Implement S3 support
-        # save_to_s3: bool = False,
-        # s3_bucket: Optional[str] = None,
-        # s3_prefix: Optional[str] = None,
-        tmp_dir: Optional[str] = None,
+        output_directory: Optional[str] = None,
         all: bool = False,
         **kwargs,
     ):
@@ -43,18 +38,12 @@ class FileGenerationTools(Toolkit):
         self.enable_csv_generation = enable_csv_generation
         self.enable_pdf_generation = enable_pdf_generation and PDF_AVAILABLE
         self.enable_txt_generation = enable_txt_generation
-        self.save_to_tmp = save_to_tmp
+        self.output_directory = Path(output_directory) if output_directory else None
         
-        # Set up temp directory
-        if tmp_dir:
-            self.tmp_dir = Path(tmp_dir)
-        else:
-            self.tmp_dir = Path.cwd() / "tmp" / "agno_generated_files"
-        
-        # Create temp directory if it doesn't exist
-        if self.save_to_tmp:
-            self.tmp_dir.mkdir(parents=True, exist_ok=True)
-            log_debug(f"Files will be saved to: {self.tmp_dir}")
+        # Create output directory if specified
+        if self.output_directory:
+            self.output_directory.mkdir(parents=True, exist_ok=True)
+            log_debug(f"Files will be saved to: {self.output_directory}")
 
         if enable_pdf_generation and not PDF_AVAILABLE:
             logger.warning("PDF generation requested but reportlab is not installed. Disabling PDF generation.")
@@ -72,12 +61,12 @@ class FileGenerationTools(Toolkit):
 
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
-    def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> str:
-        """Save file to disk and return the file path."""
-        if not self.save_to_tmp:
-            return ""
+    def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Optional[str]:
+        """Save file to disk if output_directory is set. Return file path or None."""
+        if not self.output_directory:
+            return None
             
-        file_path = self.tmp_dir / filename
+        file_path = self.output_directory / filename
         
         if isinstance(content, str):
             file_path.write_text(content, encoding='utf-8')
@@ -103,7 +92,6 @@ class FileGenerationTools(Toolkit):
             # Handle different input types
             if isinstance(data, str):
                 try:
-                    # Try to parse as JSON to validate
                     json.loads(data)
                     json_content = data  # Use the original string if it's valid JSON
                 except json.JSONDecodeError:
@@ -118,7 +106,7 @@ class FileGenerationTools(Toolkit):
             elif not filename.endswith('.json'):
                 filename += '.json'
 
-            # Save file to disk
+            # Save file to disk (if output_directory is set)
             file_path = self._save_file_to_disk(json_content, filename)
 
             # Create FileArtifact
@@ -136,6 +124,8 @@ class FileGenerationTools(Toolkit):
             success_msg = f"JSON file '{filename}' has been generated successfully with {len(json_content)} characters."
             if file_path:
                 success_msg += f" File saved to: {file_path}"
+            else:
+                success_msg += " File is available in response."
                 
             return ToolResult(
                 content=success_msg,
@@ -201,7 +191,7 @@ class FileGenerationTools(Toolkit):
             elif not filename.endswith('.csv'):
                 filename += '.csv'
 
-            # Save file to disk
+            # Save file to disk (if output_directory is set)
             file_path = self._save_file_to_disk(csv_content, filename)
 
             # Create FileArtifact
@@ -219,6 +209,8 @@ class FileGenerationTools(Toolkit):
             success_msg = f"CSV file '{filename}' has been generated successfully with {len(csv_content)} characters."
             if file_path:
                 success_msg += f" File saved to: {file_path}"
+            else:
+                success_msg += " File is available in response."
                 
             return ToolResult(
                 content=success_msg,
@@ -282,7 +274,7 @@ class FileGenerationTools(Toolkit):
             elif not filename.endswith('.pdf'):
                 filename += '.pdf'
 
-            # Save file to disk
+            # Save file to disk (if output_directory is set)
             file_path = self._save_file_to_disk(pdf_content, filename)
 
             # Create FileArtifact
@@ -300,6 +292,8 @@ class FileGenerationTools(Toolkit):
             success_msg = f"PDF file '{filename}' has been generated successfully with {len(pdf_content)} bytes."
             if file_path:
                 success_msg += f" File saved to: {file_path}"
+            else:
+                success_msg += " File is available in response."
                 
             return ToolResult(
                 content=success_msg,
@@ -329,7 +323,7 @@ class FileGenerationTools(Toolkit):
             elif not filename.endswith('.txt'):
                 filename += '.txt'
 
-            # Save file to disk
+            # Save file to disk (if output_directory is set)
             file_path = self._save_file_to_disk(content, filename)
 
             # Create FileArtifact
@@ -347,6 +341,8 @@ class FileGenerationTools(Toolkit):
             success_msg = f"Text file '{filename}' has been generated successfully with {len(content)} characters."
             if file_path:
                 success_msg += f" File saved to: {file_path}"
+            else:
+                success_msg += " File is available in response."
                 
             return ToolResult(
                 content=success_msg,
