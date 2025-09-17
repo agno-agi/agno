@@ -80,6 +80,5 @@ agent = Agent(
         set_tool,
         tuple_tool,
     ],
-    show_tool_calls=True,
 )
 agent.print_response("Call all the tools and make up interesting arguments")

@@ -11,10 +11,9 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 def test_image_input():
     agent = Agent(
         model=Cohere(id="c4ai-aya-vision-8b"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -26,11 +25,12 @@ def test_image_input():
 
     # Just check it doesn't break on subsequent messages
     response = agent.run("Where can I find more information?")
+    assert response.messages is not None
     assert [message.role for message in response.messages] == ["system", "user", "assistant", "user", "assistant"]
 
 
 def test_image_input_bytes():
-    agent = Agent(model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False, monitoring=False)
+    agent = Agent(model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False)
 
     image_path = Path(__file__).parent.parent.joinpath("sample_image.jpg")
 
@@ -47,7 +47,7 @@ def test_image_input_bytes():
 
 
 def test_image_input_local_file():
-    agent = Agent(model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False, monitoring=False)
+    agent = Agent(model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False)
 
     image_path = Path(__file__).parent.parent.joinpath("sample_image.jpg")
 
@@ -67,7 +67,6 @@ def test_image_input_with_tool_call():
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(

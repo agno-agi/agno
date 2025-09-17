@@ -244,7 +244,7 @@ print_heading "Running ${MODEL_NAME} tests"
 TEST_PATH="tests/integration/models/${MODEL_NAME}"
 if [ -d "$TEST_PATH" ]; then
     print_info "Running tests in ${TEST_PATH}"
-    python -m pytest ${TEST_PATH} -v
+    AGNO_TELEMETRY=false python -m pytest ${TEST_PATH} -v
     TEST_EXIT_CODE=$?
 else
     print_heading "Error: No tests found for ${MODEL_NAME} at ${TEST_PATH}"

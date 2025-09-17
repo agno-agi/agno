@@ -5,7 +5,7 @@ import os
 from unittest.mock import Mock, patch
 
 import pytest
-from firecrawl import FirecrawlApp # noqa
+from firecrawl import FirecrawlApp  # noqa
 
 from agno.tools.firecrawl import FirecrawlTools
 

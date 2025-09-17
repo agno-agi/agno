@@ -15,12 +15,12 @@ def test_tool_use():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "TSLA" in response.content
@@ -32,20 +32,15 @@ def test_tool_use_stream():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
-
-    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
 
-    for chunk in response_stream:
+    for chunk in agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
         responses.append(chunk)
-
-        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -61,12 +56,12 @@ async def test_async_tool_use():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
     assert "TSLA" in response.content
@@ -79,22 +74,15 @@ async def test_async_tool_use_stream():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
-    )
-
-    response_stream = agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
     )
 
     responses = []
     tool_call_seen = False
 
-    async for chunk in response_stream:
+    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
         responses.append(chunk)
-
-        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -109,13 +97,13 @@ def test_multiple_tool_calls():
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and what is the latest news about it?")
 
     # Verify tool usage
     tool_calls = []
+    assert response.messages is not None
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
@@ -136,12 +124,12 @@ def test_tool_call_custom_tool_no_parameters():
         tools=[get_the_weather_in_tokyo],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Tokyo?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
@@ -165,12 +153,12 @@ def test_tool_call_custom_tool_optional_parameters():
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Paris?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
@@ -183,7 +171,6 @@ def test_tool_call_list_parameters():
         instructions="Use a single tool call if possible",
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -191,6 +178,7 @@ def test_tool_call_list_parameters():
     )
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     tool_calls = []
     for msg in response.messages:

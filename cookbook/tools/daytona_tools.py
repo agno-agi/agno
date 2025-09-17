@@ -34,7 +34,6 @@ agent = Agent(
         "- Always show both the code AND the execution output",
         "- Handle errors gracefully and explain any issues encountered",
     ],
-    show_tool_calls=True,
 )
 
 agent.print_response(

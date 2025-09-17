@@ -35,6 +35,8 @@ class BaiduSearchTools(Toolkit):
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
         debug: Optional[bool] = False,
+        enable_baidu_search: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.fixed_max_results = fixed_max_results
@@ -45,7 +47,8 @@ class BaiduSearchTools(Toolkit):
         self.debug = debug
 
         tools = []
-        tools.append(self.baidu_search)
+        if all or enable_baidu_search:
+            tools.append(self.baidu_search)
 
         super().__init__(name="baidusearch", tools=tools, **kwargs)
 

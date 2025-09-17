@@ -20,7 +20,7 @@ def temp_output_dir():
 @pytest.fixture
 def viz_tools(temp_output_dir):
     """Create a VisualizationTools instance with all chart types enabled."""
-    return VisualizationTools(output_dir=temp_output_dir, enable_all=True)
+    return VisualizationTools(output_dir=temp_output_dir)
 
 
 @pytest.fixture
@@ -33,11 +33,11 @@ def test_initialization_with_selective_charts(temp_output_dir):
     """Test initialization with only selected chart types."""
     tools = VisualizationTools(
         output_dir=temp_output_dir,
-        bar_chart=True,
-        line_chart=True,
-        pie_chart=False,
-        scatter_plot=False,
-        histogram=True,
+        enable_create_bar_chart=True,
+        enable_create_line_chart=True,
+        enable_create_pie_chart=False,
+        enable_create_scatter_plot=False,
+        enable_create_histogram=True,
     )
 
     function_names = [func.name for func in tools.functions.values()]

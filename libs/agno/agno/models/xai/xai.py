@@ -65,7 +65,7 @@ class xAI(OpenAILike):
 
         return request_params
 
-    def parse_provider_response(
+    def _parse_provider_response(
         self,
         response: ChatCompletion,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -73,21 +73,21 @@ class xAI(OpenAILike):
         """
         Parse the xAI response into a ModelResponse.
         """
-        model_response = super().parse_provider_response(response, response_format)
+        model_response = super()._parse_provider_response(response, response_format)
 
-        if hasattr(response, "citations") and response.citations:
+        if hasattr(response, "citations") and response.citations:  # type: ignore
             citations = Citations()
             url_citations = []
-            for citation_url in response.citations:
+            for citation_url in response.citations:  # type: ignore
                 url_citations.append(UrlCitation(url=str(citation_url)))
 
             citations.urls = url_citations
-            citations.raw = response.citations
+            citations.raw = response.citations  # type: ignore
             model_response.citations = citations
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
+    def _parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
         """
         Parse the xAI streaming response.
 
@@ -97,16 +97,16 @@ class xAI(OpenAILike):
         Returns:
             ModelResponse: Parsed response data
         """
-        model_response = super().parse_provider_response_delta(response_delta)
+        model_response = super()._parse_provider_response_delta(response_delta)
 
-        if hasattr(response_delta, "citations") and response_delta.citations:
+        if hasattr(response_delta, "citations") and response_delta.citations:  # type: ignore
             citations = Citations()
             url_citations = []
-            for citation_url in response_delta.citations:
+            for citation_url in response_delta.citations:  # type: ignore
                 url_citations.append(UrlCitation(url=str(citation_url)))
 
             citations.urls = url_citations
-            citations.raw = response_delta.citations
+            citations.raw = response_delta.citations  # type: ignore
             model_response.citations = citations
 
         return model_response

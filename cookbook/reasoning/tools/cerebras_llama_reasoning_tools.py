@@ -55,9 +55,8 @@ reasoning_agent = Agent(
         - Address value considerations
         \
     """),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     stream_intermediate_steps=True,
-    show_tool_calls=True,
     markdown=True,
 )
 
