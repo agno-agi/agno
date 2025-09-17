@@ -462,8 +462,8 @@ def workflow_run_output_event_from_dict(data: dict) -> BaseWorkflowRunOutputEven
 class WorkflowRunOutput:
     """Response returned by Workflow.run() functions - kept for backwards compatibility"""
 
-    input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
-    content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
+    input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
+    content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
     content_type: str = "str"
 
     # Workflow-specific fields
