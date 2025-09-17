@@ -108,32 +108,32 @@ class WebsiteReader(Reader):
             """
             if not isinstance(tag, Tag):
                 return False
-                
+
             if tag.name in ["article", "main", "section"]:
                 return True
-                
+
             classes = tag.get("class", [])
             content_classes = ["content", "main-content", "post-content", "entry-content", "article-body"]
             if any(cls in content_classes for cls in classes):
                 return True
-                
+
             # Check for common content IDs
             tag_id = tag.get("id", "")
             if tag_id in ["content", "main", "article"]:
                 return True
-                
+
             return False
 
         # Try to find main content element
         element = soup.find(match)
         if element:
             # Remove common unwanted elements from the found content
-            for unwanted in element.find_all(['script', 'style', 'nav', 'header', 'footer']):
+            for unwanted in element.find_all(["script", "style", "nav", "header", "footer"]):
                 unwanted.decompose()
             return element.get_text(strip=True, separator=" ")
 
         # Fallback: get full page content
-        for unwanted in soup.find_all(['script', 'style', 'nav', 'header', 'footer']):
+        for unwanted in soup.find_all(["script", "style", "nav", "header", "footer"]):
             unwanted.decompose()
         return soup.get_text(strip=True, separator=" ")
 
@@ -186,14 +186,14 @@ class WebsiteReader(Reader):
 
             try:
                 log_debug(f"Crawling: {current_url}")
-                
+
                 response = (
                     httpx.get(current_url, timeout=self.timeout, proxy=self.proxy, follow_redirects=True)
                     if self.proxy
                     else httpx.get(current_url, timeout=self.timeout, follow_redirects=True)
                 )
                 response.raise_for_status()
-                            
+
                 soup = BeautifulSoup(response.content, "html.parser")
 
                 # Extract main content
