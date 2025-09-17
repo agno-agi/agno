@@ -48,9 +48,7 @@ How to Get These Credentials:
 
 """
 
-
 import mimetypes
-
 from functools import wraps
 from os import getenv
 from pathlib import Path
@@ -59,18 +57,16 @@ from typing import Any, List, Optional, Union
 from agno.tools import Toolkit
 
 try:
-
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import build
-    from googleapiclient.discovery import Resource
-    from googleapiclient.errors import HttpError
-    from googleapiclient.http import MediaFileUpload,MediaIoBaseDownload
+    from googleapiclient.discovery import Resource, build
+    from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 except ImportError:
     raise ImportError(
         "Google client library for Python not found , install it using `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
     )
+
 
 def authenticate(func):
     """Decorator to ensure authentication before executing a function."""
@@ -88,32 +84,24 @@ def authenticate(func):
 
 class GoogleDriveTools(Toolkit):
     # Default scopes for Google Drive API access
-    DEFAULT_SCOPES = [
-        "https://www.googleapis.com/auth/drive.file",
-        "https://www.googleapis.com/auth/drive.readonly"
-    ]
+    DEFAULT_SCOPES = ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive.readonly"]
     service: Optional[Resource]
-    def __init__(self,creds: Optional[Credentials] = None, scopes: Optional[List[str]] = None, **kwargs):
+
+    def __init__(self, creds: Optional[Credentials] = None, scopes: Optional[List[str]] = None, **kwargs):
         self.creds: Optional[Credentials] = creds
         self.service: Optional[Resource] = None
         self.scopes = scopes or []
         self.scopes.extend(self.DEFAULT_SCOPES)
-        tools:List[Any]=[
+        tools: List[Any] = [
             self.list_files,
         ]
-        super().__init__(
-            name="google_drive_tools",
-            tools=tools,
-            **kwargs
-        )
+        super().__init__(name="google_drive_tools", tools=tools, **kwargs)
         if not self.scopes:
             # Add read permission by default
-            self.scopes.append(self.DEFAULT_SCOPES["read"])
+            self.scopes.append(self.DEFAULT_SCOPES[1])  # 'drive.readonly'
             # Add write permission if allow_update is True
-            if getattr(self, 'allow_update', False):
-                self.scopes.append(self.DEFAULT_SCOPES["write"])
-
-
+            if getattr(self, "allow_update", False):
+                self.scopes.append(self.DEFAULT_SCOPES[0])  # 'drive.file'
 
     def _auth(self):
         """
@@ -131,7 +119,9 @@ class GoogleDriveTools(Toolkit):
         client_secret = getenv("GOOGLE_CLIENT_SECRET")
         redirect_uri = getenv("GOOGLE_REDIRECT_URI", "http://localhost")
         if not client_id or not client_secret:
-            raise ValueError("Google Drive authentication failed: Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your environment variables.")
+            raise ValueError(
+                "Google Drive authentication failed: Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your environment variables."
+            )
         flow = InstalledAppFlow.from_client_config(
             {
                 "installed": {
@@ -139,13 +129,12 @@ class GoogleDriveTools(Toolkit):
                     "client_secret": client_secret,
                     "redirect_uris": [redirect_uri],
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token"
+                    "token_uri": "https://oauth2.googleapis.com/token",
                 }
             },
-            self.scopes
+            self.scopes,
         )
         self.creds = flow.run_local_server(port=0)
-                
 
     @authenticate
     def list_files(self, query: Optional[str] = None, page_size: int = 10) -> List[dict]:
@@ -162,16 +151,17 @@ class GoogleDriveTools(Toolkit):
         if not self.service:
             raise ValueError("Google Drive service is not initialized. Please authenticate first.")
         try:
-            results = self.service.files().list(
-                q=query,
-                pageSize=page_size,
-                fields="nextPageToken, files(id, name, mimeType, modifiedTime)"
-            ).execute()
-            items = results.get('files', [])
+            results = (
+                self.service.files()
+                .list(q=query, pageSize=page_size, fields="nextPageToken, files(id, name, mimeType, modifiedTime)")
+                .execute()
+            )
+            items = results.get("files", [])
             return items
         except Exception as error:
             print(f"Could not list files: {error}")
             return []
+
     @authenticate
     def upload_file(self, file_path: Union[str, Path], mime_type: Optional[str] = None) -> Optional[dict]:
         """
@@ -192,22 +182,22 @@ class GoogleDriveTools(Toolkit):
         if mime_type is None:
             mime_type, _ = mimetypes.guess_type(file_path.as_posix())
             if mime_type is None:
-                mime_type = 'application/octet-stream'  # Default MIME type
+                mime_type = "application/octet-stream"  # Default MIME type
 
-        file_metadata = {'name': file_path.name}
+        file_metadata = {"name": file_path.name}
         media = MediaFileUpload(file_path.as_posix(), mimetype=mime_type)
 
         try:
-            uploaded_file = self.service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id, name, mimeType, modifiedTime'
-            ).execute()
+            uploaded_file = (
+                self.service.files()
+                .create(body=file_metadata, media_body=media, fields="id, name, mimeType, modifiedTime")
+                .execute()
+            )
             return uploaded_file
         except Exception as error:
             print(f"Could not upload file '{file_path}': {error}")
             return None
-    
+
     @authenticate
     def download_file(self, file_id: str, dest_path: Union[str, Path]) -> Optional[Path]:
         """
@@ -225,7 +215,7 @@ class GoogleDriveTools(Toolkit):
         dest_path = Path(dest_path)
         try:
             request = self.service.files().get_media(fileId=file_id)
-            with open(dest_path, 'wb') as fh:
+            with open(dest_path, "wb") as fh:
                 downloader = MediaIoBaseDownload(fh, request)
                 done = False
                 while not done:
