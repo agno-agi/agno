@@ -502,7 +502,7 @@ def get_base_router(
                 "content": {
                     "application/json": {
                         "example": {
-                            "os_id": "demo",
+                            "id": "demo",
                             "description": "Example AgentOS configuration",
                             "available_models": [],
                             "databases": ["9c884dc4-9066-448c-9074-ef49ec7eb73c"],
@@ -564,7 +564,7 @@ def get_base_router(
     )
     async def config() -> ConfigResponse:
         return ConfigResponse(
-            os_id=os.os_id or "Unnamed OS",
+            os_id=os.id or "Unnamed OS",
             description=os.description,
             available_models=os.config.available_models if os.config else [],
             databases=[db.id for db in os.dbs.values()],

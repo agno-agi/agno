@@ -1,7 +1,9 @@
 """Schemas related to the AgentOS configuration"""
 
+from dataclasses import dataclass
 from typing import Generic, List, Optional, TypeVar
 
+from fastapi import FastAPI
 from pydantic import BaseModel, field_validator
 
 
@@ -101,3 +103,13 @@ class AgentOSConfig(BaseModel):
     memory: Optional[MemoryConfig] = None
     session: Optional[SessionConfig] = None
     metrics: Optional[MetricsConfig] = None
+
+
+@dataclass
+class AppConfig():
+    """Configuration for the App of the AgentOS"""
+
+    app: FastAPI
+    replace_conflicting_routes: bool = True
+    
+    

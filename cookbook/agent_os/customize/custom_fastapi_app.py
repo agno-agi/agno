@@ -11,6 +11,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
+from agno.os.config import AppConfig
 from agno.tools.duckduckgo import DuckDuckGoTools
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
@@ -36,7 +37,7 @@ app: FastAPI = FastAPI(
     version="1.0.0",
 )
 
-# Add Middleware
+# Add Middleware to handle CORS (could add any other middleware here)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -63,17 +64,12 @@ async def get_customers():
     ]
 
 
-# Setup our AgentOS app by passing your FastAPI app
-# Use route_prefix to avoid conflicts with your custom routes
+# Setup our AgentOS app by passing your FastAPI app in the app_config parameter
 agent_os = AgentOS(
     description="Example app with custom routers",
     agents=[web_research_agent],
-    fastapi_app=app,
+    app_config=AppConfig(app=app),
 )
-
-# Alternatively, add all routes from AgentOS app to the current app
-# for route in agent_os.get_routes():
-#     app.router.routes.append(route)
 
 app = agent_os.get_app()
 
@@ -85,4 +81,4 @@ if __name__ == "__main__":
     - API docs: http://localhost:7777/docs
 
     """
-    agent_os.serve(app="basic_example:app", reload=True)
+    agent_os.serve(app="custom_fastapi_app:app", reload=True)

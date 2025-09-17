@@ -15,6 +15,7 @@ from starlette.requests import Request
 from agno.agent.agent import Agent
 from agno.os.config import (
     AgentOSConfig,
+    AppConfig,
     DatabaseConfig,
     EvalsConfig,
     EvalsDomainConfig,
@@ -60,7 +61,8 @@ async def mcp_lifespan(app, mcp_tools):
 class AgentOS:
     def __init__(
         self,
-        os_id: Optional[str] = None,
+        id: Optional[str] = None,
+        os_id: Optional[str] = None,  # Deprecated
         name: Optional[str] = None,
         description: Optional[str] = None,
         version: Optional[str] = None,
@@ -70,16 +72,17 @@ class AgentOS:
         interfaces: Optional[List[BaseInterface]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
-        fastapi_app: Optional[FastAPI] = None,
         lifespan: Optional[Any] = None,
         enable_mcp: bool = False,
-        replace_routes: bool = True,
+        fastapi_app: Optional[FastAPI] = None,  # Deprecated
+        replace_routes: bool = True,  # Deprecated
+        app_config: Optional[AppConfig] = None,
         telemetry: bool = True,
     ):
         """Initialize AgentOS.
 
         Args:
-            os_id: Unique identifier for this AgentOS instance
+            id: Unique identifier for this AgentOS instance
             name: Name of the AgentOS instance
             description: Description of the AgentOS instance
             version: Version of the AgentOS instance
@@ -89,10 +92,11 @@ class AgentOS:
             interfaces: List of interfaces to include in the OS
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
-            fastapi_app: Optional custom FastAPI app to use instead of creating a new one
             lifespan: Optional lifespan context manager for the FastAPI app
             enable_mcp: Whether to enable MCP (Model Context Protocol)
-            replace_routes: If False and using a custom fastapi_app, skip AgentOS routes that
+            app_config: Configuration for the App of the AgentOS. Allows you to configure a custom FastAPI app and how it behaves.
+            fastapi_app: Optional custom FastAPI app to use instead of creating a new one (deprecated)
+            replace_routes: If False and using a custom fastapi_app, skip AgentOS routes that (deprecated)
                           conflict with existing routes, preferring the user's custom routes.
                           If True (default), AgentOS routes will override conflicting custom routes.
             telemetry: Whether to enable telemetry
@@ -110,15 +114,28 @@ class AgentOS:
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
 
         self._app_set = False
-        self.fastapi_app: Optional[FastAPI] = None
-        if fastapi_app:
-            self.fastapi_app = fastapi_app
+        
+        if app_config:
+            self.custom_app = app_config.app
             self._app_set = True
+            self.replace_conflicting_routes = app_config.replace_conflicting_routes
+        elif fastapi_app:
+            self.custom_app = fastapi_app
+            self._app_set = True
+            self.replace_conflicting_routes = replace_routes
+        else:
+            self.custom_app = None
+            self._app_set = False
+            self.replace_conflicting_routes = True
 
         self.interfaces = interfaces or []
 
-        self.os_id = os_id
         self.name = name
+        
+        self.id = id or os_id
+        if not self.id:
+            self.id = generate_id(self.name) if self.name else str(uuid4())
+        
         self.version = version
         self.description = description
 
@@ -175,13 +192,10 @@ class AgentOS:
                 if not workflow.id:
                     workflow.id = generate_id_from_name(workflow.name)
 
-        if not self.os_id:
-            self.os_id = generate_id(self.name) if self.name else str(uuid4())
-
         if self.telemetry:
             from agno.api.os import OSLaunch, log_os_telemetry
 
-            log_os_telemetry(launch=OSLaunch(os_id=self.os_id, data=self._get_telemetry_data()))
+            log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
@@ -213,7 +227,10 @@ class AgentOS:
         )
 
     def get_app(self) -> FastAPI:
-        if not self.fastapi_app:
+        
+        if self.custom_app:
+            fastapi_app = self.custom_app
+        else:
             if self.enable_mcp:
                 from contextlib import asynccontextmanager
 
@@ -233,19 +250,18 @@ class AgentOS:
 
                     final_lifespan = combined_lifespan  # type: ignore
 
-                self.fastapi_app = self._make_app(lifespan=final_lifespan)
+                fastapi_app = self._make_app(lifespan=final_lifespan)
             else:
-                self.fastapi_app = self._make_app(lifespan=self.lifespan)
+                fastapi_app = self._make_app(lifespan=self.lifespan)
 
         # Add routes with conflict detection
-        self._add_router(get_base_router(self, settings=self.settings))
-        self._add_router(get_websocket_router(self, settings=self.settings))
-        self._add_router(get_health_router())
-        self._add_router(get_home_router(self))
+        self._add_router(fastapi_app, get_base_router(self, settings=self.settings))
+        self._add_router(fastapi_app, get_websocket_router(self, settings=self.settings))
+        self._add_router(fastapi_app, get_health_router())
 
         for interface in self.interfaces:
             interface_router = interface.get_router()
-            self._add_router(interface_router)
+            self._add_router(fastapi_app, interface_router)
 
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
@@ -259,16 +275,19 @@ class AgentOS:
         ]
 
         for router in routers:
-            self._add_router(router)
+            self._add_router(fastapi_app, router)
 
         # Mount MCP if needed
         if self.enable_mcp and self.mcp_app:
-            self.fastapi_app.mount("/", self.mcp_app)
+            fastapi_app.mount("/", self.mcp_app)
+        else:
+            # Add the home router
+            self._add_router(fastapi_app, get_home_router(self))
 
         # Add middleware (only if app is not set)
         if not self._app_set:
 
-            @self.fastapi_app.exception_handler(HTTPException)
+            @fastapi_app.exception_handler(HTTPException)
             async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
                 return JSONResponse(
                     status_code=exc.status_code,
@@ -284,9 +303,9 @@ class AgentOS:
                         content={"detail": str(e)},
                     )
 
-            self.fastapi_app.middleware("http")(general_exception_handler)
+            fastapi_app.middleware("http")(general_exception_handler)
 
-            self.fastapi_app.add_middleware(
+            fastapi_app.add_middleware(
                 CORSMiddleware,
                 allow_origins=self.settings.cors_origin_list,  # type: ignore
                 allow_credentials=True,
@@ -295,7 +314,7 @@ class AgentOS:
                 expose_headers=["*"],
             )
 
-        return self.fastapi_app
+        return fastapi_app
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.
@@ -307,17 +326,14 @@ class AgentOS:
 
         return app.routes
 
-    def _get_existing_route_paths(self) -> Dict[str, List[str]]:
+    def _get_existing_route_paths(self, fastapi_app: FastAPI) -> Dict[str, List[str]]:
         """Get all existing route paths and methods from the FastAPI app.
 
         Returns:
             Dict[str, List[str]]: Dictionary mapping paths to list of HTTP methods
         """
-        if not self.fastapi_app:
-            return {}
-
         existing_paths: Dict[str, Any] = {}
-        for route in self.fastapi_app.routes:
+        for route in fastapi_app.routes:
             if isinstance(route, APIRoute):
                 path = route.path
                 methods = list(route.methods) if route.methods else []
@@ -327,17 +343,14 @@ class AgentOS:
                     existing_paths[path] = methods
         return existing_paths
 
-    def _add_router(self, router: APIRouter) -> None:
+    def _add_router(self, fastapi_app: FastAPI, router: APIRouter) -> None:
         """Add a router to the FastAPI app, avoiding route conflicts.
 
         Args:
             router: The APIRouter to add
         """
-        if not self.fastapi_app:
-            return
-
         # Get existing routes
-        existing_paths = self._get_existing_route_paths()
+        existing_paths = self._get_existing_route_paths(fastapi_app)
 
         # Check for conflicts
         conflicts = []
@@ -365,13 +378,13 @@ class AgentOS:
                     )
 
                 # Remove conflicting routes
-                for route in self.fastapi_app.routes:
+                for route in fastapi_app.routes:
                     for conflict in conflicts:
                         if isinstance(route, APIRoute):
                             if route.path == conflict["path"] and list(route.methods) == list(conflict["methods"]):
-                                self.fastapi_app.routes.pop(self.fastapi_app.routes.index(route))
+                                fastapi_app.routes.pop(fastapi_app.routes.index(route))
 
-                self.fastapi_app.include_router(router)
+                fastapi_app.include_router(router)
 
             else:
                 # Skip conflicting AgentOS routes, prefer user's existing routes
@@ -390,10 +403,10 @@ class AgentOS:
 
                 # Use the filtered router if it has any routes left
                 if filtered_router.routes:
-                    self.fastapi_app.include_router(filtered_router)
+                    fastapi_app.include_router(filtered_router)
         else:
             # No conflicts, add router normally
-            self.fastapi_app.include_router(router)
+            fastapi_app.include_router(router)
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
         """Get the telemetry data for the OS"""
