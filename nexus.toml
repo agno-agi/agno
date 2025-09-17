@@ -1,0 +1,19 @@
+[llm]
+enabled = true  # Enable LLM functionality
+path = "/llm"   # API endpoint path
+
+# Configure OpenAI provider
+[llm.providers.openai]
+type = "openai"
+api_key = "{{ env.OPENAI_API_KEY }}"
+
+# Must explicitly configure models
+[llm.providers.openai.models.gpt-4]
+[llm.providers.openai.models."gpt-3.5-turbo"]
+
+# Configure Anthropic provider
+[llm.providers.anthropic]
+type = "anthropic"
+api_key = "{{ env.ANTHROPIC_API_KEY }}"
+
+[llm.providers.anthropic.models."claude-sonnet-4-20250514"]
