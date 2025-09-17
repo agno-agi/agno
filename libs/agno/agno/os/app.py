@@ -95,10 +95,6 @@ class AgentOS:
             lifespan: Optional lifespan context manager for the FastAPI app
             enable_mcp: Whether to enable MCP (Model Context Protocol)
             app_config: Configuration for the App of the AgentOS. Allows you to configure a custom FastAPI app and how it behaves.
-            fastapi_app: Optional custom FastAPI app to use instead of creating a new one (deprecated)
-            replace_routes: If False and using a custom fastapi_app, skip AgentOS routes that (deprecated)
-                          conflict with existing routes, preferring the user's custom routes.
-                          If True (default), AgentOS routes will override conflicting custom routes.
             telemetry: Whether to enable telemetry
         """
         if not agents and not workflows and not teams:
@@ -114,32 +110,30 @@ class AgentOS:
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
 
         self._app_set = False
-        
+
         if app_config:
-            self.custom_app = app_config.app
+            self.custom_app: Optional[FastAPI] = app_config.app
             self._app_set = True
-            self.replace_conflicting_routes = app_config.replace_conflicting_routes
+            self.preserve_conflicting_routes = app_config.preserve_conflicting_routes
         elif fastapi_app:
             self.custom_app = fastapi_app
             self._app_set = True
-            self.replace_conflicting_routes = replace_routes
+            self.preserve_conflicting_routes = not replace_routes
         else:
             self.custom_app = None
             self._app_set = False
-            self.replace_conflicting_routes = True
+            self.preserve_conflicting_routes = True
 
         self.interfaces = interfaces or []
 
         self.name = name
-        
+
         self.id = id or os_id
         if not self.id:
             self.id = generate_id(self.name) if self.name else str(uuid4())
-        
+
         self.version = version
         self.description = description
-
-        self.replace_routes = replace_routes
 
         self.telemetry = telemetry
 
@@ -227,7 +221,6 @@ class AgentOS:
         )
 
     def get_app(self) -> FastAPI:
-        
         if self.custom_app:
             fastapi_app = self.custom_app
         else:
@@ -368,25 +361,7 @@ class AgentOS:
                         conflicting_routes.append(route)
 
         if conflicts and self._app_set:
-            if self.replace_routes:
-                # Log warnings but still add all routes (AgentOS routes will override)
-                for conflict in conflicts:
-                    methods_str = ", ".join(conflict["methods"])  # type: ignore
-                    logger.warning(
-                        f"Route conflict detected: {methods_str} {conflict['path']} - "
-                        f"AgentOS route will override existing custom route"
-                    )
-
-                # Remove conflicting routes
-                for route in fastapi_app.routes:
-                    for conflict in conflicts:
-                        if isinstance(route, APIRoute):
-                            if route.path == conflict["path"] and list(route.methods) == list(conflict["methods"]):
-                                fastapi_app.routes.pop(fastapi_app.routes.index(route))
-
-                fastapi_app.include_router(router)
-
-            else:
+            if self.preserve_conflicting_routes:
                 # Skip conflicting AgentOS routes, prefer user's existing routes
                 for conflict in conflicts:
                     methods_str = ", ".join(conflict["methods"])  # type: ignore
@@ -404,6 +379,25 @@ class AgentOS:
                 # Use the filtered router if it has any routes left
                 if filtered_router.routes:
                     fastapi_app.include_router(filtered_router)
+
+            else:
+                # Log warnings but still add all routes (AgentOS routes will override)
+                for conflict in conflicts:
+                    methods_str = ", ".join(conflict["methods"])  # type: ignore
+                    logger.warning(
+                        f"Route conflict detected: {methods_str} {conflict['path']} - "
+                        f"AgentOS route will override existing custom route"
+                    )
+
+                # Remove conflicting routes
+                for route in fastapi_app.routes:
+                    for conflict in conflicts:
+                        if isinstance(route, APIRoute):
+                            if route.path == conflict["path"] and list(route.methods) == list(conflict["methods"]):  # type: ignore
+                                fastapi_app.routes.pop(fastapi_app.routes.index(route))
+
+                fastapi_app.include_router(router)
+
         else:
             # No conflicts, add router normally
             fastapi_app.include_router(router)

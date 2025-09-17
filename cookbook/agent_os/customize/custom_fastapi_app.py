@@ -48,7 +48,7 @@ app.add_middleware(
 
 
 # Add your own routes
-@app.post("/customers")
+@app.get("/customers")
 async def get_customers():
     return [
         {

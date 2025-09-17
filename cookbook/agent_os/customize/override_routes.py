@@ -1,15 +1,15 @@
 """
 Example AgentOS app with a custom FastAPI app with conflicting routes.
 
-This example demonstrates the `replace_conflicting_routes=False` functionality which allows your
+This example demonstrates the `preserve_conflicting_routes=True` functionality which allows your
 custom routes to take precedence over conflicting AgentOS routes.
 
-When `replace_conflicting_routes=False`:
+When `preserve_conflicting_routes=True`:
 - Your custom routes (/, /health) will be preserved
 - Conflicting AgentOS routes will be skipped
 - Non-conflicting AgentOS routes will still be added
 
-When `replace_conflicting_routes=True` (default):
+When `preserve_conflicting_routes=False` (default):
 - AgentOS routes will override your custom routes
 - Warnings will be logged about the conflicts
 """
@@ -75,8 +75,8 @@ agent_os = AgentOS(
     description="Example app with route replacement",
     agents=[web_research_agent],
     app_config=AppConfig(
-        app=app, 
-        replace_conflicting_routes=False  # Skip conflicting AgentOS routes, keep your custom routes
+        app=app,
+        preserve_conflicting_routes=True,  # Skip conflicting AgentOS routes, keep your custom routes
     ),
 )
 
@@ -85,12 +85,12 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """Run your AgentOS.
 
-    With replace_conflicting_routes=False:
+    With preserve_conflicting_routes=True:
     - Your custom routes are preserved: http://localhost:7777/ and http://localhost:7777/health
     - AgentOS routes are available at other paths: http://localhost:7777/sessions, etc.
     - Conflicting AgentOS routes (GET / and GET /health) are skipped
     - API docs: http://localhost:7777/docs
 
-    Try changing replace_conflicting_routes=True to see AgentOS routes override your custom ones. This is the default behavior.
+    Try changing preserve_conflicting_routes=False to see AgentOS routes override your custom ones. This is the default behavior.
     """
     agent_os.serve(app="override_routes:app", reload=True)

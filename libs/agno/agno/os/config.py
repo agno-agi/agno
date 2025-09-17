@@ -106,10 +106,8 @@ class AgentOSConfig(BaseModel):
 
 
 @dataclass
-class AppConfig():
+class AppConfig:
     """Configuration for the App of the AgentOS"""
 
     app: FastAPI
-    replace_conflicting_routes: bool = True
-    
-    
+    preserve_conflicting_routes: bool = False
