@@ -113,10 +113,18 @@ def _create_events_from_chunk(
     message_id: str,
     message_started: bool,
     event_buffer: EventBuffer,
-) -> Tuple[List[BaseEvent], bool]:
+) -> Tuple[List[BaseEvent], bool, str]:
     """
     Process a single chunk and return events to emit + updated message_started state.
-    Returns: (events_to_emit, new_message_started_state)
+
+    Args:
+        chunk: The event chunk to process
+        message_id: Current message identifier
+        message_started: Whether a message is currently active
+        event_buffer: Event buffer for tracking tool call state
+
+    Returns:
+        Tuple of (events_to_emit, new_message_started_state, message_id)
     """
     events_to_emit: List[BaseEvent] = []
 
@@ -151,11 +159,15 @@ def _create_events_from_chunk(
 
     # Handle starting a new tool call
     elif chunk.event == RunEvent.tool_call_started:
-        # End the current text message if one is active before starting tool calls
+        # Store current message_id for tool call reference
+        current_message_id = message_id
+
+        # End the current text message before starting tool calls
         if message_started:
-            end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
+            end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_message_id)
             events_to_emit.append(end_message_event)
-            message_started = False  # Reset message_started state
+            message_started = False
+            message_id = str(uuid.uuid4())
 
         if chunk.tool is not None:  # type: ignore
             tool_call = chunk.tool  # type: ignore
@@ -163,7 +175,7 @@ def _create_events_from_chunk(
                 type=EventType.TOOL_CALL_START,
                 tool_call_id=tool_call.tool_call_id,  # type: ignore
                 tool_call_name=tool_call.tool_name,  # type: ignore
-                parent_message_id=message_id,
+                parent_message_id=current_message_id,
             )
             events_to_emit.append(start_event)
 
@@ -203,7 +215,7 @@ def _create_events_from_chunk(
         step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
         events_to_emit.append(step_finished_event)
 
-    return events_to_emit, message_started
+    return events_to_emit, message_started, message_id
 
 
 def _create_completion_events(
@@ -304,7 +316,7 @@ def stream_agno_response_as_agui_events(
             stream_completed = True
         else:
             # Process regular chunk immediately
-            events_from_chunk, message_started = _create_events_from_chunk(
+            events_from_chunk, message_started, message_id = _create_events_from_chunk(
                 chunk, message_id, message_started, event_buffer
             )
 
@@ -364,7 +376,7 @@ async def async_stream_agno_response_as_agui_events(
             stream_completed = True
         else:
             # Process regular chunk immediately
-            events_from_chunk, message_started = _create_events_from_chunk(
+            events_from_chunk, message_started, message_id = _create_events_from_chunk(
                 chunk, message_id, message_started, event_buffer
             )
 
