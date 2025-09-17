@@ -382,7 +382,7 @@ class SqliteDb(BaseDb):
 
     def get_sessions(
         self,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -397,7 +397,7 @@ class SqliteDb(BaseDb):
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
         Args:
-            session_type (SessionType): The type of session to get.
+            session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
             component_id (Optional[str]): The ID of the agent / workflow to filter by.
             session_name (Optional[str]): The name of the session to filter by.

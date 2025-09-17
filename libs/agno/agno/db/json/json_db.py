@@ -219,7 +219,7 @@ class JsonDb(BaseDb):
 
     def get_sessions(
         self,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -234,7 +234,7 @@ class JsonDb(BaseDb):
         """Get all sessions from the JSON file with filtering and pagination.
 
         Args:
-            session_type (SessionType): The type of the sessions to read.
+            session_type (Optional[SessionType]): The type of the sessions to read.
             user_id (Optional[str]): The ID of the user to read the sessions for.
             component_id (Optional[str]): The ID of the component to read the sessions for.
             session_name (Optional[str]): The name of the session to read.
