@@ -1044,7 +1044,7 @@ class Model(ABC):
             if "tool_call_ids" in model_response_delta.extra:
                 if not stream_data.extra.get("tool_call_ids"):
                     stream_data.extra["tool_call_ids"] = []
-                stream_data.extra["tool_call_ids"].extend(model_response_delta.extra["tool_calls"])
+                stream_data.extra["tool_call_ids"].extend(model_response_delta.extra["tool_call_ids"])
 
             stream_data.extra.update(
                 stream_data.extra.update({k: v for k, v in model_response_delta.extra.items() if k != "tool_call_ids"})
