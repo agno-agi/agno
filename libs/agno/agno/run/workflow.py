@@ -463,7 +463,7 @@ class WorkflowRunOutput:
     """Response returned by Workflow.run() functions - kept for backwards compatibility"""
 
     input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
-    content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
+    content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
     content_type: str = "str"
 
     # Workflow-specific fields
