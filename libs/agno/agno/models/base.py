@@ -1041,8 +1041,14 @@ class Model(ABC):
         if model_response_delta.extra is not None:
             if stream_data.extra is None:
                 stream_data.extra = {}
-            stream_data.extra.update(model_response_delta.extra)
+            if "tool_call_ids" in model_response_delta.extra:
+                if not stream_data.extra.get("tool_call_ids"):
+                    stream_data.extra["tool_call_ids"] = []
+                stream_data.extra["tool_call_ids"].extend(model_response_delta.extra["tool_calls"])
 
+            stream_data.extra.update(
+                stream_data.extra.update({k: v for k, v in model_response_delta.extra.items() if k != "tool_call_ids"})
+            )
         if should_yield:
             yield model_response_delta
 
