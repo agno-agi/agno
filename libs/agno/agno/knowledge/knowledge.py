@@ -231,7 +231,7 @@ class Knowledge:
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
             log_info("At least one of 'path', 'url', 'text_content', 'topics', or 'remote_content' must be provided.")
             return
-        
+
         if not skip_if_exists:
             log_info("skip_if_exists is disabled, disabling upsert")
             upsert = False

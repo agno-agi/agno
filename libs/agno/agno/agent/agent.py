@@ -1086,7 +1086,11 @@ class Agent:
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=file_artifacts
+            input_content=input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
         )
 
         # Read existing session from database
@@ -1719,7 +1723,11 @@ class Agent:
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=file_artifacts
+            input_content=input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
         )
 
         # Read existing session from storage
@@ -7252,6 +7260,7 @@ class Agent:
             for file in files:
                 if not file.id:
                     from uuid import uuid4
+
                     file.id = str(uuid4())
                 file_list.append(file)
 

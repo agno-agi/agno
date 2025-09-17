@@ -146,7 +146,7 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
                 # For Gemini, we need to represent Dict[str, T] as an object with at least one property
                 # to avoid the "properties should be non-empty" error.
                 # We'll create a generic property that represents the dictionary structure
-                
+
                 # Handle both single types and union types (arrays) from Zod schemas
                 type_value = additional_props.get("type", "string")
                 if isinstance(type_value, list):
@@ -157,7 +157,7 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
                     # Single type
                     value_type = type_value.upper()
                     type_description_suffix = ""
-                
+
                 # Create a placeholder property to satisfy Gemini's requirements
                 # This is a workaround since Gemini doesn't support additionalProperties directly
                 placeholder_properties = {
@@ -186,7 +186,7 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
 
     elif schema_type == "array" and "items" in schema_dict:
         if not schema_dict["items"]:  # Handle empty {}
-            items = Schema(type=Type.STRING) 
+            items = Schema(type=Type.STRING)
         else:
             items = convert_schema(schema_dict["items"], root_schema)
         min_items = schema_dict.get("minItems")

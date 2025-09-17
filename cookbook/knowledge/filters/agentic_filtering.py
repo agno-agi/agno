@@ -1,11 +1,12 @@
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
+from agno.models.openai import OpenAIChat
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
 from agno.vectordb.lancedb import LanceDb
-from agno.models.openai import OpenAIChat
+
 # Download all sample sales files and get their paths
 downloaded_csv_paths = download_knowledge_filters_sample_data(
     num_files=4, file_extension=SampleDataFileExtension.CSV
@@ -68,7 +69,7 @@ knowledge.add_contents(
             },
         },
     ],
-    skip_if_exists=True
+    skip_if_exists=True,
 )
 # Step 2: Query the knowledge base with Agent using filters from query automatically
 # -----------------------------------------------------------------------------------
@@ -79,7 +80,7 @@ agent = Agent(
     knowledge=knowledge,
     search_knowledge=True,
     enable_agentic_knowledge_filters=True,
-    debug_mode=True
+    debug_mode=True,
 )
 
 agent.print_response(

@@ -189,7 +189,7 @@ class Message(BaseModel):
                     reconstructed_videos.append(vid_data)
             data["videos"] = reconstructed_videos
 
-        # Handle file reconstruction properly  
+        # Handle file reconstruction properly
         if "files" in data and data["files"]:
             reconstructed_files = []
             for i, file_data in enumerate(data["files"]):
