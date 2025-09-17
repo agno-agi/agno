@@ -154,6 +154,7 @@ def filter_deprecated_v1_fields(data: Dict[str, Any]) -> Dict[str, Any]:
     deprecated_fields = {
         "team_session_id",  # RunOutput v1 field, removed in v2
         "formatted_tool_calls",  # RunOutput v1 field, removed in v2
+        "extra_data",  # RunOutput v1 field, removed in v2
         # Add other deprecated fields here as needed
     }
 
