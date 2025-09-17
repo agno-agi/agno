@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import inspect
 
 from agno.knowledge.chunking.strategy import ChunkingStrategy
@@ -28,7 +28,7 @@ class SemanticChunking(ChunkingStrategy):
                 )
 
             # Build arguments dynamically based on chonkie's supported signature
-            params = {
+            params: Dict[str, Any] = {
                 "chunk_size": self.chunk_size,
                 "threshold": self.similarity_threshold,
             }
