@@ -181,7 +181,7 @@ class DynamoDb(BaseDb):
 
     # --- Sessions ---
 
-    def delete_session(self, session_id: Optional[str] = None, session_type: Optional[SessionType] = None) -> bool:
+    def delete_session(self, session_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
