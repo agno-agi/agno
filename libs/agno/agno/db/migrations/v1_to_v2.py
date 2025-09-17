@@ -47,10 +47,10 @@ def convert_v1_metrics_to_v2(metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def convert_any_metrics_in_data(data: Any) -> Any:
-    """Recursively find and convert any metrics dictionaries in the data structure."""
+    """Recursively find and convert any metrics dictionaries and handle v1 to v2 field conversion."""
     if isinstance(data, dict):
-        # First filter out deprecated v1 fields
-        data = filter_deprecated_v1_fields(data)
+        # First apply v1 to v2 field conversion (handles extra_data extraction, thinking/reasoning_content consolidation, etc.)
+        data = convert_v1_fields_to_v2(data)
 
         # Check if this looks like a metrics dictionary
         if _is_metrics_dict(data):
@@ -114,11 +114,11 @@ def _is_metrics_dict(data: Dict[str, Any]) -> bool:
 
 
 def convert_session_data_comprehensively(session_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Comprehensively convert any metrics found anywhere in session_data from v1 to v2 format."""
+    """Comprehensively convert session data from v1 to v2 format, including metrics conversion and field mapping."""
     if not session_data:
         return session_data
 
-    # Use the recursive converter to find and fix all metrics
+    # Use the recursive converter to handle all v1 to v2 conversions (metrics, field mapping, extra_data extraction, etc.)
     return convert_any_metrics_in_data(session_data)
 
 
@@ -145,22 +145,147 @@ def safe_get_runs_from_memory(memory_data: Any) -> Any:
     return None
 
 
-def filter_deprecated_v1_fields(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Remove v1-only fields that don't exist in v2 models."""
+def convert_v1_media_to_v2(media_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert v1 media objects to v2 format."""
+    if not isinstance(media_data, dict):
+        return media_data
+    
+    # Create a copy to avoid modifying the original
+    v2_media = media_data.copy()
+    
+    # Add id if missing (required in v2)
+    if "id" not in v2_media or v2_media["id"] is None:
+        from uuid import uuid4
+        v2_media["id"] = str(uuid4())
+    
+    # Handle VideoArtifact → Video conversion
+    if "eta" in v2_media or "length" in v2_media:
+        # Convert length to duration if it's numeric
+        length = v2_media.pop("length", None)
+        if length and isinstance(length, (int, float)):
+            v2_media["duration"] = length
+        elif length and isinstance(length, str):
+            try:
+                v2_media["duration"] = float(length)
+            except ValueError:
+                pass  # Keep as is if not convertible
+    
+    # Handle AudioArtifact → Audio conversion
+    if "base64_audio" in v2_media:
+        # Map base64_audio to content
+        base64_audio = v2_media.pop("base64_audio", None)
+        if base64_audio:
+            v2_media["content"] = base64_audio
+    
+    # Handle AudioResponse content conversion (base64 string to bytes if needed)
+    if "transcript" in v2_media and "content" in v2_media:
+        content = v2_media.get("content")
+        if content and isinstance(content, str):
+            # Try to decode base64 content to bytes for v2
+            try:
+                import base64
+                v2_media["content"] = base64.b64decode(content)
+            except Exception:
+                # If not valid base64, keep as string
+                pass
+    
+    # Ensure format and mime_type are set appropriately
+    if "format" in v2_media and "mime_type" not in v2_media:
+        format_val = v2_media["format"]
+        if format_val:
+            # Set mime_type based on format for common types
+            mime_type_map = {
+                "mp4": "video/mp4",
+                "mov": "video/quicktime", 
+                "avi": "video/x-msvideo",
+                "webm": "video/webm",
+                "mp3": "audio/mpeg",
+                "wav": "audio/wav",
+                "ogg": "audio/ogg",
+                "png": "image/png",
+                "jpg": "image/jpeg",
+                "jpeg": "image/jpeg",
+                "gif": "image/gif",
+                "webp": "image/webp"
+            }
+            if format_val.lower() in mime_type_map:
+                v2_media["mime_type"] = mime_type_map[format_val.lower()]
+    
+    return v2_media
+
+
+def convert_v1_fields_to_v2(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert v1 fields to v2 format with proper field mapping and extraction."""
     if not isinstance(data, dict):
         return data
 
-    # Fields that existed in v1 but were removed in v2
+    # Create a copy to avoid modifying the original
+    v2_data = data.copy()
+
+    # Fields that should be completely ignored/removed in v2
     deprecated_fields = {
         "team_session_id",  # RunOutput v1 field, removed in v2
         "formatted_tool_calls",  # RunOutput v1 field, removed in v2
-        "extra_data",  # RunOutput v1 field, removed in v2
+        "event",  # Remove event field
+        "events",  # Remove events field
         # Add other deprecated fields here as needed
     }
 
-    # Create a copy and remove deprecated fields
-    filtered_data = {k: v for k, v in data.items() if k not in deprecated_fields}
-    return filtered_data
+    # Extract and map fields from extra_data before removing it
+    extra_data = v2_data.get("extra_data")
+    if extra_data and isinstance(extra_data, dict):
+        # Map extra_data fields to their v2 locations
+        if "add_messages" in extra_data:
+            v2_data["additional_input"] = extra_data["add_messages"]
+        if "references" in extra_data:
+            v2_data["references"] = extra_data["references"]
+        if "reasoning_steps" in extra_data:
+            v2_data["reasoning_steps"] = extra_data["reasoning_steps"]
+        if "reasoning_content" in extra_data:
+            # reasoning_content from extra_data also goes to reasoning_content
+            v2_data["reasoning_content"] = extra_data["reasoning_content"]
+        if "reasoning_messages" in extra_data:
+            v2_data["reasoning_messages"] = extra_data["reasoning_messages"]
+
+    # Handle thinking and reasoning_content consolidation
+    # Both thinking and reasoning_content from v1 should become reasoning_content in v2
+    thinking = v2_data.get("thinking")
+    reasoning_content = v2_data.get("reasoning_content")
+    
+    # Consolidate thinking and reasoning_content into reasoning_content
+    if thinking and reasoning_content:
+        # Both exist, combine them (thinking first, then reasoning_content)
+        v2_data["reasoning_content"] = f"{thinking}\n{reasoning_content}"
+    elif thinking and not reasoning_content:
+        # Only thinking exists, move it to reasoning_content
+        v2_data["reasoning_content"] = thinking
+    # If only reasoning_content exists, keep it as is
+
+    # Remove thinking field since it's now consolidated into reasoning_content
+    if "thinking" in v2_data:
+        del v2_data["thinking"]
+
+    # Handle media object conversions
+    media_fields = ["images", "videos", "audio", "response_audio"]
+    for field in media_fields:
+        if field in v2_data and v2_data[field]:
+            if isinstance(v2_data[field], list):
+                # Handle list of media objects
+                v2_data[field] = [convert_v1_media_to_v2(item) if isinstance(item, dict) else item 
+                                 for item in v2_data[field]]
+            elif isinstance(v2_data[field], dict):
+                # Handle single media object
+                v2_data[field] = convert_v1_media_to_v2(v2_data[field])
+
+    # Remove extra_data after extraction
+    if "extra_data" in v2_data:
+        del v2_data["extra_data"]
+
+    # Remove other deprecated fields
+    for field in deprecated_fields:
+        v2_data.pop(field, None)
+
+    return v2_data
 
 
 def migrate(
