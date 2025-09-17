@@ -87,7 +87,7 @@ class FileGenerationTools(Toolkit):
         log_debug(f"File saved to: {file_path}")
         return str(file_path)
 
-    def generate_json_file(self, agent: Union[Agent, Team], data: Union[Dict, List, str], filename: Optional[str] = None) -> ToolResult:
+    def generate_json_file(self, data: Union[Dict, List, str], filename: Optional[str] = None) -> ToolResult:
         """Generate a JSON file from the provided data.
 
         Args:
@@ -146,7 +146,7 @@ class FileGenerationTools(Toolkit):
             logger.error(f"Failed to generate JSON file: {e}")
             return ToolResult(content=f"Error generating JSON file: {e}")
 
-    def generate_csv_file(self, agent: Union[Agent, Team], data: Union[List[List], List[Dict], str], filename: Optional[str] = None, headers: Optional[List[str]] = None) -> ToolResult:
+    def generate_csv_file(self, data: Union[List[List], List[Dict], str], filename: Optional[str] = None, headers: Optional[List[str]] = None) -> ToolResult:
         """Generate a CSV file from the provided data.
 
         Args:
@@ -229,7 +229,7 @@ class FileGenerationTools(Toolkit):
             logger.error(f"Failed to generate CSV file: {e}")
             return ToolResult(content=f"Error generating CSV file: {e}")
 
-    def generate_pdf_file(self, agent: Union[Agent, Team], content: str, filename: Optional[str] = None, title: Optional[str] = None) -> ToolResult:
+    def generate_pdf_file(self, content: str, filename: Optional[str] = None, title: Optional[str] = None) -> ToolResult:
         """Generate a PDF file from the provided content.
 
         Args:
@@ -310,7 +310,7 @@ class FileGenerationTools(Toolkit):
             logger.error(f"Failed to generate PDF file: {e}")
             return ToolResult(content=f"Error generating PDF file: {e}")
 
-    def generate_text_file(self, agent: Union[Agent, Team], content: str, filename: Optional[str] = None) -> ToolResult:
+    def generate_text_file(self, content: str, filename: Optional[str] = None) -> ToolResult:
         """Generate a text file from the provided content.
 
         Args:
