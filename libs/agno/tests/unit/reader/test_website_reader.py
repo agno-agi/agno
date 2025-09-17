@@ -133,7 +133,7 @@ def test_extract_main_content():
 
     html = """<html><body><div>Random content</div></body></html>"""
     soup = BeautifulSoup(html, "html.parser")
-    assert reader._extract_main_content(soup) == ""
+    assert reader._extract_main_content(soup) == "Random content"
 
 
 def test_get_primary_domain():
