@@ -121,6 +121,115 @@ class Message(BaseModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Message":
+        # Handle image reconstruction properly
+        if "images" in data and data["images"]:
+            reconstructed_images = []
+            for i, img_data in enumerate(data["images"]):
+                if isinstance(img_data, dict):
+                    # If content is base64, decode it back to bytes
+                    if "content" in img_data and isinstance(img_data["content"], str):
+                        reconstructed_images.append(
+                            Image.from_base64(
+                                img_data["content"],
+                                id=img_data.get("id"),
+                                mime_type=img_data.get("mime_type"),
+                                format=img_data.get("format"),
+                            )
+                        )
+                    else:
+                        # Regular image (filepath/url)
+                        reconstructed_images.append(Image(**img_data))
+                else:
+                    reconstructed_images.append(img_data)
+            data["images"] = reconstructed_images
+
+        # Handle audio reconstruction properly
+        if "audio" in data and data["audio"]:
+            reconstructed_audio = []
+            for i, aud_data in enumerate(data["audio"]):
+                if isinstance(aud_data, dict):
+                    # If content is base64, decode it back to bytes
+                    if "content" in aud_data and isinstance(aud_data["content"], str):
+                        reconstructed_audio.append(
+                            Audio.from_base64(
+                                aud_data["content"],
+                                id=aud_data.get("id"),
+                                mime_type=aud_data.get("mime_type"),
+                                transcript=aud_data.get("transcript"),
+                                expires_at=aud_data.get("expires_at"),
+                                sample_rate=aud_data.get("sample_rate", 24000),
+                                channels=aud_data.get("channels", 1),
+                            )
+                        )
+                    else:
+                        reconstructed_audio.append(Audio(**aud_data))
+                else:
+                    reconstructed_audio.append(aud_data)
+            data["audio"] = reconstructed_audio
+
+        # Handle video reconstruction properly
+        if "videos" in data and data["videos"]:
+            reconstructed_videos = []
+            for i, vid_data in enumerate(data["videos"]):
+                if isinstance(vid_data, dict):
+                    # If content is base64, decode it back to bytes
+                    if "content" in vid_data and isinstance(vid_data["content"], str):
+                        reconstructed_videos.append(
+                            Video.from_base64(
+                                vid_data["content"],
+                                id=vid_data.get("id"),
+                                mime_type=vid_data.get("mime_type"),
+                                format=vid_data.get("format"),
+                            )
+                        )
+                    else:
+                        reconstructed_videos.append(Video(**vid_data))
+                else:
+                    reconstructed_videos.append(vid_data)
+            data["videos"] = reconstructed_videos
+
+        if "audio_output" in data and data["audio_output"]:
+            aud_data = data["audio_output"]
+            if isinstance(aud_data, dict):
+                if "content" in aud_data and isinstance(aud_data["content"], str):
+                    data["audio_output"] = Audio.from_base64(
+                        aud_data["content"],
+                        id=aud_data.get("id"),
+                        mime_type=aud_data.get("mime_type"),
+                        transcript=aud_data.get("transcript"),
+                        expires_at=aud_data.get("expires_at"),
+                        sample_rate=aud_data.get("sample_rate", 24000),
+                        channels=aud_data.get("channels", 1),
+                    )
+                else:
+                    data["audio_output"] = Audio(**aud_data)
+
+        if "image_output" in data and data["image_output"]:
+            img_data = data["image_output"]
+            if isinstance(img_data, dict):
+                if "content" in img_data and isinstance(img_data["content"], str):
+                    data["image_output"] = Image.from_base64(
+                        img_data["content"],
+                        id=img_data.get("id"),
+                        mime_type=img_data.get("mime_type"),
+                        format=img_data.get("format"),
+                    )
+                else:
+                    data["image_output"] = Image(**img_data)
+
+        if "video_output" in data and data["video_output"]:
+            vid_data = data["video_output"]
+            if isinstance(vid_data, dict):
+                if "content" in vid_data and isinstance(vid_data["content"], str):
+                    data["video_output"] = Video.from_base64(
+                        vid_data["content"],
+                        id=vid_data.get("id"),
+                        mime_type=vid_data.get("mime_type"),
+                        format=vid_data.get("format"),
+                    )
+                else:
+                    data["video_output"] = Video(**vid_data)
+
         return cls(**data)
 
     def to_dict(self) -> Dict[str, Any]:

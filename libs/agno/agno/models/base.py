@@ -1228,7 +1228,7 @@ class Model(ABC):
             function_execution_result=function_execution_result,
         )
         yield ModelResponse(
-            content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
+            content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
             tool_executions=[
                 ToolExecution(
                     tool_call_id=function_call_result.tool_call_id,
@@ -1632,7 +1632,7 @@ class Model(ABC):
                 function_execution_result=function_execution_result,
             )
             yield ModelResponse(
-                content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
+                content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
                 tool_executions=[
                     ToolExecution(
                         tool_call_id=function_call_result.tool_call_id,

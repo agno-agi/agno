@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -34,7 +34,7 @@ class xAI(OpenAILike):
     name: str = "xAI"
     provider: str = "xAI"
 
-    api_key: Optional[str] = getenv("XAI_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("XAI_API_KEY"))
     base_url: str = "https://api.x.ai/v1"
 
     search_parameters: Optional[Dict[str, Any]] = None

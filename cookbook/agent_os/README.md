@@ -62,6 +62,18 @@ For additional tools and integrations:
 pip install ddgs yfinance
 ```
 
+## Getting Started
+
+1. **Choose a database**: Start with SQLite for prototyping or PostgreSQL for production
+2. **Create your first agent**: Define its role, instructions, and tools
+3. **Set up AgentOS**: Initialize with your agents, teams, or workflows
+4. **Deploy**: Run locally or deploy to your preferred platform
+5. **Integrate**: Add interfaces like Slack, WhatsApp, etc.
+
+## Documentation
+
+For detailed documentation, visit the [Agno Documentation](https://docs.agno.com).
+
 ## Examples
 
 This directory contains comprehensive examples demonstrating different aspects of AgentOS:
@@ -70,6 +82,17 @@ This directory contains comprehensive examples demonstrating different aspects o
 - [`basic.py`](basic.py) - Minimal AgentOS setup with agent, team, and workflow
 - [`demo.py`](demo.py) - Full-featured demo with multiple agents, tools, and knowledge base
 - [`evals_demo.py`](evals_demo.py) - Agent evaluation and testing framework
+
+### Customization Examples
+- [`customize/custom_fastapi.py`](customize/custom_fastapi.py) - Custom FastAPI app for the AgentOS
+- [`customize/custom_lifespan.py`](customize/custom_lifespan.py) - Custom lifespan for the AgentOS
+- [`customize/override_routes.py`](customize/override_routes.py) - Override AgentOS routes with your own
+
+### MCP Examples
+- [`mcp/enable_mcp_example.py`](mcp/enable_mcp_example.py) - How to convert your AgentOS into an MCP server
+- [`mcp/mcp_tools_example.py`](mcp/mcp_tools_example.py) - How to use MCP tools in your AgentOS
+- [`mcp/mcp_tools_existing_lifespan.py`](mcp/mcp_tools_existing_lifespan.py) - MCP tools example with existing lifespan
+- [`mcp/mcp_tools_advanced_example.py`](mcp/mcp_tools_advanced_example.py) - MCP tools example with multiple MCP servers
 
 ### Database Integrations
 - [`dbs/postgres_demo.py`](dbs/postgres_demo.py) - Demo using PostgreSQL database
@@ -122,16 +145,3 @@ This directory contains comprehensive examples demonstrating different aspects o
 - [`advanced/reasoning_demo.py`](advanced/reasoning_demo.py) - Advanced reasoning capabilities
 - [`advanced/multiple_knowledge_bases.py`](advanced/multiple_knowledge_bases.py) - Multiple knowledge base management
 - [`advanced/mcp_demo.py`](advanced/mcp_demo.py) - Model Context Protocol integration
-
-## Getting Started
-
-1. **Choose a database**: Start with SQLite for prototyping or PostgreSQL for production
-2. **Create your first agent**: Define its role, instructions, and tools
-3. **Set up AgentOS**: Initialize with your agents, teams, or workflows
-4. **Deploy**: Run locally or deploy to your preferred platform
-5. **Integrate**: Add interfaces like Slack, WhatsApp, etc.
-
-## Documentation
-
-For detailed documentation, visit the [Agno Documentation](https://docs.agno.com).
-

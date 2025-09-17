@@ -536,7 +536,7 @@ class RunOutput:
 
         return _dict
 
-    def to_json(self) -> str:
+    def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
         import json
 
         try:
@@ -545,7 +545,10 @@ class RunOutput:
             logger.error("Failed to convert response to json", exc_info=True)
             raise
 
-        return json.dumps(_dict, indent=2)
+        if indent is None:
+            return json.dumps(_dict, separators=separators)
+        else:
+            return json.dumps(_dict, indent=indent, separators=separators)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunOutput":
@@ -556,7 +559,7 @@ class RunOutput:
         events = [run_output_event_from_dict(event) for event in events] if events else None
 
         messages = data.pop("messages", None)
-        messages = [Message.model_validate(message) for message in messages] if messages else None
+        messages = [Message.from_dict(message) for message in messages] if messages else None
 
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
@@ -588,7 +591,7 @@ class RunOutput:
         additional_input = data.pop("additional_input", None)
 
         if additional_input is not None:
-            additional_input = [Message.model_validate(message) for message in additional_input]
+            additional_input = [Message.from_dict(message) for message in additional_input]
 
         reasoning_steps = data.pop("reasoning_steps", None)
         if reasoning_steps is not None:
@@ -596,7 +599,7 @@ class RunOutput:
 
         reasoning_messages = data.pop("reasoning_messages", None)
         if reasoning_messages is not None:
-            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
+            reasoning_messages = [Message.from_dict(message) for message in reasoning_messages]
 
         references = data.pop("references", None)
         if references is not None:

@@ -55,6 +55,7 @@ from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutp
 from agno.session import SessionSummaryManager, TeamSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_team_memory_update_completed_event,
     create_team_memory_update_started_event,
@@ -103,7 +104,7 @@ from agno.utils.response import (
     generator_wrapper,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model_str
+from agno.utils.string import generate_id_from_name, parse_response_model_str
 from agno.utils.team import format_member_agent_task, get_member_id
 from agno.utils.timer import Timer
 
@@ -408,6 +409,7 @@ class Team:
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
         add_memories_to_context: Optional[bool] = None,
+        memory_manager: Optional[MemoryManager] = None,
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
@@ -505,6 +507,7 @@ class Team:
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
         self.add_memories_to_context = add_memories_to_context
+        self.memory_manager = memory_manager
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
         self.add_session_summary_to_context = add_session_summary_to_context
@@ -577,10 +580,7 @@ class Team:
         If the name is not provided, generate a random UUID.
         """
         if self.id is None:
-            if self.name is not None:
-                self.id = self.name.lower().replace(" ", "-")
-            else:
-                self.id = str(uuid4())
+            self.id = generate_id_from_name(self.name)
 
     def _set_debug(self, debug_mode: Optional[bool] = None) -> None:
         if self.debug_mode or debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
@@ -619,8 +619,6 @@ class Team:
         if isinstance(input, BaseModel):
             if isinstance(input, self.input_schema):
                 try:
-                    # Re-validate to catch any field validation errors
-                    input.model_validate(input.model_dump())
                     return input
                 except Exception as e:
                     raise ValueError(f"BaseModel validation failed: {str(e)}")
@@ -631,8 +629,13 @@ class Team:
         # Case 2: Message is a dict
         elif isinstance(input, dict):
             try:
-                validated_model = self.input_schema(**input)
-                return validated_model
+                # Check if the schema is a TypedDict
+                if is_typed_dict(self.input_schema):
+                    validated_dict = validate_typed_dict(input, self.input_schema)
+                    return validated_dict
+                else:
+                    validated_model = self.input_schema(**input)
+                    return validated_model
             except Exception as e:
                 raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
 
@@ -653,8 +656,6 @@ class Team:
             member.set_id()
 
         elif isinstance(member, Team):
-            if member.id is None:
-                member.id = str(uuid4())
             member.parent_team_id = self.id
             for sub_member in member.members:
                 self._initialize_member(sub_member, debug_mode=debug_mode)
@@ -804,9 +805,9 @@ class Team:
         1. Reason about the task(s) if reasoning is enabled
         2. Get a response from the model
         3. Update Team Memory
-        5. Save session to storage
-        6. Parse any structured outputs
-        7. Log the team run
+        4. Add RunOutput to Team Session
+        5. Calculate session metrics
+        6. Save session to storage
         """
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
@@ -847,10 +848,15 @@ class Team:
         else:
             self._scrub_media_from_run_output(run_response)
 
-        # 4. Add the RunOutput to Team Session
+        run_response.status = RunStatus.completed
+
+        # Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
+
+        # 3. Add the RunOutput to Team Session
         session.upsert_run(run_response=run_response)
 
-        # 5. Update Team Memory
+        # 4. Update Team Memory
         response_iterator = self._make_memories_and_summaries(
             run_response=run_response,
             run_messages=run_messages,
@@ -861,11 +867,6 @@ class Team:
 
         # 5. Calculate session metrics
         self._update_session_metrics(session=session)
-
-        run_response.status = RunStatus.completed
-
-        # 5. Parse team response model
-        self._convert_response_to_structured_format(run_response=run_response)
 
         # 6. Save session to storage
         self.save_session(session=session)
@@ -897,8 +898,9 @@ class Team:
         1. Reason about the task(s) if reasoning is enabled
         2. Get a response from the model
         3. Update Team Memory
-        4. Save session to storage
-        5. Log Team Run
+        4. Add RunOutput to Team Session
+        5. Calculate session metrics
+        6. Save session to storage
         """
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
@@ -971,10 +973,12 @@ class Team:
                 session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             )
 
-            # 4. Add the run to memory
+            run_response.status = RunStatus.completed
+
+            # 3. Add the run to Team Session
             session.upsert_run(run_response=run_response)
 
-            # 5. Update Team Memory
+            # 4. Update Team Memory
             yield from self._make_memories_and_summaries(
                 run_response=run_response,
                 run_messages=run_messages,
@@ -984,8 +988,6 @@ class Team:
 
             # 5. Calculate session metrics
             self._update_session_metrics(session=session)
-
-            run_response.status = RunStatus.completed
 
             completed_event = self._handle_event(
                 create_team_run_completed_event(
@@ -1336,35 +1338,72 @@ class Team:
     async def _arun(
         self,
         run_response: TeamRunOutput,
-        run_messages: RunMessages,
+        input_message: Union[str, List, Dict, Message, BaseModel, List[Message]],
         session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
 
         Steps:
-        1. Reason about the task(s) if reasoning is enabled
-        2. Get a response from the model
-        3. Update Team Memory
-        5. Save session to storage
-        6. Parse any structured outputs
-        7. Log the team run
+        1. Resolve dependencies
+        2. Prepare run messages
+        3. Reason about the task(s) if reasoning is enabled
+        4. Get a response from the model
+        5. Update Team Memory
+        6. Add RunOutput to Team Session
+        7. Calculate session metrics
+        8. Save session to storage
         """
-        self.model = cast(Model, self.model)
+        # 1. Resolve callable dependencies if present
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=dependencies)
 
+        # 2. Prepare run messages
+        run_messages = self._get_run_messages(
+            run_response=run_response,
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            input_message=input_message,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            **kwargs,
+        )
+
+        self.model = cast(Model, self.model)
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
-        # 1. Reason about the task(s) if reasoning is enabled
+        # 3. Reason about the task(s) if reasoning is enabled
         await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
         # Check for cancellation before model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # 2. Get the model response for the team leader
+        # 4. Get the model response for the team leader
         model_response = await self.model.aresponse(
             messages=run_messages.messages,
             tools=self._tools_for_model,
@@ -1391,10 +1430,15 @@ class Team:
         else:
             self._scrub_media_from_run_output(run_response)
 
-        # 3. Add the run to memory
+        run_response.status = RunStatus.completed
+
+        # Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
+
+        # 5. Add the run to memory
         session.upsert_run(run_response=run_response)
 
-        # 4. Update Team Memory
+        # 6. Update Team Memory
         async for _ in self._amake_memories_and_summaries(
             run_response=run_response,
             session=session,
@@ -1403,18 +1447,13 @@ class Team:
         ):
             pass
 
-        # 5. Calculate session metrics
+        # 7. Calculate session metrics
         self._update_session_metrics(session=session)
 
-        run_response.status = RunStatus.completed
-
-        # 6. Parse team response model
-        self._convert_response_to_structured_format(run_response=run_response)
-
-        # 7. Save session to storage
+        # 8. Save session to storage
         self.save_session(session=session)
 
-        # 8. Log Team Telemetry
+        # Log Team Telemetry
         await self._alog_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
@@ -1427,25 +1466,64 @@ class Team:
     async def _arun_stream(
         self,
         run_response: TeamRunOutput,
-        run_messages: RunMessages,
+        input_message: Union[str, List, Dict, Message, BaseModel, List[Message]],
         session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
         yield_run_response: bool = False,
+        **kwargs: Any,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
         """Run the Team and return the response.
 
         Steps:
-        1. Reason about the task(s) if reasoning is enabled
-        2. Get a response from the model
-        3. Update Team Memory
-        4. Save session to storage
-        5. Log Team Run
+        1. Resolve dependencies
+        2. Prepare run messages
+        3. Reason about the task(s) if reasoning is enabled
+        4. Get a response from the model
+        5. Update Team Memory
+        6. Add RunOutput to Team Session
+        7. Calculate session metrics
+        8. Save session to storage
         """
-        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
+        # 1. Resolve callable dependencies if present
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=dependencies)
+
+        # 2. Prepare run messages
+        run_messages = self._get_run_messages(
+            run_response=run_response,
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            input_message=input_message,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            **kwargs,
+        )
+
+        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
@@ -1456,7 +1534,7 @@ class Team:
                     create_team_run_started_event(from_run_response=run_response), run_response, workflow_context
                 )
 
-            # 1. Reason about the task(s) if reasoning is enabled
+            # 3. Reason about the task(s) if reasoning is enabled
             async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
                 raise_if_cancelled(run_response.run_id)  # type: ignore
                 yield item
@@ -1464,7 +1542,7 @@ class Team:
             # Check for cancellation before model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 2. Get a response from the model
+            # 4. Get a response from the model
             if self.output_model is None:
                 async for event in self._ahandle_model_response_stream(
                     session=session,
@@ -1516,10 +1594,12 @@ class Team:
             ):
                 yield event
 
-            # 3. Add the run to memory
+            run_response.status = RunStatus.completed
+
+            # 5. Add the run to Team Session
             session.upsert_run(run_response=run_response)
 
-            # 4. Update Team Memory
+            # 6. Update Team Memory
             async for event in self._amake_memories_and_summaries(
                 run_response=run_response,
                 session=session,
@@ -1528,16 +1608,14 @@ class Team:
             ):
                 yield event
 
-            # 5. Calculate session metrics
+            # 7. Calculate session metrics
             self._update_session_metrics(session=session)
-
-            run_response.status = RunStatus.completed
 
             completed_event = self._handle_event(
                 create_team_run_completed_event(from_run_response=run_response), run_response, workflow_context
             )
 
-            # 6. Save session to storage
+            # 8. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1546,7 +1624,7 @@ class Team:
             if yield_run_response:
                 yield run_response
 
-            # 7. Log Team Telemetry
+            # Log Team Telemetry
             await self._alog_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
             log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
@@ -1679,10 +1757,6 @@ class Team:
         # Determine run dependencies (runtime override takes priority)
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
-        # Resolve callable dependencies if present
-        if run_dependencies is not None:
-            self._resolve_run_dependencies(dependencies=run_dependencies)
-
         # Determine runtime context parameters
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
@@ -1779,43 +1853,49 @@ class Team:
         for attempt in range(num_attempts):
             # Run the team
             try:
-                run_messages = self._get_run_messages(
-                    run_response=run_response,
-                    session=team_session,  # type: ignore
-                    session_state=session_state,
-                    user_id=user_id,
-                    input_message=validated_input,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
-                    knowledge_filters=effective_filters,
-                    add_history_to_context=add_history,
-                    dependencies=run_dependencies,
-                    add_dependencies_to_context=add_dependencies,
-                    add_session_state_to_context=add_session_state,
-                    **kwargs,
-                )
-
                 if stream:
                     response_iterator = self._arun_stream(
                         run_response=run_response,
-                        run_messages=run_messages,
+                        input_message=validated_input,
                         session=team_session,  # type: ignore
+                        session_state=session_state,
                         user_id=user_id,
+                        audio=audio,
+                        images=images,
+                        videos=videos,
+                        files=files,
+                        knowledge_filters=effective_filters,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        metadata=metadata,
                         response_format=response_format,
+                        dependencies=run_dependencies,
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
+                        **kwargs,
                     )
                     return response_iterator  # type: ignore
                 else:
                     return self._arun(  # type: ignore
                         run_response=run_response,
-                        run_messages=run_messages,
+                        input_message=validated_input,
                         session=team_session,  # type: ignore
                         user_id=user_id,
+                        session_state=session_state,
+                        audio=audio,
+                        images=images,
+                        videos=videos,
+                        files=files,
+                        knowledge_filters=effective_filters,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        metadata=metadata,
                         response_format=response_format,
+                        dependencies=run_dependencies,
+                        **kwargs,
                     )
 
             except ModelProviderError as e:
@@ -2282,11 +2362,13 @@ class Team:
                             tc.tool_call_id: i for i, tc in enumerate(run_response.tools) if tc.tool_call_id is not None
                         }
                         # Process tool calls
-                        for tool_call_dict in tool_executions_list:
-                            tool_call_id = tool_call_dict.tool_call_id or ""
+                        for tool_execution in tool_executions_list:
+                            tool_call_id = tool_execution.tool_call_id or ""
                             index = tool_call_index_map.get(tool_call_id)
                             if index is not None:
-                                run_response.tools[index] = tool_call_dict
+                                if run_response.tools[index].child_run_id is not None:
+                                    tool_execution.child_run_id = run_response.tools[index].child_run_id
+                                run_response.tools[index] = tool_execution
                     else:
                         run_response.tools = tool_executions_list
 
@@ -3729,7 +3811,7 @@ class Team:
 
             try:
                 sig = signature(value)
-                resolved_value = value(agent=self) if "agent" in sig.parameters else value()
+                resolved_value = value(team=self) if "team" in sig.parameters else value()
 
                 if iscoroutine(resolved_value):
                     resolved_value = await resolved_value
@@ -4390,8 +4472,8 @@ class Team:
                 f"<additional_context>\n{self.additional_context.strip()}\n</additional_context>\n\n"
             )
 
-        if self.add_session_state_to_context:
-            system_message_content += f"<session_state>\n{session_state}\n</session_state>\n\n"
+        if self.add_session_state_to_context and session_state is not None:
+            system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
         # Add the JSON output prompt if output_schema is provided and structured_outputs is False
         if (
@@ -4403,6 +4485,9 @@ class Team:
             system_message_content += f"{self._get_json_output_prompt()}"
 
         return Message(role=self.system_message_role, content=system_message_content.strip())
+
+    def _get_formatted_session_state_for_system_message(self, session_state: Dict[str, Any]) -> str:
+        return f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
     def _get_run_messages(
         self,
@@ -4595,7 +4680,13 @@ class Team:
             # If message is provided as a dict, try to validate it as a Message
             elif isinstance(input_message, dict):
                 try:
-                    return Message.model_validate(input_message)
+                    if self.input_schema and is_typed_dict(self.input_schema):
+                        import json
+
+                        content = json.dumps(input_message, indent=2, ensure_ascii=False)
+                        return Message(role="user", content=content)
+                    else:
+                        return Message.model_validate(input_message)
                 except Exception as e:
                     log_warning(f"Failed to validate input: {e}")
 
@@ -5155,6 +5246,12 @@ class Team:
             # Add team run id to the member run
             if member_agent_run_response is not None:
                 member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
+
+            # Update the top-level team run_response tool call to have the run_id of the member run
+            if run_response.tools is not None:
+                for tool in run_response.tools:
+                    if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
+                        tool.child_run_id = member_agent_run_response.run_id  # type: ignore
 
             # Update the team run context
             member_name = member_agent.name if member_agent.name else member_agent.id if member_agent.id else "Unknown"

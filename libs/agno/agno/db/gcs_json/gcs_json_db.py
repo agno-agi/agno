@@ -16,6 +16,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 try:
     from google.cloud import storage as gcs  # type: ignore
@@ -35,6 +36,7 @@ class GcsJsonDb(BaseDb):
         knowledge_table: Optional[str] = None,
         project: Optional[str] = None,
         credentials: Optional[Any] = None,
+        id: Optional[str] = None,
     ):
         """
         Interface for interacting with JSON files stored in Google Cloud Storage as database.
@@ -50,8 +52,15 @@ class GcsJsonDb(BaseDb):
             project (Optional[str]): GCP project ID. If None, uses default project.
             location (Optional[str]): GCS bucket location. If None, uses default location.
             credentials (Optional[Any]): GCP credentials. If None, uses default credentials.
+            id (Optional[str]): ID of the database.
         """
+        if id is None:
+            prefix_suffix = prefix or "agno/"
+            seed = f"{bucket_name}_{project}#{prefix_suffix}"
+            id = generate_id(seed)
+
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
@@ -176,7 +185,7 @@ class GcsJsonDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: Optional[SessionType] = None,
+        session_type: SessionType,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
@@ -184,7 +193,7 @@ class GcsJsonDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to read.
-            session_type (Optional[SessionType]): The type of the session to read.
+            session_type (SessionType): The type of the session to read.
             user_id (Optional[str]): The ID of the user to read the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
@@ -217,6 +226,8 @@ class GcsJsonDb(BaseDb):
                         return TeamSession.from_dict(session_data)
                     elif session_type == SessionType.WORKFLOW:
                         return WorkflowSession.from_dict(session_data)
+                    else:
+                        raise ValueError(f"Invalid session type: {session_type}")
 
             return None
 

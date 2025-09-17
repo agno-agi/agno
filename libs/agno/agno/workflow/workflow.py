@@ -51,6 +51,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.team.team import Team
+from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -217,13 +218,17 @@ class Workflow:
 
     def _validate_input(
         self, input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]]
-    ) -> Optional[BaseModel]:
+    ) -> Optional[Union[str, List, Dict, Message, BaseModel]]:
         """Parse and validate input against input_schema if provided"""
         if self.input_schema is None:
-            return None
+            return input  # Return input unchanged if no schema is set
 
         if input is None:
             raise ValueError("Input required when input_schema is set")
+
+        # Handle Message objects - extract content
+        if isinstance(input, Message):
+            input = input.content  # type: ignore
 
         # If input is a string, convert it to a dict
         if isinstance(input, str):
@@ -238,8 +243,6 @@ class Workflow:
         if isinstance(input, BaseModel):
             if isinstance(input, self.input_schema):
                 try:
-                    # Re-validate to catch any field validation errors
-                    input.model_validate(input.model_dump())
                     return input
                 except Exception as e:
                     raise ValueError(f"BaseModel validation failed: {str(e)}")
@@ -250,8 +253,13 @@ class Workflow:
         # Case 2: Message is a dict
         elif isinstance(input, dict):
             try:
-                validated_model = self.input_schema(**input)
-                return validated_model
+                # Check if the schema is a TypedDict
+                if is_typed_dict(self.input_schema):
+                    validated_dict = validate_typed_dict(input, self.input_schema)
+                    return validated_dict
+                else:
+                    validated_model = self.input_schema(**input)
+                    return validated_model
             except Exception as e:
                 raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
 
@@ -1700,6 +1708,7 @@ class Workflow:
         # Create workflow run response with PENDING status
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            input=input,
             session_id=session_id,
             workflow_id=self.id,
             workflow_name=self.name,
@@ -1790,6 +1799,7 @@ class Workflow:
         # Create workflow run response with PENDING status
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            input=input,
             session_id=session_id,
             workflow_id=self.id,
             workflow_name=self.name,
@@ -1924,10 +1934,7 @@ class Workflow:
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
 
-        validated_input = self._validate_input(input)
-        if validated_input is not None:
-            input = validated_input
-
+        input = self._validate_input(input)
         if background:
             raise RuntimeError("Background execution is not supported for sync run()")
 
@@ -1966,6 +1973,7 @@ class Workflow:
         # Create workflow run response that will be updated by reference
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            input=input,
             session_id=session_id,
             workflow_id=self.id,
             workflow_name=self.name,
@@ -2059,9 +2067,7 @@ class Workflow:
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
 
-        validated_input = self._validate_input(input)
-        if validated_input is not None:
-            input = validated_input
+        input = self._validate_input(input)
 
         websocket_handler = None
         if websocket:
@@ -2136,6 +2142,7 @@ class Workflow:
         # Create workflow run response that will be updated by reference
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            input=input,
             session_id=session_id,
             workflow_id=self.id,
             workflow_name=self.name,

@@ -22,6 +22,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.string import generate_id
 
 try:
     from sqlalchemy import TEXT, and_, cast, func, update
@@ -45,6 +46,7 @@ class MySQLDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        id: Optional[str] = None,
     ):
         """
         Interface for interacting with a MySQL database.
@@ -63,12 +65,20 @@ class MySQLDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
+            id (Optional[str]): ID of the database.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
+        if id is None:
+            base_seed = db_url or str(db_engine.url)  # type: ignore
+            schema_suffix = db_schema if db_schema is not None else "ai"
+            seed = f"{base_seed}#{schema_suffix}"
+            id = generate_id(seed)
+
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
@@ -340,8 +350,8 @@ class MySQLDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to read.
+            session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -405,6 +415,7 @@ class MySQLDb(BaseDb):
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
         Args:
+            session_type (Optional[SessionType]): The type of sessions to get.
             user_id (Optional[str]): The ID of the user to filter by.
             entity_id (Optional[str]): The ID of the agent / workflow to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
@@ -1701,17 +1712,17 @@ class MySQLDb(BaseDb):
         if v1_table_type == "agent_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "team_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "workflow_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "memories":
             for memory in memories:

@@ -85,7 +85,7 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    """Run our AgentOS.
+    """Run your AgentOS.
 
     You can see the configuration and available endpoints at:
     http://localhost:7777/config

@@ -23,6 +23,7 @@ class TestPostgresDb:
     def mock_engine(self):
         """Create a mock SQLAlchemy engine"""
         engine = Mock(spec=Engine)
+        engine.url = "fake:///url"
         return engine
 
     @pytest.fixture
@@ -48,6 +49,14 @@ class TestPostgresDb:
             eval_table="test_evals",
             knowledge_table="test_knowledge",
         )
+
+    def test_id_is_deterministic(self, mock_engine):
+        # Initialize two databases with the same engine
+        first_db = PostgresDb(db_engine=mock_engine)
+        second_db = PostgresDb(db_engine=mock_engine)
+
+        # Assert that the ids are the same
+        assert first_db.id == second_db.id
 
     def test_init_with_engine(self, mock_engine):
         """Test initialization with engine"""

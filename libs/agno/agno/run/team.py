@@ -12,6 +12,7 @@ from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.utils.log import log_error
 
 
 class TeamRunEvent(str, Enum):
@@ -488,12 +489,19 @@ class TeamRunOutput:
 
         return _dict
 
-    def to_json(self) -> str:
+    def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
         import json
 
-        _dict = self.to_dict()
+        try:
+            _dict = self.to_dict()
+        except Exception:
+            log_error("Failed to convert response to json", exc_info=True)
+            raise
 
-        return json.dumps(_dict, indent=2)
+        if indent is None:
+            return json.dumps(_dict, separators=separators)
+        else:
+            return json.dumps(_dict, indent=indent, separators=separators)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRunOutput":
@@ -511,7 +519,7 @@ class TeamRunOutput:
         events = final_events
 
         messages = data.pop("messages", None)
-        messages = [Message.model_validate(message) for message in messages] if messages else None
+        messages = [Message.from_dict(message) for message in messages] if messages else None
 
         member_responses = data.pop("member_responses", [])
         parsed_member_responses: List[Union["TeamRunOutput", RunOutput]] = []
@@ -524,7 +532,7 @@ class TeamRunOutput:
 
         additional_input = data.pop("additional_input", None)
         if additional_input is not None:
-            additional_input = [Message.model_validate(message) for message in additional_input]
+            additional_input = [Message.from_dict(message) for message in additional_input]
 
         reasoning_steps = data.pop("reasoning_steps", None)
         if reasoning_steps is not None:
@@ -532,7 +540,7 @@ class TeamRunOutput:
 
         reasoning_messages = data.pop("reasoning_messages", None)
         if reasoning_messages is not None:
-            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
+            reasoning_messages = [Message.from_dict(message) for message in reasoning_messages]
 
         references = data.pop("references", None)
         if references is not None:
