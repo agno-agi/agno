@@ -1046,9 +1046,7 @@ class Model(ABC):
                     stream_data.extra["tool_call_ids"] = []
                 stream_data.extra["tool_call_ids"].extend(model_response_delta.extra["tool_call_ids"])
 
-            stream_data.extra.update(
-                stream_data.extra.update({k: v for k, v in model_response_delta.extra.items() if k != "tool_call_ids"})
-            )
+            stream_data.extra.update({k: v for k, v in model_response_delta.extra.items() if k != "tool_call_ids"})
         if should_yield:
             yield model_response_delta
 
