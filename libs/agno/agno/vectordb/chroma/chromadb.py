@@ -71,7 +71,7 @@ class ChromaDb(VectorDb):
         Returns:
             Flattened dictionary with only primitive values
         """
-        flattened = {}
+        flattened: Dict[str, Any] = {}
 
         def _flatten_recursive(obj: Any, prefix: str = "") -> None:
             if isinstance(obj, dict):
