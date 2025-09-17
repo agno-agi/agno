@@ -1,5 +1,4 @@
 from typing import Any, Callable, Dict, List, Optional, Union
-from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile
 
@@ -139,7 +138,7 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
 
-        return FileMedia(content=content)
+        return FileMedia(content=content, filename=file.filename, mime_type=file.content_type)
     except Exception as e:
         logger.error(f"Error processing document {file.filename}: {e}")
         return None
@@ -261,10 +260,3 @@ def _generate_schema_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
         schema["required"] = required
 
     return schema
-
-
-def generate_id(name: Optional[str] = None) -> str:
-    if name:
-        return name.lower().replace(" ", "-").replace("_", "-")
-    else:
-        return str(uuid4())

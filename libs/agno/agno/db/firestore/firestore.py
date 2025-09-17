@@ -16,9 +16,10 @@ from agno.db.firestore.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields, generate_deterministic_id, serialize_session_json_fields
+from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.string import generate_id
 
 try:
     from google.cloud.firestore import Client, FieldFilter  # type: ignore[import-untyped]
@@ -58,7 +59,7 @@ class FirestoreDb(BaseDb):
         """
         if id is None:
             seed = project_id or str(db_client)
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,
@@ -241,8 +242,8 @@ class FirestoreDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
+            session_type (SessionType): The type of session to get.
             user_id (Optional[str]): The ID of the user to get the session for.
-            session_type (Optional[SessionType]): The type of session to get.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -280,8 +281,10 @@ class FirestoreDb(BaseDb):
                 return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM:
                 return TeamSession.from_dict(session)
-            else:
+            elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception reading session: {e}")

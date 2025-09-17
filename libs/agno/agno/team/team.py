@@ -104,7 +104,7 @@ from agno.utils.response import (
     generator_wrapper,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model_str
+from agno.utils.string import generate_id_from_name, parse_response_model_str
 from agno.utils.team import format_member_agent_task, get_member_id
 from agno.utils.timer import Timer
 
@@ -580,10 +580,7 @@ class Team:
         If the name is not provided, generate a random UUID.
         """
         if self.id is None:
-            if self.name is not None:
-                self.id = self.name.lower().replace(" ", "-")
-            else:
-                self.id = str(uuid4())
+            self.id = generate_id_from_name(self.name)
 
     def _set_debug(self, debug_mode: Optional[bool] = None) -> None:
         if self.debug_mode or debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
@@ -659,8 +656,6 @@ class Team:
             member.set_id()
 
         elif isinstance(member, Team):
-            if member.id is None:
-                member.id = str(uuid4())
             member.parent_team_id = self.id
             for sub_member in member.members:
                 self._initialize_member(sub_member, debug_mode=debug_mode)
@@ -853,7 +848,15 @@ class Team:
         else:
             self._scrub_media_from_run_output(run_response)
 
-        # 3. Update Team Memory
+        run_response.status = RunStatus.completed
+
+        # Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
+
+        # 3. Add the RunOutput to Team Session
+        session.upsert_run(run_response=run_response)
+
+        # 4. Update Team Memory
         response_iterator = self._make_memories_and_summaries(
             run_response=run_response,
             run_messages=run_messages,
@@ -861,14 +864,6 @@ class Team:
             user_id=user_id,
         )
         deque(response_iterator, maxlen=0)
-
-        run_response.status = RunStatus.completed
-
-        # Parse team response model
-        self._convert_response_to_structured_format(run_response=run_response)
-
-        # 4. Add the RunOutput to Team Session
-        session.upsert_run(run_response=run_response)
 
         # 5. Calculate session metrics
         self._update_session_metrics(session=session)
@@ -978,18 +973,18 @@ class Team:
                 session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             )
 
-            # 3. Update Team Memory
+            run_response.status = RunStatus.completed
+
+            # 3. Add the run to Team Session
+            session.upsert_run(run_response=run_response)
+
+            # 4. Update Team Memory
             yield from self._make_memories_and_summaries(
                 run_response=run_response,
                 run_messages=run_messages,
                 session=session,
                 user_id=user_id,
             )
-
-            run_response.status = RunStatus.completed
-
-            # 4. Add the run to memory
-            session.upsert_run(run_response=run_response)
 
             # 5. Calculate session metrics
             self._update_session_metrics(session=session)
@@ -1126,13 +1121,17 @@ class Team:
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
-            images=images, videos=videos, audios=audio
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
         )
 
         # Create RunInput to capture the original user input
         run_input = TeamRunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
         )
 
         # Read existing session from database
@@ -1435,7 +1434,15 @@ class Team:
         else:
             self._scrub_media_from_run_output(run_response)
 
-        # 5. Update Team Memory
+        run_response.status = RunStatus.completed
+
+        # Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
+
+        # 5. Add the run to memory
+        session.upsert_run(run_response=run_response)
+
+        # 6. Update Team Memory
         async for _ in self._amake_memories_and_summaries(
             run_response=run_response,
             session=session,
@@ -1443,14 +1450,6 @@ class Team:
             user_id=user_id,
         ):
             pass
-
-        run_response.status = RunStatus.completed
-
-        # Parse team response model
-        self._convert_response_to_structured_format(run_response=run_response)
-
-        # 6. Add the run to memory
-        session.upsert_run(run_response=run_response)
 
         # 7. Calculate session metrics
         self._update_session_metrics(session=session)
@@ -1599,6 +1598,11 @@ class Team:
             ):
                 yield event
 
+            run_response.status = RunStatus.completed
+
+            # 5. Add the run to Team Session
+            session.upsert_run(run_response=run_response)
+
             # 6. Update Team Memory
             async for event in self._amake_memories_and_summaries(
                 run_response=run_response,
@@ -1608,19 +1612,14 @@ class Team:
             ):
                 yield event
 
-            run_response.status = RunStatus.completed
-
-            # 7. Add the run to memory
-            session.upsert_run(run_response=run_response)
-
-            # 8. Calculate session metrics
+            # 7. Calculate session metrics
             self._update_session_metrics(session=session)
 
             completed_event = self._handle_event(
                 create_team_run_completed_event(from_run_response=run_response), run_response, workflow_context
             )
 
-            # 9. Save session to storage
+            # 8. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1744,13 +1743,17 @@ class Team:
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
-            images=images, videos=videos, audios=audio
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
         )
 
         # Create RunInput to capture the original user input
         run_input = TeamRunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
         )
 
         team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
@@ -1967,6 +1970,10 @@ class Team:
         if model_response.audios is not None:
             for audio in model_response.audios:
                 self._add_audio(audio, run_response)  # Generated audio go to run_response.audio
+
+        if model_response.files is not None:
+            for file in model_response.files:
+                self._add_file(file, run_response)  # Generated files go to run_response.files
 
     def _update_run_response(
         self, model_response: ModelResponse, run_response: TeamRunOutput, run_messages: RunMessages
@@ -3123,6 +3130,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         audios: Optional[Sequence[Audio]] = None,
+        files: Optional[Sequence[File]] = None,
     ) -> tuple:
         image_list = None
         if images:
@@ -3154,7 +3162,17 @@ class Team:
                     aud.id = str(uuid4())
                 audio_list.append(aud)
 
-        return image_list, video_list, audio_list
+        file_list = None
+        if files:
+            file_list = []
+            for file in files:
+                if not file.id:
+                    from uuid import uuid4
+
+                    file.id = str(uuid4())
+                file_list.append(file)
+
+        return image_list, video_list, audio_list, file_list
 
     def cli_app(
         self,
@@ -6263,6 +6281,13 @@ class Team:
         if run_response.audio is None:
             run_response.audio = []
         run_response.audio.append(audio)
+
+    def _add_file(self, file: File, run_response: TeamRunOutput) -> None:
+        """Add file to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.files is None:
+            run_response.files = []
+        run_response.files.append(file)
 
     def _update_reasoning_content_from_tool_call(
         self, run_response: TeamRunOutput, tool_name: str, tool_args: Dict[str, Any]

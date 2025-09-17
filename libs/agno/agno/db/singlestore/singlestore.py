@@ -19,9 +19,9 @@ from agno.db.singlestore.utils import (
     is_table_available,
     is_valid_table,
 )
-from agno.db.utils import generate_deterministic_id
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 try:
     from sqlalchemy import Index, UniqueConstraint, and_, func, update
@@ -74,7 +74,7 @@ class SingleStoreDb(BaseDb):
             base_seed = db_url or str(db_engine.url) if db_engine else "singlestore"  # type: ignore
             schema_suffix = db_schema if db_schema is not None else "ai"
             seed = f"{base_seed}#{schema_suffix}"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,
@@ -431,8 +431,8 @@ class SingleStoreDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to read.
+            session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -496,7 +496,7 @@ class SingleStoreDb(BaseDb):
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
         Args:
-            session_type (Optional[SessionType]): The type of session to filter by. Defaults to None.
+            session_type (Optional[SessionType]): The type of session to filter by.
             user_id (Optional[str]): The ID of the user to filter by.
             component_id (Optional[str]): The ID of the agent / workflow to filter by.
             session_name (Optional[str]): The name of the session to filter by.
