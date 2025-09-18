@@ -6,6 +6,7 @@ import pathlib
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
+from agno.models.openai import OpenAIChat
 from agno.vectordb.langchaindb import LangChainVectorDb
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_chroma import Chroma
@@ -44,7 +45,7 @@ knowledge = Knowledge(
 )
 
 # Create an agent with the knowledge base
-agent = Agent(knowledge=knowledge)
+agent = Agent(model=OpenAIChat("gpt-5-mini"), knowledge=knowledge)
 
 # Use the agent to ask a question and print a response.
 agent.print_response(
