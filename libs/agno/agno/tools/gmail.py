@@ -246,9 +246,12 @@ class GmailTools(Toolkit):
             str: Formatted string containing email details
         """
         try:
-            results = self.service.users().messages().list(userId="me", maxResults=count).execute()  # type: ignore
+            results = self.service.users().messages().list(userId="me", maxResults=count).execute()
+            print(results)  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
-            return self._format_emails(emails)
+            print(emails)
+            #return self._format_emails(emails)
+            return emails
         except HttpError as error:
             return f"Error retrieving latest emails: {error}"
         except Exception as error:
@@ -696,3 +699,59 @@ class GmailTools(Toolkit):
         if attachments:
             return f"{body}\n\nAttachments: {', '.join(attachments)}"
         return body
+    @authenticate
+    def setup_push_notifications(self, topic_name: str, label_ids: Optional[List[str]] = None) -> dict[str, Any]:
+        """
+        Setup Gmail push notifications to a Cloud Pub/Sub topic.
+
+        Args:
+            topic_name (str): Full Cloud Pub/Sub topic name (projects/{project_id}/topics/{topic_name})
+            label_ids (Optional[List[str]]): List of label IDs to watch. Defaults to ["INBOX"]
+
+        Returns:
+            Dict[str, Any]: Watch response containing historyId and expiration
+        """
+        try:
+            request_body = {
+                "topicName": topic_name,
+                "labelIds": label_ids or ["INBOX"],
+                "labelFilterBehavior": "INCLUDE",
+            }
+
+            response = (
+                self.service.users()
+                .watch(  # type: ignore
+                    userId="me", body=request_body
+                )
+                .execute()
+            )
+
+            print(f"Successfully setup push notifications to topic: {topic_name}")
+            return response
+
+        except HttpError as error:
+            print(f"Error setting up push notifications: {error}")
+            raise
+
+    @authenticate
+    def stop_push_notifications(self) -> None:
+        """Stop receiving Gmail push notifications."""
+        try:
+            self.service.users().stop(userId="me").execute()  # type: ignore
+            print("Successfully stopped push notifications")
+        except HttpError as error:
+            print(f"Error stopping push notifications: {error}")
+            raise
+
+
+
+
+
+
+
+
+
+
+
+
+
