@@ -950,17 +950,28 @@ class LanceDb(VectorDb):
                 logger.error("Table not initialized")
                 return
 
-            # Search for documents with the given content_id
-            query_filter = f"payload->>'content_id' = '{content_id}'"
-            results = self.table.search().where(query_filter).to_pandas()
+            # Get all documents and filter in Python (LanceDB doesn't support JSON operators)
+            total_count = self.table.count_rows()
+            results = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
 
             if results.empty:
+                logger.debug("No documents found")
+                return
+
+            # Find matching documents with the given content_id
+            matching_rows = []
+            for _, row in results.iterrows():
+                payload = json.loads(row["payload"])
+                if payload.get("content_id") == content_id:
+                    matching_rows.append(row)
+
+            if not matching_rows:
                 logger.debug(f"No documents found with content_id: {content_id}")
                 return
 
             # Update each matching document
             updated_count = 0
-            for _, row in results.iterrows():
+            for row in matching_rows:
                 row_id = row["id"]
                 current_payload = json.loads(row["payload"])
 

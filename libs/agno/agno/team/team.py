@@ -829,6 +829,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            send_media_to_model=self.send_media_to_model,
         )
 
         # Check for cancellation after model call
@@ -1121,13 +1122,17 @@ class Team:
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
-            images=images, videos=videos, audios=audio
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
         )
 
         # Create RunInput to capture the original user input
         run_input = TeamRunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
         )
 
         # Read existing session from database
@@ -1411,6 +1416,7 @@ class Team:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
+            send_media_to_model=self.send_media_to_model,
         )  # type: ignore
 
         # Check for cancellation after model call
@@ -1739,13 +1745,17 @@ class Team:
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
-            images=images, videos=videos, audios=audio
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
         )
 
         # Create RunInput to capture the original user input
         run_input = TeamRunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
         )
 
         team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
@@ -1963,6 +1973,10 @@ class Team:
             for audio in model_response.audios:
                 self._add_audio(audio, run_response)  # Generated audio go to run_response.audio
 
+        if model_response.files is not None:
+            for file in model_response.files:
+                self._add_file(file, run_response)  # Generated files go to run_response.files
+
     def _update_run_response(
         self, model_response: ModelResponse, run_response: TeamRunOutput, run_messages: RunMessages
     ):
@@ -2049,6 +2063,7 @@ class Team:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
+            send_media_to_model=self.send_media_to_model,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -2129,6 +2144,7 @@ class Team:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
+            send_media_to_model=self.send_media_to_model,
         )  # type: ignore
         async for model_response_event in model_stream:
             for event in self._handle_model_response_chunk(
@@ -3118,6 +3134,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         audios: Optional[Sequence[Audio]] = None,
+        files: Optional[Sequence[File]] = None,
     ) -> tuple:
         image_list = None
         if images:
@@ -3149,7 +3166,17 @@ class Team:
                     aud.id = str(uuid4())
                 audio_list.append(aud)
 
-        return image_list, video_list, audio_list
+        file_list = None
+        if files:
+            file_list = []
+            for file in files:
+                if not file.id:
+                    from uuid import uuid4
+
+                    file.id = str(uuid4())
+                file_list.append(file)
+
+        return image_list, video_list, audio_list, file_list
 
     def cli_app(
         self,
@@ -6258,6 +6285,13 @@ class Team:
         if run_response.audio is None:
             run_response.audio = []
         run_response.audio.append(audio)
+
+    def _add_file(self, file: File, run_response: TeamRunOutput) -> None:
+        """Add file to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.files is None:
+            run_response.files = []
+        run_response.files.append(file)
 
     def _update_reasoning_content_from_tool_call(
         self, run_response: TeamRunOutput, tool_name: str, tool_args: Dict[str, Any]

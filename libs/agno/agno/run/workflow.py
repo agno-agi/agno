@@ -462,6 +462,7 @@ def workflow_run_output_event_from_dict(data: dict) -> BaseWorkflowRunOutputEven
 class WorkflowRunOutput:
     """Response returned by Workflow.run() functions - kept for backwards compatibility"""
 
+    input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
     content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
     content_type: str = "str"
 
@@ -553,6 +554,12 @@ class WorkflowRunOutput:
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
 
+        if self.input is not None:
+            if isinstance(self.input, BaseModel):
+                _dict["input"] = self.input.model_dump(exclude_none=True)
+            else:
+                _dict["input"] = self.input
+
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
@@ -624,6 +631,8 @@ class WorkflowRunOutput:
             final_events.append(event)
         events = final_events
 
+        input_data = data.pop("input", None)
+
         return cls(
             step_results=parsed_step_results,
             metadata=metadata,
@@ -634,6 +643,7 @@ class WorkflowRunOutput:
             events=events,
             metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
+            input=input_data,
             **data,
         )
 

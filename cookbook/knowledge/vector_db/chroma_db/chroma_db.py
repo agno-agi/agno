@@ -21,6 +21,8 @@ knowledge.add_content(
 
 # Create and use the agent
 agent = Agent(knowledge=knowledge)
+
+
 agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
 
 # Delete operations examples

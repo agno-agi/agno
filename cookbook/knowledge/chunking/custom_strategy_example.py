@@ -4,7 +4,7 @@ from agno.agent import Agent
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reader.pdf_reader import PDFUrlReader
+from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.vectordb.pgvector import PgVector
 
 
@@ -84,7 +84,7 @@ knowledge = Knowledge(
 # - Any custom pattern that fits your content
 knowledge.add_content(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    reader=PDFUrlReader(
+    reader=PDFReader(
         name="Custom Strategy Reader",
         chunking_strategy=CustomSeparatorChunking(separator="---"),
     ),

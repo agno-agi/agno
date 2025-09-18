@@ -5,15 +5,15 @@ After starting this AgentOS app, you can test the MCP server with the test_clien
 """
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Setup the database
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = SqliteDb(db_file="tmp/agentos.db")
 
-# Setup basic agents, teams and workflows
+# Setup basic research agent
 web_research_agent = Agent(
     id="web-research-agent",
     name="Web Research Agent",

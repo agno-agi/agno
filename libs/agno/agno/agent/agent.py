@@ -762,6 +762,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         )
 
         # Check for cancellation after model call
@@ -1080,13 +1081,17 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
-            images=images, videos=videos, audios=audio
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
         )
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
         )
 
         # Read existing session from database
@@ -1355,6 +1360,7 @@ class Agent:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
+            send_media_to_model=self.send_media_to_model,
         )
 
         # Check for cancellation after model call
@@ -1713,13 +1719,17 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
-            images=images, videos=videos, audios=audio
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
         )
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
         )
 
         # Read existing session from storage
@@ -3063,6 +3073,10 @@ class Agent:
             for audio in model_response.audios:
                 self._add_audio(audio, run_response)  # Generated audio go to run_response.audio
 
+        if model_response.files is not None:
+            for file in model_response.files:
+                self._add_file(file, run_response)  # Generated files go to run_response.files
+
     def _update_run_response(self, model_response: ModelResponse, run_response: RunOutput, run_messages: RunMessages):
         # Handle structured outputs
         if self.output_schema is not None and model_response.parsed is not None:
@@ -3162,6 +3176,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -3238,6 +3253,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -3801,7 +3817,9 @@ class Agent:
             self._rebuild_tools = True
         if self.search_session_history:
             agent_tools.append(
-                self._get_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions)
+                self._get_previous_sessions_messages_function(
+                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                )
             )
             self._rebuild_tools = True
 
@@ -5717,6 +5735,13 @@ class Agent:
             run_response.audio = []
         run_response.audio.append(audio)
 
+    def _add_file(self, file: File, run_response: RunOutput) -> None:
+        """Add file to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.files is None:
+            run_response.files = []
+        run_response.files.append(file)
+
     ###########################################################################
     # Reasoning
     ###########################################################################
@@ -6780,11 +6805,14 @@ class Agent:
         )
         return "Successfully added to knowledge base"
 
-    def _get_previous_sessions_messages_function(self, num_history_sessions: Optional[int] = 2) -> Callable:
+    def _get_previous_sessions_messages_function(
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+    ) -> Callable:
         """Factory function to create a get_previous_session_messages function.
 
         Args:
             num_history_sessions: The last n sessions to be taken from db
+            user_id: The user ID to filter sessions by
 
         Returns:
             Callable: A function that retrieves messages from previous sessions
@@ -6803,7 +6831,9 @@ class Agent:
             if self.db is None:
                 return "Previous session messages not available"
 
-            selected_sessions = self.db.get_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
+            selected_sessions = self.db.get_sessions(
+                session_type=SessionType.AGENT, limit=num_history_sessions, user_id=user_id
+            )
 
             all_messages = []
             seen_message_pairs = set()
@@ -7200,6 +7230,7 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         audios: Optional[Sequence[Audio]] = None,
+        files: Optional[Sequence[File]] = None,
     ) -> tuple:
         """Convert raw Image/Video/Audio objects - now unified, so just return as-is."""
         # With unified classes, no conversion needed - just ensure IDs are set
@@ -7234,7 +7265,17 @@ class Agent:
                     aud.id = str(uuid4())
                 audio_list.append(aud)
 
-        return image_list, video_list, audio_list
+        file_list = None
+        if files:
+            file_list = []
+            for file in files:
+                if not file.id:
+                    from uuid import uuid4
+
+                    file.id = str(uuid4())
+                file_list.append(file)
+
+        return image_list, video_list, audio_list, file_list
 
     def cli_app(
         self,

@@ -334,11 +334,16 @@ class Video(BaseModel):
 
 
 class File(BaseModel):
+    id: Optional[str] = None
     url: Optional[str] = None
     filepath: Optional[Union[Path, str]] = None
     # Raw bytes content of a file
     content: Optional[Any] = None
     mime_type: Optional[str] = None
+
+    file_type: Optional[str] = None
+    filename: Optional[str] = None
+    size: Optional[int] = None
     # External file object (e.g. GeminiFile, must be a valid object as expected by the model you are using)
     external: Optional[Any] = None
     format: Optional[str] = None  # E.g. `pdf`, `txt`, `csv`, `xml`, etc.
@@ -364,7 +369,10 @@ class File(BaseModel):
     def valid_mime_types(cls) -> List[str]:
         return [
             "application/pdf",
+            "application/json",
             "application/x-javascript",
+            "application/json",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "text/javascript",
             "application/x-python",
             "text/x-python",
@@ -377,6 +385,29 @@ class File(BaseModel):
             "text/rtf",
         ]
 
+    @classmethod
+    def from_base64(
+        cls,
+        base64_content: str,
+        id: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        filename: Optional[str] = None,
+        name: Optional[str] = None,
+        format: Optional[str] = None,
+    ) -> "File":
+        """Create File from base64 encoded content"""
+        import base64
+
+        content_bytes = base64.b64decode(base64_content)
+        return cls(
+            content=content_bytes,
+            id=id,
+            mime_type=mime_type,
+            filename=filename,
+            name=name,
+            format=format,
+        )
+
     @property
     def file_url_content(self) -> Optional[Tuple[bytes, str]]:
         import httpx
@@ -388,3 +419,44 @@ class File(BaseModel):
             return content, mime_type
         else:
             return None
+
+    def _normalise_content(self) -> Optional[Union[str, bytes]]:
+        if self.content is None:
+            return None
+        content_normalised: Union[str, bytes] = self.content
+        if content_normalised and isinstance(content_normalised, bytes):
+            from base64 import b64encode
+
+            try:
+                if self.mime_type and self.mime_type.startswith("text/"):
+                    content_normalised = content_normalised.decode("utf-8")
+                else:
+                    content_normalised = b64encode(content_normalised).decode("utf-8")
+            except UnicodeDecodeError:
+                if isinstance(self.content, bytes):
+                    content_normalised = b64encode(self.content).decode("utf-8")
+            except Exception:
+                try:
+                    if isinstance(self.content, bytes):
+                        content_normalised = b64encode(self.content).decode("utf-8")
+                except Exception:
+                    pass
+        return content_normalised
+
+    def to_dict(self) -> Dict[str, Any]:
+        content_normalised = self._normalise_content()
+
+        response_dict = {
+            "id": self.id,
+            "url": self.url,
+            "filepath": str(self.filepath) if self.filepath else None,
+            "content": content_normalised,
+            "mime_type": self.mime_type,
+            "file_type": self.file_type,
+            "filename": self.filename,
+            "size": self.size,
+            "external": self.external,
+            "format": self.format,
+            "name": self.name,
+        }
+        return {k: v for k, v in response_dict.items() if v is not None}
