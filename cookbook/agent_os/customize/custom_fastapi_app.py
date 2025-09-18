@@ -39,7 +39,9 @@ app: FastAPI = FastAPI(
 # Add Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://os.agno.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -85,4 +87,4 @@ if __name__ == "__main__":
     - API docs: http://localhost:7777/docs
 
     """
-    agent_os.serve(app="basic_example:app", reload=True)
+    agent_os.serve(app="custom_fastapi_app:app", reload=True)
