@@ -96,6 +96,7 @@ class RunContentEvent(BaseAgentRunEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: Optional[str] = None
+    provider_data: Optional[Dict[str, Any]] = None
     citations: Optional[Citations] = None
     response_audio: Optional[Audio] = None  # Model audio response
     image: Optional[Image] = None  # Image attached to the response
@@ -382,6 +383,8 @@ class RunOutput:
     reasoning_content: Optional[str] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
+
+    provider_data: Optional[Dict[str, Any]] = None
 
     model: Optional[str] = None
     model_provider: Optional[str] = None

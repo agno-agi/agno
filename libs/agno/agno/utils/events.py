@@ -343,6 +343,7 @@ def create_run_output_content_event(
     content_type: Optional[str] = None,
     reasoning_content: Optional[str] = None,
     redacted_reasoning_content: Optional[str] = None,
+    provider_data: Optional[Dict[str, Any]] = None,
     citations: Optional[Citations] = None,
     response_audio: Optional[Audio] = None,
     image: Optional[Image] = None,
@@ -364,6 +365,7 @@ def create_run_output_content_event(
         additional_input=from_run_response.additional_input,
         reasoning_steps=from_run_response.reasoning_steps,
         reasoning_messages=from_run_response.reasoning_messages,
+        provider_data=provider_data,
     )
 
 
