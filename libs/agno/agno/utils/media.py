@@ -55,7 +55,7 @@ def download_image(url: str, output_path: str) -> bool:
 
 
 def download_audio(url: str, output_path: str) -> str:
-    """Download video from URL"""
+    """Download audio from URL"""
     response = httpx.get(url)
     response.raise_for_status()
 
