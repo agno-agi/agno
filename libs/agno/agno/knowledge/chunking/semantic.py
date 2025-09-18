@@ -1,5 +1,5 @@
-from typing import Any, Dict, List, Optional
 import inspect
+from typing import Any, Dict, List, Optional
 
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
