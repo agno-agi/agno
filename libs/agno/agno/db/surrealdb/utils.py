@@ -3,6 +3,11 @@ from typing import Any, Sequence, TypeVar
 
 from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, Surreal
 
+from agno.db.base import SessionType
+from agno.session import Session
+from agno.session.agent import AgentSession
+from agno.session.team import TeamSession
+from agno.session.workflow import WorkflowSession
 from agno.utils.log import logger
 
 RecordType = TypeVar("RecordType")
@@ -64,3 +69,41 @@ def query_one(
             return record_type(**response)
     else:
         raise ValueError(f"Unexpected response type: {type(response)}")
+
+
+def serialize_session(session: Session) -> dict:
+    return session.to_dict()
+
+
+def deserialize_session(session_type: SessionType, session_raw: dict) -> Session | None:
+    if session_type == SessionType.AGENT:
+        return AgentSession.from_dict(session_raw)
+    elif session_type == SessionType.TEAM:
+        return TeamSession.from_dict(session_raw)
+    elif session_type == SessionType.WORKFLOW:
+        return WorkflowSession.from_dict(session_raw)
+    else:
+        raise ValueError(f"Invalid session type: {session_type}")
+
+
+def deserialize_sessions(session_type: SessionType, sessions_raw: list[dict]) -> list[Session]:
+    if session_type == SessionType.AGENT:
+        sessions = [y for y in [AgentSession.from_dict(x) for x in sessions_raw] if y is not None]
+    elif session_type == SessionType.TEAM:
+        sessions = [y for y in [TeamSession.from_dict(x) for x in sessions_raw] if y is not None]
+    elif session_type == SessionType.WORKFLOW:
+        sessions = [y for y in [WorkflowSession.from_dict(x) for x in sessions_raw] if y is not None]
+    else:
+        raise ValueError(f"Invalid session type: {session_type}")
+    return [x for x in sessions if x is not None]
+
+
+def get_session_type(session: Session) -> SessionType:
+    if isinstance(session, AgentSession):
+        return SessionType.AGENT
+    elif isinstance(session, TeamSession):
+        return SessionType.TEAM
+    elif isinstance(session, WorkflowSession):
+        return SessionType.WORKFLOW
+    else:
+        raise ValueError(f"Invalid session instance: {type(session)}")

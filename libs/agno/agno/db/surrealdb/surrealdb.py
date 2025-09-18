@@ -1,7 +1,13 @@
 from textwrap import dedent
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-from agno.db.surrealdb.utils import build_client
+from agno.db.surrealdb.utils import (
+    build_client,
+    deserialize_session,
+    deserialize_sessions,
+    get_session_type,
+    serialize_session,
+)
 
 try:
     from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, RecordID
@@ -13,7 +19,7 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.surrealdb import utils
 from agno.db.surrealdb.queries import CREATE_TABLE_QUERY
 from agno.db.utils import deserialize_session_json_fields, generate_deterministic_id
-from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.session import Session
 from agno.utils.log import log_debug, logger
 
 
@@ -63,6 +69,9 @@ class SurrealDb(BaseDb):
         if self._client is None:
             self._client = build_client(self._db_url, self._db_creds, self._db_ns, self._db_db)
         return self._client
+
+    def _get_table(self, table_type: str):
+        raise NotImplementedError(f"TODO for {table_type}")
 
     def _query(
         self,
@@ -125,15 +134,7 @@ class SurrealDb(BaseDb):
         session_raw = deserialize_session_json_fields(result)
         if not session_raw or not deserialize:
             return session_raw
-
-        if session_type == SessionType.AGENT:
-            return AgentSession.from_dict(session_raw)
-        elif session_type == SessionType.TEAM:
-            return TeamSession.from_dict(session_raw)
-        elif session_type == SessionType.WORKFLOW:
-            return WorkflowSession.from_dict(session_raw)
-        else:
-            raise ValueError(f"Invalid session type: {session_type}")
+        return deserialize_session(session_type, session_raw)
 
     def get_sessions(
         self,
@@ -204,7 +205,9 @@ class SurrealDb(BaseDb):
             GROUP BY id)[0] OR {{count: 0}}
         """)
         count_result = self._query_one(table_type, total_count_query, vars, dict)
-        total_count = count_result.get("count", 0)
+        total_count = count_result.get("count")
+        assert isinstance(total_count, int), f"Expected int, got {type(total_count)}"
+        total_count = int(total_count)
 
         # Query
         query = dedent(f"""
@@ -225,15 +228,7 @@ class SurrealDb(BaseDb):
         sessions_raw = [deserialize_session_json_fields(x) for x in result]
         if not deserialize:
             return sessions_raw, total_count
-
-        if session_type == SessionType.AGENT:
-            return [y for y in [AgentSession.from_dict(x) for x in sessions_raw] if y is not None]
-        elif session_type == SessionType.TEAM:
-            return [y for y in [TeamSession.from_dict(x) for x in sessions_raw] if y is not None]
-        elif session_type == SessionType.WORKFLOW:
-            return [y for y in [WorkflowSession.from_dict(x) for x in sessions_raw] if y is not None]
-        else:
-            raise ValueError(f"Invalid session type: {session_type}")
+        return deserialize_sessions(session_type, sessions_raw), total_count
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -252,15 +247,27 @@ class SurrealDb(BaseDb):
         session_raw = deserialize_session_json_fields(result)
         if not session_raw or not deserialize:
             return session_raw
+        return deserialize_session(session_type, session_raw)
 
-        if session_type == SessionType.AGENT:
-            return AgentSession.from_dict(session_raw)
-        elif session_type == SessionType.TEAM:
-            return TeamSession.from_dict(session_raw)
-        elif session_type == SessionType.WORKFLOW:
-            return WorkflowSession.from_dict(session_raw)
-        else:
-            raise ValueError(f"Invalid session type: {session_type}")
+    def upsert_session(
+        self, session: Session, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
+        table_type = "sessions"
+        session_type = get_session_type(session)
+        table = self._get_table(table_type)
+        result = self._query_one(
+            table_type,
+            "UPSERT $record CONTENT $content",
+            {
+                "record": RecordID(table, session.session_id),
+                "content": serialize_session(session),
+            },
+            dict,
+        )
+        session_raw = deserialize_session_json_fields(result)
+        if not session_raw or not deserialize:
+            return session_raw
+        return deserialize_session(session_type, session_raw)
 
     # --- Other ---
 
