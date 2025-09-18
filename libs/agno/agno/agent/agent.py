@@ -762,6 +762,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         )
 
         # Check for cancellation after model call
@@ -1359,6 +1360,7 @@ class Agent:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
+            send_media_to_model=self.send_media_to_model,
         )
 
         # Check for cancellation after model call
@@ -3100,6 +3102,8 @@ class Agent:
         # Update the run_response citations with the model response citations
         if model_response.citations is not None:
             run_response.citations = model_response.citations
+        if model_response.provider_data is not None:
+            run_response.model_provider_data = model_response.provider_data
 
         # Update the run_response tools with the model response tool_executions
         if model_response.tool_executions is not None:
@@ -3174,6 +3178,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -3250,6 +3255,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -3352,6 +3358,10 @@ class Agent:
                         model_response.reasoning_content += model_response_event.redacted_reasoning_content
                     run_response.reasoning_content = model_response.reasoning_content
 
+                if model_response_event.provider_data is not None:
+                    # We get citations in one chunk
+                    run_response.model_provider_data = model_response.provider_data
+
                 if model_response_event.citations is not None:
                     # We get citations in one chunk
                     run_response.citations = model_response_event.citations
@@ -3372,6 +3382,7 @@ class Agent:
                     or model_response_event.reasoning_content is not None
                     or model_response_event.redacted_reasoning_content is not None
                     or model_response_event.citations is not None
+                    or model_response_event.provider_data is not None
                 ):
                     yield self._handle_event(
                         create_run_output_content_event(
@@ -3380,6 +3391,7 @@ class Agent:
                             reasoning_content=model_response_event.reasoning_content,
                             redacted_reasoning_content=model_response_event.redacted_reasoning_content,
                             citations=model_response_event.citations,
+                            model_provider_data=model_response_event.provider_data,
                         ),
                         run_response,
                         workflow_context=workflow_context,
@@ -3813,7 +3825,9 @@ class Agent:
             self._rebuild_tools = True
         if self.search_session_history:
             agent_tools.append(
-                self._get_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions)
+                self._get_previous_sessions_messages_function(
+                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                )
             )
             self._rebuild_tools = True
 
@@ -6799,11 +6813,14 @@ class Agent:
         )
         return "Successfully added to knowledge base"
 
-    def _get_previous_sessions_messages_function(self, num_history_sessions: Optional[int] = 2) -> Callable:
+    def _get_previous_sessions_messages_function(
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+    ) -> Callable:
         """Factory function to create a get_previous_session_messages function.
 
         Args:
             num_history_sessions: The last n sessions to be taken from db
+            user_id: The user ID to filter sessions by
 
         Returns:
             Callable: A function that retrieves messages from previous sessions
@@ -6822,7 +6839,9 @@ class Agent:
             if self.db is None:
                 return "Previous session messages not available"
 
-            selected_sessions = self.db.get_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
+            selected_sessions = self.db.get_sessions(
+                session_type=SessionType.AGENT, limit=num_history_sessions, user_id=user_id
+            )
 
             all_messages = []
             seen_message_pairs = set()
