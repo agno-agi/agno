@@ -9,7 +9,6 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from rich import box
 from rich.panel import Panel
-from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
