@@ -5724,7 +5724,7 @@ class Team:
                     current_agent = member_agent
                     current_index = member_agent_index
                     self._initialize_member(current_agent)
-                    batch_runner.add(stream_member, current_agent, current_index)
+                    batch_runner.add(stream_member, current_agent, current_index, return_with=None)
 
                 async for return_result, _ in batch_runner.run_as_iterator(capture_exceptions=False):
                     yield return_result.result

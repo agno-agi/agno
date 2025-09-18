@@ -5,6 +5,7 @@ from typing import Any, AsyncGenerator, AsyncIterable, AsyncIterator, Callable, 
 import uuid
 import anyio
 from pydantic import BaseModel
+from agno.utils.log import logger
 
 ReturnType = TypeVar("ReturnType")
 ReturnWithType = TypeVar("ReturnWithType")
@@ -17,7 +18,7 @@ class AsyncFunctionCall(BaseModel, Generic[ReturnType, ReturnWithType]):
     name: str | None = None
 
 
-class ReturnResult(BaseModel, Generic[ReturnType]):
+class ReturnResult(BaseModel, Generic[ReturnType], arbitrary_types_allowed=True):
     result: ReturnType | None = None
     exception: Exception | None = None
 
@@ -131,6 +132,7 @@ class BatchRunner(Generic[ReturnType, ReturnWithType]):
                         tg.start_soon(process_task, task)
             finally:
                 # producer signals end-of-stream
+                logger.exception("Error in batch runner")
                 await send_stream.aclose()
 
         # Move to background to avoid blocking the main thread
@@ -141,110 +143,12 @@ class BatchRunner(Generic[ReturnType, ReturnWithType]):
                 async for item in receive_stream:
                     yield item
         finally:
+            logger.exception("Error in batch runner")
             background_task.cancel()
             try:
                 await background_task
             except Exception:
                 pass
-
-    async def run_batch(
-        self,
-        raise_on_no_tasks: bool = True,
-        individual_task_timeout: int | None = None,
-        capture_exceptions: bool = True,
-    ) -> list[tuple[ReturnResult[ReturnType], ReturnWithType]]:
-        """
-        Run parallel tasks with max concurrency of batch_size.
-        THis uses memory stream so that we can
-        """
-
-        if not self._tasks:
-            if raise_on_no_tasks:
-                raise ValueError("No tasks to run")
-            return []
-
-        if len(self._tasks) == 1:
-            task = self._tasks[0]
-            try:
-                result = await task.coroutine(*task.params)
-                return [(ReturnResult(result=result), task.return_with)]
-            except Exception as e:
-                if capture_exceptions:
-                    return [(ReturnResult(exception=e), task.return_with)]
-                raise
-
-        results: list[tuple[ReturnResult[ReturnType], ReturnWithType]] = []
-        batch_size = self.batch_size or len(self._tasks)
-
-        # Iterate in chunks of size batch_size
-        for i in range(0, len(self._tasks), batch_size):
-            chunk = self._tasks[i : i + batch_size]
-
-            batch_start = anyio.current_time()
-            results.extend(
-                await self._run_batch_chunk(
-                    chunk,
-                    individual_task_timeout=individual_task_timeout,
-                    capture_exceptions=capture_exceptions,
-                )
-            )
-            elapsed = anyio.current_time() - batch_start
-
-            # Enforce minimum spacing between batch starts if batch_timeout is set
-            if self.batch_timeout:
-                sleep_for = self.batch_timeout - elapsed
-                if sleep_for > 0:
-                    await anyio.sleep(sleep_for)
-
-        return results
-
-    async def _run_batch_chunk(
-        self,
-        tasks: list[AsyncFunctionCall[ReturnType, ReturnWithType]],
-        *,
-        individual_task_timeout: int | None,
-        capture_exceptions: bool,
-    ) -> list[tuple[ReturnResult[ReturnType], ReturnWithType]]:
-        """
-        Run a chunk concurrently; return results in the same order as 'tasks'.
-        """
-        # Pre-allocate to preserve order without locks
-        results: list[tuple[ReturnResult[ReturnType], ReturnWithType] | None] = [None] * len(tasks)
-
-        async def run_one(idx: int, task: AsyncFunctionCall[ReturnType, ReturnWithType]) -> None:
-            try:
-                value: ReturnType | None = None
-                if individual_task_timeout:
-                    with anyio.move_on_after(individual_task_timeout) as scope:
-                        value = await self._run_task(task)
-                    if scope.cancel_called:
-                        raise TimeoutError(
-                            f"Task timed out after {individual_task_timeout}s: "
-                            f"{getattr(task.coroutine, '__name__', str(task.coroutine))}"
-                        )
-                else:
-                    value = await self._run_task(task)
-
-                results[idx] = (ReturnResult(result=value), task.return_with)
-
-            except Exception as e:
-                if capture_exceptions:
-                    results[idx] = (ReturnResult(exception=e), task.return_with)
-                else:
-                    raise
-
-        try:
-            async with anyio.create_task_group() as tg:
-                for idx, task in enumerate(tasks):
-                    tg.start_soon(run_one, idx, task)
-        except Exception:
-            # This would only happen if capture_exceptions=False and any task fails
-            # If that happens we have to bubble it up
-            raise
-
-        # results are all filled unless an exception bubbled (capture_exceptions=False)
-        # There are no None results, but we had to add None to intial list to preserve order
-        return [r for r in results if r is not None]
 
     async def _run_task(self, task: AsyncFunctionCall[ReturnType, ReturnWithType]) -> ReturnType:
         return await task.coroutine(*task.params)
