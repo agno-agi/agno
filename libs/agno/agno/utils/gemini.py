@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from agno.media import Image
 from agno.utils.log import log_error, log_warning
@@ -13,6 +13,35 @@ try:
     )
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
+
+
+def convert_pydantic_to_gemini_schema(model_or_schema: Any) -> Any:
+    """
+    Try to use Pydantic model directly, fall back to conversion if needed.
+
+    This handles Gemini's requirement for structured output while supporting
+    both simple models (that Gemini accepts directly) and complex ones
+    (that need conversion).
+    """
+    # If it's a Pydantic model, try using it directly
+    # Gemini will handle simple models but reject complex ones
+    if hasattr(model_or_schema, 'model_json_schema'):
+        try:
+            # For now, always convert to be safe
+            # TODO: Test if we can detect which models work directly
+            schema_dict = model_or_schema.model_json_schema()
+            return convert_schema(schema_dict)
+        except Exception as e:
+            log_warning(f"Failed to convert Pydantic model: {e}")
+            # Try returning the model directly as last resort
+            return model_or_schema
+
+    # Already a schema dict
+    if isinstance(model_or_schema, dict):
+        return convert_schema(model_or_schema)
+
+    # Unknown type, return as-is
+    return model_or_schema
 
 
 def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
@@ -66,7 +95,11 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         return None
 
 
-def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, Any]] = None) -> Optional[Schema]:
+def convert_schema(
+    schema_dict: Dict[str, Any],
+    root_schema: Optional[Dict[str, Any]] = None,
+    visited_refs: Optional[set] = None
+) -> Optional[Schema]:
     """
     Recursively convert a JSON-like schema dictionary to a types.Schema object.
 
@@ -74,23 +107,39 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
         schema_dict (dict): The JSON schema dictionary with keys like "type", "description",
                             "properties", and "required".
         root_schema (dict, optional): The root schema containing $defs for resolving $ref
+        visited_refs (set, optional): Set of visited $ref paths to detect circular references
 
     Returns:
         types.Schema: The converted schema.
     """
 
-    # If this is the initial call, set root_schema to self
+    # If this is the initial call, set root_schema to self and initialize visited_refs
     if root_schema is None:
         root_schema = schema_dict
+    if visited_refs is None:
+        visited_refs = set()
 
-    # Handle $ref references
+    # Handle $ref references with cycle detection
     if "$ref" in schema_dict:
         ref_path = schema_dict["$ref"]
+
+        # Check for circular reference
+        if ref_path in visited_refs:
+            # Return a basic object schema to break the cycle
+            return Schema(
+                type=Type.OBJECT,
+                description=f"Circular reference to {ref_path}",
+            )
+
         if ref_path.startswith("#/$defs/"):
             def_name = ref_path.split("/")[-1]
             if "$defs" in root_schema and def_name in root_schema["$defs"]:
+                # Add to visited set before recursing
+                new_visited = visited_refs.copy()
+                new_visited.add(ref_path)
+
                 referenced_schema = root_schema["$defs"][def_name]
-                return convert_schema(referenced_schema, root_schema)
+                return convert_schema(referenced_schema, root_schema, new_visited)
         # If we can't resolve the reference, return None
         return None
 
@@ -117,8 +166,8 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
                     prop_def["type"] = prop_type[0]
                     is_nullable = True
 
-                # Process property schema (pass root_schema for $ref resolution)
-                converted_schema = convert_schema(prop_def, root_schema)
+                # Process property schema (pass root_schema and visited_refs for $ref resolution)
+                converted_schema = convert_schema(prop_def, root_schema, visited_refs)
                 if converted_schema is not None:
                     if is_nullable:
                         converted_schema.nullable = True
@@ -188,7 +237,7 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
         if not schema_dict["items"]:  # Handle empty {}
             items = Schema(type=Type.STRING)
         else:
-            items = convert_schema(schema_dict["items"], root_schema)
+            items = convert_schema(schema_dict["items"], root_schema, visited_refs)
         min_items = schema_dict.get("minItems")
         max_items = schema_dict.get("maxItems")
         return Schema(
@@ -224,7 +273,7 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
     elif schema_type == "" and "anyOf" in schema_dict:
         any_of = []
         for sub_schema in schema_dict["anyOf"]:
-            sub_schema_converted = convert_schema(sub_schema, root_schema)
+            sub_schema_converted = convert_schema(sub_schema, root_schema, visited_refs)
             any_of.append(sub_schema_converted)
 
         is_nullable = False

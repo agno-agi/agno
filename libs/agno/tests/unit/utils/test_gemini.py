@@ -1,4 +1,4 @@
-from agno.utils.gemini import convert_schema, format_function_definitions
+from agno.utils.gemini import convert_schema, format_function_definitions, convert_pydantic_to_gemini_schema
 
 
 def test_convert_schema_simple_string():
@@ -317,3 +317,143 @@ def test_convert_schema_union():
     assert result.any_of[1].description == "An integer value"
     assert result.any_of[2].type == "BOOLEAN"
     assert result.any_of[2].description == "A boolean value"
+
+
+def test_convert_schema_with_ref():
+    """Test converting a schema with $ref to $defs"""
+    schema_dict = {
+        "type": "object",
+        "properties": {
+            "person": {"$ref": "#/$defs/Person"}
+        },
+        "$defs": {
+            "Person": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "age": {"type": "integer"}
+                },
+                "required": ["name"]
+            }
+        }
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "OBJECT"
+    assert "person" in result.properties
+
+    person_schema = result.properties["person"]
+    assert person_schema.type == "OBJECT"
+    assert "name" in person_schema.properties
+    assert "age" in person_schema.properties
+    assert person_schema.properties["name"].type == "STRING"
+    assert person_schema.properties["age"].type == "INTEGER"
+    assert "name" in person_schema.required
+
+
+def test_convert_schema_with_circular_ref():
+    """Test converting a schema with circular references"""
+    schema_dict = {
+        "type": "object",
+        "properties": {
+            "node": {"$ref": "#/$defs/Node"}
+        },
+        "$defs": {
+            "Node": {
+                "type": "object",
+                "properties": {
+                    "value": {"type": "string"},
+                    "next": {"$ref": "#/$defs/Node"}  # Circular reference
+                }
+            }
+        }
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "OBJECT"
+    assert "node" in result.properties
+
+    node_schema = result.properties["node"]
+    assert node_schema.type == "OBJECT"
+    assert "value" in node_schema.properties
+    assert "next" in node_schema.properties
+
+    # The circular reference should be handled gracefully
+    next_schema = node_schema.properties["next"]
+    assert next_schema.type == "OBJECT"
+    assert "Circular reference" in next_schema.description
+
+
+def test_convert_schema_with_multiple_refs_to_same_def():
+    """Test converting a schema with multiple references to the same definition"""
+    schema_dict = {
+        "type": "object",
+        "properties": {
+            "sender": {"$ref": "#/$defs/Person"},
+            "receiver": {"$ref": "#/$defs/Person"}
+        },
+        "$defs": {
+            "Person": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "email": {"type": "string"}
+                }
+            }
+        }
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "OBJECT"
+    assert "sender" in result.properties
+    assert "receiver" in result.properties
+
+    # Both should resolve to the same Person schema structure
+    for prop in ["sender", "receiver"]:
+        person_schema = result.properties[prop]
+        assert person_schema.type == "OBJECT"
+        assert "name" in person_schema.properties
+        assert "email" in person_schema.properties
+        assert person_schema.properties["name"].type == "STRING"
+        assert person_schema.properties["email"].type == "STRING"
+
+
+def test_convert_pydantic_to_gemini_schema_with_dict():
+    """Test converting a schema dict through the hybrid function"""
+    schema_dict = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"}
+        }
+    }
+
+    result = convert_pydantic_to_gemini_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "OBJECT"
+    assert "name" in result.properties
+    assert "age" in result.properties
+
+
+def test_convert_pydantic_to_gemini_schema_with_pydantic_model():
+    """Test converting a Pydantic model through the hybrid function"""
+    from pydantic import BaseModel
+
+    class SimpleModel(BaseModel):
+        name: str
+        age: int
+
+    # The hybrid function should convert the model to schema
+    result = convert_pydantic_to_gemini_schema(SimpleModel)
+
+    assert result is not None
+    # Since we're always converting for now, it should be a Schema object
+    assert hasattr(result, 'type')
+    assert result.type == "OBJECT"
