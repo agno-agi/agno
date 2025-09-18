@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import json
 from collections import ChainMap, deque
 from copy import copy
@@ -107,6 +106,7 @@ from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import generate_id_from_name, parse_response_model_str
 from agno.utils.team import format_member_agent_task, get_member_id
 from agno.utils.timer import Timer
+from agno.utils.batch_handler import BatchRunner
 
 
 @dataclass(init=False)
@@ -5711,38 +5711,23 @@ class Team:
                                 member_agent_run_response = member_agent_run_output_event  # type: ignore
                                 break
                             check_if_run_cancelled(member_agent_run_output_event)
-                            await queue.put(member_agent_run_output_event)
+                            yield member_agent_run_output_event
                     finally:
                         _process_delegate_task_to_member(
                             member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
                         )
 
                 # Initialize and launch all members
-                tasks: List[asyncio.Task[None]] = []
+                tasks: List[Coroutine[Any, Any, Any]] = []
+                batch_runner = BatchRunner[RunOutputEvent | TeamRunOutputEvent, None](batch_size=len(self.members))
                 for member_agent_index, member_agent in enumerate(self.members):
                     current_agent = member_agent
                     current_index = member_agent_index
                     self._initialize_member(current_agent)
-                    tasks.append(asyncio.create_task(stream_member(current_agent, current_index)))
+                    batch_runner.add(stream_member, current_agent, current_index)
 
-                # Drain queue until all members reported done
-                completed = 0
-                try:
-                    while completed < len(tasks):
-                        item = await queue.get()
-                        if item is done_marker:
-                            completed += 1
-                        else:
-                            yield item  # type: ignore
-                finally:
-                    # Ensure tasks do not leak on cancellation
-                    for t in tasks:
-                        if not t.done():
-                            t.cancel()
-                    # Await cancellation to suppress warnings
-                    for t in tasks:
-                        with contextlib.suppress(Exception):
-                            await t
+                async for return_result, _ in batch_runner.run_as_iterator(capture_exceptions=False):
+                    yield return_result.result
 
             else:
                 # Non-streaming concurrent run of members; collect results when done
