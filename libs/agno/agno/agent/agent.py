@@ -762,6 +762,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         )
 
         # Check for cancellation after model call
@@ -1359,6 +1360,7 @@ class Agent:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
+            send_media_to_model=self.send_media_to_model,
         )
 
         # Check for cancellation after model call
@@ -3176,6 +3178,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -3252,6 +3255,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
