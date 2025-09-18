@@ -5090,7 +5090,7 @@ class Team:
             import json
 
             history: List[Dict[str, Any]] = []
-            
+
             all_chats = session.get_messages_from_last_n_runs(
                 team_id=self.id,
             )

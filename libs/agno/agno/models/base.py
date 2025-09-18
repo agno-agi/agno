@@ -302,7 +302,11 @@ class Model(ABC):
 
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
-                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results, send_media_to_model=send_media_to_model)
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -443,7 +447,11 @@ class Model(ABC):
 
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
-                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results, send_media_to_model=send_media_to_model)
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -781,7 +789,11 @@ class Model(ABC):
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
-                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results, send_media_to_model=send_media_to_model)
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -941,7 +953,11 @@ class Model(ABC):
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
-                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results, send_media_to_model=send_media_to_model)
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -1718,7 +1734,9 @@ class Model(ABC):
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
 
-    def _handle_function_call_media(self, messages: List[Message], function_call_results: List[Message], send_media_to_model: bool = True) -> None:
+    def _handle_function_call_media(
+        self, messages: List[Message], function_call_results: List[Message], send_media_to_model: bool = True
+    ) -> None:
         """
         Handle media artifacts from function calls by adding follow-up user messages for generated media if needed.
         """
