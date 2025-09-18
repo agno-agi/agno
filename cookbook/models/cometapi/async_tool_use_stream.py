@@ -15,4 +15,9 @@ agent = Agent(
 )
 
 # Async streaming tool use
-asyncio.run(agent.aprint_response("Search for the latest developments in quantum computing and summarize them", stream=True))
+asyncio.run(
+    agent.aprint_response(
+        "Search for the latest developments in quantum computing and summarize them",
+        stream=True,
+    )
+)

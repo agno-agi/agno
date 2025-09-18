@@ -10,4 +10,8 @@ from agno.models.cometapi import CometAPI
 agent = Agent(model=CometAPI(id="gpt-5-mini"), markdown=True)
 
 # Async streaming response
-asyncio.run(agent.aprint_response("Write a short poem about artificial intelligence", stream=True))
+asyncio.run(
+    agent.aprint_response(
+        "Write a short poem about artificial intelligence", stream=True
+    )
+)

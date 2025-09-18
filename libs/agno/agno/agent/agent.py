@@ -3813,7 +3813,9 @@ class Agent:
             self._rebuild_tools = True
         if self.search_session_history:
             agent_tools.append(
-                self._get_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions, user_id=user_id)
+                self._get_previous_sessions_messages_function(
+                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                )
             )
             self._rebuild_tools = True
 

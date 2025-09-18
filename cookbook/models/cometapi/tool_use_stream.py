@@ -19,4 +19,7 @@ agent = Agent(
 )
 
 # Tool use with streaming
-agent.print_response("What's the current weather in Tokyo and what are some popular tourist attractions there?", stream=True)
+agent.print_response(
+    "What's the current weather in Tokyo and what are some popular tourist attractions there?",
+    stream=True,
+)

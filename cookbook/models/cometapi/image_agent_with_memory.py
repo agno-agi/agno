@@ -3,9 +3,9 @@ Image analysis with memory example using CometAPI.
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.media import Image
 from agno.models.cometapi import CometAPI
-from agno.db.sqlite import SqliteDb
 
 agent = Agent(
     model=CometAPI(id="gpt-4o"),  # GPT-4o has vision capabilities
@@ -24,7 +24,9 @@ agent.print_response(
     ],
 )
 
-print("\n" + "="*50 + "\n")
+print("\n" + "=" * 50 + "\n")
 
 # Follow-up question using memory
-agent.print_response("What was the main color of the character in the image I showed you earlier?")
+agent.print_response(
+    "What was the main color of the character in the image I showed you earlier?"
+)

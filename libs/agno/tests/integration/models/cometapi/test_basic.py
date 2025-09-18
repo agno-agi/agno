@@ -115,7 +115,7 @@ def test_with_memory():
         db=db,
         session_id="test_session_123",
         add_history_to_context=True,
-        telemetry=False
+        telemetry=False,
     )
 
     response: RunOutput = agent.run("Remember, my name is Alice.")
@@ -136,7 +136,7 @@ def test_tool_usage():
         model=CometAPI(id="gpt-5-mini"),
         tools=[CalculatorTools()],
         instructions="You are a helpful assistant. Always use the calculator tool for mathematical calculations.",
-        telemetry=False
+        telemetry=False,
     )
 
     response: RunOutput = agent.run("Use the calculator to compute 15 + 27")
@@ -186,7 +186,7 @@ def test_tool_usage_stream():
         model=CometAPI(id="gpt-5-mini"),
         tools=[CalculatorTools()],
         instructions="You are a helpful assistant. Always use the calculator tool for mathematical calculations.",
-        telemetry=False
+        telemetry=False,
     )
 
     response_stream = agent.run("Use the calculator to compute 25 * 4", stream=True)
@@ -208,7 +208,7 @@ async def test_async_tool_usage():
         model=CometAPI(id="gpt-5-mini"),
         tools=[CalculatorTools()],
         instructions="You are a helpful assistant. Always use the calculator tool for mathematical calculations.",
-        telemetry=False
+        telemetry=False,
     )
 
     response: RunOutput = await agent.arun("Use the calculator to compute 12 * 8")
@@ -231,7 +231,7 @@ async def test_async_tool_usage_stream():
         model=CometAPI(id="gpt-5-mini"),
         tools=[CalculatorTools()],
         instructions="You are a helpful assistant. Always use the calculator tool for mathematical calculations.",
-        telemetry=False
+        telemetry=False,
     )
 
     response_stream = agent.arun("Use the calculator to compute 9 * 7", stream=True)
@@ -244,7 +244,7 @@ async def test_async_tool_usage_stream():
     async for response in response_stream:
         responses.append(response)
         # Only check content if it exists (streaming events may not have content)
-        if hasattr(response, 'content') and response.content:
+        if hasattr(response, "content") and response.content:
             final_content += response.content
 
     assert len(responses) > 0
@@ -320,9 +320,10 @@ def test_image_analysis_with_memory():
         # Clean up
         try:
             import os
+
             if os.path.exists("test_cometapi_image.db"):
                 os.remove("test_cometapi_image.db")
-        except:
+        except OSError:
             pass  # Ignore cleanup errors
 
     except Exception as e:

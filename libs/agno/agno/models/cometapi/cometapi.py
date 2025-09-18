@@ -1,7 +1,6 @@
-import re
 from dataclasses import dataclass
 from os import getenv
-from typing import List, Optional
+from typing import List
 
 from agno.models.openai.like import OpenAILike
 from agno.utils.log import log_debug
@@ -41,7 +40,6 @@ class CometAPI(OpenAILike):
                 self.api_key = env_key
 
         super().__post_init__()
-
 
     def get_available_models(self) -> List[str]:
         """
