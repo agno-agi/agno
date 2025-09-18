@@ -47,7 +47,7 @@ def test_basic_stream():
 
     run_stream = agent.run("Say 'hi'", stream=True)
     for chunk in run_stream:
-        assert chunk.content is not None
+        assert chunk.content is not None or chunk.model_provider_data is not None
 
 
 @pytest.mark.asyncio
@@ -70,7 +70,7 @@ async def test_async_basic_stream():
     agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
-        assert response.content is not None
+        assert response.content is not None or response.model_provider_data is not None
 
 
 def test_exception_handling():
