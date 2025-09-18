@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from agno.media import Image
 from agno.utils.log import log_error, log_warning
@@ -17,31 +17,105 @@ except ImportError:
 
 def convert_pydantic_to_gemini_schema(model_or_schema: Any) -> Any:
     """
-    Try to use Pydantic model directly, fall back to conversion if needed.
+    Convert Pydantic model to Gemini-compatible schema.
 
-    This handles Gemini's requirement for structured output while supporting
-    both simple models (that Gemini accepts directly) and complex ones
-    (that need conversion).
+    Based on testing, Gemini accepts most Pydantic models directly except:
+    - Models with circular/self-references ($ref to same model)
+    - Models that generate empty object properties
+
+    For these edge cases, we convert to Gemini's Schema format.
     """
-    # If it's a Pydantic model, try using it directly
-    # Gemini will handle simple models but reject complex ones
+    # If it's a Pydantic model, check if conversion is needed
     if hasattr(model_or_schema, 'model_json_schema'):
-        try:
-            # For now, always convert to be safe
-            # TODO: Test if we can detect which models work directly
-            schema_dict = model_or_schema.model_json_schema()
+        schema_dict = model_or_schema.model_json_schema()
+
+        # Check if schema has circular references or other issues
+        if needs_conversion(schema_dict):
+            # Convert to Gemini Schema format
             return convert_schema(schema_dict)
-        except Exception as e:
-            log_warning(f"Failed to convert Pydantic model: {e}")
-            # Try returning the model directly as last resort
+        else:
+            # Gemini can handle this model directly
             return model_or_schema
 
-    # Already a schema dict
+    # Already a schema dict - always convert
     if isinstance(model_or_schema, dict):
         return convert_schema(model_or_schema)
 
     # Unknown type, return as-is
     return model_or_schema
+
+
+def needs_conversion(schema_dict: Dict[str, Any]) -> bool:
+    """
+    Check if a schema needs conversion for Gemini.
+
+    Returns True if the schema has:
+    - Self-references or circular references
+    - Dict fields (additionalProperties) that Gemini doesn't handle well
+    - Empty object definitions that Gemini rejects
+    """
+    # Check for dict fields (additionalProperties) anywhere in the schema
+    if has_additional_properties(schema_dict):
+        return True
+
+    # Check if schema has $defs with circular references
+    if "$defs" in schema_dict:
+        defs = schema_dict["$defs"]
+        for def_name, def_schema in defs.items():
+            ref_path = f"#/$defs/{def_name}"
+            if has_self_reference(def_schema, ref_path):
+                return True
+
+    return False
+
+
+def has_additional_properties(schema: Any) -> bool:
+    """Check if schema has additionalProperties (Dict fields)"""
+    if isinstance(schema, dict):
+        # Direct check
+        if "additionalProperties" in schema:
+            return True
+
+        # Check properties recursively
+        if "properties" in schema:
+            for prop_schema in schema["properties"].values():
+                if has_additional_properties(prop_schema):
+                    return True
+
+        # Check array items
+        if "items" in schema:
+            if has_additional_properties(schema["items"]):
+                return True
+
+    return False
+
+
+def has_self_reference(schema: Dict, target_ref: str) -> bool:
+    """Check if a schema references itself (directly or indirectly)"""
+    if isinstance(schema, dict):
+        # Direct self-reference
+        if schema.get("$ref") == target_ref:
+            return True
+
+        # Check properties
+        if "properties" in schema:
+            for prop_schema in schema["properties"].values():
+                if has_self_reference(prop_schema, target_ref):
+                    return True
+
+        # Check array items
+        if "items" in schema:
+            if has_self_reference(schema["items"], target_ref):
+                return True
+
+        # Check anyOf/oneOf/allOf
+        for key in ["anyOf", "oneOf", "allOf"]:
+            if key in schema:
+                for sub_schema in schema[key]:
+                    if has_self_reference(sub_schema, target_ref):
+                        return True
+
+    return False
 
 
 def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
