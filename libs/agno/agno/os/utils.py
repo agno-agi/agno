@@ -264,10 +264,10 @@ def _generate_schema_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def update_cors_middleware(app: FastAPI, new_origins: list):
-    existing_origins = []
-    
+    existing_origins: List[str] = []
+
     # TODO: Allow more options where CORS is properly merged and user can disable this behaviour
-    
+
     # Extract existing origins from current CORS middleware
     for middleware in app.user_middleware:
         if middleware.cls == CORSMiddleware:
@@ -277,7 +277,7 @@ def update_cors_middleware(app: FastAPI, new_origins: list):
     # Merge origins
     merged_origins = list(set(new_origins + existing_origins))
     final_origins = [origin for origin in merged_origins if origin != "*"]
-    
+
     # Remove existing CORS
     app.user_middleware = [m for m in app.user_middleware if m.cls != CORSMiddleware]
     app.middleware_stack = None

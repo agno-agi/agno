@@ -287,7 +287,7 @@ class AgentOS:
             self.fastapi_app.middleware("http")(general_exception_handler)
 
         # Update CORS middleware
-        update_cors_middleware(self.fastapi_app, self.settings.cors_origin_list)
+        update_cors_middleware(self.fastapi_app, self.settings.cors_origin_list)  # type: ignore
 
         return self.fastapi_app
 
@@ -362,7 +362,7 @@ class AgentOS:
                 for route in self.fastapi_app.routes:
                     for conflict in conflicts:
                         if isinstance(route, APIRoute):
-                            if route.path == conflict["path"] and list(route.methods) == list(conflict["methods"]):
+                            if route.path == conflict["path"] and list(route.methods) == list(conflict["methods"]):  # type: ignore
                                 self.fastapi_app.routes.pop(self.fastapi_app.routes.index(route))
 
                 self.fastapi_app.include_router(router)
