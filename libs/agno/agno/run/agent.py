@@ -120,6 +120,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
+    provider_data: Optional[Dict[str, Any]] = None
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response

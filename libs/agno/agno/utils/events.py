@@ -76,6 +76,7 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         content_type=from_run_response.content_type,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
         citations=from_run_response.citations,  # type: ignore
+        provider_data=from_run_response.provider_data,  # type: ignore
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
@@ -100,6 +101,7 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         content_type=from_run_response.content_type,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
         citations=from_run_response.citations,  # type: ignore
+        provider_data=from_run_response.provider_data,  # type: ignore
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
@@ -345,6 +347,7 @@ def create_run_output_content_event(
     redacted_reasoning_content: Optional[str] = None,
     provider_data: Optional[Dict[str, Any]] = None,
     citations: Optional[Citations] = None,
+    provider_data: Optional[Dict[str, Any]] = None,
     response_audio: Optional[Audio] = None,
     image: Optional[Image] = None,
 ) -> RunContentEvent:
@@ -376,6 +379,7 @@ def create_team_run_output_content_event(
     reasoning_content: Optional[str] = None,
     redacted_reasoning_content: Optional[str] = None,
     citations: Optional[Citations] = None,
+    provider_data: Optional[Dict[str, Any]] = None,
     response_audio: Optional[Audio] = None,
     image: Optional[Image] = None,
 ) -> TeamRunContentEvent:
@@ -390,6 +394,7 @@ def create_team_run_output_content_event(
         content_type=content_type or "str",
         reasoning_content=thinking_combined,
         citations=citations,
+        provider_data=provider_data,
         response_audio=response_audio,
         image=image,
         references=from_run_response.references,  # type: ignore
