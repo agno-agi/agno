@@ -102,7 +102,7 @@ class MCPTools(Toolkit):
         transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
         server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = None,
         session: Optional[ClientSession] = None,
-        timeout_seconds: int = 5,
+        timeout_seconds: int = 10,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
