@@ -1045,7 +1045,13 @@ class Model(ABC):
         if model_response_delta.extra is not None:
             if stream_data.extra is None:
                 stream_data.extra = {}
-            stream_data.extra.update(model_response_delta.extra)
+            for key in model_response_delta.extra:
+                if isinstance(model_response_delta.extra[key], list):
+                    if not stream_data.extra.get(key):
+                        stream_data.extra[key] = []
+                    stream_data.extra[key].extend(model_response_delta.extra[key])
+                else:
+                    stream_data.extra[key] = model_response_delta.extra[key]
 
         if should_yield:
             yield model_response_delta
