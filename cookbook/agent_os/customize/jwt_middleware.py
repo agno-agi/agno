@@ -55,7 +55,7 @@ if __name__ == "__main__":
     """
     # Test token:
     payload = {
-            "user_id": "user_123",
+            "sub": "user_123",
             "username": "demo",
             "exp": datetime.now(UTC) + timedelta(hours=24),
             "iat": datetime.now(UTC),

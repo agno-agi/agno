@@ -26,7 +26,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         secret_key: str,
         algorithm: str = "HS256",
         token_prefix: str = "Bearer",
-        user_id_claim: str = "user_id",
+        user_id_claim: str = "sub",
         validate_token: bool = True,
         excluded_route_paths: Optional[List[str]] = None,
     ):

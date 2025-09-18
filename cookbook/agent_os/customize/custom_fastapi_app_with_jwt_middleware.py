@@ -39,7 +39,7 @@ app = FastAPI(
 )
 
 # Add JWT middleware
-app.add_middleware(JWTMiddleware, secret_key=JWT_SECRET, algorithm="HS256", token_prefix="Bearer", user_id_claim="user_id", excluded_route_paths=["/auth/login"], validate_token=True)  # Set validate_token to False to skip token validation
+app.add_middleware(JWTMiddleware, secret_key=JWT_SECRET, excluded_route_paths=["/auth/login"], validate_token=True)  # Set validate_token to False to skip token validation
 
 # Custom routes that use JWT
 @app.post("/auth/login")
@@ -47,7 +47,7 @@ async def login(username: str = Form(...), password: str = Form(...)):
     """Login endpoint that returns JWT token"""
     if username == "demo" and password == "password":
         payload = {
-            "user_id": "user_123",
+            "sub": "user_123",
             "username": username,
             "exp": datetime.utcnow() + timedelta(hours=24),
             "iat": datetime.utcnow(),
