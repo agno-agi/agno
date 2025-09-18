@@ -47,4 +47,7 @@ knowledge = Knowledge(
 agent = Agent(knowledge=knowledge)
 
 # Use the agent to ask a question and print a response.
-agent.print_response("What did the president say?", markdown=True)
+agent.print_response(
+    "What did the president say about broadcasting and the State of the Union?",
+    markdown=True,
+)

@@ -17,6 +17,11 @@ class LlamaIndexVectorDb(VectorDb):
     knowledge_retriever: BaseRetriever
     loader: Optional[Callable] = None
 
+    def __init__(self, knowledge_retriever: BaseRetriever, loader: Optional[Callable] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.knowledge_retriever = knowledge_retriever
+        self.loader = loader
+
     def create(self) -> None:
         raise NotImplementedError
 
@@ -53,15 +58,13 @@ class LlamaIndexVectorDb(VectorDb):
         logger.warning("LlamaIndexVectorDb.async_upsert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
-    def search(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
         Returns relevant documents matching the query.
 
         Args:
             query (str): The query string to search for.
-            num_documents (Optional[int]): The maximum number of documents to return. Defaults to None.
+            limit (int): The maximum number of documents to return. Defaults to 5.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search. Defaults to None.
 
         Returns:
@@ -73,8 +76,8 @@ class LlamaIndexVectorDb(VectorDb):
             raise ValueError(f"Knowledge retriever is not of type BaseRetriever: {self.knowledge_retriever}")
 
         lc_documents: List[NodeWithScore] = self.knowledge_retriever.retrieve(query)
-        if num_documents is not None:
-            lc_documents = lc_documents[:num_documents]
+        if limit is not None:
+            lc_documents = lc_documents[:limit]
         documents = []
         for lc_doc in lc_documents:
             documents.append(
@@ -125,3 +128,19 @@ class LlamaIndexVectorDb(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         raise NotImplementedError("update_metadata not supported for LlamaIndex vectorstores")
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """
+        Delete documents by content ID.
+        Not implemented for LlamaIndex wrapper.
+
+        Args:
+            content_id (str): The content ID to delete
+
+        Returns:
+            bool: False as this operation is not supported
+        """
+        logger.warning(
+            "LlamaIndexVectorDb.delete_by_content_id() not supported - please check the vectorstore manually."
+        )
+        return False
