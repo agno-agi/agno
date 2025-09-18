@@ -16,9 +16,8 @@ from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.utils.gemini import convert_pydantic_to_gemini_schema, convert_schema, format_function_definitions, format_image_for_message
+from agno.utils.gemini import convert_pydantic_to_gemini_schema, format_function_definitions, format_image_for_message
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
     from google import genai
