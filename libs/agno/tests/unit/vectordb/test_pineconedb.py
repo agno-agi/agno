@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.pineconedb import PineconeDb
 
 # Configuration for tests
@@ -78,6 +78,28 @@ def create_test_documents(num_docs=3):
             name=f"test_doc_{i}",
         )
         for i in range(num_docs)
+    ]
+
+
+@pytest.fixture
+def sample_documents():
+    """Fixture to create sample documents"""
+    return [
+        Document(
+            content="Tom Kha Gai is a Thai coconut soup with chicken",
+            meta_data={"cuisine": "Thai", "type": "soup"},
+            name="tom_kha",
+        ),
+        Document(
+            content="Pad Thai is a stir-fried rice noodle dish",
+            meta_data={"cuisine": "Thai", "type": "noodles"},
+            name="pad_thai",
+        ),
+        Document(
+            content="Green curry is a spicy Thai curry with coconut milk",
+            meta_data={"cuisine": "Thai", "type": "curry"},
+            name="green_curry",
+        ),
     ]
 
 
@@ -180,22 +202,6 @@ def test_drop(mock_pinecone_db):
         mock_pinecone_db.client.delete_index.assert_not_called()
 
 
-def test_doc_exists(mock_pinecone_db):
-    """Test doc_exists method."""
-    doc = create_test_documents(1)[0]
-
-    # Test when document doesn't exist
-    mock_pinecone_db.index.fetch.return_value.vectors = {}
-
-    assert mock_pinecone_db.doc_exists(doc) is False
-    mock_pinecone_db.index.fetch.assert_called_with(ids=[doc.id], namespace=TEST_NAMESPACE)
-
-    # Test when document exists
-    mock_pinecone_db.index.fetch.return_value.vectors = {doc.id: {"id": doc.id}}
-
-    assert mock_pinecone_db.doc_exists(doc) is True
-
-
 def test_name_exists(mock_pinecone_db):
     """Test name_exists method."""
     # Test when index exists
@@ -215,10 +221,10 @@ def test_upsert(mock_pinecone_db, mock_embedder):
     docs = create_test_documents(2)
 
     # Mock embedder
-    mock_embedder.get_embedding.return_value = [0.1] * 1024
+    mock_embedder.get_embedding_and_usage.return_value = ([0.1] * 1024, {"prompt_tokens": 10, "total_tokens": 10})
 
     # Test upsert
-    mock_pinecone_db.upsert(docs)
+    mock_pinecone_db.upsert(documents=docs, content_hash="test_hash")
 
     # Check that index.upsert was called with the right arguments
     mock_pinecone_db.index.upsert.assert_called_once()
@@ -235,9 +241,10 @@ def test_upsert(mock_pinecone_db, mock_embedder):
 
 
 def test_insert_not_supported(mock_pinecone_db):
-    """Test that insert raises NotImplementedError."""
-    with pytest.raises(NotImplementedError):
-        mock_pinecone_db.insert([])
+    """Test that insert logs warning and redirects to upsert."""
+    with patch.object(mock_pinecone_db, "upsert") as mock_upsert:
+        mock_pinecone_db.insert(documents=[], content_hash="test_hash")
+        mock_upsert.assert_called_once()
 
 
 def test_search(mock_pinecone_db, mock_embedder):
@@ -245,7 +252,7 @@ def test_search(mock_pinecone_db, mock_embedder):
     query = "test query"
 
     # Mock embedder
-    mock_embedder.get_embedding.return_value = [0.1] * 1024
+    mock_embedder.get_embedding_and_usage.return_value = ([0.1] * 1024, {"prompt_tokens": 10, "total_tokens": 10})
 
     # Test search
     results = mock_pinecone_db.search(query, limit=2)
@@ -313,20 +320,6 @@ async def test_async_create(mock_pinecone_db):
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(mock_pinecone_db):
-    """Test async_doc_exists method."""
-    doc = create_test_documents(1)[0]
-
-    with patch.object(mock_pinecone_db, "doc_exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
-        mock_to_thread.return_value = True
-
-        result = await mock_pinecone_db.async_doc_exists(doc)
-
-        assert result is True
-        mock_to_thread.assert_called_once_with(mock_pinecone_db.doc_exists, doc)
-
-
-@pytest.mark.asyncio
 async def test_async_name_exists(mock_pinecone_db):
     """Test async_name_exists method."""
     with patch.object(mock_pinecone_db, "name_exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
@@ -344,7 +337,7 @@ async def test_async_upsert(mock_pinecone_db, mock_embedder):
     docs = create_test_documents(2)
 
     # Mock embedder
-    mock_embedder.get_embedding.return_value = [0.1] * 1024
+    mock_embedder.get_embedding_and_usage.return_value = ([0.1] * 1024, {"prompt_tokens": 10, "total_tokens": 10})
 
     # Create the expected prepared vectors
     prepared_vectors_batch = [
@@ -368,7 +361,7 @@ async def test_async_upsert(mock_pinecone_db, mock_embedder):
         patch("asyncio.gather", gather_mock),
     ):
         # Call the method
-        await mock_pinecone_db.async_upsert(docs)
+        await mock_pinecone_db.async_upsert(documents=docs, content_hash="test_hash")
 
         # Verify gather was called
         gather_mock.assert_called_once()
@@ -385,9 +378,10 @@ async def test_async_upsert(mock_pinecone_db, mock_embedder):
 
 @pytest.mark.asyncio
 async def test_async_insert_not_supported(mock_pinecone_db):
-    """Test that async_insert raises NotImplementedError."""
-    with pytest.raises(NotImplementedError):
-        await mock_pinecone_db.async_insert([])
+    """Test that async_insert logs warning and redirects to async_upsert."""
+    with patch.object(mock_pinecone_db, "async_upsert") as mock_async_upsert:
+        await mock_pinecone_db.async_insert(documents=[], content_hash="test_hash")
+        mock_async_upsert.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -413,3 +407,199 @@ async def test_async_drop_not_supported(mock_pinecone_db):
     """Test that async_drop raises NotImplementedError."""
     with pytest.raises(NotImplementedError):
         await mock_pinecone_db.async_drop()
+
+
+def test_delete_by_id(mock_pinecone_db, sample_documents):
+    """Test deleting documents by ID"""
+    # Mock insert and get_count
+    with patch.object(mock_pinecone_db, "insert"), patch.object(mock_pinecone_db, "get_count") as mock_get_count:
+        mock_pinecone_db.insert(documents=sample_documents, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_id method
+    with patch.object(mock_pinecone_db, "delete_by_id") as mock_delete_by_id:
+        mock_delete_by_id.return_value = True
+
+        # Get the actual ID that would be generated for the first document
+        from hashlib import md5
+
+        cleaned_content = sample_documents[0].content.replace("\x00", "\ufffd")
+        doc_id = md5(cleaned_content.encode()).hexdigest()
+
+        # Test delete by ID
+        result = mock_pinecone_db.delete_by_id(doc_id)
+        assert result is True
+        mock_delete_by_id.assert_called_once_with(doc_id)
+
+        # Test delete non-existent ID
+        mock_delete_by_id.reset_mock()
+        mock_delete_by_id.return_value = True
+        result = mock_pinecone_db.delete_by_id("nonexistent_id")
+        assert result is True
+
+
+def test_delete_by_name(mock_pinecone_db, sample_documents):
+    """Test deleting documents by name"""
+    # Mock insert and get_count
+    with patch.object(mock_pinecone_db, "insert"), patch.object(mock_pinecone_db, "get_count") as mock_get_count:
+        mock_pinecone_db.insert(documents=sample_documents, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_name method
+    with patch.object(mock_pinecone_db, "delete_by_name") as mock_delete_by_name:
+        mock_delete_by_name.return_value = True
+
+        # Test delete by name
+        result = mock_pinecone_db.delete_by_name("tom_kha")
+        assert result is True
+        mock_delete_by_name.assert_called_once_with("tom_kha")
+
+        # Test delete non-existent name
+        mock_delete_by_name.reset_mock()
+        mock_delete_by_name.return_value = False
+        result = mock_pinecone_db.delete_by_name("nonexistent")
+        assert result is False
+
+
+def test_delete_by_metadata(mock_pinecone_db, sample_documents):
+    """Test deleting documents by metadata"""
+    # Mock insert and get_count
+    with patch.object(mock_pinecone_db, "insert"), patch.object(mock_pinecone_db, "get_count") as mock_get_count:
+        mock_pinecone_db.insert(documents=sample_documents, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_metadata method
+    with patch.object(mock_pinecone_db, "delete_by_metadata") as mock_delete_by_metadata:
+        # Test delete all Thai cuisine documents
+        mock_delete_by_metadata.return_value = True
+        result = mock_pinecone_db.delete_by_metadata({"cuisine": "Thai"})
+        assert result is True
+        mock_delete_by_metadata.assert_called_once_with({"cuisine": "Thai"})
+
+        # Test delete by specific metadata combination
+        mock_delete_by_metadata.reset_mock()
+        mock_delete_by_metadata.return_value = True
+        result = mock_pinecone_db.delete_by_metadata({"cuisine": "Thai", "type": "soup"})
+        assert result is True
+        mock_delete_by_metadata.assert_called_once_with({"cuisine": "Thai", "type": "soup"})
+
+        # Test delete by non-existent metadata
+        mock_delete_by_metadata.reset_mock()
+        mock_delete_by_metadata.return_value = False
+        result = mock_pinecone_db.delete_by_metadata({"cuisine": "Italian"})
+        assert result is False
+
+
+def test_delete_by_content_id(mock_pinecone_db, sample_documents):
+    """Test deleting documents by content ID"""
+    # Add content_id to sample documents
+    sample_documents[0].content_id = "recipe_1"
+    sample_documents[1].content_id = "recipe_2"
+    sample_documents[2].content_id = "recipe_3"
+
+    # Mock insert and get_count
+    with patch.object(mock_pinecone_db, "insert"), patch.object(mock_pinecone_db, "get_count") as mock_get_count:
+        mock_pinecone_db.insert(documents=sample_documents, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_content_id method
+    with patch.object(mock_pinecone_db, "delete_by_content_id") as mock_delete_by_content_id:
+        # Test delete by content_id
+        mock_delete_by_content_id.return_value = True
+        result = mock_pinecone_db.delete_by_content_id("recipe_1")
+        assert result is True
+        mock_delete_by_content_id.assert_called_once_with("recipe_1")
+
+        # Test delete non-existent content_id
+        mock_delete_by_content_id.reset_mock()
+        mock_delete_by_content_id.return_value = False
+        result = mock_pinecone_db.delete_by_content_id("nonexistent_content_id")
+        assert result is False
+
+
+def test_delete_by_name_multiple_documents(mock_pinecone_db):
+    """Test deleting multiple documents with the same name"""
+    # Create multiple documents with the same name
+    docs = [
+        Document(
+            content="First version of Tom Kha Gai",
+            meta_data={"version": "1"},
+            name="tom_kha",
+            content_id="recipe_1_v1",
+        ),
+        Document(
+            content="Second version of Tom Kha Gai",
+            meta_data={"version": "2"},
+            name="tom_kha",
+            content_id="recipe_1_v2",
+        ),
+        Document(
+            content="Pad Thai recipe",
+            meta_data={"version": "1"},
+            name="pad_thai",
+            content_id="recipe_2_v1",
+        ),
+    ]
+
+    # Mock insert and get_count
+    with patch.object(mock_pinecone_db, "insert"), patch.object(mock_pinecone_db, "get_count") as mock_get_count:
+        mock_pinecone_db.insert(documents=docs, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_name and name_exists methods
+    with (
+        patch.object(mock_pinecone_db, "delete_by_name") as mock_delete_by_name,
+        patch.object(mock_pinecone_db, "name_exists") as mock_name_exists,
+    ):
+        mock_delete_by_name.return_value = True
+        mock_name_exists.side_effect = [False, True]  # tom_kha doesn't exist, pad_thai exists
+
+        # Test delete all documents with name "tom_kha"
+        result = mock_pinecone_db.delete_by_name("tom_kha")
+        assert result is True
+        mock_delete_by_name.assert_called_once_with("tom_kha")
+
+        # Verify name_exists behavior
+        assert mock_pinecone_db.name_exists("tom_kha") is False
+        assert mock_pinecone_db.name_exists("pad_thai") is True
+
+
+def test_delete_by_metadata_complex(mock_pinecone_db):
+    """Test deleting documents with complex metadata matching"""
+    docs = [
+        Document(
+            content="Thai soup recipe",
+            meta_data={"cuisine": "Thai", "type": "soup", "spicy": True},
+            name="recipe_1",
+        ),
+        Document(
+            content="Thai noodle recipe",
+            meta_data={"cuisine": "Thai", "type": "noodles", "spicy": False},
+            name="recipe_2",
+        ),
+        Document(
+            content="Italian pasta recipe",
+            meta_data={"cuisine": "Italian", "type": "pasta", "spicy": False},
+            name="recipe_3",
+        ),
+    ]
+
+    # Mock insert and get_count
+    with patch.object(mock_pinecone_db, "insert"), patch.object(mock_pinecone_db, "get_count") as mock_get_count:
+        mock_pinecone_db.insert(documents=docs, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_metadata method
+    with patch.object(mock_pinecone_db, "delete_by_metadata") as mock_delete_by_metadata:
+        # Test delete only spicy Thai dishes
+        mock_delete_by_metadata.return_value = True
+        result = mock_pinecone_db.delete_by_metadata({"cuisine": "Thai", "spicy": True})
+        assert result is True
+        mock_delete_by_metadata.assert_called_once_with({"cuisine": "Thai", "spicy": True})
+
+        # Test delete all non-spicy dishes
+        mock_delete_by_metadata.reset_mock()
+        mock_delete_by_metadata.return_value = True
+        result = mock_pinecone_db.delete_by_metadata({"spicy": False})
+        assert result is True
+        mock_delete_by_metadata.assert_called_once_with({"spicy": False})

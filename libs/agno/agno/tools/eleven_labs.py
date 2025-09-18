@@ -6,9 +6,10 @@ from typing import Any, Iterator, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import AudioArtifact
+from agno.media import Audio
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import logger
 
 try:
@@ -39,6 +40,10 @@ class ElevenLabsTools(Toolkit):
         target_directory: Optional[str] = None,
         model_id: str = "eleven_multilingual_v2",
         output_format: ElevenLabsAudioOutputFormat = "mp3_44100_64",
+        enable_get_voices: bool = True,
+        enable_generate_sound_effect: bool = True,
+        enable_text_to_speech: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("ELEVEN_LABS_API_KEY")
@@ -57,10 +62,12 @@ class ElevenLabsTools(Toolkit):
         self.eleven_labs_client = ElevenLabs(api_key=self.api_key)
 
         tools: List[Any] = []
-
-        tools.append(self.get_voices)
-        tools.append(self.generate_sound_effect)
-        tools.append(self.text_to_speech)
+        if all or enable_get_voices:
+            tools.append(self.get_voices)
+        if all or enable_generate_sound_effect:
+            tools.append(self.generate_sound_effect)
+        if all or enable_text_to_speech:
+            tools.append(self.text_to_speech)
 
         super().__init__(name="elevenlabs_tools", tools=tools, **kwargs)
 
@@ -122,9 +129,7 @@ class ElevenLabsTools(Toolkit):
 
         return base64_audio
 
-    def generate_sound_effect(
-        self, agent: Union[Agent, Team], prompt: str, duration_seconds: Optional[float] = None
-    ) -> str:
+    def generate_sound_effect(self, prompt: str, duration_seconds: Optional[float] = None) -> ToolResult:
         """
         Use this function to generate sound effect audio from a text prompt.
 
@@ -132,7 +137,7 @@ class ElevenLabsTools(Toolkit):
             prompt (str): Text to generate audio from.
             duration_seconds (Optional[float]): Duration in seconds to generate audio from. Has to be between 0.5 and 22.
         Returns:
-            str: Return the path to the generated audio file.
+            ToolResult: A ToolResult containing the generated audio or error message.
         """
         try:
             audio_generator = self.eleven_labs_client.text_to_sound_effects.convert(
@@ -141,29 +146,30 @@ class ElevenLabsTools(Toolkit):
 
             base64_audio = self._process_audio(audio_generator)
 
-            # Attach to the agent
-            agent.add_audio(
-                AudioArtifact(
-                    id=str(uuid4()),
-                    base64_audio=base64_audio,
-                    mime_type="audio/mpeg",
-                )
+            # Create AudioArtifact
+            audio_artifact = Audio(
+                id=str(uuid4()),
+                base64_audio=base64_audio,
+                mime_type="audio/mpeg",
             )
 
-            return "Audio generated successfully"
+            return ToolResult(
+                content="Audio generated successfully",
+                audios=[audio_artifact],
+            )
 
         except Exception as e:
             logger.error(f"Failed to generate audio: {e}")
-            return f"Error: {e}"
+            return ToolResult(content=f"Error: {e}")
 
-    def text_to_speech(self, agent: Union[Agent, Team], prompt: str) -> str:
+    def text_to_speech(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
         """
         Use this function to convert text to speech audio.
 
         Args:
             prompt (str): Text to generate audio from.
         Returns:
-            str: Return the path to the generated audio file.
+            ToolResult: A ToolResult containing the generated audio or error message.
         """
         try:
             audio_generator = self.eleven_labs_client.text_to_speech.convert(
@@ -175,17 +181,18 @@ class ElevenLabsTools(Toolkit):
 
             base64_audio = self._process_audio(audio_generator)
 
-            # Attach to the agent
-            agent.add_audio(
-                AudioArtifact(
-                    id=str(uuid4()),
-                    base64_audio=base64_audio,
-                    mime_type="audio/mpeg",
-                )
+            # Create AudioArtifact
+            audio_artifact = Audio(
+                id=str(uuid4()),
+                base64_audio=base64_audio,
+                mime_type="audio/mpeg",
             )
 
-            return "Audio generated successfully"
+            return ToolResult(
+                content="Audio generated successfully",
+                audios=[audio_artifact],
+            )
 
         except Exception as e:
             logger.error(f"Failed to generate audio: {e}")
-            return f"Error: {e}"
+            return ToolResult(content=f"Error: {e}")

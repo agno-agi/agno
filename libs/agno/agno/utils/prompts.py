@@ -6,28 +6,28 @@ from pydantic import BaseModel
 from agno.utils.log import log_warning
 
 
-def get_json_output_prompt(response_model: Union[str, list, BaseModel]) -> str:
+def get_json_output_prompt(output_schema: Union[str, list, BaseModel]) -> str:
     """Return the JSON output prompt for the Agent.
 
-    This is added to the system prompt when the response_model is set and structured_outputs is False.
+    This is added to the system prompt when the output_schema is set and structured_outputs is False.
     """
 
     json_output_prompt = "Provide your output as a JSON containing the following fields:"
-    if response_model is not None:
-        if isinstance(response_model, str):
+    if output_schema is not None:
+        if isinstance(output_schema, str):
             json_output_prompt += "\n<json_fields>"
-            json_output_prompt += f"\n{response_model}"
+            json_output_prompt += f"\n{output_schema}"
             json_output_prompt += "\n</json_fields>"
-        elif isinstance(response_model, list):
+        elif isinstance(output_schema, list):
             json_output_prompt += "\n<json_fields>"
-            json_output_prompt += f"\n{json.dumps(response_model)}"
+            json_output_prompt += f"\n{json.dumps(output_schema)}"
             json_output_prompt += "\n</json_fields>"
         elif (
-            issubclass(type(response_model), BaseModel)
-            or issubclass(response_model, BaseModel)  # type: ignore
-            or isinstance(response_model, BaseModel)
+            issubclass(type(output_schema), BaseModel)
+            or issubclass(output_schema, BaseModel)  # type: ignore
+            or isinstance(output_schema, BaseModel)
         ):  # type: ignore
-            json_schema = response_model.model_json_schema()
+            json_schema = output_schema.model_json_schema()
             if json_schema is not None:
                 response_model_properties = {}
                 json_schema_properties = json_schema.get("properties")
@@ -85,7 +85,7 @@ def get_json_output_prompt(response_model: Union[str, list, BaseModel]) -> str:
                     json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2)}"
                     json_output_prompt += "\n</json_field_properties>"
         else:
-            log_warning(f"Could not build json schema for {response_model}")
+            log_warning(f"Could not build json schema for {output_schema}")
     else:
         json_output_prompt += "Provide the output as JSON."
 
@@ -95,13 +95,13 @@ def get_json_output_prompt(response_model: Union[str, list, BaseModel]) -> str:
     return json_output_prompt
 
 
-def get_response_model_format_prompt(response_model: Type[BaseModel]) -> str:
+def get_response_model_format_prompt(output_schema: Type[BaseModel]) -> str:
     """Return the format prompt for the response model."""
 
     message = "Make sure your response is a valid string (NOT JSON) that mentions the following topics:"
 
     # Extract field names and descriptions
-    for field_name, field_info in response_model.model_fields.items():
+    for field_name, field_info in output_schema.model_fields.items():
         description = field_info.description or ""
         if description:
             message += f"\n- {field_name}: {description}"

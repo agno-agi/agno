@@ -2,12 +2,15 @@
 pip install elevenlabs
 """
 
+import base64
+
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.google import Gemini
 from agno.tools.eleven_labs import ElevenLabsTools
+from agno.utils.media import save_base64_data
 
 audio_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=Gemini(id="gemini-2.5-pro"),
     tools=[
         ElevenLabsTools(
             voice_id="21m00Tcm4TlvDq8ikWAM",
@@ -24,9 +27,18 @@ audio_agent = Agent(
         "The audio should be long and detailed.",
     ],
     markdown=True,
-    show_tool_calls=True,
 )
 
-audio_agent.print_response("Generate a very long audio of history of french revolution")
+response = audio_agent.run(
+    "Generate a very long audio of history of french revolution and tell me which subject it belongs to.",
+    debug_mode=True,
+)
+
+if response.audio:
+    print("Agent response:", response.content)
+    base64_audio = base64.b64encode(response.audio[0].content).decode("utf-8")
+    save_base64_data(base64_audio, "tmp/french_revolution.mp3")
+    print("Successfully saved generated speech to tmp/french_revolution.mp3")
+
 
 audio_agent.print_response("Generate a kick sound effect")

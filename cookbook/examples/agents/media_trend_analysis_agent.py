@@ -70,8 +70,7 @@ agent = Agent(
     {Detailed source list with links}
     """),
     markdown=True,
-    show_tool_calls=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 # Example usage:

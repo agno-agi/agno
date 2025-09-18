@@ -3,7 +3,7 @@ from enum import Enum
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.google import Gemini
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
@@ -17,13 +17,13 @@ def test_tool_use():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
 
 
@@ -35,7 +35,6 @@ def test_tool_use_stream():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
@@ -48,7 +47,7 @@ def test_tool_use_stream():
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -64,13 +63,13 @@ async def test_async_tool_use():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("What is the current price of TSLA?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant" and msg.tool_calls is not None)
     assert response.content is not None
 
 
@@ -83,12 +82,9 @@ async def test_async_tool_use_stream():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
-    )
+    response_stream = agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -98,7 +94,7 @@ async def test_async_tool_use_stream():
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -116,9 +112,8 @@ def test_tool_use_with_native_structured_outputs():
         model=Gemini(id="gemini-2.5-flash-preview-04-17"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
-        response_model=StockPrice,
+        output_schema=StockPrice,
         telemetry=False,
-        monitoring=False,
         delay_between_retries=5,
     )
     # Gemini does not support structured outputs for tool calls at this time
@@ -140,10 +135,9 @@ def test_tool_use_with_json_structured_outputs():
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
-        response_model=StockPrice,
+        output_schema=StockPrice,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
     )
     # Gemini does not support structured outputs for tool calls at this time
     response = agent.run("What is the current price of TSLA?")
@@ -161,12 +155,12 @@ def test_parallel_tool_calls():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and AAPL?")
 
     # Verify tool usage
+    assert response.messages is not None
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
@@ -184,12 +178,12 @@ def test_multiple_tool_calls():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and what is the latest news about it?")
 
     # Verify tool usage
+    assert response.messages is not None
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
@@ -205,7 +199,6 @@ def test_grounding():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Tokyo?")
@@ -223,7 +216,6 @@ def test_grounding_stream():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("What is the weather in Tokyo?", stream=True)
@@ -246,7 +238,6 @@ def test_search_stream():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("What are the latest scientific studies about climate change from 2024?", stream=True)
@@ -278,11 +269,11 @@ def test_tool_use_with_enum():
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[get_color],
         telemetry=False,
-        monitoring=False,
     )
     response = agent.run("I want the color red.")
 
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:

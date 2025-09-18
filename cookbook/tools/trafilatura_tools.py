@@ -28,7 +28,6 @@ def basic_text_extraction():
 
     agent = Agent(
         tools=[TrafilaturaTools()],  # Default configuration
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -59,7 +58,6 @@ def json_with_metadata():
                 include_tables=True,
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -89,7 +87,6 @@ def markdown_with_formatting():
                 with_metadata=True,
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -116,7 +113,6 @@ def metadata_only_extraction():
                 include_tools=["extract_metadata_only"],
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -146,7 +142,6 @@ def high_precision_extraction():
                 output_format="txt",
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -177,7 +172,6 @@ def high_recall_extraction():
                 output_format="markdown",
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -207,7 +201,6 @@ def language_specific_extraction():
                 deduplicate=True,
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -231,13 +224,12 @@ def website_crawling():
     agent = Agent(
         tools=[
             TrafilaturaTools(
-                include_tools=["crawl_website"],
+                enable_crawl_website=True,
                 max_crawl_urls=5,  # Limit for demo
                 output_format="json",
                 with_metadata=True,
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -261,10 +253,9 @@ def html_to_text_conversion():
     agent = Agent(
         tools=[
             TrafilaturaTools(
-                include_tools=["html_to_text"],
+                enable_html_to_text=True,
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -326,7 +317,6 @@ def research_assistant_agent():
         - Source Information
         - Recommendations for further research
         """,
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -361,7 +351,6 @@ def multiple_urls_different_configs():
                 favor_precision=True,
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -375,7 +364,6 @@ def multiple_urls_different_configs():
                 favor_recall=True,
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -418,7 +406,6 @@ def advanced_customization():
                 max_tree_size=10000,
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -449,7 +436,6 @@ def comparative_analysis():
                 favor_precision=True,
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -490,7 +476,6 @@ def content_research_pipeline():
         Use TrafilaturaTools to extract content and provide comprehensive analysis.
         Always include source metadata in your analysis.
         """,
-        show_tool_calls=True,
         markdown=True,
     )
 
@@ -530,7 +515,6 @@ def performance_optimized():
                 deduplicate=False,  # Skip deduplication for speed
             )
         ],
-        show_tool_calls=True,
         markdown=True,
     )
 
