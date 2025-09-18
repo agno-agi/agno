@@ -1,5 +1,5 @@
-from types import ModuleType, SimpleNamespace
 import sys
+from types import ModuleType, SimpleNamespace
 
 from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.document.base import Document
@@ -109,5 +109,3 @@ def test_semantic_chunking_falls_back_to_embedding_model_for_older_versions():
         assert abs(fake.threshold - 0.8) < 1e-9
     finally:
         remove_fake_chonkie()
-
-
