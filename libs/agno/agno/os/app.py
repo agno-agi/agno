@@ -37,6 +37,7 @@ from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.session import get_session_router
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import update_cors_middleware
 from agno.team.team import Team
 from agno.utils.log import logger
 from agno.utils.string import generate_id, generate_id_from_name
@@ -286,14 +287,8 @@ class AgentOS:
 
             self.fastapi_app.middleware("http")(general_exception_handler)
 
-            self.fastapi_app.add_middleware(
-                CORSMiddleware,
-                allow_origins=self.settings.cors_origin_list,  # type: ignore
-                allow_credentials=True,
-                allow_methods=["*"],
-                allow_headers=["*"],
-                expose_headers=["*"],
-            )
+        # Update CORS middleware
+        update_cors_middleware(self.fastapi_app, self.settings.cors_origin_list)
 
         return self.fastapi_app
 

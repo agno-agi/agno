@@ -85,4 +85,4 @@ if __name__ == "__main__":
     - API docs: http://localhost:7777/docs
 
     """
-    agent_os.serve(app="basic_example:app", reload=True)
+    agent_os.serve(app="custom_fastapi_app:app", reload=True)
