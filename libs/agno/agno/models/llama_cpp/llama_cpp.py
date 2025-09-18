@@ -20,6 +20,3 @@ class LlamaCpp(OpenAILike):
     provider: str = "LlamaCPP"
 
     base_url: str = "http://127.0.0.1:8080/v1"
-
-    supports_native_structured_outputs: bool = False
-    supports_json_schema_outputs: bool = True
