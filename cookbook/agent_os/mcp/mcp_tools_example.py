@@ -15,7 +15,7 @@ db = SqliteDb(db_file="tmp/agentos.db")
 
 mcp_tools = MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")
 
-# Setup basic agents, teams and workflows
+# Setup basic agent
 agno_support_agent = Agent(
     id="agno-support-agent",
     name="Agno Support Agent",

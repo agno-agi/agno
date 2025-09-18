@@ -34,7 +34,7 @@ brave_mcp_tools = MCPTools(
 #     env={"BRAVE_API_KEY": getenv("BRAVE_API_KEY")},
 # )
 
-# Setup basic agents, teams and workflows
+# Setup ai framework agent
 ai_framework_agent = Agent(
     id="agno-support-agent",
     name="Agno Support Agent",

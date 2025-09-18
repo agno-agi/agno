@@ -15,12 +15,12 @@ from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_info
 
-# Setup the database (SQLite for quick local setup)
+# Setup the database
 db = SqliteDb(db_file="tmp/agentos.db")
 
 mcp_tools = MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")
 
-# Setup basic agents, teams and workflows
+# Setup basic support agent
 agno_support_agent = Agent(
     id="agno-support-agent",
     name="Agno Support Agent",
