@@ -6,7 +6,7 @@
 
 Run your chat model using Llama CPP. For the examples below make sure to download `ggml-org/gpt-oss-20b-GGUF`. Please also make sure that the model is reachable at `http://127.0.0.1:8080/v1`.
 
-Sample command:
+Command to run GPT-OSS-20B:
 
 ```shell
 llama-server -hf ggml-org/gpt-oss-20b-GGUF  --ctx-size 0 --jinja -ub 2048 -b 2048
