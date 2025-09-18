@@ -9,14 +9,14 @@ In addition you can pass your own lifespan to AgentOS.
 from contextlib import asynccontextmanager
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_info
 
-# Setup the database
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+# Setup the database (SQLite for quick local setup)
+db = SqliteDb(db_file="tmp/agentos.db")
 
 mcp_tools = MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")
 
@@ -58,4 +58,4 @@ if __name__ == "__main__":
 
     """
     # Don't use reload=True here, this can cause issues with the lifespan
-    agent_os.serve(app="mcp_tools_example_existing_lifespan:app")
+    agent_os.serve(app="mcp_tools_existing_lifespan:app")

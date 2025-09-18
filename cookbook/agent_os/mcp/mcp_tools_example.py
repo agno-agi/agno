@@ -5,13 +5,13 @@ AgentOS handles the lifespan of the MCPTools internally.
 """
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
 
 # Setup the database
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = SqliteDb(db_file="tmp/agentos.db")
 
 mcp_tools = MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")
 
