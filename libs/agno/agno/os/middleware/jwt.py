@@ -17,6 +17,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
     2. Decodes and validates the token
     3. Extracts user_id and other claims
     4. Adds them to request state for use in routes
+    5. Extracts specified dependency claims into a dependencies dict
     """
 
     def __init__(
@@ -28,6 +29,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         user_id_claim: str = "sub",
         validate_token: bool = True,
         excluded_route_paths: Optional[List[str]] = None,
+        dependencies_claims: Optional[List[str]] = None,
     ):
         super().__init__(app)
         self.secret_key = secret_key
@@ -36,6 +38,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.user_id_claim = user_id_claim
         self.validate_token = validate_token
         self.excluded_route_paths = excluded_route_paths
+        self.dependencies_claims = dependencies_claims or []
         
     async def dispatch(self, request: Request, call_next) -> Response:
         if self.excluded_route_paths and request.url.path in self.excluded_route_paths:
@@ -69,37 +72,32 @@ class JWTMiddleware(BaseHTTPMiddleware):
             # Extract user information
             user_id = payload.get(self.user_id_claim)
 
+            # Extract dependency claims
+            dependencies = {}
+            for claim in self.dependencies_claims:
+                if claim in payload:
+                    dependencies[claim] = payload[claim]
+
             # Add to request state
             request.state.jwt_payload = payload
             request.state.user_id = user_id
             request.state.authenticated = True
+            request.state.dependencies = dependencies
 
             log_debug(f"JWT decoded successfully for user: {user_id}")
+            if dependencies:
+                log_debug(f"Extracted dependencies: {dependencies}")
 
         except jwt.ExpiredSignatureError:
             if self.validate_token:
                 return JSONResponse(status_code=401, content={"detail": "Token has expired"})
             request.state.authenticated = False
+            request.state.dependencies = {}
 
         except jwt.InvalidTokenError as e:
             if self.validate_token:
                 return JSONResponse(status_code=401, content={"detail": f"Invalid token: {str(e)}"})
             request.state.authenticated = False
+            request.state.dependencies = {}
 
         return await call_next(request)
-
-
-# Helper functions
-def get_current_user_id(request: Request) -> Optional[str]:
-    """Helper function to get current user ID from request."""
-    return getattr(request.state, "user_id", None)
-
-
-def get_jwt_payload(request: Request) -> Optional[Dict[str, Any]]:
-    """Helper function to get full JWT payload from request."""
-    return getattr(request.state, "jwt_payload", None)
-
-
-def is_authenticated(request: Request) -> bool:
-    """Helper function to check if request is authenticated."""
-    return getattr(request.state, "authenticated", False)
