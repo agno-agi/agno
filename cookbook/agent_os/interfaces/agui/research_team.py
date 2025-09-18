@@ -3,20 +3,23 @@ from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.os.interfaces.agui.agui import AGUI
 from agno.team.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 researcher = Agent(
     name="researcher",
     role="Research Assistant",
     model=OpenAIChat(id="gpt-4o"),
     instructions="You are a research assistant. Find information and provide detailed analysis.",
+    tools=[DuckDuckGoTools()],
     markdown=True,
 )
 
 writer = Agent(
     name="writer",
     role="Content Writer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o4-mini"),
     instructions="You are a content writer. Create well-structured content based on research.",
+    tools=[DuckDuckGoTools()],
     markdown=True,
 )
 
