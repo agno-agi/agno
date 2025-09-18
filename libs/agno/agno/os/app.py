@@ -10,7 +10,6 @@ from fastapi.routing import APIRoute
 from rich import box
 from rich.panel import Panel
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
@@ -38,6 +37,7 @@ from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.session import get_session_router
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import update_cors_middleware
 from agno.team.team import Team
 from agno.utils.log import logger
 from agno.utils.string import generate_id, generate_id_from_name
@@ -196,9 +196,11 @@ class AgentOS:
                 # Handle (middleware_class, params_dict) tuples - preferred pattern
                 middleware_class, params = middleware_item
                 if isinstance(middleware_class, type) and issubclass(middleware_class, BaseHTTPMiddleware):
-                    self.fastapi_app.add_middleware(middleware_class, **params) # type: ignore
+                    self.fastapi_app.add_middleware(middleware_class, **params)  # type: ignore
                 else:
-                    raise ValueError(f"First element of tuple must be a BaseHTTPMiddleware subclass, got: {middleware_class}")
+                    raise ValueError(
+                        f"First element of tuple must be a BaseHTTPMiddleware subclass, got: {middleware_class}"
+                    )
             else:
                 raise ValueError(
                     f"Middleware must be a tuple of (MiddlewareClass, params_dict). "
@@ -310,14 +312,8 @@ class AgentOS:
 
             self.fastapi_app.middleware("http")(general_exception_handler)
 
-            self.fastapi_app.add_middleware(
-                CORSMiddleware,
-                allow_origins=self.settings.cors_origin_list,  # type: ignore
-                allow_credentials=True,
-                allow_methods=["*"],
-                allow_headers=["*"],
-                expose_headers=["*"],
-            )
+        # Update CORS middleware
+        update_cors_middleware(self.fastapi_app, self.settings.cors_origin_list)  # type: ignore
 
         return self.fastapi_app
 
@@ -392,7 +388,7 @@ class AgentOS:
                 for route in self.fastapi_app.routes:
                     for conflict in conflicts:
                         if isinstance(route, APIRoute):
-                            if route.path == conflict["path"] and list(route.methods) == list(conflict["methods"]):
+                            if route.path == conflict["path"] and list(route.methods) == list(conflict["methods"]):  # type: ignore
                                 self.fastapi_app.routes.pop(self.fastapi_app.routes.index(route))
 
                 self.fastapi_app.include_router(router)
@@ -446,18 +442,25 @@ class AgentOS:
     def _auto_discover_databases(self) -> None:
         """Auto-discover the databases used by all contextual agents, teams and workflows."""
         dbs = {}
+        knowledge_dbs = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
             if agent.db:
                 dbs[agent.db.id] = agent.db
             if agent.knowledge and agent.knowledge.contents_db:
-                dbs[agent.knowledge.contents_db.id] = agent.knowledge.contents_db
+                knowledge_dbs[agent.knowledge.contents_db.id] = agent.knowledge.contents_db
+                # Also add to general dbs if it's used for both purposes
+                if agent.knowledge.contents_db.id not in dbs:
+                    dbs[agent.knowledge.contents_db.id] = agent.knowledge.contents_db
 
         for team in self.teams or []:
             if team.db:
                 dbs[team.db.id] = team.db
             if team.knowledge and team.knowledge.contents_db:
-                dbs[team.knowledge.contents_db.id] = team.knowledge.contents_db
+                knowledge_dbs[team.knowledge.contents_db.id] = team.knowledge.contents_db
+                # Also add to general dbs if it's used for both purposes
+                if team.knowledge.contents_db.id not in dbs:
+                    dbs[team.knowledge.contents_db.id] = team.knowledge.contents_db
 
         for workflow in self.workflows or []:
             if workflow.db:
@@ -470,6 +473,7 @@ class AgentOS:
                 dbs[interface.team.db.id] = interface.team.db
 
         self.dbs = dbs
+        self.knowledge_dbs = knowledge_dbs
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
@@ -534,16 +538,17 @@ class AgentOS:
         if knowledge_config.dbs is None:
             knowledge_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
+        multiple_knowledge_dbs: bool = len(self.knowledge_dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
-        for db_id in self.dbs.keys():
+        # Only add databases that are actually used for knowledge contents
+        for db_id in self.knowledge_dbs.keys():
             if db_id not in dbs_with_specific_config:
                 knowledge_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=KnowledgeDomainConfig(
-                            display_name="Knowledge" if not multiple_dbs else "Knowledge in database " + db_id
+                            display_name="Knowledge" if not multiple_knowledge_dbs else "Knowledge in database " + db_id
                         ),
                     )
                 )

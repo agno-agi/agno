@@ -2,7 +2,7 @@ from .jwt import JWTMiddleware, get_current_user_id, get_jwt_payload, is_authent
 
 __all__ = [
     "JWTMiddleware",
-    "get_current_user_id", 
+    "get_current_user_id",
     "get_jwt_payload",
     "is_authenticated",
 ]

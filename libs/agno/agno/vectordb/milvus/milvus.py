@@ -423,6 +423,9 @@ class Milvus(VectorDb):
         else:
             for document in documents:
                 document.embed(embedder=self.embedder)
+                if not document.embedding:
+                    log_debug(f"Skipping document without embedding: {document.name} ({document.meta_data})")
+                    continue
                 cleaned_content = document.content.replace("\x00", "\ufffd")
                 doc_id = md5(cleaned_content.encode()).hexdigest()
 
@@ -465,6 +468,9 @@ class Milvus(VectorDb):
 
             async def process_document(document):
                 document.embed(embedder=self.embedder)
+                if not document.embedding:
+                    log_debug(f"Skipping document without embedding: {document.name} ({document.meta_data})")
+                    return None
                 cleaned_content = document.content.replace("\x00", "\ufffd")
                 doc_id = md5(cleaned_content.encode()).hexdigest()
 

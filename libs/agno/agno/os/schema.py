@@ -885,6 +885,7 @@ class TeamRunSchema(BaseModel):
     created_at: Optional[datetime]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
+
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
         run_input = get_run_input(run_dict)
@@ -926,6 +927,7 @@ class WorkflowRunSchema(BaseModel):
     reasoning_steps: Optional[List[dict]]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
+
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
         run_input = get_run_input(run_response, is_workflow_run=True)

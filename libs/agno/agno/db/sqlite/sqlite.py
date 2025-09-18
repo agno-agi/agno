@@ -333,8 +333,8 @@ class SqliteDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to read.
+            session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:

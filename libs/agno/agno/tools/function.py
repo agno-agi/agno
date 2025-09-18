@@ -485,6 +485,7 @@ class FunctionExecutionResult(BaseModel):
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
     audios: Optional[List[Audio]] = None
+    files: Optional[List[File]] = None
 
 
 class FunctionCall(BaseModel):
@@ -965,3 +966,4 @@ class ToolResult(BaseModel):
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
     audios: Optional[List[Audio]] = None
+    files: Optional[List[File]] = None

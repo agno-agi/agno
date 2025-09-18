@@ -1708,6 +1708,7 @@ class Workflow:
         # Create workflow run response with PENDING status
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            input=input,
             session_id=session_id,
             workflow_id=self.id,
             workflow_name=self.name,
@@ -1798,6 +1799,7 @@ class Workflow:
         # Create workflow run response with PENDING status
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            input=input,
             session_id=session_id,
             workflow_id=self.id,
             workflow_name=self.name,
@@ -1971,6 +1973,7 @@ class Workflow:
         # Create workflow run response that will be updated by reference
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            input=input,
             session_id=session_id,
             workflow_id=self.id,
             workflow_name=self.name,
@@ -2139,6 +2142,7 @@ class Workflow:
         # Create workflow run response that will be updated by reference
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            input=input,
             session_id=session_id,
             workflow_id=self.id,
             workflow_name=self.name,

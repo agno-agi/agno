@@ -1,6 +1,7 @@
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from fastapi import HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
+from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb
@@ -138,7 +139,7 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
 
-        return FileMedia(content=content)
+        return FileMedia(content=content, filename=file.filename, mime_type=file.content_type)
     except Exception as e:
         logger.error(f"Error processing document {file.filename}: {e}")
         return None
@@ -260,3 +261,33 @@ def _generate_schema_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
         schema["required"] = required
 
     return schema
+
+
+def update_cors_middleware(app: FastAPI, new_origins: list):
+    existing_origins: List[str] = []
+
+    # TODO: Allow more options where CORS is properly merged and user can disable this behaviour
+
+    # Extract existing origins from current CORS middleware
+    for middleware in app.user_middleware:
+        if middleware.cls == CORSMiddleware:
+            if hasattr(middleware, "kwargs"):
+                existing_origins = middleware.kwargs.get("allow_origins", [])
+            break
+    # Merge origins
+    merged_origins = list(set(new_origins + existing_origins))
+    final_origins = [origin for origin in merged_origins if origin != "*"]
+
+    # Remove existing CORS
+    app.user_middleware = [m for m in app.user_middleware if m.cls != CORSMiddleware]
+    app.middleware_stack = None
+
+    # Add updated CORS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=final_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["*"],
+    )

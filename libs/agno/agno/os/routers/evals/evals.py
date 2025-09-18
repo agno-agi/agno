@@ -380,7 +380,7 @@ def parse_eval_types_filter(
     eval_types: Optional[str] = Query(
         default=None,
         description="Comma-separated eval types (accuracy,performance,reliability)",
-        example="accuracy,performance",
+        examples=["accuracy,performance"],
     ),
 ) -> Optional[List[EvalType]]:
     """Parse comma-separated eval types into EvalType enums for filtering evaluation runs."""
