@@ -1,4 +1,9 @@
-from agno.utils.gemini import convert_schema, format_function_definitions, convert_pydantic_to_gemini_schema, needs_conversion
+from agno.utils.gemini import (
+    convert_schema,
+    format_function_definitions,
+    convert_pydantic_to_gemini_schema,
+    needs_conversion,
+)
 
 
 def test_convert_schema_simple_string():
@@ -323,19 +328,14 @@ def test_convert_schema_with_ref():
     """Test converting a schema with $ref to $defs"""
     schema_dict = {
         "type": "object",
-        "properties": {
-            "person": {"$ref": "#/$defs/Person"}
-        },
+        "properties": {"person": {"$ref": "#/$defs/Person"}},
         "$defs": {
             "Person": {
                 "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "age": {"type": "integer"}
-                },
-                "required": ["name"]
+                "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
+                "required": ["name"],
             }
-        }
+        },
     }
 
     result = convert_schema(schema_dict)
@@ -357,18 +357,16 @@ def test_convert_schema_with_circular_ref():
     """Test converting a schema with circular references"""
     schema_dict = {
         "type": "object",
-        "properties": {
-            "node": {"$ref": "#/$defs/Node"}
-        },
+        "properties": {"node": {"$ref": "#/$defs/Node"}},
         "$defs": {
             "Node": {
                 "type": "object",
                 "properties": {
                     "value": {"type": "string"},
-                    "next": {"$ref": "#/$defs/Node"}  # Circular reference
-                }
+                    "next": {"$ref": "#/$defs/Node"},  # Circular reference
+                },
             }
-        }
+        },
     }
 
     result = convert_schema(schema_dict)
@@ -392,19 +390,10 @@ def test_convert_schema_with_multiple_refs_to_same_def():
     """Test converting a schema with multiple references to the same definition"""
     schema_dict = {
         "type": "object",
-        "properties": {
-            "sender": {"$ref": "#/$defs/Person"},
-            "receiver": {"$ref": "#/$defs/Person"}
-        },
+        "properties": {"sender": {"$ref": "#/$defs/Person"}, "receiver": {"$ref": "#/$defs/Person"}},
         "$defs": {
-            "Person": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "email": {"type": "string"}
-                }
-            }
-        }
+            "Person": {"type": "object", "properties": {"name": {"type": "string"}, "email": {"type": "string"}}}
+        },
     }
 
     result = convert_schema(schema_dict)
@@ -426,13 +415,7 @@ def test_convert_schema_with_multiple_refs_to_same_def():
 
 def test_convert_pydantic_to_gemini_schema_with_dict():
     """Test converting a schema dict through the hybrid function"""
-    schema_dict = {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "age": {"type": "integer"}
-        }
-    }
+    schema_dict = {"type": "object", "properties": {"name": {"type": "string"}, "age": {"type": "integer"}}}
 
     result = convert_pydantic_to_gemini_schema(schema_dict)
 
@@ -460,13 +443,7 @@ def test_convert_pydantic_to_gemini_schema_with_pydantic_model():
 
 def test_needs_conversion_simple_schema():
     """Test that simple schemas don't need conversion"""
-    schema = {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "age": {"type": "integer"}
-        }
-    }
+    schema = {"type": "object", "properties": {"name": {"type": "string"}, "age": {"type": "integer"}}}
 
     assert needs_conversion(schema) is False
 
@@ -475,18 +452,16 @@ def test_needs_conversion_with_circular_ref():
     """Test that schemas with circular refs need conversion"""
     schema = {
         "type": "object",
-        "properties": {
-            "node": {"$ref": "#/$defs/Node"}
-        },
+        "properties": {"node": {"$ref": "#/$defs/Node"}},
         "$defs": {
             "Node": {
                 "type": "object",
                 "properties": {
                     "value": {"type": "string"},
-                    "next": {"$ref": "#/$defs/Node"}  # Circular
-                }
+                    "next": {"$ref": "#/$defs/Node"},  # Circular
+                },
             }
-        }
+        },
     }
 
     assert needs_conversion(schema) is True
@@ -496,19 +471,13 @@ def test_needs_conversion_with_self_ref():
     """Test that schemas with self-references need conversion"""
     schema = {
         "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "parent": {"$ref": "#/$defs/SameModel"}
-        },
+        "properties": {"name": {"type": "string"}, "parent": {"$ref": "#/$defs/SameModel"}},
         "$defs": {
             "SameModel": {
                 "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "parent": {"$ref": "#/$defs/SameModel"}
-                }
+                "properties": {"name": {"type": "string"}, "parent": {"$ref": "#/$defs/SameModel"}},
             }
-        }
+        },
     }
 
     assert needs_conversion(schema) is True
@@ -519,14 +488,8 @@ def test_needs_conversion_nested_no_refs():
     schema = {
         "type": "object",
         "properties": {
-            "address": {
-                "type": "object",
-                "properties": {
-                    "street": {"type": "string"},
-                    "city": {"type": "string"}
-                }
-            }
-        }
+            "address": {"type": "object", "properties": {"street": {"type": "string"}, "city": {"type": "string"}}}
+        },
     }
 
     assert needs_conversion(schema) is False
@@ -539,11 +502,11 @@ def test_convert_pydantic_with_circular_ref():
 
     class TreeNode(BaseModel):
         value: str
-        left: Optional['TreeNode'] = None
-        right: Optional['TreeNode'] = None
+        left: Optional["TreeNode"] = None
+        right: Optional["TreeNode"] = None
 
     result = convert_pydantic_to_gemini_schema(TreeNode)
 
     # Should be converted to Schema, not the raw model
     assert result != TreeNode
-    assert hasattr(result, 'type')  # Should be a Schema object
+    assert hasattr(result, "type")  # Should be a Schema object

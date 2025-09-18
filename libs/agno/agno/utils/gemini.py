@@ -26,7 +26,7 @@ def convert_pydantic_to_gemini_schema(model_or_schema: Any) -> Any:
     For these edge cases, we convert to Gemini's Schema format.
     """
     # If it's a Pydantic model, check if conversion is needed
-    if hasattr(model_or_schema, 'model_json_schema'):
+    if hasattr(model_or_schema, "model_json_schema"):
         schema_dict = model_or_schema.model_json_schema()
 
         # Check if schema has circular references or other issues
@@ -170,9 +170,7 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
 
 
 def convert_schema(
-    schema_dict: Dict[str, Any],
-    root_schema: Optional[Dict[str, Any]] = None,
-    visited_refs: Optional[set] = None
+    schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, Any]] = None, visited_refs: Optional[set] = None
 ) -> Optional[Schema]:
     """
     Recursively convert a JSON-like schema dictionary to a types.Schema object.
