@@ -74,6 +74,8 @@ class Knowledge:
     async def add_contents_async(self, *args, **kwargs) -> None:
         if args and isinstance(args[0], list):
             arguments = args[0]
+            upsert = kwargs.get("upsert", False)
+            skip_if_exists = kwargs.get("skip_if_exists", False)
             for argument in arguments:
                 await self.add_content_async(
                     name=argument.get("name"),
@@ -85,8 +87,8 @@ class Knowledge:
                     reader=argument.get("reader"),
                     include=argument.get("include"),
                     exclude=argument.get("exclude"),
-                    upsert=argument.get("upsert", False),
-                    skip_if_exists=argument.get("skip_if_exists", False),
+                    upsert=argument.get("upsert", upsert),
+                    skip_if_exists=argument.get("skip_if_exists", skip_if_exists),
                     remote_content=argument.get("remote_content", None),
                 )
 
@@ -102,7 +104,6 @@ class Knowledge:
             upsert = kwargs.get("upsert", False)
             skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
-
             for path in paths:
                 await self.add_content_async(
                     name=name,
@@ -304,7 +305,7 @@ class Knowledge:
             text_content: Optional text content to add directly
             metadata: Optional metadata dictionary
             topics: Optional list of topics
-            config: Optional cloud storage configuration
+            remote_content: Optional cloud storage configuration
             reader: Optional custom reader for processing the content
             include: Optional list of file patterns to include
             exclude: Optional list of file patterns to exclude

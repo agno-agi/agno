@@ -78,21 +78,25 @@ class OpenAIEmbedder(Embedder):
         return self.client.embeddings.create(**_request_params)
 
     def get_embedding(self, text: str) -> List[float]:
-        response: CreateEmbeddingResponse = self.response(text=text)
         try:
+            response: CreateEmbeddingResponse = self.response(text=text)
             return response.data[0].embedding
         except Exception as e:
             logger.warning(e)
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
-        response: CreateEmbeddingResponse = self.response(text=text)
+        try:
+            response: CreateEmbeddingResponse = self.response(text=text)
 
-        embedding = response.data[0].embedding
-        usage = response.usage
-        if usage:
-            return embedding, usage.model_dump()
-        return embedding, None
+            embedding = response.data[0].embedding
+            usage = response.usage
+            if usage:
+                return embedding, usage.model_dump()
+            return embedding, None
+        except Exception as e:
+            logger.warning(e)
+            return [], None
 
     async def async_get_embedding(self, text: str) -> List[float]:
         req: Dict[str, Any] = {
@@ -127,10 +131,14 @@ class OpenAIEmbedder(Embedder):
         if self.request_params:
             req.update(self.request_params)
 
-        response = await self.aclient.embeddings.create(**req)
-        embedding = response.data[0].embedding
-        usage = response.usage
-        return embedding, usage.model_dump() if usage else None
+        try:
+            response = await self.aclient.embeddings.create(**req)
+            embedding = response.data[0].embedding
+            usage = response.usage
+            return embedding, usage.model_dump() if usage else None
+        except Exception as e:
+            logger.warning(e)
+            return [], None
 
     def get_embeddings_batch(self, texts: List[str], batch_size: int = 100) -> List[List[float]]:
         """

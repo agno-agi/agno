@@ -168,7 +168,7 @@ class JsonDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: Optional[SessionType] = None,
+        session_type: SessionType,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
@@ -176,7 +176,7 @@ class JsonDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to read.
-            session_type (Optional[SessionType]): The type of the session to read.
+            session_type (SessionType): The type of the session to read.
             user_id (Optional[str]): The ID of the user to read the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
@@ -208,8 +208,10 @@ class JsonDb(BaseDb):
                         return AgentSession.from_dict(session)
                     elif session_type == SessionType.TEAM:
                         return TeamSession.from_dict(session)
-                    else:
+                    elif session_type == SessionType.WORKFLOW:
                         return WorkflowSession.from_dict(session)
+                    else:
+                        raise ValueError(f"Invalid session type: {session_type}")
 
             return None
 
@@ -338,8 +340,10 @@ class JsonDb(BaseDb):
                         return AgentSession.from_dict(session)
                     elif session_type == SessionType.TEAM:
                         return TeamSession.from_dict(session)
-                    else:
+                    elif session_type == SessionType.WORKFLOW:
                         return WorkflowSession.from_dict(session)
+                    else:
+                        raise ValueError(f"Invalid session type: {session_type}")
 
             return None
 

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from hashlib import md5
 from typing import Any, Dict, List, Mapping, Optional, Union, cast
 
@@ -59,6 +60,44 @@ class ChromaDb(VectorDb):
 
         # Chroma client kwargs
         self.kwargs = kwargs
+
+    def _flatten_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Union[str, int, float, bool]]:
+        """
+        Flatten nested metadata to ChromaDB-compatible format.
+
+        Args:
+            metadata: Dictionary that may contain nested structures
+
+        Returns:
+            Flattened dictionary with only primitive values
+        """
+        flattened: Dict[str, Any] = {}
+
+        def _flatten_recursive(obj: Any, prefix: str = "") -> None:
+            if isinstance(obj, dict):
+                if len(obj) == 0:
+                    # Handle empty dictionaries by converting to JSON string
+                    flattened[prefix] = json.dumps(obj)
+                else:
+                    for key, value in obj.items():
+                        new_key = f"{prefix}.{key}" if prefix else key
+                        _flatten_recursive(value, new_key)
+            elif isinstance(obj, (list, tuple)):
+                # Convert lists/tuples to JSON strings
+                flattened[prefix] = json.dumps(obj)
+            elif isinstance(obj, (str, int, float, bool)) or obj is None:
+                if obj is not None:  # ChromaDB doesn't accept None values
+                    flattened[prefix] = obj
+            else:
+                # Convert other complex types to JSON strings
+                try:
+                    flattened[prefix] = json.dumps(obj)
+                except (TypeError, ValueError):
+                    # If it can't be serialized, convert to string
+                    flattened[prefix] = str(obj)
+
+        _flatten_recursive(metadata)
+        return flattened
 
     @property
     def client(self) -> ClientAPI:
@@ -147,11 +186,14 @@ class ChromaDb(VectorDb):
 
             metadata["content_hash"] = content_hash
 
+            # Flatten metadata for ChromaDB compatibility
+            flattened_metadata = self._flatten_metadata(metadata)
+
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
-            docs_metadata.append(metadata)
-            log_debug(f"Prepared document: {document.id} | {document.name} | {metadata}")
+            docs_metadata.append(flattened_metadata)
+            log_debug(f"Prepared document: {document.id} | {document.name} | {flattened_metadata}")
 
         if self._collection is None:
             logger.warning("Collection does not exist")
@@ -196,11 +238,14 @@ class ChromaDb(VectorDb):
 
             metadata["content_hash"] = content_hash
 
+            # Flatten metadata for ChromaDB compatibility
+            flattened_metadata = self._flatten_metadata(metadata)
+
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
-            docs_metadata.append(metadata)
-            log_debug(f"Prepared document: {document.id} | {document.name} | {metadata}")
+            docs_metadata.append(flattened_metadata)
+            log_debug(f"Prepared document: {document.id} | {document.name} | {flattened_metadata}")
 
         if self._collection is None:
             logger.warning("Collection does not exist")
@@ -262,11 +307,14 @@ class ChromaDb(VectorDb):
 
             metadata["content_hash"] = content_hash
 
+            # Flatten metadata for ChromaDB compatibility
+            flattened_metadata = self._flatten_metadata(metadata)
+
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
-            docs_metadata.append(metadata)
-            log_debug(f"Upserted document: {document.id} | {document.name} | {metadata}")
+            docs_metadata.append(flattened_metadata)
+            log_debug(f"Upserted document: {document.id} | {document.name} | {flattened_metadata}")
 
         if self._collection is None:
             logger.warning("Collection does not exist")
@@ -313,11 +361,14 @@ class ChromaDb(VectorDb):
 
             metadata["content_hash"] = content_hash
 
+            # Flatten metadata for ChromaDB compatibility
+            flattened_metadata = self._flatten_metadata(metadata)
+
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
-            docs_metadata.append(metadata)
-            log_debug(f"Upserted document: {document.id} | {document.name} | {metadata}")
+            docs_metadata.append(flattened_metadata)
+            log_debug(f"Upserted document: {document.id} | {document.name} | {flattened_metadata}")
 
         if self._collection is None:
             logger.warning("Collection does not exist")
@@ -747,6 +798,9 @@ class ChromaDb(VectorDb):
                     logger.debug(f"No documents found with content_id: {content_id}")
                     return
 
+                # Flatten the new metadata first
+                flattened_new_metadata = self._flatten_metadata(metadata)
+
                 # Merge metadata for each document
                 updated_metadatas = []
                 for i, current_meta in enumerate(current_metadatas or []):
@@ -754,26 +808,13 @@ class ChromaDb(VectorDb):
                         meta_dict: Dict[str, Any] = {}
                     else:
                         meta_dict = dict(current_meta)  # Convert Mapping to dict
-                    updated_meta: Dict[str, Any] = meta_dict.copy()
-                    updated_meta.update(metadata)
 
-                    if "filters" not in updated_meta:
-                        updated_meta["filters"] = {}
-                    if isinstance(updated_meta["filters"], dict):
-                        updated_meta["filters"].update(metadata)
-                    else:
-                        updated_meta["filters"] = metadata
-                    updated_metadatas.append(updated_meta)
-
-                # Update the documents
-                # Filter out None values from metadata as ChromaDB doesn't accept them
-                cleaned_metadatas = []
-                for meta in updated_metadatas:
-                    cleaned_meta = {k: v for k, v in meta.items() if v is not None}
-                    cleaned_metadatas.append(cleaned_meta)
+                    # Update with flattened metadata
+                    meta_dict.update(flattened_new_metadata)
+                    updated_metadatas.append(meta_dict)
 
                 # Convert to the expected type for ChromaDB
-                chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool]]], cleaned_metadatas)
+                chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool]]], updated_metadatas)
                 collection.update(ids=ids, metadatas=chroma_metadatas)  # type: ignore
                 logger.debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
 

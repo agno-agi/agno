@@ -461,11 +461,8 @@ class TeamResponse(BaseModel):
             "stream_member_events": False,
         }
 
-        if team.model is None:
-            raise ValueError("Team model is required")
-
         team.determine_tools_for_model(
-            model=team.model,
+            model=team.model,  # type: ignore
             session=TeamSession(session_id=str(uuid4()), session_data={}),
             run_response=TeamRunOutput(run_id=str(uuid4())),
             async_mode=True,
@@ -763,6 +760,7 @@ class TeamSessionDetailSchema(BaseModel):
     session_state: Optional[dict]
     metrics: Optional[dict]
     team_data: Optional[dict]
+    chat_history: Optional[List[dict]]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
     total_tokens: Optional[int]
@@ -784,6 +782,7 @@ class TeamSessionDetailSchema(BaseModel):
             if session.session_data
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
+            chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
         )
@@ -885,6 +884,7 @@ class TeamRunSchema(BaseModel):
     created_at: Optional[datetime]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
+
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
         run_input = get_run_input(run_dict)
@@ -926,6 +926,7 @@ class WorkflowRunSchema(BaseModel):
     reasoning_steps: Optional[List[dict]]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
+
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
         run_input = get_run_input(run_response, is_workflow_run=True)
