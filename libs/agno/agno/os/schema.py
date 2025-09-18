@@ -461,11 +461,8 @@ class TeamResponse(BaseModel):
             "stream_member_events": False,
         }
 
-        if team.model is None:
-            raise ValueError("Team model is required")
-
         team.determine_tools_for_model(
-            model=team.model,
+            model=team.model,  # type: ignore
             session=TeamSession(session_id=str(uuid4()), session_data={}),
             run_response=TeamRunOutput(run_id=str(uuid4())),
             async_mode=True,
