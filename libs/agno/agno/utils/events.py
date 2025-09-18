@@ -42,7 +42,7 @@ from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import TeamRunOutput
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
-
+from typing import Dict, Any
 
 def create_team_run_started_event(from_run_response: TeamRunOutput) -> TeamRunStartedEvent:
     return TeamRunStartedEvent(
@@ -347,7 +347,6 @@ def create_run_output_content_event(
     redacted_reasoning_content: Optional[str] = None,
     provider_data: Optional[Dict[str, Any]] = None,
     citations: Optional[Citations] = None,
-    provider_data: Optional[Dict[str, Any]] = None,
     response_audio: Optional[Audio] = None,
     image: Optional[Image] = None,
 ) -> RunContentEvent:

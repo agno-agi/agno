@@ -1999,7 +1999,6 @@ class Team:
                 run_response.reasoning_content += model_response.reasoning_content
         # Update provider data
         if model_response.provider_data is not None:
-            model_response.provider_data = model_response.provider_data
             run_response.provider_data = model_response.provider_data
         # Update citations
         if model_response.citations is not None:

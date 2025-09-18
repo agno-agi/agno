@@ -3100,6 +3100,8 @@ class Agent:
         # Update the run_response citations with the model response citations
         if model_response.citations is not None:
             run_response.citations = model_response.citations
+        if model_response.provider_data is not None:
+            run_response.provider_data = model_response.provider_data
 
         # Update the run_response tools with the model response tool_executions
         if model_response.tool_executions is not None:
@@ -3354,7 +3356,6 @@ class Agent:
 
                 if model_response_event.provider_data is not None:
                     # We get citations in one chunk
-                    model_response.provider_data = model_response_event.provider_data
                     run_response.provider_data = model_response.provider_data
 
                 if model_response_event.citations is not None:
