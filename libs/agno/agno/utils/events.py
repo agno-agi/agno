@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Dict
+from typing import Any, Dict, List, Optional
 
 from agno.media import Audio, Image
 from agno.models.message import Citations
@@ -42,6 +42,7 @@ from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import TeamRunOutput
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
+
 
 def create_team_run_started_event(from_run_response: TeamRunOutput) -> TeamRunStartedEvent:
     return TeamRunStartedEvent(
