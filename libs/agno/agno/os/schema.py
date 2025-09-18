@@ -760,6 +760,7 @@ class TeamSessionDetailSchema(BaseModel):
     session_state: Optional[dict]
     metrics: Optional[dict]
     team_data: Optional[dict]
+    chat_history: Optional[List[dict]]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
     total_tokens: Optional[int]
@@ -781,6 +782,7 @@ class TeamSessionDetailSchema(BaseModel):
             if session.session_data
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
+            chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
         )
