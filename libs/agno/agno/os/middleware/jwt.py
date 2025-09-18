@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Optional
 from fastapi.responses import JSONResponse
 import jwt
 from fastapi import Request, Response
-from fastapi.exceptions import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from agno.utils.log import log_debug
