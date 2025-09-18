@@ -1048,7 +1048,7 @@ class Model(ABC):
                     stream_data.extra[key].extend(model_response_delta.extra[key])
                 else:
                     stream_data.extra[key] = model_response_delta.extra[key]
-                    
+
         if should_yield:
             yield model_response_delta
 
