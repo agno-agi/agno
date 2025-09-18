@@ -311,7 +311,8 @@ def convert_schema(
         if not schema_dict["items"]:  # Handle empty {}
             items = Schema(type=Type.STRING)
         else:
-            items = convert_schema(schema_dict["items"], root_schema, visited_refs)
+            converted_items = convert_schema(schema_dict["items"], root_schema, visited_refs)
+            items = converted_items if converted_items is not None else Schema(type=Type.STRING)
         min_items = schema_dict.get("minItems")
         max_items = schema_dict.get("maxItems")
         return Schema(
