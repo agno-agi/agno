@@ -2000,8 +2000,8 @@ class Team:
             else:
                 run_response.reasoning_content += model_response.reasoning_content
         # Update provider data
-        if model_response.provider_data is not None:
-            run_response.provider_data = model_response.provider_data
+        if model_response.model_provider_data is not None:
+            run_response.model_provider_data = model_response.model_provider_data
         # Update citations
         if model_response.citations is not None:
             run_response.citations = model_response.citations
@@ -2088,8 +2088,8 @@ class Team:
             run_response.response_audio = full_model_response.audio
         if full_model_response.citations is not None:
             run_response.citations = full_model_response.citations
-        if full_model_response.provider_data is not None:
-            run_response.provider_data = full_model_response.provider_data
+        if full_model_response.model_provider_data is not None:
+            run_response.model_provider_data = full_model_response.model_provider_data
 
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
@@ -2178,8 +2178,8 @@ class Team:
             run_response.response_audio = full_model_response.audio
         if full_model_response.citations is not None:
             run_response.citations = full_model_response.citations
-        if full_model_response.provider_data is not None:
-            run_response.provider_data = full_model_response.provider_data
+        if full_model_response.model_provider_data is not None:
+            run_response.model_provider_data = full_model_response.model_provider_data
 
         # Build a list of messages that should be added to the RunOutput
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
@@ -2319,7 +2319,7 @@ class Team:
                                 redacted_reasoning_content=model_response_event.redacted_reasoning_content,
                                 response_audio=full_model_response.audio,
                                 citations=model_response_event.citations,
-                                provider_data=model_response_event.provider_data,
+                                model_provider_data=model_response_event.model_provider_data,
                                 image=model_response_event.images[-1] if model_response_event.images else None,
                             ),
                             run_response,
