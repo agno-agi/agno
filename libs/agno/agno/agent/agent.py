@@ -3813,7 +3813,9 @@ class Agent:
             self._rebuild_tools = True
         if self.search_session_history:
             agent_tools.append(
-                self._get_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions)
+                self._get_previous_sessions_messages_function(
+                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                )
             )
             self._rebuild_tools = True
 
@@ -6799,11 +6801,14 @@ class Agent:
         )
         return "Successfully added to knowledge base"
 
-    def _get_previous_sessions_messages_function(self, num_history_sessions: Optional[int] = 2) -> Callable:
+    def _get_previous_sessions_messages_function(
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+    ) -> Callable:
         """Factory function to create a get_previous_session_messages function.
 
         Args:
             num_history_sessions: The last n sessions to be taken from db
+            user_id: The user ID to filter sessions by
 
         Returns:
             Callable: A function that retrieves messages from previous sessions
@@ -6822,7 +6827,9 @@ class Agent:
             if self.db is None:
                 return "Previous session messages not available"
 
-            selected_sessions = self.db.get_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
+            selected_sessions = self.db.get_sessions(
+                session_type=SessionType.AGENT, limit=num_history_sessions, user_id=user_id
+            )
 
             all_messages = []
             seen_message_pairs = set()

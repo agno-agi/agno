@@ -371,6 +371,8 @@ class File(BaseModel):
             "application/pdf",
             "application/json",
             "application/x-javascript",
+            "application/json",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "text/javascript",
             "application/x-python",
             "text/x-python",

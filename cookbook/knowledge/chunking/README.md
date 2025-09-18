@@ -9,6 +9,7 @@ pip install agno openai
 ```
 
 Set your OpenAI API key:
+
 ```bash
 export OPENAI_API_KEY=your_api_key
 ```
@@ -18,10 +19,10 @@ export OPENAI_API_KEY=your_api_key
 Chunking strategies integrate with readers to process documents:
 
 ```python
-from agno.knowledge.reader.pdf_reader import PDFUrlReader
+from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.knowledge.chunking.semantic import SemanticChunking
 
-reader = PDFUrlReader(
+reader = PDFReader(
     chunking_strategy=SemanticChunking()
 )
 knowledge.add_content(url="document.pdf", reader=reader)
@@ -32,7 +33,7 @@ agent = Agent(
 )
 
 agent.print_response(
-    "What are the key concepts covered in this document?", 
+    "What are the key concepts covered in this document?",
     markdown=True
 )
 ```
