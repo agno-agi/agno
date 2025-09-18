@@ -829,6 +829,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            send_media_to_model=self.send_media_to_model,
         )
 
         # Check for cancellation after model call
@@ -1415,6 +1416,7 @@ class Team:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
+            send_media_to_model=self.send_media_to_model,
         )  # type: ignore
 
         # Check for cancellation after model call
@@ -2064,6 +2066,7 @@ class Team:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
+            send_media_to_model=self.send_media_to_model,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -2146,6 +2149,7 @@ class Team:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
+            send_media_to_model=self.send_media_to_model,
         )  # type: ignore
         async for model_response_event in model_stream:
             for event in self._handle_model_response_chunk(
