@@ -146,13 +146,24 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
                 # For Gemini, we need to represent Dict[str, T] as an object with at least one property
                 # to avoid the "properties should be non-empty" error.
                 # We'll create a generic property that represents the dictionary structure
-                value_type = additional_props.get("type", "string").upper()
+
+                # Handle both single types and union types (arrays) from Zod schemas
+                type_value = additional_props.get("type", "string")
+                if isinstance(type_value, list):
+                    value_type = type_value[0].upper() if type_value else "STRING"
+                    union_types = ", ".join(type_value)
+                    type_description_suffix = f" (supports union types: {union_types})"
+                else:
+                    # Single type
+                    value_type = type_value.upper()
+                    type_description_suffix = ""
+
                 # Create a placeholder property to satisfy Gemini's requirements
                 # This is a workaround since Gemini doesn't support additionalProperties directly
                 placeholder_properties = {
                     "example_key": Schema(
                         type=value_type,
-                        description=f"Example key-value pair. This object can contain any number of keys with {value_type.lower()} values.",
+                        description=f"Example key-value pair. This object can contain any number of keys with {value_type.lower()} values{type_description_suffix}.",
                     )
                 }
                 if value_type == "ARRAY":
@@ -162,7 +173,7 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
                     type=Type.OBJECT,
                     properties=placeholder_properties,
                     description=description
-                    or f"Dictionary with {value_type.lower()} values. Can contain any number of key-value pairs.",
+                    or f"Dictionary with {value_type.lower()} values{type_description_suffix}. Can contain any number of key-value pairs.",
                     default=default,
                 )
             else:
@@ -174,7 +185,10 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
             return Schema(type=Type.OBJECT, description=description, default=default)
 
     elif schema_type == "array" and "items" in schema_dict:
-        items = convert_schema(schema_dict["items"], root_schema)
+        if not schema_dict["items"]:  # Handle empty {}
+            items = Schema(type=Type.STRING)
+        else:
+            items = convert_schema(schema_dict["items"], root_schema)
         min_items = schema_dict.get("minItems")
         max_items = schema_dict.get("maxItems")
         return Schema(
@@ -233,6 +247,12 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
                 default=default,
             )
     else:
+        if isinstance(schema_type, list):
+            non_null_types = [t for t in schema_type if t != "null"]
+            if non_null_types:
+                schema_type = non_null_types[0]
+            else:
+                schema_type = ""
         # Only convert to uppercase if schema_type is not empty
         if schema_type:
             schema_type = schema_type.upper()

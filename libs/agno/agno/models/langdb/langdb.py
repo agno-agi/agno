@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
@@ -22,10 +22,10 @@ class LangDB(OpenAILike):
     name: str = "LangDB"
     provider: str = "LangDB"
 
-    api_key: Optional[str] = getenv("LANGDB_API_KEY")
-    project_id: Optional[str] = getenv("LANGDB_PROJECT_ID")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("LANGDB_API_KEY"))
+    project_id: Optional[str] = field(default_factory=lambda: getenv("LANGDB_PROJECT_ID"))
 
-    base_host_url: str = getenv("LANGDB_API_BASE_URL", "https://api.us-east-1.langdb.ai")
+    base_host_url: str = field(default_factory=lambda: getenv("LANGDB_API_BASE_URL", "https://api.us-east-1.langdb.ai"))
 
     base_url: Optional[str] = None
     label: Optional[str] = None
