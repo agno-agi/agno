@@ -2379,7 +2379,7 @@ class Workflow:
                     "type": StepType.STEP.value,
                 }
                 return step_dict
-            
+
             # Handle Agent and Team objects directly
             if isinstance(step, Agent):
                 step_dict = {
@@ -2389,10 +2389,10 @@ class Workflow:
                     "agent": step,
                 }
                 return step_dict
-            
+
             if isinstance(step, Team):
                 step_dict = {
-                    "name": step.name or "unnamed_team", 
+                    "name": step.name or "unnamed_team",
                     "description": step.description or "Team step",
                     "type": StepType.STEP.value,
                     "team": step,

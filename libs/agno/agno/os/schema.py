@@ -462,7 +462,7 @@ class TeamResponse(BaseModel):
         }
 
         team.determine_tools_for_model(
-            model=team.model,
+            model=team.model,  # type: ignore
             session=TeamSession(session_id=str(uuid4()), session_data={}),
             run_response=TeamRunOutput(run_id=str(uuid4())),
             async_mode=True,
