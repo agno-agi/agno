@@ -155,15 +155,8 @@ class AgentSession:
                 if hasattr(message, "from_history") and message.from_history and skip_history_messages:
                     continue
 
-                # Skip messages with specified role, but ONLY for role="system"
-                # The original intent of skip_role was to avoid duplicate system messages.
-                # However, when system_message_role is set to roles like "user", "assistant",
-                # or custom roles, we should NOT filter those messages from history because:
-                # 1. The system message is regenerated fresh for each run anyway
-                # 2. Messages with those roles in history are legitimate conversation messages
-                # 3. Filtering them would break conversation continuity
-                # Therefore, we only apply skip_role filtering for the traditional "system" role.
-                if skip_role and message.role == skip_role and skip_role == "system":
+                # Skip messages with specified role
+                if skip_role and message.role == skip_role:
                     continue
 
                 if message.role == "system":
