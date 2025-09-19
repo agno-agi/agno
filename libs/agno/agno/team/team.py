@@ -515,6 +515,11 @@ class Team:
         self.num_history_runs = num_history_runs
         self.metadata = metadata
 
+        if add_history_to_context and not db:
+            log_warning(
+                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+            )
+
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
         self.reasoning_agent = reasoning_agent
@@ -2911,11 +2916,6 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        show_message: bool = True,
-        show_reasoning: bool = True,
-        show_full_reasoning: bool = False,
-        console: Optional[Any] = None,
-        tags_to_include_in_markdown: Optional[Set[str]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2923,9 +2923,16 @@ class Team:
         markdown: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        show_message: bool = True,
+        show_reasoning: bool = True,
+        show_full_reasoning: bool = False,
+        console: Optional[Any] = None,
+        tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
         if not tags_to_include_in_markdown:
@@ -2964,6 +2971,8 @@ class Team:
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -2988,6 +2997,8 @@ class Team:
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -3002,11 +3013,6 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        show_message: bool = True,
-        show_reasoning: bool = True,
-        show_full_reasoning: bool = False,
-        console: Optional[Any] = None,
-        tags_to_include_in_markdown: Optional[Set[str]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -3015,8 +3021,15 @@ class Team:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        show_message: bool = True,
+        show_reasoning: bool = True,
+        show_full_reasoning: bool = False,
+        console: Optional[Any] = None,
+        tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
         if not tags_to_include_in_markdown:
@@ -3055,6 +3068,8 @@ class Team:
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -3079,6 +3094,8 @@ class Team:
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -4005,6 +4022,7 @@ class Team:
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         # Prepare tools
@@ -4084,9 +4102,13 @@ class Team:
             audio=audio,  # type: ignore
             files=files,  # type: ignore
             knowledge_filters=knowledge_filters,
-            workflow_context=workflow_context,
-            debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
+            workflow_context=workflow_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            debug_mode=debug_mode,
         )
 
         _tools.append(delegate_task_func)
@@ -5206,9 +5228,13 @@ class Team:
         audio: Optional[List[Audio]] = None,
         files: Optional[List[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        workflow_context: Optional[Dict] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
+        workflow_context: Optional[Dict] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
     ) -> Function:
         if not images:
             images = []
@@ -5244,9 +5270,9 @@ class Team:
                     task_description, expected_output, team_member_interactions_str
                 )
 
-            # 4. Add history for the member if enabled
+            # 4. Add history for the member if enabled (because we won't load the session for the member, so history won't be loaded automatically)
             history = None
-            if member_agent.add_history_to_context:
+            if member_agent.add_history_to_context or add_history_to_context:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     if isinstance(member_agent_task, str):
@@ -5358,8 +5384,11 @@ class Team:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     debug_mode=debug_mode,
-                    add_history_to_context=add_history_to_context,
                     workflow_context=workflow_context,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    metadata=metadata,
+                    add_session_state_to_context=add_session_state_to_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5393,7 +5422,10 @@ class Team:
                     stream=False,
                     debug_mode=debug_mode,
                     workflow_context=workflow_context,
-                    add_history_to_context=add_history_to_context,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    metadata=metadata,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5477,7 +5509,10 @@ class Team:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     debug_mode=debug_mode,
-                    add_history_to_context=add_history_to_context,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    metadata=metadata,
                     workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
@@ -5512,7 +5547,10 @@ class Team:
                     stream=False,
                     debug_mode=debug_mode,
                     workflow_context=workflow_context,
-                    add_history_to_context=add_history_to_context,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    metadata=metadata,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5590,7 +5628,10 @@ class Team:
                         if not member_agent.knowledge_filters and member_agent.knowledge
                         else None,
                         debug_mode=debug_mode,
-                        add_history_to_context=add_history_to_context,
+                        dependencies=dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=metadata,
                         yield_run_response=True,
                     )
                     member_agent_run_response = None
@@ -5625,7 +5666,10 @@ class Team:
                         if not member_agent.knowledge_filters and member_agent.knowledge
                         else None,
                         debug_mode=debug_mode,
-                        add_history_to_context=add_history_to_context,
+                        dependencies=dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=metadata,
                     )
 
                     check_if_run_cancelled(member_agent_run_response)  # type: ignore
@@ -5699,7 +5743,10 @@ class Team:
                         knowledge_filters=knowledge_filters
                         if not member_agent.knowledge_filters and member_agent.knowledge
                         else None,
-                        add_history_to_context=add_history_to_context,
+                        dependencies=dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=metadata,
                         yield_run_response=True,
                     )
                     member_agent_run_response = None
@@ -5773,7 +5820,10 @@ class Team:
                             knowledge_filters=knowledge_filters
                             if not member_agent.knowledge_filters and member_agent.knowledge
                             else None,
-                            add_history_to_context=add_history_to_context,
+                            dependencies=dependencies,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
+                            metadata=metadata,
                         )
                         check_if_run_cancelled(member_agent_run_response)
 
