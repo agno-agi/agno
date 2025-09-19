@@ -560,7 +560,6 @@ class Claude(Model):
                 model_response.provider_data = {
                     "signature": response.delta.signature,
                 }
-                model_response.reasoning_content = (model_response.reasoning_content or "")
 
         elif isinstance(response, ContentBlockStopEvent):
             if response.content_block.type == "tool_use":  # type: ignore
