@@ -25,11 +25,6 @@ def get_default_reasoning_agent(
 ) -> Optional["Agent"]:  # type: ignore  # noqa: F821
     from agno.agent import Agent
 
-    # Set a reasonable default tool_call_limit if none provided
-    # Scale with max_steps: allow up to 5 tool calls per reasoning step
-    if tool_call_limit is None:
-        tool_call_limit = max(20, max_steps * 5)
-
     agent = Agent(
         model=reasoning_model,
         description="You are a meticulous, thoughtful, and logical Reasoning Agent who solves complex problems through clear, structured, step-by-step analysis.",
