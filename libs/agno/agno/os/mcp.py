@@ -54,7 +54,7 @@ def get_mcp_server(
     )  # type: ignore
     async def config() -> ConfigResponse:
         return ConfigResponse(
-            os_id=os.os_id or "AgentOS",
+            os_id=os.id or "AgentOS",
             description=os.description,
             available_models=os.config.available_models if os.config else [],
             databases=[db.id for db in os.dbs.values()],
