@@ -33,6 +33,7 @@ research_team = Team(
     show_members_responses=True,
     get_member_information_tool=True,
     add_member_tools_to_context=True,
+    add_history_to_context=True,
 )
 
 # Setup our AgentOS app
