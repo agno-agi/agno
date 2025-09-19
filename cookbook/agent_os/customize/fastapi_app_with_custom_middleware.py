@@ -11,7 +11,8 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Request, Response
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 
@@ -40,9 +41,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Check if rate limit exceeded
         if len(history) >= self.requests_per_minute:
-            raise HTTPException(
+            return JSONResponse(
                 status_code=429,
-                detail=f"Rate limit exceeded. Max {self.requests_per_minute} requests per minute.",
+                content={
+                    "detail": f"Rate limit exceeded. Max {self.requests_per_minute} requests per minute."
+                },
             )
 
         # Add current request to history
@@ -121,55 +124,25 @@ agent = Agent(
     markdown=True,
 )
 
-# === Create FastAPI app and add middleware using standard FastAPI patterns ===
-fastapi_app = FastAPI(title="Essential Middleware Demo", version="1.0.0")
+agent_os = AgentOS(
+    description="Essential middleware demo with rate limiting and logging",
+    agents=[agent],
+)
 
-# Add custom middleware 
-fastapi_app.add_middleware(
+app = agent_os.get_app()
+
+# Add custom middleware
+app.add_middleware(
     RateLimitMiddleware,
     requests_per_minute=10,
     window_size=60,
 )
 
-fastapi_app.add_middleware(
+app.add_middleware(
     RequestLoggingMiddleware,
     log_body=False,
     log_headers=False,
 )
-
-# === Add custom routes ===
-@fastapi_app.get("/home")
-async def home():
-    """Home endpoint"""
-    return {
-        "message": "Essential AgentOS Middleware Demo",
-        "endpoints": [
-            "/home - This endpoint",
-            "/test - Test endpoint", 
-            "/rate-limit-test - Test rate limiting",
-        ],
-    }
-
-@fastapi_app.get("/test")
-async def test_endpoint():
-    """Simple test endpoint"""
-    return {"message": "Test successful!", "timestamp": time.time()}
-
-@fastapi_app.get("/rate-limit-test")
-async def rate_limit_test():
-    """Test rate limiting - hit this multiple times quickly"""
-    return {
-        "message": "Rate limit test - hit me quickly to see rate limiting in action!"
-    }
-
-# === Create AgentOS with pre-configured FastAPI app ===
-agent_os = AgentOS(
-    description="Essential middleware demo with rate limiting and logging",
-    agents=[agent],
-    fastapi_app=fastapi_app,  
-)
-
-app = agent_os.get_app()
 
 if __name__ == "__main__":
     """
@@ -185,10 +158,10 @@ if __name__ == "__main__":
        curl http://localhost:7777/test
     
     2. Test rate limiting:
-       for i in {1..15}; do curl http://localhost:7777/rate-limit-test; done
+       for i in {1..15}; do curl http://localhost:7777/config; done
     
     3. Check rate limit headers:
-       curl -v http://localhost:7777/test
+       curl -v http://localhost:7777/config
     
     Look for:
     - Console logs showing request/response info
@@ -196,9 +169,9 @@ if __name__ == "__main__":
     - Request count header: X-Request-Count
     - 429 errors when rate limit exceeded
     """
-    
+
     agent_os.serve(
-        app="test:app",  
+        app="fastapi_app_with_custom_middleware:app",
         host="localhost",
         port=7777,
         reload=True,
