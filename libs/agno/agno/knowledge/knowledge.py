@@ -24,10 +24,6 @@ from agno.utils.string import generate_id
 
 if TYPE_CHECKING:
     from agno.vectordb import VectorDb
-else:
-    # Make VectorDb available at runtime for forward reference resolution
-    # This avoids NameError when type hints are resolved at runtime (e.g., by Pydantic)
-    from agno.vectordb.base import VectorDb
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
 
