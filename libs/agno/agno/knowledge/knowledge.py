@@ -595,10 +595,7 @@ class Knowledge:
         read_documents = []
 
         if isinstance(content.file_data, str):
-            try:
-                content_bytes = content.file_data.encode("utf-8")
-            except UnicodeEncodeError:
-                content_bytes = content.file_data.encode("latin-1")
+            content_bytes = content.file_data.encode("utf-8", errors="replace")
             content_io = io.BytesIO(content_bytes)
 
             if content.reader:
@@ -619,14 +616,7 @@ class Knowledge:
                 if isinstance(content.file_data.content, bytes):
                     content_io = io.BytesIO(content.file_data.content)
                 elif isinstance(content.file_data.content, str):
-                    if self._is_text_mime_type(content.file_data.type):
-                        try:
-                            content_bytes = content.file_data.content.encode("utf-8")
-                        except UnicodeEncodeError:
-                            log_debug(f"UTF-8 encoding failed for {content.file_data.type}, using latin-1")
-                            content_bytes = content.file_data.content.encode("latin-1")
-                    else:
-                        content_bytes = content.file_data.content.encode("latin-1")
+                    content_bytes = content.file_data.content.encode("utf-8", errors="replace")
                     content_io = io.BytesIO(content_bytes)
                 else:
                     content_io = content.file_data.content  # type: ignore
