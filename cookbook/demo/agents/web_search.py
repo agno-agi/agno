@@ -48,6 +48,3 @@ web_search_agent = Agent(
     ],
 )
 # *******************************
-
-if __name__ == "__main__":
-    web_search_agent.print_response("What is the capital of France?")
