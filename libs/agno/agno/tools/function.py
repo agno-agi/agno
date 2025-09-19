@@ -387,14 +387,9 @@ class Function(BaseModel):
             return func
         # Wrap the callable with validate_call
         else:
-            try:
-                wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
-                wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
-                return wrapped
-            except Exception:
-                # If validate_call fails (e.g., due to unresolved forward references),
-                # return the original function unwrapped
-                return func
+            wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+            wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
+            return wrapped
 
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
