@@ -1,9 +1,9 @@
 import json
 
-from agno.agent import RunOutput
+from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai.chat import OpenAIChat
-from agno.team import Team
+from agno.team import Team, TeamRunOutput
 
 
 def test_dependencies():
@@ -15,7 +15,7 @@ def test_dependencies():
     )
 
     # Run agent and return the response as a variable
-    response: RunOutput = team.run("Tell me a 5 second short story about a robot named {robot_name}")
+    response: TeamRunOutput = team.run("Tell me a 5 second short story about a robot named {robot_name}")
 
     # Check the system message
     assert "If you are asked to write a story about a robot, always name the robot Anna" in response.messages[0].content
@@ -35,7 +35,7 @@ def test_dependencies_function():
     )
 
     # Run agent and return the response as a variable
-    response: RunOutput = team.run("Tell me a 5 second short story about a robot named {robot_name}")
+    response: TeamRunOutput = team.run("Tell me a 5 second short story about a robot named {robot_name}")
 
     # Check the system message
     assert "If you are asked to write a story about a robot, always name the robot Anna" in response.messages[0].content
@@ -52,7 +52,7 @@ async def test_dependencies_async():
     )
 
     # Run agent and return the response as a variable
-    response: RunOutput = await team.arun("Tell me a 5 second short story about a robot named {robot_name}")
+    response: TeamRunOutput = await team.arun("Tell me a 5 second short story about a robot named {robot_name}")
 
     # Check the system message
     assert "If you are asked to write a story about a robot, always name the robot Anna" in response.messages[0].content
@@ -72,7 +72,7 @@ async def test_dependencies_function_async():
     )
 
     # Run agent and return the response as a variable
-    response: RunOutput = await team.arun("Tell me a 5 second short story about a robot named {robot_name}")
+    response: TeamRunOutput = await team.arun("Tell me a 5 second short story about a robot named {robot_name}")
 
     # Check the system message
     assert "If you are asked to write a story about a robot, always name the robot Anna" in response.messages[0].content
@@ -88,7 +88,7 @@ def test_dependencies_on_run():
     )
 
     # Run agent and return the response as a variable
-    response: RunOutput = team.run(
+    response: TeamRunOutput = team.run(
         "Tell me a 5 second short story about a robot named {robot_name}",
         dependencies={"robot_name": "Anna"},
     )
@@ -107,7 +107,7 @@ async def test_dependencies_on_run_async():
     )
 
     # Run agent and return the response as a variable
-    response: RunOutput = await team.arun(
+    response: TeamRunOutput = await team.arun(
         "Tell me a 5 second short story about a robot named {robot_name}",
         dependencies={"robot_name": "Anna"},
     )
@@ -127,7 +127,7 @@ def test_dependencies_mixed():
     )
 
     # Run agent and return the response as a variable
-    response: RunOutput = team.run(
+    response: TeamRunOutput = team.run(
         "Tell me a 5 second short story about a robot named {robot_name}", dependencies={"robot_name": "Anna"}
     )
 
@@ -146,7 +146,7 @@ async def test_dependencies_mixed_async():
     )
 
     # Run agent and return the response as a variable
-    response: RunOutput = await team.arun(
+    response: TeamRunOutput = await team.arun(
         "Tell me a 5 second short story about a robot named {robot_name}", dependencies={"robot_name": "Anna"}
     )
 
@@ -196,7 +196,7 @@ def test_dependencies_resolve_in_context_false():
     )
 
     # Run agent and return the response as a variable
-    response: RunOutput = team.run("Tell me a 5 second short story about a robot named {robot_name}")
+    response: TeamRunOutput = team.run("Tell me a 5 second short story about a robot named {robot_name}")
 
     # Check the system message
     assert (
@@ -217,7 +217,9 @@ def test_add_dependencies_to_context():
     )
 
     # Run agent and return the response as a variable
-    response: RunOutput = team.run("Tell me a 5 second short story about a robot and include their name in the story.")
+    response: TeamRunOutput = team.run(
+        "Tell me a 5 second short story about a robot and include their name in the story."
+    )
 
     # Check the user message
     assert json.dumps({"robot_name": "Johnny"}, indent=2, default=str) in response.messages[1].content
@@ -238,9 +240,40 @@ def test_add_dependencies_to_context_function():
     )
 
     # Run agent and return the response as a variable
-    response: RunOutput = team.run("Tell me a 5 second short story about a robot and include their name in the story.")
+    response: TeamRunOutput = team.run(
+        "Tell me a 5 second short story about a robot and include their name in the story."
+    )
 
     # Check the user message
     assert json.dumps({"robot_name": "Johnny"}, indent=2, default=str) in response.messages[1].content
     # Check the response
     assert "Johnny" in response.content
+
+
+def test_dependencies_on_run_pass_to_team_members():
+    member = Agent(
+        role="Story Writer",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="If you are asked to write a story about a robot, always name the robot {robot_name}",
+    )
+    team = Team(
+        members=[member],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="Always delegate the task to the member agent",
+    )
+
+    # Run agent and return the response as a variable
+    response: TeamRunOutput = team.run(
+        "Tell me a 5 second short story about a robot",
+        dependencies={"robot_name": "Anna"},
+    )
+
+    assert response.member_responses is not None
+    assert len(response.member_responses) == 1
+    print(response.member_responses[0])
+
+    # Check the system message
+    assert (
+        "If you are asked to write a story about a robot, always name the robot Anna"
+        in response.member_responses[0].messages[0].content
+    )
