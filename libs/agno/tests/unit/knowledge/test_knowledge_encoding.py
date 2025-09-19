@@ -1,4 +1,3 @@
-import asyncio
 from typing import Any, Dict, List, Optional
 
 import pytest
