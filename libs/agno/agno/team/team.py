@@ -4147,6 +4147,7 @@ class Team:
                     if name not in self._functions_for_model:
                         func._team = self
                         func._session_state = session_state
+                        func._dependencies = dependencies
                         func.process_entrypoint(strict=strict)
                         if strict:
                             func.strict = True
@@ -4166,6 +4167,7 @@ class Team:
                 if tool.name not in self._functions_for_model:
                     tool._team = self
                     tool._session_state = session_state
+                    tool._dependencies = dependencies
                     tool.process_entrypoint(strict=strict)
                     if strict and tool.strict is None:
                         tool.strict = True
@@ -4187,6 +4189,7 @@ class Team:
                     func = Function.from_callable(tool, strict=strict)
                     func._team = self
                     func._session_state = session_state
+                    func._dependencies = dependencies
                     if strict:
                         func.strict = True
                     if self.tool_hooks:
