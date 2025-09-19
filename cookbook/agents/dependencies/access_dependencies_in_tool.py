@@ -14,25 +14,6 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
 
-def get_user_profile(user_id: str = "john_doe") -> dict:
-    """Get user profile information."""
-    profiles = {
-        "john_doe": {
-            "name": "John Doe",
-            "preferences": ["AI/ML", "Software Engineering", "Finance"],
-            "location": "San Francisco, CA",
-            "role": "Senior Software Engineer",
-        },
-        "jane_smith": {
-            "name": "Jane Smith", 
-            "preferences": ["Data Science", "Machine Learning", "Python"],
-            "location": "New York, NY",
-            "role": "Data Scientist",
-        }
-    }
-    return profiles.get(user_id, {"name": "Unknown User"})
-
-
 def get_current_context() -> dict:
     """Get current contextual information like time, weather, etc."""
     return {
@@ -40,7 +21,6 @@ def get_current_context() -> dict:
         "timezone": "PST",
         "day_of_week": datetime.now().strftime("%A"),
     }
-
 
 def analyze_user(user_id: str, dependencies: Optional[Dict[str, Any]] = None) -> str:
     """
@@ -82,35 +62,36 @@ def analyze_user(user_id: str, dependencies: Optional[Dict[str, Any]] = None) ->
     
     return "\n\n".join(results)
 
-def main():
-    # Create an agent with the analysis tool function
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
-        tools=[analyze_user],
-        name="User Analysis Agent",
-        description="An agent specialized in analyzing users using integrated data sources.",
-        instructions=[
-            "You are a user analysis expert with access to user analysis tools.",
-            "When asked to analyze any user, use the analyze_user tool.",
-            "This tool has access to user profiles and current context through integrated data sources.",
-            "After getting tool results, provide additional insights and recommendations based on the analysis.",
-            "Be thorough in your analysis and explain what the tool found."
-        ],
-    )
+# Create an agent with the analysis tool function
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[analyze_user],
+    name="User Analysis Agent",
+    description="An agent specialized in analyzing users using integrated data sources.",
+    instructions=[
+        "You are a user analysis expert with access to user analysis tools.",
+        "When asked to analyze any user, use the analyze_user tool.",
+        "This tool has access to user profiles and current context through integrated data sources.",
+        "After getting tool results, provide additional insights and recommendations based on the analysis.",
+        "Be thorough in your analysis and explain what the tool found."
+    ],
+)
 
-    print("=== Tool Dependencies Access Example ===\n")
+print("=== Tool Dependencies Access Example ===\n")
 
-    response = agent.run(
-        input="Please analyze user 'john_doe' and provide insights about their professional background and preferences.",
-        dependencies={
-            "user_profile": get_user_profile,
-            "current_context": get_current_context,
+response = agent.run(
+    input="Please analyze user 'john_doe' and provide insights about their professional background and preferences.",
+    dependencies={
+        "user_profile": {
+            "name": "John Doe",
+            "preferences": ["AI/ML", "Software Engineering", "Finance"],
+            "location": "San Francisco, CA",
+            "role": "Senior Software Engineer",
         },
-        session_id="test_tool_dependencies",
-    )
+        "current_context": get_current_context,
+    },
+    session_id="test_tool_dependencies",
+)
 
-    print(f"\nAgent Response: {response.content}")
+print(f"\nAgent Response: {response.content}")
 
-
-if __name__ == "__main__":
-    main()
