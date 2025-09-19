@@ -144,7 +144,6 @@ def test_get_embeddings_batch_with_request_params(mock_mistral_class, embedder):
     mock_client.embeddings.create.return_value = mock_response
 
     texts = ["Hello world"]
-    embeddings = embedder.get_embeddings_batch(texts)
 
     # Check that custom params were included
     call_args = mock_client.embeddings.create.call_args[1]
