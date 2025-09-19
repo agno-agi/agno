@@ -1144,7 +1144,7 @@ class Team:
 
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
-        
+
         if isinstance(run_dependencies, str):
             try:
                 import json
@@ -1775,7 +1775,7 @@ class Team:
 
         # Determine run dependencies (runtime override takes priority)
         run_dependencies = dependencies if dependencies is not None else self.dependencies
-        
+
         if isinstance(run_dependencies, str):
             try:
                 import json
