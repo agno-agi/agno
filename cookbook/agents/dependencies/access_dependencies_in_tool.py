@@ -1,14 +1,14 @@
+
 """
 Example showing how tools can access dependencies passed to the agent.
 
 This demonstrates:
-1. Passing dependencies to agent.run()
-2. A simple tool function that can access and use those dependencies
-3. Proper instructions to guide the agent to use the tool
+1. Passing dependencies to agent.run() 
+2. A simple tool that receives resolved dependencies
 """
 
+from typing import Dict, Any, Optional
 from datetime import datetime
-from typing import Any, Dict, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -24,11 +24,11 @@ def get_user_profile(user_id: str = "john_doe") -> dict:
             "role": "Senior Software Engineer",
         },
         "jane_smith": {
-            "name": "Jane Smith",
+            "name": "Jane Smith", 
             "preferences": ["Data Science", "Machine Learning", "Python"],
             "location": "New York, NY",
             "role": "Data Scientist",
-        },
+        }
     }
     return profiles.get(user_id, {"name": "Unknown User"})
 
@@ -42,76 +42,66 @@ def get_current_context() -> dict:
     }
 
 
-def analyze_user_with_dependencies(
-    user_id: str, dependencies: Optional[Dict[str, Any]] = None
-) -> str:
+def analyze_user(user_id: str, dependencies: Optional[Dict[str, Any]] = None) -> str:
     """
-    Analyze user using available dependencies passed to the agent.
-
-    Use this tool when you need to analyze a specific user's profile and context.
-
+    Analyze a specific user's profile and provide insights.
+    
+    This tool analyzes user behavior and preferences using available data sources.
+    Call this tool with the user_id you want to analyze.
+    
     Args:
-        user_id: The user ID to analyze
-        dependencies: Dependencies passed to the agent (automatically injected)
-
+        user_id: The user ID to analyze (e.g., 'john_doe', 'jane_smith')
+        dependencies: Available data sources (automatically provided)
+    
     Returns:
-        Analysis results using the available dependencies
+        Detailed analysis and insights about the user
     """
     if not dependencies:
-        return "No dependencies available for analysis."
-
-    print(f"--> Tool received dependencies: {list(dependencies.keys())}")
-
+        return "No data sources available for analysis."
+    
+    print(f"--> Tool received data sources: {list(dependencies.keys())}")
+    
     results = [f"=== USER ANALYSIS FOR {user_id.upper()} ==="]
-
-    # Use user_profile dependency if available
+    
+    # Use user profile data if available
     if "user_profile" in dependencies:
-        profile_func = dependencies["user_profile"]
-        if callable(profile_func):
-            profile = profile_func(user_id)
-            results.append(f"Profile Data: {profile}")
-        else:
-            results.append(f"Profile Data (static): {profile_func}")
-
-    # Use current_context dependency if available
+        profile_data = dependencies["user_profile"]
+        results.append(f"Profile Data: {profile_data}")
+        
+        # Add analysis based on the profile
+        if profile_data.get("role"):
+            results.append(f"Professional Analysis: {profile_data['role']} with expertise in {', '.join(profile_data.get('preferences', []))}")
+    
+    # Use current context data if available
     if "current_context" in dependencies:
-        context_func = dependencies["current_context"]
-        if callable(context_func):
-            context = context_func()
-            results.append(f"Current Context: {context}")
-        else:
-            results.append(f"Current Context (static): {context_func}")
-
-    # Add analysis insights
-    results.append(
-        "ANALYSIS: This user appears to be active and engaged based on available data."
-    )
+        context_data = dependencies["current_context"]
+        results.append(f"Current Context: {context_data}")
+        results.append(f"Time-based Analysis: Analysis performed on {context_data['day_of_week']} at {context_data['current_time']}")
 
     print(f"--> Tool returned results: {results}")
-
+    
     return "\n\n".join(results)
-
 
 def main():
     # Create an agent with the analysis tool function
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
-        tools=[analyze_user_with_dependencies],
+        tools=[analyze_user],
         name="User Analysis Agent",
-        description="An agent that can analyze users using dependency injection.",
+        description="An agent specialized in analyzing users using integrated data sources.",
         instructions=[
-            "You are a user analysis expert.",
-            "When asked to analyze a user, always use the analyze_user_with_dependencies tool.",
-            "This tool has access to user profiles and current context through dependencies.",
-            "Provide insights based on the tool results.",
+            "You are a user analysis expert with access to user analysis tools.",
+            "When asked to analyze any user, use the analyze_user tool.",
+            "This tool has access to user profiles and current context through integrated data sources.",
+            "After getting tool results, provide additional insights and recommendations based on the analysis.",
+            "Be thorough in your analysis and explain what the tool found."
         ],
     )
 
     print("=== Tool Dependencies Access Example ===\n")
 
-    # Example: Tool accessing dependencies
     response = agent.run(
-        input="Please analyze user 'john_doe' using the available data sources and provide insights about their background and preferences.",
+        input="Please analyze user 'john_doe' and provide insights about their professional background and preferences.",
         dependencies={
             "user_profile": get_user_profile,
             "current_context": get_current_context,
@@ -119,7 +109,7 @@ def main():
         session_id="test_tool_dependencies",
     )
 
-    print(f"Agent Response: {response.content}")
+    print(f"\nAgent Response: {response.content}")
 
 
 if __name__ == "__main__":
