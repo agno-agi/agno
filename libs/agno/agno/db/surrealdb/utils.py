@@ -4,6 +4,8 @@ from typing import Any, Sequence, TypeVar
 from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, Surreal
 
 from agno.db.base import SessionType
+from agno.db.schemas.memory import UserMemory
+from agno.db.utils import deserialize_session_json_fields
 from agno.session import Session
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
@@ -24,27 +26,25 @@ def build_client(
 
 def _query_aux(
     client: BlockingWsSurrealConnection | BlockingHttpSurrealConnection,
-    table_type: str,
     query: str,
     vars: dict[str, Any],
 ) -> list | dict:
     try:
         response = client.query(query, vars)
-        logger.debug(f"Read {table_type}: {response}. Query: {query}")
+        logger.debug(f"Query: {query}, Response: {response}")
     except Exception as e:
-        logger.error(f"Error reading {table_type}: {e}")
+        logger.error(f"Query execution error: {e}")
         raise e
     return response
 
 
 def query(
     client: BlockingWsSurrealConnection | BlockingHttpSurrealConnection,
-    table_type: str,
     query: str,
     vars: dict[str, Any],
     record_type: type[RecordType],
 ) -> Sequence[RecordType]:
-    response = _query_aux(client, table_type, query, vars)
+    response = _query_aux(client, query, vars)
     if isinstance(response, list):
         if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):
             return [getattr(record_type, "from_dict").__call__(x) for x in response]
@@ -56,12 +56,11 @@ def query(
 
 def query_one(
     client: BlockingWsSurrealConnection | BlockingHttpSurrealConnection,
-    table_type: str,
     query: str,
     vars: dict[str, Any],
     record_type: type[RecordType],
 ) -> RecordType:
-    response = _query_aux(client, table_type, query, vars)
+    response = _query_aux(client, query, vars)
     if not isinstance(response, list):
         if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):
             return getattr(record_type, "from_dict").__call__(response)
@@ -76,6 +75,7 @@ def serialize_session(session: Session) -> dict:
 
 
 def deserialize_session(session_type: SessionType, session_raw: dict) -> Session | None:
+    session_raw = deserialize_session_json_fields(session_raw)
     if session_type == SessionType.AGENT:
         return AgentSession.from_dict(session_raw)
     elif session_type == SessionType.TEAM:
@@ -107,3 +107,15 @@ def get_session_type(session: Session) -> SessionType:
         return SessionType.WORKFLOW
     else:
         raise ValueError(f"Invalid session instance: {type(session)}")
+
+
+def deserialize_user_memory(memory_raw: dict) -> UserMemory | None:
+    return UserMemory.from_dict(memory_raw)
+
+
+def deserialize_user_memories(memories_raw: Sequence[dict]) -> list[UserMemory]:
+    return [UserMemory.from_dict(x) for x in memories_raw]
+
+
+def serialize_user_memory(memory: UserMemory) -> dict:
+    return memory.to_dict()
