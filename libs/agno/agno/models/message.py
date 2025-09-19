@@ -74,6 +74,7 @@ class Message(BaseModel):
     audio_output: Optional[Audio] = None
     image_output: Optional[Image] = None
     video_output: Optional[Video] = None
+    file_output: Optional[File] = None
 
     # The thinking content from the model
     redacted_reasoning_content: Optional[str] = None
@@ -188,6 +189,29 @@ class Message(BaseModel):
                     reconstructed_videos.append(vid_data)
             data["videos"] = reconstructed_videos
 
+        # Handle file reconstruction properly
+        if "files" in data and data["files"]:
+            reconstructed_files = []
+            for i, file_data in enumerate(data["files"]):
+                if isinstance(file_data, dict):
+                    # If content is base64, decode it back to bytes
+                    if "content" in file_data and isinstance(file_data["content"], str):
+                        reconstructed_files.append(
+                            File.from_base64(
+                                file_data["content"],
+                                id=file_data.get("id"),
+                                mime_type=file_data.get("mime_type"),
+                                filename=file_data.get("filename"),
+                                name=file_data.get("name"),
+                                format=file_data.get("format"),
+                            )
+                        )
+                    else:
+                        reconstructed_files.append(File(**file_data))
+                else:
+                    reconstructed_files.append(file_data)
+            data["files"] = reconstructed_files
+
         if "audio_output" in data and data["audio_output"]:
             aud_data = data["audio_output"]
             if isinstance(aud_data, dict):
@@ -261,6 +285,8 @@ class Message(BaseModel):
             message_dict["audio"] = [aud.to_dict() for aud in self.audio]
         if self.videos:
             message_dict["videos"] = [vid.to_dict() for vid in self.videos]
+        if self.files:
+            message_dict["files"] = [file.to_dict() for file in self.files]
         if self.audio_output:
             message_dict["audio_output"] = self.audio_output.to_dict()
 

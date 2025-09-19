@@ -66,3 +66,27 @@ def test_structured_response_with_enum_fields():
     assert response.content is not None
     assert isinstance(response.content.rating, Grade)
     assert isinstance(response.content.recipe_name, str)
+
+
+def test_structured_response_with_union_field_types():
+    """Test structured output with Union types that exercise our union handling logic"""
+    from typing import Union
+
+    class UnionFieldResponse(BaseModel):
+        # This will generate union-like schemas that exercise our conversion logic
+        flexible_value: Union[str, int, bool] = Field(..., description="Value that can be string, number, or boolean")
+        name: str = Field(..., description="Required name field")
+
+    structured_output_agent = Agent(
+        model=Gemini(id="gemini-2.0-flash"),
+        description="You return data with flexible union-typed fields.",
+        output_schema=UnionFieldResponse,
+    )
+    response = structured_output_agent.run(
+        "Return a response with a flexible value that could be text, number, or true/false"
+    )
+
+    assert response.content is not None
+    assert isinstance(response.content.name, str)
+    # The flexible_value should be one of the union types
+    assert isinstance(response.content.flexible_value, (str, int, bool))

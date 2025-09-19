@@ -16,6 +16,7 @@ def generate_haiku(
     """Generate a haiku in Japanese and English and display it in the frontend."""
     return "Haiku generated and displayed in frontend"
 
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[

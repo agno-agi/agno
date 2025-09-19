@@ -1,7 +1,6 @@
 import json
 from typing import Any, Dict, List, Optional
 
-from agno.agent import Agent
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -122,7 +121,6 @@ class MemoriTools(Toolkit):
 
     def search_memory(
         self,
-        agent: Agent,
         query: str,
         limit: Optional[int] = None,
     ) -> str:
@@ -180,7 +178,7 @@ class MemoriTools(Toolkit):
             log_error(f"Error searching memory: {e}")
             return json.dumps({"success": False, "error": f"Memory search error: {str(e)}"})
 
-    def record_conversation(self, agent: Agent, content: str) -> str:
+    def record_conversation(self, content: str) -> str:
         """
         Add important information or facts to memory.
 
@@ -222,7 +220,6 @@ class MemoriTools(Toolkit):
 
     def get_memory_stats(
         self,
-        agent: Agent,
     ) -> str:
         """
         Get statistics about the memory system.
@@ -340,52 +337,3 @@ class MemoriTools(Toolkit):
         except Exception as e:
             log_error(f"Failed to disable memory system: {e}")
             return False
-
-
-def create_memori_search_tool(memori_toolkit: MemoriTools):
-    """
-    Create a standalone memory search function for use with Agno agents.
-
-    This is a convenience function that creates a memory search tool similar
-    to the pattern shown in the Memori example code.
-
-    Args:
-        memori_toolkit: An initialized MemoriTools instance
-
-    Returns:
-        Callable: A memory search function that can be used as an agent tool
-
-    Example:
-        ```python
-        memori_tools = MemoriTools(database_connect="sqlite:///memory.db")
-        search_tool = create_memori_search_tool(memori_tools)
-
-        agent = Agent(
-            model=OpenAIChat(),
-            tools=[search_tool],
-            description="Agent with memory search capability"
-        )
-        ```
-    """
-
-    def search_memory(query: str) -> str:
-        """
-        Search the agent's memory for past conversations and information.
-
-        Args:
-            query: What to search for in memory
-
-        Returns:
-            str: Search results or error message
-        """
-        try:
-            if not query.strip():
-                return "Please provide a search query"
-
-            result = memori_toolkit._memory_tool.execute(query=query.strip())
-            return str(result) if result else "No relevant memories found"
-
-        except Exception as e:
-            return f"Memory search error: {str(e)}"
-
-    return search_memory
