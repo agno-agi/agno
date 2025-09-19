@@ -1183,6 +1183,7 @@ class Agent:
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
+            dependencies=run_dependencies,
             user_id=user_id,
             async_mode=False,
             knowledge_filters=effective_filters,
@@ -1815,6 +1816,7 @@ class Agent:
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
+            dependencies=run_dependencies,
             user_id=user_id,
             async_mode=True,
             knowledge_filters=effective_filters,
@@ -4005,6 +4007,7 @@ class Agent:
         run_response: RunOutput,
         session: AgentSession,
         session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         async_mode: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
@@ -4114,6 +4117,7 @@ class Agent:
 
             for func in self._functions_for_model.values():
                 func._session_state = session_state
+                func._dependencies = dependencies
                 func._images = joint_images
                 func._files = joint_files
                 func._audios = joint_audios
