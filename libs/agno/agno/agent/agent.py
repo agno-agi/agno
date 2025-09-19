@@ -455,6 +455,11 @@ class Agent:
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
 
+        if add_history_to_context and not db:
+            log_warning(
+                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+            )
+
         self.store_media = store_media
 
         self.knowledge = knowledge
@@ -762,6 +767,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         )
 
         # Check for cancellation after model call
@@ -1176,6 +1182,7 @@ class Agent:
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
+            dependencies=run_dependencies,
             user_id=user_id,
             async_mode=False,
             knowledge_filters=effective_filters,
@@ -1359,6 +1366,7 @@ class Agent:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
+            send_media_to_model=self.send_media_to_model,
         )
 
         # Check for cancellation after model call
@@ -1807,6 +1815,7 @@ class Agent:
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
+            dependencies=run_dependencies,
             user_id=user_id,
             async_mode=True,
             knowledge_filters=effective_filters,
@@ -3100,6 +3109,8 @@ class Agent:
         # Update the run_response citations with the model response citations
         if model_response.citations is not None:
             run_response.citations = model_response.citations
+        if model_response.provider_data is not None:
+            run_response.model_provider_data = model_response.provider_data
 
         # Update the run_response tools with the model response tool_executions
         if model_response.tool_executions is not None:
@@ -3174,6 +3185,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -3250,6 +3262,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -3354,8 +3367,7 @@ class Agent:
 
                 if model_response_event.provider_data is not None:
                     # We get citations in one chunk
-                    model_response.provider_data = model_response_event.provider_data
-                    run_response.provider_data = model_response.provider_data
+                    run_response.model_provider_data = model_response.provider_data
 
                 if model_response_event.citations is not None:
                     # We get citations in one chunk
@@ -3386,7 +3398,7 @@ class Agent:
                             reasoning_content=model_response_event.reasoning_content,
                             redacted_reasoning_content=model_response_event.redacted_reasoning_content,
                             citations=model_response_event.citations,
-                            provider_data=model_response_event.provider_data,
+                            model_provider_data=model_response_event.provider_data,
                         ),
                         run_response,
                         workflow_context=workflow_context,
@@ -3820,7 +3832,9 @@ class Agent:
             self._rebuild_tools = True
         if self.search_session_history:
             agent_tools.append(
-                self._get_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions, user_id=user_id)
+                self._get_previous_sessions_messages_function(
+                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                )
             )
             self._rebuild_tools = True
 
@@ -4000,6 +4014,7 @@ class Agent:
         run_response: RunOutput,
         session: AgentSession,
         session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         async_mode: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
@@ -4109,6 +4124,7 @@ class Agent:
 
             for func in self._functions_for_model.values():
                 func._session_state = session_state
+                func._dependencies = dependencies
                 func._images = joint_images
                 func._files = joint_files
                 func._audios = joint_audios
@@ -4926,7 +4942,7 @@ class Agent:
             system_message_content += f"{get_response_model_format_prompt(self.output_schema)}"
 
         # 3.3.15 Add the session state to the system message
-        if self.add_session_state_to_context and session_state is not None:
+        if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
         # Return the system message
@@ -5197,9 +5213,16 @@ class Agent:
         if add_history_to_context:
             from copy import deepcopy
 
+            # Only skip messages from history when system_message_role is NOT a standard conversation role.
+            # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+            # to preserve conversation continuity.
+            skip_role = (
+                self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
+            )
+
             history: List[Message] = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
-                skip_role=self.system_message_role,
+                skip_role=skip_role,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
@@ -5917,6 +5940,7 @@ class Agent:
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
+                    tool_call_limit=self.tool_call_limit,
                     use_json_mode=self.use_json_mode,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
@@ -6142,6 +6166,7 @@ class Agent:
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
+                    tool_call_limit=self.tool_call_limit,
                     use_json_mode=self.use_json_mode,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
@@ -6887,21 +6912,21 @@ class Agent:
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
         console: Optional[Any] = None,
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Optional[Set[str]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        add_history_to_context: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -6938,8 +6963,10 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
-                add_history_to_context=add_history,
+                add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 **kwargs,
             )
@@ -6964,8 +6991,10 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
-                add_history_to_context=add_history,
+                add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 **kwargs,
             )
@@ -6984,21 +7013,21 @@ class Agent:
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
         console: Optional[Any] = None,
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Optional[Set[str]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        add_history_to_context: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -7034,8 +7063,10 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
-                add_history_to_context=add_history,
+                add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 **kwargs,
             )
@@ -7059,8 +7090,10 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
-                add_history_to_context=add_history,
+                add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 **kwargs,
             )

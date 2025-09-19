@@ -616,7 +616,10 @@ class Workflow:
         return session_state
 
     def _get_workflow_data(self) -> Dict[str, Any]:
-        workflow_data = {}
+        workflow_data: Dict[str, Any] = {
+            "workflow_id": self.id,
+            "name": self.name,
+        }
 
         if self.steps and not callable(self.steps):
             steps_dict = []
@@ -2371,6 +2374,34 @@ class Workflow:
         """Convert workflow to dictionary representation"""
 
         def serialize_step(step):
+            # Handle callable functions (not wrapped in Step objects)
+            if callable(step) and hasattr(step, "__name__"):
+                step_dict = {
+                    "name": step.__name__,
+                    "description": "User-defined callable step",
+                    "type": StepType.STEP.value,
+                }
+                return step_dict
+
+            # Handle Agent and Team objects directly
+            if isinstance(step, Agent):
+                step_dict = {
+                    "name": step.name or "unnamed_agent",
+                    "description": step.description or "Agent step",
+                    "type": StepType.STEP.value,
+                    "agent": step,
+                }
+                return step_dict
+
+            if isinstance(step, Team):
+                step_dict = {
+                    "name": step.name or "unnamed_team",
+                    "description": step.description or "Team step",
+                    "type": StepType.STEP.value,
+                    "team": step,
+                }
+                return step_dict
+
             step_dict = {
                 "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
                 "description": step.description if hasattr(step, "description") else "User-defined callable step",
