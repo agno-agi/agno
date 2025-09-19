@@ -616,7 +616,7 @@ class Workflow:
         return session_state
 
     def _get_workflow_data(self) -> Dict[str, Any]:
-        workflow_data = {
+        workflow_data: Dict[str, Any] = {
             "id": self.id,
             "name": self.name,
         }
