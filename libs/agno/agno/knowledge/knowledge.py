@@ -1045,7 +1045,10 @@ class Knowledge:
             return content_row.to_dict()
 
         else:
-            log_warning(f"Contents DB not found for knowledge base: {self.name}")
+            if self.name:
+                log_warning(f"Contents DB not found for knowledge base: {self.name}")
+            else:
+                log_warning("Contents DB not found for knowledge base")
             return None
 
     async def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
