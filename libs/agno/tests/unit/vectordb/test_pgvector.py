@@ -677,3 +677,246 @@ def test_delete_by_metadata_complex(mock_pgvector):
         result = mock_pgvector.delete_by_metadata({"spicy": False})
         assert result is True
         mock_delete_by_metadata.assert_called_once_with({"spicy": False})
+
+
+# Batch embedding tests
+@pytest.fixture
+def mock_embedder_with_batch():
+    """Create a mock embedder that supports batch embedding"""
+    embedder = MagicMock()
+    embedder.get_embedding.return_value = [0.1, 0.2, 0.3]
+    embedder.get_embedding_and_usage.return_value = ([0.1, 0.2, 0.3], {"tokens": 10})
+
+    # Create async mock for batch embedding
+    async def mock_async_get_embeddings_batch(texts, batch_size=100):
+        # Return embeddings for each text
+        return [
+            [0.1, 0.2, 0.3],
+            [0.4, 0.5, 0.6],
+            [0.7, 0.8, 0.9]
+        ][:len(texts)]  # Return only as many as requested
+
+    embedder.async_get_embeddings_batch = mock_async_get_embeddings_batch
+    return embedder
+
+
+@pytest.fixture
+def mock_embedder_without_batch():
+    """Create a mock embedder that does not support batch embedding"""
+    embedder = MagicMock()
+    embedder.get_embedding.return_value = [0.1, 0.2, 0.3]
+    embedder.get_embedding_and_usage.return_value = ([0.1, 0.2, 0.3], {"tokens": 10})
+
+    # Mock async methods too
+    async def mock_async_get_embedding(text):
+        return [0.1, 0.2, 0.3]
+
+    async def mock_async_get_embedding_and_usage(text):
+        return ([0.1, 0.2, 0.3], {"tokens": 10})
+
+    embedder.async_get_embedding = mock_async_get_embedding
+    embedder.async_get_embedding_and_usage = mock_async_get_embedding_and_usage
+
+    # Explicitly remove batch methods to simulate embedder without batch support
+    del embedder.async_get_embeddings_batch
+    del embedder.get_embeddings_batch
+    return embedder
+
+
+@pytest.fixture
+def pgvector_with_batch(mock_engine, mock_embedder_with_batch):
+    """Create a PgVector instance with batch-capable embedder"""
+    return PgVector(
+        table_name=TEST_TABLE,
+        schema=TEST_SCHEMA,
+        db_engine=mock_engine,
+        embedder=mock_embedder_with_batch,
+        use_batch=True
+    )
+
+
+@pytest.fixture
+def pgvector_without_batch(mock_engine, mock_embedder_without_batch):
+    """Create a PgVector instance with non-batch embedder"""
+    return PgVector(
+        table_name=TEST_TABLE,
+        schema=TEST_SCHEMA,
+        db_engine=mock_engine,
+        embedder=mock_embedder_without_batch,
+        use_batch=True  # Test fallback when use_batch=True but embedder doesn't support it
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_insert_uses_batch_embedding(pgvector_with_batch, sample_documents):
+    """Test that async_insert uses batch embedding when available and enabled"""
+    # Prepare documents
+    docs = sample_documents[:3]
+
+    with patch.object(pgvector_with_batch, '_get_document_record') as mock_get_record:
+        mock_get_record.return_value = {"id": "test", "content": "test", "embedding": [0.1, 0.2]}
+
+        with patch.object(pgvector_with_batch, 'Session') as mock_session_class:
+            mock_session = MagicMock()
+            mock_session_class.return_value = mock_session
+            mock_session.__enter__.return_value = mock_session
+
+            await pgvector_with_batch.async_insert("test_hash", docs)
+
+            # Verify documents got embeddings assigned from batch processing
+            # The batch embedder returns [0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]
+            assert docs[0].embedding == [0.1, 0.2, 0.3]
+            assert docs[1].embedding == [0.4, 0.5, 0.6]
+            assert docs[2].embedding == [0.7, 0.8, 0.9]
+            assert docs[0].usage == {}  # Batch API doesn't provide usage
+
+
+@pytest.mark.asyncio
+async def test_async_insert_falls_back_to_individual_embedding(pgvector_without_batch, sample_documents):
+    """Test that async_insert falls back to individual embedding when batch not available"""
+    # Prepare documents
+    docs = sample_documents[:2]
+
+    # Track calls to async_get_embedding_and_usage
+    call_count = 0
+    original_async_method = pgvector_without_batch.embedder.async_get_embedding_and_usage
+
+    async def counting_async_method(text):
+        nonlocal call_count
+        call_count += 1
+        return await original_async_method(text)
+
+    pgvector_without_batch.embedder.async_get_embedding_and_usage = counting_async_method
+
+    with patch.object(pgvector_without_batch, '_get_document_record') as mock_get_record:
+        mock_get_record.return_value = {"id": "test", "content": "test", "embedding": [0.1, 0.2]}
+
+        with patch.object(pgvector_without_batch, 'Session') as mock_session_class:
+            mock_session = MagicMock()
+            mock_session_class.return_value = mock_session
+            mock_session.__enter__.return_value = mock_session
+
+            await pgvector_without_batch.async_insert("test_hash", docs)
+
+            # Verify individual embedding was called for each document
+            assert call_count == 2
+
+            # Verify documents got embeddings from individual calls
+            assert docs[0].embedding == [0.1, 0.2, 0.3]
+            assert docs[1].embedding == [0.1, 0.2, 0.3]
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_uses_batch_embedding(pgvector_with_batch, sample_documents):
+    """Test that async_upsert uses batch embedding when available and enabled"""
+    # Prepare documents
+    docs = sample_documents[:2]
+
+    with patch.object(pgvector_with_batch, '_get_document_record') as mock_get_record:
+        mock_get_record.return_value = {"id": "test", "content": "test", "embedding": [0.1, 0.2]}
+
+        with patch.object(pgvector_with_batch, 'Session') as mock_session_class:
+            with patch.object(pgvector_with_batch, 'content_hash_exists', return_value=False):
+                mock_session = MagicMock()
+                mock_session_class.return_value = mock_session
+                mock_session.__enter__.return_value = mock_session
+
+                await pgvector_with_batch.async_upsert("test_hash", docs)
+
+                # Verify documents got embeddings from batch processing
+                assert docs[0].embedding == [0.1, 0.2, 0.3]
+                assert docs[1].embedding == [0.4, 0.5, 0.6]
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_falls_back_to_individual_embedding(pgvector_without_batch, sample_documents):
+    """Test that async_upsert falls back to individual embedding when batch not available"""
+    # Prepare documents
+    docs = sample_documents[:2]
+
+    # Track calls to async_get_embedding_and_usage
+    call_count = 0
+    original_async_method = pgvector_without_batch.embedder.async_get_embedding_and_usage
+
+    async def counting_async_method(text):
+        nonlocal call_count
+        call_count += 1
+        return await original_async_method(text)
+
+    pgvector_without_batch.embedder.async_get_embedding_and_usage = counting_async_method
+
+    with patch.object(pgvector_without_batch, '_get_document_record') as mock_get_record:
+        mock_get_record.return_value = {"id": "test", "content": "test", "embedding": [0.1, 0.2]}
+
+        with patch.object(pgvector_without_batch, 'Session') as mock_session_class:
+            with patch.object(pgvector_without_batch, 'content_hash_exists', return_value=False):
+                mock_session = MagicMock()
+                mock_session_class.return_value = mock_session
+                mock_session.__enter__.return_value = mock_session
+
+                await pgvector_without_batch.async_upsert("test_hash", docs)
+
+                # Verify individual embedding was called for each document
+                assert call_count == 2
+
+                # Verify documents got embeddings from individual calls
+                assert docs[0].embedding == [0.1, 0.2, 0.3]
+                assert docs[1].embedding == [0.1, 0.2, 0.3]
+
+
+def test_use_batch_flag_defaults_to_false(mock_engine, mock_embedder):
+    """Test that use_batch defaults to False"""
+    pgvector = PgVector(
+        table_name=TEST_TABLE,
+        schema=TEST_SCHEMA,
+        db_engine=mock_engine,
+        embedder=mock_embedder
+    )
+
+    assert pgvector.use_batch is False
+
+
+def test_use_batch_flag_can_be_set(mock_engine, mock_embedder):
+    """Test that use_batch flag can be set to True"""
+    pgvector = PgVector(
+        table_name=TEST_TABLE,
+        schema=TEST_SCHEMA,
+        db_engine=mock_engine,
+        embedder=mock_embedder,
+        use_batch=True
+    )
+
+    assert pgvector.use_batch is True
+
+
+@pytest.mark.asyncio
+async def test_batch_size_parameter_passed_to_embedder(mock_engine, mock_embedder_with_batch):
+    """Test that batch size affects how documents are processed in PgVector"""
+    pgvector = PgVector(
+        table_name=TEST_TABLE,
+        schema=TEST_SCHEMA,
+        db_engine=mock_engine,
+        embedder=mock_embedder_with_batch,
+        use_batch=True
+    )
+
+    docs = [
+        Document(content="Test doc 1"),
+        Document(content="Test doc 2"),
+    ]
+
+    with patch.object(pgvector, '_get_document_record') as mock_get_record:
+        mock_get_record.return_value = {"id": "test", "content": "test", "embedding": [0.1, 0.2]}
+
+        with patch.object(pgvector, 'Session') as mock_session_class:
+            mock_session = MagicMock()
+            mock_session_class.return_value = mock_session
+            mock_session.__enter__.return_value = mock_session
+
+            # Test with batch_size=1 (processes documents one at a time)
+            await pgvector.async_insert("test_hash", docs, batch_size=1)
+
+            # With batch_size=1, each document is processed individually in batch embedding
+            # Both get the first available embedding since the mock returns the same sequence
+            assert docs[0].embedding == [0.1, 0.2, 0.3]
+            assert docs[1].embedding == [0.1, 0.2, 0.3]  # Same as first since mock returns same sequence

@@ -337,8 +337,18 @@ class PgVector(VectorDb):
                     batch_docs = documents[i : i + batch_size]
                     log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
-                        embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
-                        await asyncio.gather(*embed_tasks, return_exceptions=True)
+                        # Use batch embedding if available and enabled
+                        if self.use_batch and hasattr(self.embedder, 'async_get_embeddings_batch'):
+                            batch_texts = [doc.content for doc in batch_docs]
+                            embeddings = await self.embedder.async_get_embeddings_batch(batch_texts, batch_size=len(batch_texts))
+                            # Assign embeddings to documents in order
+                            for doc, embedding in zip(batch_docs, embeddings):
+                                doc.embedding = embedding
+                                doc.usage = {}  # Batch API doesn't provide usage per document
+                        else:
+                            # Fall back to individual embedding
+                            embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
+                            await asyncio.gather(*embed_tasks, return_exceptions=True)
 
                         # Prepare documents for insertion
                         batch_records = []
@@ -530,8 +540,18 @@ class PgVector(VectorDb):
                     batch_docs = documents[i : i + batch_size]
                     log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
-                        embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
-                        await asyncio.gather(*embed_tasks, return_exceptions=True)
+                        # Use batch embedding if available and enabled
+                        if self.use_batch and hasattr(self.embedder, 'async_get_embeddings_batch'):
+                            batch_texts = [doc.content for doc in batch_docs]
+                            embeddings = await self.embedder.async_get_embeddings_batch(batch_texts, batch_size=len(batch_texts))
+                            # Assign embeddings to documents in order
+                            for doc, embedding in zip(batch_docs, embeddings):
+                                doc.embedding = embedding
+                                doc.usage = {}  # Batch API doesn't provide usage per document
+                        else:
+                            # Fall back to individual embedding
+                            embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
+                            await asyncio.gather(*embed_tasks, return_exceptions=True)
 
                         # Prepare documents for upserting
                         batch_records_dict = {}  # Use dict to deduplicate by ID
