@@ -98,6 +98,7 @@ class RunContentEvent(BaseTeamRunEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: Optional[str] = None
+    model_provider_data: Optional[Dict[str, Any]] = None
     citations: Optional[Citations] = None
     response_audio: Optional[Audio] = None  # Model audio response
     image: Optional[Image] = None  # Image attached to the response
@@ -121,6 +122,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
+    model_provider_data: Optional[Dict[str, Any]] = None
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
@@ -382,7 +384,7 @@ class TeamRunOutput:
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None
-
+    model_provider_data: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
 
     references: Optional[List[MessageReferences]] = None
