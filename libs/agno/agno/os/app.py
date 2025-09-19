@@ -299,7 +299,7 @@ class AgentOS:
             fastapi_app.middleware("http")(general_exception_handler)
 
         # Update CORS middleware
-        update_cors_middleware(self.fastapi_app, self.settings.cors_origin_list)  # type: ignore
+        update_cors_middleware(fastapi_app, self.settings.cors_origin_list)  # type: ignore
 
         return fastapi_app
 
