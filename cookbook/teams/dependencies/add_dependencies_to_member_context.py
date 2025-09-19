@@ -50,8 +50,6 @@ team = Team(
     members=[profile_agent, context_agent],
     markdown=True,
     show_members_responses=True,
-    # So we can observe the dependencies sent to the member agents
-    debug_mode=True,
 )
 
 team.print_response(
@@ -61,4 +59,7 @@ team.print_response(
         "current_context": get_current_context,
     },
     add_dependencies_to_context=True,  # This setting will pass through to the member agents
+    # So we can observe the dependencies sent to the member agents
+    debug_mode=True,
+    
 )

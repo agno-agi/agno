@@ -1236,7 +1236,9 @@ class Team:
             workflow_context=workflow_context,
             debug_mode=debug_mode,
             add_history_to_context=add_history,
+            add_session_state_to_context=add_session_state,
             dependencies=run_dependencies,
+            add_dependencies_to_context=add_dependencies,
             metadata=metadata,
         )
 
@@ -1854,6 +1856,8 @@ class Team:
             workflow_context=workflow_context,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
             dependencies=dependencies,
             metadata=metadata,
         )
@@ -4528,7 +4532,7 @@ class Team:
                 f"<additional_context>\n{self.additional_context.strip()}\n</additional_context>\n\n"
             )
 
-        if self.add_session_state_to_context and session_state is not None:
+        if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
         # Add the JSON output prompt if output_schema is provided and structured_outputs is False
