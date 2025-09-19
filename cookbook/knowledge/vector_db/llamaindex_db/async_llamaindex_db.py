@@ -1,7 +1,4 @@
-"""
-pip install llama-index-core llama-index-readers-file llama-index-embeddings-openai agno
-"""
-
+import asyncio
 from pathlib import Path
 from shutil import rmtree
 
@@ -46,7 +43,6 @@ index = VectorStoreIndex(nodes=nodes, storage_context=storage_context)
 
 knowledge_retriever = VectorIndexRetriever(index)
 
-# Create a knowledge instance from the vector store
 knowledge = Knowledge(
     vector_db=LlamaIndexVectorDb(knowledge_retriever=knowledge_retriever)
 )
@@ -59,7 +55,9 @@ agent = Agent(
     debug_mode=True,
 )
 
-# Use the agent to ask a question and print a response.
-agent.print_response(
-    "Explain what this text means: low end eats the high end", markdown=True
-)
+if __name__ == "__main__":
+    asyncio.run(
+        agent.aprint_response(
+            "Explain what this text means: low end eats the high end", markdown=True
+        )
+    )
