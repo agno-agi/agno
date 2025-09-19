@@ -126,6 +126,55 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
+def test_custom_host_configuration():
+    """Test Ollama model with custom host configuration"""
+    custom_host = "http://192.168.1.100:11434"
+
+    # Test model with custom host
+    model = Ollama(id="llama3.2:latest", host=custom_host, timeout=30.0)
+
+    # Verify host configuration
+    assert model.host == custom_host
+
+    # Verify client parameters
+    client_params = model._get_client_params()
+    assert client_params["host"] == custom_host
+    assert client_params["timeout"] == 30.0
+
+    # Test sync client configuration
+    sync_client = model.get_client()
+    assert sync_client._client.base_url == custom_host
+
+    # Test async client configuration and caching
+    async_client1 = model.get_async_client()
+    async_client2 = model.get_async_client()
+
+    # Verify async client is configured correctly
+    assert async_client1._client.base_url == custom_host
+    assert async_client2._client.base_url == custom_host
+
+    # Verify async client caching works (should be the same object)
+    assert async_client1 is async_client2
+    assert model.async_client is async_client1
+
+    # Test agent with custom host model
+    agent = Agent(
+        model=model,
+        instructions="Test agent with custom host",
+        telemetry=False,
+    )
+
+    # Verify agent's model retains custom host
+    assert agent.model.host == custom_host
+    assert agent.model._get_client_params()["host"] == custom_host
+
+    # Test that different model instances have different clients
+    model2 = Ollama(id="llama3.2:latest", host="http://different-host:11434")
+    assert model2.get_client() is not model.get_client()
+    assert model2.get_async_client() is not model.get_async_client()
+    assert model2.get_client()._client.base_url != model.get_client()._client.base_url
+
+
 def test_history():
     agent = Agent(
         model=Ollama(id="llama3.2:latest"),
