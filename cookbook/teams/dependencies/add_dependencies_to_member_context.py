@@ -61,5 +61,4 @@ team.print_response(
     add_dependencies_to_context=True,  # This setting will pass through to the member agents
     # So we can observe the dependencies sent to the member agents
     debug_mode=True,
-    
 )
