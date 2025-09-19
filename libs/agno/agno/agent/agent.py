@@ -4258,10 +4258,7 @@ class Agent:
                 and isinstance(session_state_from_db, dict)
                 and len(session_state_from_db) > 0
             ):
-                # This updates session_state_from_db
-                # If there are conflicting keys, values from provided session_state will take precedence
-                merge_dictionaries(session_state_from_db, session_state)
-                session_state = session_state_from_db
+                merge_dictionaries(session_state, session_state_from_db)
 
         # Update the session_state in the session
         if session.session_data is not None:
