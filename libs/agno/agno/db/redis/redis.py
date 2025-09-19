@@ -300,8 +300,8 @@ class RedisDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
+            session_type (SessionType): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
-            session_type (Optional[SessionType]): The type of session to filter by.
 
         Returns:
             Optional[Union[AgentSession, TeamSession, WorkflowSession]]: The session if found, None otherwise.
