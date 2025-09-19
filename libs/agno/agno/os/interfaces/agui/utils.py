@@ -191,12 +191,12 @@ def _create_events_from_chunk(
             )
             events_to_emit.append(content_event)  # type: ignore
 
-    # Handle starting a new tool call (both Agent and Team level)
+    # Handle starting a new tool
     elif chunk.event == RunEvent.tool_call_started or chunk.event == TeamRunEvent.tool_call_started:
         if chunk.tool is not None:  # type: ignore
             tool_call = chunk.tool  # type: ignore
 
-            # CRITICAL FIX: End current text message and prepare for tool calls
+            # End current text message and handle for tool calls
             current_message_id = message_id
             if message_started:
                 # End the current text message
@@ -211,15 +211,10 @@ def _create_events_from_chunk(
                 message_started = False
                 message_id = str(uuid.uuid4())
 
-            # Get the parent message ID - this will use pending parent if set,
-            # ensuring multiple tool calls in sequence have the same parent
+            # Get the parent message ID - this will use pending parent if set, ensuring multiple tool calls in sequence have the same parent
             parent_message_id = event_buffer.get_parent_message_id_for_tool_call()
 
-            # FIXED: Remove fallback that could use wrong message ID
-            # The EventBuffer should always provide the correct parent ID
             if not parent_message_id:
-                # If no parent is set, use current message ID as last resort
-                # This should only happen if there's no preceding text message
                 parent_message_id = current_message_id
 
             start_event = ToolCallStartEvent(
@@ -237,7 +232,7 @@ def _create_events_from_chunk(
             )
             events_to_emit.append(args_event)  # type: ignore
 
-    # Handle tool call completion (both Agent and Team level)
+    # Handle tool call completion
     elif chunk.event == RunEvent.tool_call_completed or chunk.event == TeamRunEvent.tool_call_completed:
         if chunk.tool is not None:  # type: ignore
             tool_call = chunk.tool  # type: ignore
