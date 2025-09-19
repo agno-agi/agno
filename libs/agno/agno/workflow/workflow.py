@@ -616,7 +616,10 @@ class Workflow:
         return session_state
 
     def _get_workflow_data(self) -> Dict[str, Any]:
-        workflow_data = {}
+        workflow_data = {
+            "id": self.id,
+            "name": self.name,
+        }
 
         if self.steps and not callable(self.steps):
             steps_dict = []
