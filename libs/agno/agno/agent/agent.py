@@ -5204,9 +5204,12 @@ class Agent:
         if add_history_to_context:
             from copy import deepcopy
 
-            # Only skip system messages from history when using the traditional "system" role.
-            # For other roles (user, assistant, custom), don't skip anything to preserve conversation history.
-            skip_role = "system" if self.system_message_role == "system" else None
+            # Only skip messages from history when system_message_role is NOT a standard conversation role.
+            # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+            # to preserve conversation continuity.
+            skip_role = (
+                self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
+            )
 
             history: List[Message] = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
