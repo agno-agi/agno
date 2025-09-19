@@ -8,7 +8,7 @@ from functools import cached_property
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast, overload
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union, cast, overload
 
 from httpx import AsyncClient
 
@@ -21,7 +21,9 @@ from agno.knowledge.remote_content.remote_content import GCSContent, RemoteConte
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
-from agno.vectordb import VectorDb
+
+if TYPE_CHECKING:
+    from agno.vectordb import VectorDb
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
 
@@ -39,7 +41,7 @@ class Knowledge:
 
     name: Optional[str] = None
     description: Optional[str] = None
-    vector_db: Optional[VectorDb] = None
+    vector_db: Optional["VectorDb"] = None
     contents_db: Optional[BaseDb] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
