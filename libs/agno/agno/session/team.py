@@ -160,12 +160,14 @@ class TeamSession:
                 continue
 
             for message in run_response.messages or []:
-                # Skip messages with specified role
-                if skip_role and message.role == skip_role:
-                    continue
                 # Skip messages that were tagged as history in previous runs
                 if hasattr(message, "from_history") and message.from_history and skip_history_messages:
                     continue
+
+                # Skip messages with specified role
+                if skip_role and message.role == skip_role:
+                    continue
+
                 if message.role == "system":
                     # Only add the system message once
                     if system_message is None:
