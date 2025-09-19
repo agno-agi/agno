@@ -4,12 +4,13 @@ Example AgentOS app where the agent has MCPTools.
 AgentOS handles the lifespan of the MCPTools internally.
 """
 
+from os import getenv
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.mcp import MCPTools  # noqa: F401
-from os import getenv
 
 # Setup the database
 db = SqliteDb(db_file="tmp/agentos.db")

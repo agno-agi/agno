@@ -1,4 +1,4 @@
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.media import Audio, Image
 from agno.models.message import Citations
@@ -76,6 +76,7 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         content_type=from_run_response.content_type,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
         citations=from_run_response.citations,  # type: ignore
+        model_provider_data=from_run_response.model_provider_data,  # type: ignore
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
@@ -100,6 +101,7 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         content_type=from_run_response.content_type,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
         citations=from_run_response.citations,  # type: ignore
+        model_provider_data=from_run_response.model_provider_data,  # type: ignore
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
@@ -343,6 +345,7 @@ def create_run_output_content_event(
     content_type: Optional[str] = None,
     reasoning_content: Optional[str] = None,
     redacted_reasoning_content: Optional[str] = None,
+    model_provider_data: Optional[Dict[str, Any]] = None,
     citations: Optional[Citations] = None,
     response_audio: Optional[Audio] = None,
     image: Optional[Image] = None,
@@ -364,6 +367,7 @@ def create_run_output_content_event(
         additional_input=from_run_response.additional_input,
         reasoning_steps=from_run_response.reasoning_steps,
         reasoning_messages=from_run_response.reasoning_messages,
+        model_provider_data=model_provider_data,
     )
 
 
@@ -374,6 +378,7 @@ def create_team_run_output_content_event(
     reasoning_content: Optional[str] = None,
     redacted_reasoning_content: Optional[str] = None,
     citations: Optional[Citations] = None,
+    model_provider_data: Optional[Dict[str, Any]] = None,
     response_audio: Optional[Audio] = None,
     image: Optional[Image] = None,
 ) -> TeamRunContentEvent:
@@ -388,6 +393,7 @@ def create_team_run_output_content_event(
         content_type=content_type or "str",
         reasoning_content=thinking_combined,
         citations=citations,
+        model_provider_data=model_provider_data,
         response_audio=response_audio,
         image=image,
         references=from_run_response.references,  # type: ignore
