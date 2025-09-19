@@ -617,7 +617,7 @@ class Workflow:
 
     def _get_workflow_data(self) -> Dict[str, Any]:
         workflow_data: Dict[str, Any] = {
-            "id": self.id,
+            "workflow_id": self.id,
             "name": self.name,
         }
 
