@@ -1,8 +1,8 @@
 from agno.utils.gemini import (
     convert_schema,
     format_function_definitions,
-    convert_pydantic_to_gemini_schema,
     needs_conversion,
+    prepare_response_schema,
 )
 
 
@@ -413,32 +413,36 @@ def test_convert_schema_with_multiple_refs_to_same_def():
         assert person_schema.properties["email"].type == "STRING"
 
 
-def test_convert_pydantic_to_gemini_schema_with_dict():
-    """Test converting a schema dict through the hybrid function"""
-    schema_dict = {"type": "object", "properties": {"name": {"type": "string"}, "age": {"type": "integer"}}}
-
-    result = convert_pydantic_to_gemini_schema(schema_dict)
-
-    assert result is not None
-    assert result.type == "OBJECT"
-    assert "name" in result.properties
-    assert "age" in result.properties
-
-
-def test_convert_pydantic_to_gemini_schema_with_pydantic_model():
-    """Test converting a Pydantic model through the hybrid function"""
+def test_prepare_response_schema_with_simple_model():
+    """Test that simple Pydantic models are returned directly"""
     from pydantic import BaseModel
 
     class SimpleModel(BaseModel):
         name: str
         age: int
 
-    # The hybrid function should return the model directly for simple models
-    result = convert_pydantic_to_gemini_schema(SimpleModel)
+    result = prepare_response_schema(SimpleModel)
 
-    assert result is not None
     # Simple models should be returned directly
     assert result == SimpleModel
+
+
+def test_prepare_response_schema_with_circular_ref():
+    """Test that models with circular refs get converted"""
+    from typing import Optional
+
+    from pydantic import BaseModel
+
+    class TreeNode(BaseModel):
+        value: str
+        left: Optional["TreeNode"] = None
+        right: Optional["TreeNode"] = None
+
+    result = prepare_response_schema(TreeNode)
+
+    # Should be converted to Schema, not the raw model
+    assert result != TreeNode
+    assert hasattr(result, "type")  # Should be a Schema object
 
 
 def test_needs_conversion_simple_schema():
@@ -495,18 +499,18 @@ def test_needs_conversion_nested_no_refs():
     assert needs_conversion(schema) is False
 
 
-def test_convert_pydantic_with_circular_ref():
-    """Test that models with circular refs get converted"""
-    from typing import Optional
+def test_prepare_response_schema_with_dict_field():
+    """Test that models with dict fields get converted"""
+    from typing import Dict
+
     from pydantic import BaseModel
 
-    class TreeNode(BaseModel):
-        value: str
-        left: Optional["TreeNode"] = None
-        right: Optional["TreeNode"] = None
+    class ModelWithDict(BaseModel):
+        metadata: Dict[str, str]
+        scores: Dict[str, int]
 
-    result = convert_pydantic_to_gemini_schema(TreeNode)
+    result = prepare_response_schema(ModelWithDict)
 
-    # Should be converted to Schema, not the raw model
-    assert result != TreeNode
+    # Should be converted due to additionalProperties
+    assert result != ModelWithDict
     assert hasattr(result, "type")  # Should be a Schema object

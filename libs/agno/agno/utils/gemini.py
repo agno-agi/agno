@@ -1,5 +1,7 @@
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.media import Image
 from agno.utils.log import log_error, log_warning
@@ -9,40 +11,39 @@ try:
         FunctionDeclaration,
         Schema,
         Tool,
-        Type,
+    )
+    from google.genai.types import (
+        Type as GeminiType,
     )
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
 
 
-def convert_pydantic_to_gemini_schema(model_or_schema: Any) -> Any:
+def prepare_response_schema(pydantic_model: Type[BaseModel]) -> Union[Type[BaseModel], Schema]:
     """
-    Convert Pydantic model to Gemini-compatible schema.
+    Prepare a Pydantic model for use as Gemini response schema.
 
-    Based on testing, Gemini accepts most Pydantic models directly except:
-    - Models with circular/self-references ($ref to same model)
-    - Models that generate empty object properties
+    Returns the model directly if Gemini can handle it natively,
+    otherwise converts to Gemini's Schema format.
 
-    For these edge cases, we convert to Gemini's Schema format.
+    Args:
+        pydantic_model: A Pydantic model class
+
+    Returns:
+        Either the original Pydantic model or a converted Schema object
     """
-    # If it's a Pydantic model, check if conversion is needed
-    if hasattr(model_or_schema, "model_json_schema"):
-        schema_dict = model_or_schema.model_json_schema()
+    schema_dict = pydantic_model.model_json_schema()
 
-        # Check if schema has circular references or other issues
-        if needs_conversion(schema_dict):
-            # Convert to Gemini Schema format
-            return convert_schema(schema_dict)
-        else:
-            # Gemini can handle this model directly
-            return model_or_schema
+    # Convert to Gemini Schema if the model has problematic patterns
+    if needs_conversion(schema_dict):
+        converted = convert_schema(schema_dict)
+        if converted is None:
+            # If conversion fails, let Gemini handle it directly
+            return pydantic_model
+        return converted
 
-    # Already a schema dict - always convert
-    if isinstance(model_or_schema, dict):
-        return convert_schema(model_or_schema)
-
-    # Unknown type, return as-is
-    return model_or_schema
+    # Gemini can handle this model directly
+    return pydantic_model
 
 
 def needs_conversion(schema_dict: Dict[str, Any]) -> bool:
@@ -199,7 +200,7 @@ def convert_schema(
         if ref_path in visited_refs:
             # Return a basic object schema to break the cycle
             return Schema(
-                type=Type.OBJECT,
+                type=GeminiType.OBJECT,
                 description=f"Circular reference to {ref_path}",
             )
 
@@ -224,7 +225,7 @@ def convert_schema(
     # Handle enum types
     if "enum" in schema_dict:
         enum_values = schema_dict["enum"]
-        return Schema(type=Type.STRING, enum=enum_values, description=description, default=default)
+        return Schema(type=GeminiType.STRING, enum=enum_values, description=description, default=default)
 
     if schema_type == "object":
         # Handle regular objects with properties
@@ -249,14 +250,14 @@ def convert_schema(
 
             if properties:
                 return Schema(
-                    type=Type.OBJECT,
+                    type=GeminiType.OBJECT,
                     properties=properties,
                     required=required,
                     description=description,
                     default=default,
                 )
             else:
-                return Schema(type=Type.OBJECT, description=description, default=default)
+                return Schema(type=GeminiType.OBJECT, description=description, default=default)
 
         # Handle Dict types (objects with additionalProperties but no properties)
         elif "additionalProperties" in schema_dict:
@@ -291,7 +292,7 @@ def convert_schema(
                     placeholder_properties["example_key"].items = {}  # type: ignore
 
                 return Schema(
-                    type=Type.OBJECT,
+                    type=GeminiType.OBJECT,
                     properties=placeholder_properties,
                     description=description
                     or f"Dictionary with {value_type.lower()} values{type_description_suffix}. Can contain any number of key-value pairs.",
@@ -299,22 +300,22 @@ def convert_schema(
                 )
             else:
                 # additionalProperties is false or true
-                return Schema(type=Type.OBJECT, description=description, default=default)
+                return Schema(type=GeminiType.OBJECT, description=description, default=default)
 
         # Handle empty objects
         else:
-            return Schema(type=Type.OBJECT, description=description, default=default)
+            return Schema(type=GeminiType.OBJECT, description=description, default=default)
 
     elif schema_type == "array" and "items" in schema_dict:
         if not schema_dict["items"]:  # Handle empty {}
-            items = Schema(type=Type.STRING)
+            items = Schema(type=GeminiType.STRING)
         else:
             converted_items = convert_schema(schema_dict["items"], root_schema, visited_refs)
-            items = converted_items if converted_items is not None else Schema(type=Type.STRING)
+            items = converted_items if converted_items is not None else Schema(type=GeminiType.STRING)
         min_items = schema_dict.get("minItems")
         max_items = schema_dict.get("maxItems")
         return Schema(
-            type=Type.ARRAY,
+            type=GeminiType.ARRAY,
             description=description,
             items=items,
             min_items=min_items,
@@ -323,7 +324,7 @@ def convert_schema(
 
     elif schema_type == "string":
         schema_kwargs = {
-            "type": Type.STRING,
+            "type": GeminiType.STRING,
             "description": description,
             "default": default,
         }
