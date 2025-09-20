@@ -30,6 +30,7 @@ from pydantic import BaseModel
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import ModelProviderError, RunCancelledException, StopAgentRun
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
@@ -3797,29 +3798,21 @@ class Agent:
 
             # If any of the tools has "agent" as parameter, set _rebuild_tools to True
             for tool in agent_tools:
+                param_names = {"agent", "session_state", "team", "images", "videos", "audios", "files"}
+
                 if isinstance(tool, Function):
-                    if "agent" in tool.parameters:
+                    if param_names & set(tool.parameters):
                         self._rebuild_tools = True
                         break
-                    if "team" in tool.parameters:
-                        self._rebuild_tools = True
-                        break
-                if isinstance(tool, Toolkit):
+                elif isinstance(tool, Toolkit):
                     for func in tool.functions.values():
-                        if "agent" in func.parameters:
+                        if param_names & set(func.parameters):
                             self._rebuild_tools = True
                             break
-                        if "team" in func.parameters:
-                            self._rebuild_tools = True
-                            break
-                if callable(tool):
+                elif callable(tool):
                     from inspect import signature
 
-                    sig = signature(tool)
-                    if "agent" in sig.parameters:
-                        self._rebuild_tools = True
-                        break
-                    if "team" in sig.parameters:
+                    if param_names & set(signature(tool).parameters):
                         self._rebuild_tools = True
                         break
 
@@ -4262,10 +4255,7 @@ class Agent:
                 and isinstance(session_state_from_db, dict)
                 and len(session_state_from_db) > 0
             ):
-                # This updates session_state_from_db
-                # If there are conflicting keys, values from provided session_state will take precedence
-                merge_dictionaries(session_state_from_db, session_state)
-                session_state = session_state_from_db
+                merge_dictionaries(session_state, session_state_from_db)
 
         # Update the session_state in the session
         if session.session_data is not None:
@@ -6738,17 +6728,18 @@ class Agent:
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
-        def search_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+        def search_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
             """Use this function to search the knowledge base for information about a query.
 
             Args:
                 query: The query to search for.
-                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
 
             Returns:
                 str: A string containing the response from the knowledge base.
             """
-            search_filters = get_agentic_or_user_search_filters(filters, knowledge_filters)
+            filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+            search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
 
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
@@ -6771,17 +6762,18 @@ class Agent:
                 return "No documents found"
             return self._convert_documents_to_string(docs_from_knowledge)
 
-        async def asearch_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+        async def asearch_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
             """Use this function to search the knowledge base for information about a query asynchronously.
 
             Args:
                 query: The query to search for.
-                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
 
             Returns:
                 str: A string containing the response from the knowledge base.
             """
-            search_filters = get_agentic_or_user_search_filters(filters, knowledge_filters)
+            filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+            search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
 
             retrieval_timer = Timer()
             retrieval_timer.start()
