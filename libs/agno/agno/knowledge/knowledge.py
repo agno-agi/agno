@@ -66,6 +66,8 @@ class Knowledge:
         paths: Optional[List[str]] = None,
         urls: Optional[List[str]] = None,
         metadata: Optional[Dict[str, str]] = None,
+        topics: Optional[List[str]] = None,
+        text_contents: Optional[List[str]] = None,
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = False,
@@ -86,6 +88,7 @@ class Knowledge:
                     url=argument.get("url"),
                     metadata=argument.get("metadata"),
                     topics=argument.get("topics"),
+                    text_contents=argument.get("text_contents"),
                     reader=argument.get("reader"),
                     include=argument.get("include"),
                     exclude=argument.get("exclude"),
@@ -101,6 +104,7 @@ class Knowledge:
             topics = kwargs.get("topics", [])
             paths = kwargs.get("paths", [])
             urls = kwargs.get("urls", [])
+            text_contents = kwargs.get("text_contents", [])
             include = kwargs.get("include")
             exclude = kwargs.get("exclude")
             upsert = kwargs.get("upsert", False)
@@ -128,6 +132,17 @@ class Knowledge:
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
                 )
+            for text_content in text_contents:
+                await self.add_content_async(
+                        name=name,
+                        description=description,
+                        text_content=text_content,
+                        metadata=metadata,
+                        include=include,
+                        exclude=exclude,
+                        upsert=upsert,
+                        skip_if_exists=skip_if_exists,
+                    )
             if topics:
                 await self.add_content_async(
                     name=name,
@@ -163,6 +178,8 @@ class Knowledge:
         paths: Optional[List[str]] = None,
         urls: Optional[List[str]] = None,
         metadata: Optional[Dict[str, str]] = None,
+        topics: Optional[List[str]] = None,
+        text_contents: Optional[List[str]] = None,
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = False,
@@ -184,6 +201,8 @@ class Knowledge:
             paths: Optional list of file paths to load content from
             urls: Optional list of URLs to load content from
             metadata: Optional metadata dictionary to apply to all content
+            topics: Optional list of topics to add content to
+            text_contents: Optional list of text contents to add content to
             include: Optional list of file patterns to include
             exclude: Optional list of file patterns to exclude
             upsert: Whether to update existing content if it already exists
@@ -201,6 +220,7 @@ class Knowledge:
         url: Optional[str] = None,
         text_content: Optional[str] = None,
         metadata: Optional[Dict[str, str]] = None,
+        topics: Optional[List[str]] = None,
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = False,
