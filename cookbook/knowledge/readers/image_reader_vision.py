@@ -1,8 +1,3 @@
-"""
-This example adds image content to the knowledge base using Vision reader.
-Run: `python 02_add_vision_content.py`
-"""
-
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
@@ -11,8 +6,8 @@ from agno.vectordb.lancedb import LanceDb
 
 # Initialize vector database for Vision
 vector_db_vision = LanceDb(
-    table_name="recipes_vision",
-    uri="tmp/lancedb_vision",
+    table_name="recipes",
+    uri="tmp/lancedb",
 )
 
 # Vision Reader setup
@@ -32,7 +27,7 @@ knowledge_vision = Knowledge(
 # Add content using Vision reader
 knowledge_vision.add_content(
     path="cookbook/knowledge/testing_resources/images/",
-    metadata={"user_tag": "Engineering Candidates - Vision"},
+    metadata={"user_tag": "agno docs - Vision"},
     reader=vision_reader,
     skip_if_exists=False,
 )

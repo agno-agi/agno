@@ -1,5 +1,4 @@
 import asyncio
-
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
@@ -25,7 +24,7 @@ if __name__ == "__main__":
     asyncio.run(
         knowledge_ocr.add_content_async(
             path="cookbook/knowledge/testing_resources/images/",
-            metadata={"user_tag": "Engineering Candidates - OCR"},
+            metadata={"user_tag": "agno docs - OCR"},
             reader=ocr_reader,
             skip_if_exists=False,
         )

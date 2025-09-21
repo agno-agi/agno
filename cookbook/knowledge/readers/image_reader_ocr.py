@@ -1,8 +1,3 @@
-"""
-This example adds image content to the knowledge base using OCR reader.
-Run: `python 01_add_ocr_content.py`
-"""
-
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
@@ -10,8 +5,8 @@ from agno.vectordb.lancedb import LanceDb
 
 # Initialize vector database for OCR
 vector_db_ocr = LanceDb(
-    table_name="recipes_ocr",
-    uri="tmp/lancedb_ocr",
+    table_name="recipes",
+    uri="tmp/lancedb",
 )
 
 # OCR Reader setup
@@ -29,7 +24,7 @@ knowledge_ocr = Knowledge(
 # Add content using OCR reader
 knowledge_ocr.add_content(
     path="cookbook/knowledge/testing_resources/images/",
-    metadata={"user_tag": "Engineering Candidates - OCR"},
+    metadata={"user_tag": "agno docs - OCR"},
     reader=ocr_reader,
     skip_if_exists=False,
 )
