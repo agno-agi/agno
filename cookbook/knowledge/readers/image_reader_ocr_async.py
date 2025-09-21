@@ -1,55 +1,47 @@
-"""
-Async example: Add image content using OCR reader.
-Run: `python 01_add_ocr_content_async.py`
-"""
-
 import asyncio
+import dotenv
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
 from agno.vectordb.lancedb import LanceDb
-from agno.utils.log import set_log_level_to_debug
-import dotenv
+from agno.models.openai.chat import OpenAIChat  # Only for Vision mode
+from pathlib import Path
 
 dotenv.load_dotenv()
-set_log_level_to_debug()
 
-async def main():
-    # Initialize vector database for OCR
-    vector_db_ocr = LanceDb(
-        table_name="recipes_ocr",
-        uri="tmp/lancedb_ocr",
-    )
 
-    # OCR Reader setup
-    ocr_reader = ImageReader(
-        mode=ImageProcessingMode.OCR,
-    )
+# === OCR Example ===
+vector_db_ocr = LanceDb(
+    table_name="recipes",
+    uri="tmp/lancedb",
+)
+ocr_reader = ImageReader(
+    mode=ImageProcessingMode.OCR,
+)
+knowledge_ocr = Knowledge(
+    name="OCR Knowledge Base",
+    description="Knowledge added via OCR reader",
+    vector_db=vector_db_ocr,
+)
+agent_ocr = Agent(
+    knowledge=knowledge_ocr,
+    search_knowledge=True,
+    debug_mode=True
+)
 
-    # Create Knowledge instance
-    knowledge_ocr = Knowledge(
-        name="OCR Knowledge Base",
-        description="Knowledge added via OCR reader",
-        vector_db=vector_db_ocr,
-    )
-
-    # Add content using OCR reader asynchronously
-    await knowledge_ocr.add_content(
-        path="cookbook/knowledge/testing_resources/images/",
-        metadata={"user_tag": "Engineering Candidates - OCR"},
-        reader=ocr_reader,
-        skip_if_exists=False
-    )
-
-    # Create Agent
-    agent_ocr = Agent(
-        knowledge=knowledge_ocr,
-        search_knowledge=True,
-    )
-
-    # Query knowledge base asynchronously
-    print("=== OCR Reader Async Example ===")
-    await agent_ocr.aprint_response("What is in these images?", markdown=True)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(
+        knowledge_ocr.add_content_async(
+            path="cookbook/knowledge/testing_resources/images/",
+            metadata={"user_tag": "Engineering Candidates - OCR"},
+            reader=ocr_reader,
+            skip_if_exists=False
+        )
+    )
+    asyncio.run(
+        agent_ocr.aprint_response(
+            "what is agno?",
+            markdown=True,
+        )
+    )

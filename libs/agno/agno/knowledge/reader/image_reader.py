@@ -95,7 +95,7 @@ class ImageReader(Reader):
                 name=doc_name,
                 id=str(uuid4()),
                 content=full_text,
-                meta_data={"source_file": source_info, "processing_mode": self.mode.value},
+                meta_data={"source_file": source_info}, # "processing_mode": self.mode.value
             )
         ]
 

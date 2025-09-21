@@ -44,8 +44,7 @@ knowledge_ocr.add_content(
 agent_ocr = Agent(
     knowledge=knowledge_ocr,
     search_knowledge=True,
+    debug_mode=True
 )
 
-# Query knowledge base
-print("=== OCR Reader Example ===")
-agent_ocr.aprint_response("What is in these images?", markdown=True)
+agent_ocr.print_response("what is agno?", markdown=True)

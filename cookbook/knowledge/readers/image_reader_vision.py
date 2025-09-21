@@ -47,6 +47,7 @@ knowledge_vision.add_content(
 agent_vision = Agent(
     knowledge=knowledge_vision,
     search_knowledge=True,
+    debug_mode=True
 )
 
 
