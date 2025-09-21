@@ -5784,7 +5784,7 @@ class Team:
                         _process_delegate_task_to_member(
                             member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
                         )
-
+                    await queue.put(done_marker)
                 # Initialize and launch all members
                 tasks: List[asyncio.Task[None]] = []
                 for member_agent_index, member_agent in enumerate(self.members):
@@ -5811,6 +5811,7 @@ class Team:
                     for t in tasks:
                         with contextlib.suppress(Exception):
                             await t
+                return 
 
             else:
                 # Non-streaming concurrent run of members; collect results when done
