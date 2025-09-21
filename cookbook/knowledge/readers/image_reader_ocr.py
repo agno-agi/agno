@@ -6,9 +6,7 @@ Run: `python 01_add_ocr_content.py`
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
-from agno.utils.log import set_log_level_to_debug
 from agno.vectordb.lancedb import LanceDb
-
 
 # Initialize vector database for OCR
 vector_db_ocr = LanceDb(

@@ -7,9 +7,7 @@ from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
 from agno.models.openai.chat import OpenAIChat
-from agno.utils.log import set_log_level_to_debug
 from agno.vectordb.lancedb import LanceDb
-
 
 # Initialize vector database for Vision
 vector_db_vision = LanceDb(

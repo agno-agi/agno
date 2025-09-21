@@ -1,8 +1,8 @@
 import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
-from agno.models.openai.chat import OpenAIChat  # Only for Vision mode
 from agno.vectordb.lancedb import LanceDb
 
 # === OCR Example ===
