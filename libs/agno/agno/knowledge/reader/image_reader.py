@@ -1,4 +1,5 @@
 import asyncio
+import imghdr
 from enum import Enum
 from pathlib import Path
 from typing import IO, Any, List, Optional, Union
@@ -7,14 +8,13 @@ from uuid import uuid4
 from agno.knowledge.chunking.strategy import ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+
 # Assuming ContentType is defined elsewhere as in the original code
-# from agno.knowledge.types import ContentType 
+# from agno.knowledge.types import ContentType
 from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.aws import AwsBedrock
 from agno.utils.log import log_error, log_info, logger
-import imghdr
 
 try:
     import rapidocr_onnxruntime as rapidocr
@@ -28,18 +28,20 @@ class ImageProcessingMode(Enum):
     OCR = "ocr"
     VISION = "vision"
 
+
 # Assuming this Enum is defined in agno.knowledge.types
 class ContentType(Enum):
     PNG = "image/png"
-    JPG = "image/jpeg" # Note: Mapped to jpeg for consistency
+    JPG = "image/jpeg"  # Note: Mapped to jpeg for consistency
     JPEG = "image/jpeg"
     WEBP = "image/webp"
     BMP = "image/bmp"
-    
+
     # Helper to get the simple format string (e.g., 'png', 'jpeg')
     @property
     def simple_format(self) -> str:
-        return self.value.split('/')[-1]
+        return self.value.split("/")[-1]
+
 
 class ImageReader(Reader):
     def __init__(
@@ -64,8 +66,10 @@ class ImageReader(Reader):
         elif self.mode == ImageProcessingMode.VISION:
             if not self.vision_model:
                 raise ValueError("A 'vision_model' instance is required for VISION mode.")
-            if not (hasattr(self.vision_model, 'response') and hasattr(self.vision_model, 'aresponse')):
-                logger.warning("The provided vision_model may not support both sync and async methods ('response' and 'aresponse').")
+            if not (hasattr(self.vision_model, "response") and hasattr(self.vision_model, "aresponse")):
+                logger.warning(
+                    "The provided vision_model may not support both sync and async methods ('response' and 'aresponse')."
+                )
         else:
             raise ValueError(f"Unsupported mode: {mode}")
 
@@ -95,7 +99,7 @@ class ImageReader(Reader):
                 name=doc_name,
                 id=str(uuid4()),
                 content=full_text,
-                meta_data={"source_file": source_info}, # "processing_mode": self.mode.value
+                meta_data={"source_file": source_info},  # "processing_mode": self.mode.value
             )
         ]
 
@@ -129,9 +133,10 @@ class ImageReader(Reader):
         model_response = self.vision_model.response(messages=messages)
         return model_response.content or ""
 
-
     # --- Synchronous Image Processing ---
-    def _process_image(self, image_data: bytes, doc_name: str, source_info: str, image_format: Optional[str] = None) -> List[Document]:
+    def _process_image(
+        self, image_data: bytes, doc_name: str, source_info: str, image_format: Optional[str] = None
+    ) -> List[Document]:
         full_text = ""
         if self.mode == ImageProcessingMode.OCR:
             full_text = self._process_with_ocr(image_data)
@@ -152,7 +157,9 @@ class ImageReader(Reader):
         model_response = await self.vision_model.aresponse(messages=messages)
         return model_response.content or ""
 
-    async def _aprocess_image(self, image_data: bytes, doc_name: str, source_info: str, image_format: Optional[str] = None) -> List[Document]:
+    async def _aprocess_image(
+        self, image_data: bytes, doc_name: str, source_info: str, image_format: Optional[str] = None
+    ) -> List[Document]:
         full_text = ""
         if self.mode == ImageProcessingMode.OCR:
             # OCR processing can be I/O bound, so running in a thread is good practice
@@ -166,7 +173,9 @@ class ImageReader(Reader):
 
     # ---------------- REFACTORED HELPER METHOD ----------------
 
-    def _validate_and_get_image_data(self, file: Union[str, Path, IO[Any]], name: Optional[str]) -> tuple[bytes, str, str, str]:
+    def _validate_and_get_image_data(
+        self, file: Union[str, Path, IO[Any]], name: Optional[str]
+    ) -> tuple[bytes, str, str, str]:
         """
         Validates the file format and returns its data, name, source info, and simple format.
         Raises ValueError for unsupported formats or FileNotFoundError for missing files.
@@ -180,24 +189,24 @@ class ImageReader(Reader):
             path = Path(file)
             if not path.exists():
                 raise FileNotFoundError(f"Could not find file: {path}")
-            
+
             # Determine format from extension
-            ext = path.suffix.lstrip('.').lower()
+            ext = path.suffix.lstrip(".").lower()
             image_format = "jpeg" if ext == "jpg" else ext
 
             if image_format not in supported_formats:
                 raise ValueError(f"Unsupported file format: '.{ext}'. Supported formats are: {list(supported_formats)}")
-            
+
             doc_name = name or path.name
             source_info = str(path)
             image_data = path.read_bytes()
-        else: # Handle file-like objects
+        else:  # Handle file-like objects
             filename = getattr(file, "name", "image_stream")
             doc_name = name or filename
             source_info = doc_name
             file.seek(0)
             image_data = file.read()
-            
+
             # Determine format from content
             fmt = imghdr.what(None, h=image_data)
             if not fmt:
@@ -205,7 +214,9 @@ class ImageReader(Reader):
             image_format = "jpeg" if fmt == "jpg" else fmt
 
             if image_format not in supported_formats:
-                raise ValueError(f"Unsupported image content type: '{image_format}'. Supported types are: {list(supported_formats)}")
+                raise ValueError(
+                    f"Unsupported image content type: '{image_format}'. Supported types are: {list(supported_formats)}"
+                )
 
         return image_data, doc_name, source_info, image_format
 

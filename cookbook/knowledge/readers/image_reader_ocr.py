@@ -4,12 +4,13 @@ Run: `python 01_add_ocr_content.py`
 """
 
 import asyncio
+
+import dotenv
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
-from agno.vectordb.lancedb import LanceDb
 from agno.utils.log import set_log_level_to_debug
-import dotenv
+from agno.vectordb.lancedb import LanceDb
 
 dotenv.load_dotenv()
 set_log_level_to_debug()
@@ -37,14 +38,10 @@ knowledge_ocr.add_content(
     path="cookbook/knowledge/testing_resources/images/",
     metadata={"user_tag": "Engineering Candidates - OCR"},
     reader=ocr_reader,
-    skip_if_exists=False
+    skip_if_exists=False,
 )
 
 # Create Agent
-agent_ocr = Agent(
-    knowledge=knowledge_ocr,
-    search_knowledge=True,
-    debug_mode=True
-)
+agent_ocr = Agent(knowledge=knowledge_ocr, search_knowledge=True, debug_mode=True)
 
 agent_ocr.print_response("what is agno?", markdown=True)

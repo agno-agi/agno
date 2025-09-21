@@ -1,11 +1,12 @@
 import asyncio
+from pathlib import Path
+
 import dotenv
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
-from agno.vectordb.lancedb import LanceDb
 from agno.models.openai.chat import OpenAIChat  # Only for Vision mode
-from pathlib import Path
+from agno.vectordb.lancedb import LanceDb
 
 dotenv.load_dotenv()
 
@@ -23,11 +24,7 @@ knowledge_ocr = Knowledge(
     description="Knowledge added via OCR reader",
     vector_db=vector_db_ocr,
 )
-agent_ocr = Agent(
-    knowledge=knowledge_ocr,
-    search_knowledge=True,
-    debug_mode=True
-)
+agent_ocr = Agent(knowledge=knowledge_ocr, search_knowledge=True, debug_mode=True)
 
 
 if __name__ == "__main__":
@@ -36,7 +33,7 @@ if __name__ == "__main__":
             path="cookbook/knowledge/testing_resources/images/",
             metadata={"user_tag": "Engineering Candidates - OCR"},
             reader=ocr_reader,
-            skip_if_exists=False
+            skip_if_exists=False,
         )
     )
     asyncio.run(

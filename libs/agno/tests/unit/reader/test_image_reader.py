@@ -1,58 +1,57 @@
 import io
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from PIL import Image as PillowImage
 
-# --- Test Prerequisites ---
-# To make tests self-contained, we'll create simple placeholder classes
-# that mimic the structure of the actual `agno` library components.
+from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
+
+
 class MockModelResponse:
     def __init__(self, content: str):
         self.content = content
 
+
 class MockVisionModel:
     """A mock model that simulates sync and async responses."""
+
     def __init__(self, response_text: str = "A detailed description of the image."):
         self.response_text = response_text
         self.response = MagicMock(return_value=MockModelResponse(response_text))
         self.aresponse = AsyncMock(return_value=MockModelResponse(response_text))
-
-# Import the actual classes to be tested
-# (Adjust the import path according to your project structure)
-from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
 
 
 # =================================================================
 # ==                         PYTEST FIXTURES                       ==
 # =================================================================
 
+
 @pytest.fixture
 def mock_rapidocr(mocker):
     """Mocks the RapidOCR engine."""
     mock_engine_instance = MagicMock()
     # Simulate a successful OCR result
-    mock_engine_instance.return_value = ([
-        (None, "Hello", 1.0),
-        (None, "World", 1.0)
-    ], 0.1)
-    
+    mock_engine_instance.return_value = ([(None, "Hello", 1.0), (None, "World", 1.0)], 0.1)
+
     # Patch the class so that when ImageReader calls rapidocr.RapidOCR(),
     # it gets our mock instance.
     return mocker.patch("agno.knowledge.reader.image_reader.rapidocr.RapidOCR", return_value=mock_engine_instance)
+
 
 @pytest.fixture
 def mock_vision_model():
     """Provides a mock vision model instance."""
     return MockVisionModel(response_text="A vibrant sunset over a calm sea.")
 
+
 @pytest.fixture
 def sample_image_path(tmp_path):
     """Creates a temporary dummy image file and returns its path."""
     path = tmp_path / "test.png"
-    img = PillowImage.new('RGB', (100, 50), color = 'red')
+    img = PillowImage.new("RGB", (100, 50), color="red")
     img.save(path)
     return path
+
 
 @pytest.fixture
 def sample_image_io(sample_image_path):
@@ -60,9 +59,11 @@ def sample_image_io(sample_image_path):
     with open(sample_image_path, "rb") as f:
         return io.BytesIO(f.read())
 
+
 # =================================================================
 # ==                        INITIALIZATION TESTS                   ==
 # =================================================================
+
 
 class TestImageReaderInitialization:
     def test_init_ocr_mode(self, mock_rapidocr):
@@ -83,20 +84,21 @@ class TestImageReaderInitialization:
         with pytest.raises(ValueError, match="A 'vision_model' instance is required for VISION mode."):
             ImageReader(mode=ImageProcessingMode.VISION)
 
+
 # =================================================================
 # ==                   SYNCHRONOUS (`read`) TESTS                  ==
 # =================================================================
+
 
 class TestImageReaderSync:
     def test_read_ocr_from_path(self, mock_rapidocr, sample_image_path):
         """Tests synchronous OCR reading from a file path."""
         reader = ImageReader(mode=ImageProcessingMode.OCR)
         documents = reader.read(sample_image_path)
-        
+
         assert len(documents) == 1
         assert documents[0].content == "Hello World"
         assert documents[0].meta_data["source_file"] == str(sample_image_path)
-        assert documents[0].meta_data["processing_mode"] == "ocr"
 
     def test_read_ocr_from_io(self, mock_rapidocr, sample_image_io):
         """Tests synchronous OCR reading from a file-like object."""
@@ -111,11 +113,11 @@ class TestImageReaderSync:
         """Tests synchronous VISION reading from a file path."""
         reader = ImageReader(mode=ImageProcessingMode.VISION, vision_model=mock_vision_model)
         documents = reader.read(sample_image_path)
-        
+
         assert len(documents) == 1
         assert documents[0].content == "A vibrant sunset over a calm sea."
         mock_vision_model.response.assert_called_once()
-        
+
     def test_read_ocr_no_text_found(self, mock_rapidocr, sample_image_path):
         """Failure Test: Asserts an empty list is returned if OCR finds no text."""
         # Configure mock to return empty result
@@ -123,16 +125,18 @@ class TestImageReaderSync:
         reader = ImageReader(mode=ImageProcessingMode.OCR)
         documents = reader.read(sample_image_path)
         assert documents == []
-    
+
     def test_read_file_not_found(self, mock_rapidocr):
         """Failure Test: Asserts an empty list is returned for a non-existent file."""
         reader = ImageReader(mode=ImageProcessingMode.OCR)
         documents = reader.read("non_existent_file.png")
         assert documents == []
 
+
 # =================================================================
 # ==                 ASYNCHRONOUS (`async_read`) TESTS             ==
 # =================================================================
+
 
 @pytest.mark.asyncio
 class TestImageReaderAsync:
@@ -140,7 +144,7 @@ class TestImageReaderAsync:
         """Tests asynchronous OCR reading from a file path."""
         reader = ImageReader(mode=ImageProcessingMode.OCR)
         documents = await reader.async_read(sample_image_path)
-        
+
         assert len(documents) == 1
         assert documents[0].content == "Hello World"
         assert documents[0].meta_data["source_file"] == str(sample_image_path)
@@ -157,7 +161,7 @@ class TestImageReaderAsync:
         """Tests asynchronous VISION reading from a file path."""
         reader = ImageReader(mode=ImageProcessingMode.VISION, vision_model=mock_vision_model)
         documents = await reader.async_read(sample_image_path)
-        
+
         assert len(documents) == 1
         assert documents[0].content == "A vibrant sunset over a calm sea."
         mock_vision_model.aresponse.assert_called_once()

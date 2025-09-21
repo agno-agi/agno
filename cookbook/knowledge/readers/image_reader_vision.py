@@ -3,14 +3,13 @@ This example adds image content to the knowledge base using Vision reader.
 Run: `python 02_add_vision_content.py`
 """
 
-
+import dotenv
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
-from agno.vectordb.lancedb import LanceDb
 from agno.models.openai.chat import OpenAIChat
 from agno.utils.log import set_log_level_to_debug
-import dotenv
+from agno.vectordb.lancedb import LanceDb
 
 dotenv.load_dotenv()
 set_log_level_to_debug()
@@ -25,7 +24,7 @@ vector_db_vision = LanceDb(
 vision_reader = ImageReader(
     mode=ImageProcessingMode.VISION,
     vision_model=OpenAIChat(id="gpt-5-mini"),
-    vision_prompt="Describe the image that I have shared with you."
+    vision_prompt="Describe the image that I have shared with you.",
 )
 
 # Create Knowledge instance
@@ -40,16 +39,11 @@ knowledge_vision.add_content(
     path="cookbook/knowledge/testing_resources/images/",
     metadata={"user_tag": "Engineering Candidates - Vision"},
     reader=vision_reader,
-    skip_if_exists=False
+    skip_if_exists=False,
 )
 
 # Create Agent
-agent_vision = Agent(
-    knowledge=knowledge_vision,
-    search_knowledge=True,
-    debug_mode=True
-)
+agent_vision = Agent(knowledge=knowledge_vision, search_knowledge=True, debug_mode=True)
 
 
 agent_vision.print_response("what is agno?", markdown=True)
-
