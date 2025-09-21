@@ -87,8 +87,6 @@ class ImageReader(Reader):
             ChunkingStrategyType.AGENTIC_CHUNKER,
         ]
 
-    # ---------------- CORE PROCESSING ----------------
-
     def _create_documents_from_text(self, full_text: str, doc_name: str, source_info: str) -> List[Document]:
         if not full_text:
             logger.warning(f"No text/description generated for image: {doc_name}")
@@ -114,7 +112,6 @@ class ImageReader(Reader):
             chunked_documents.extend(self.chunk_document(document))
         return chunked_documents
 
-    # --- OCR ---
     def _process_with_ocr(self, image_data: bytes) -> str:
         if not self.ocr_engine:
             raise RuntimeError("OCR engine is not initialized.")
@@ -123,7 +120,6 @@ class ImageReader(Reader):
             return ""
         return "\n".join([item[1] for item in ocr_result])
 
-    # --- Vision ---
     def _process_with_vision(self, image_data: bytes, image_format: str) -> str:
         if not self.vision_model:
             raise RuntimeError("Vision model is not initialized.")
@@ -133,7 +129,6 @@ class ImageReader(Reader):
         model_response = self.vision_model.response(messages=messages)
         return model_response.content or ""
 
-    # --- Synchronous Image Processing ---
     def _process_image(
         self, image_data: bytes, doc_name: str, source_info: str, image_format: Optional[str] = None
     ) -> List[Document]:
@@ -147,7 +142,6 @@ class ImageReader(Reader):
 
         return self._create_documents_from_text(full_text, doc_name, source_info)
 
-    # --- Asynchronous Vision ---
     async def _aprocess_with_vision(self, image_data: bytes, image_format: str) -> str:
         if not self.vision_model:
             raise RuntimeError("Vision model is not initialized.")
@@ -170,8 +164,6 @@ class ImageReader(Reader):
             full_text = await self._aprocess_with_vision(image_data, image_format)
 
         return self._create_documents_from_text(full_text, doc_name, source_info)
-
-    # ---------------- REFACTORED HELPER METHOD ----------------
 
     def _validate_and_get_image_data(
         self, file: Union[str, Path, IO[Any]], name: Optional[str]
@@ -219,8 +211,6 @@ class ImageReader(Reader):
                 )
 
         return image_data, doc_name, source_info, image_format
-
-    # ---------------- UPDATED PUBLIC API ----------------
 
     def read(self, file: Union[str, Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         if file is None:
