@@ -1,15 +1,9 @@
 import asyncio
-from pathlib import Path
-
-import dotenv
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
 from agno.models.openai.chat import OpenAIChat  # Only for Vision mode
 from agno.vectordb.lancedb import LanceDb
-
-dotenv.load_dotenv()
-
 
 # === OCR Example ===
 vector_db_ocr = LanceDb(

@@ -1,13 +1,10 @@
 import asyncio
-
-import dotenv
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
 from agno.models.openai.chat import OpenAIChat
 from agno.vectordb.lancedb import LanceDb
 
-dotenv.load_dotenv()
 
 vector_db_vision = LanceDb(
     table_name="recipes",

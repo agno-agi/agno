@@ -3,17 +3,12 @@ This example adds image content to the knowledge base using OCR reader.
 Run: `python 01_add_ocr_content.py`
 """
 
-import asyncio
-
-import dotenv
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
 from agno.utils.log import set_log_level_to_debug
 from agno.vectordb.lancedb import LanceDb
 
-dotenv.load_dotenv()
-set_log_level_to_debug()
 
 # Initialize vector database for OCR
 vector_db_ocr = LanceDb(

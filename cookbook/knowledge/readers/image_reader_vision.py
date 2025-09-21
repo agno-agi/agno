@@ -3,7 +3,6 @@ This example adds image content to the knowledge base using Vision reader.
 Run: `python 02_add_vision_content.py`
 """
 
-import dotenv
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.image_reader import ImageProcessingMode, ImageReader
@@ -11,8 +10,6 @@ from agno.models.openai.chat import OpenAIChat
 from agno.utils.log import set_log_level_to_debug
 from agno.vectordb.lancedb import LanceDb
 
-dotenv.load_dotenv()
-set_log_level_to_debug()
 
 # Initialize vector database for Vision
 vector_db_vision = LanceDb(
