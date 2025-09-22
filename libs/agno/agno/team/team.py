@@ -2275,11 +2275,6 @@ class Team:
                     elif isinstance(model_response_event.content, str):
                         full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     should_yield = True
-                elif (
-                    model_response_event.reasoning_content is not None
-                    or model_response_event.redacted_reasoning_content is not None
-                ):
-                    should_yield = True
 
                 # Process reasoning content
                 if model_response_event.reasoning_content is not None:
