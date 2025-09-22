@@ -731,7 +731,7 @@ class PostgresDb(BaseDb):
             team_sessions = [s for s in sessions if isinstance(s, TeamSession)]
             workflow_sessions = [s for s in sessions if isinstance(s, WorkflowSession)]
 
-            results = []
+            results: List[Union[Session, Dict[str, Any]]] = []
 
             # Bulk upsert agent sessions
             if agent_sessions:
@@ -769,7 +769,10 @@ class PostgresDb(BaseDb):
                     for row in result.fetchall():
                         session_dict = dict(row._mapping)
                         if deserialize:
-                            results.append(AgentSession.from_dict(session_dict))
+                            deserialized_agent_session = AgentSession.from_dict(session_dict)
+                            if deserialized_agent_session is None:
+                                continue
+                            results.append(deserialized_agent_session)
                         else:
                             results.append(session_dict)
 
@@ -809,7 +812,10 @@ class PostgresDb(BaseDb):
                     for row in result.fetchall():
                         session_dict = dict(row._mapping)
                         if deserialize:
-                            results.append(TeamSession.from_dict(session_dict))
+                            deserialized_team_session = TeamSession.from_dict(session_dict)
+                            if deserialized_team_session is None:
+                                continue
+                            results.append(deserialized_team_session)
                         else:
                             results.append(session_dict)
 
@@ -849,7 +855,10 @@ class PostgresDb(BaseDb):
                     for row in result.fetchall():
                         session_dict = dict(row._mapping)
                         if deserialize:
-                            results.append(WorkflowSession.from_dict(session_dict))
+                            deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                            if deserialized_workflow_session is None:
+                                continue
+                            results.append(deserialized_workflow_session)
                         else:
                             results.append(session_dict)
 
@@ -1247,7 +1256,8 @@ class PostgresDb(BaseDb):
                     }
                 )
 
-            results = []
+            results: List[Union[UserMemory, Dict[str, Any]]] = []
+
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table)
                 update_columns = {
@@ -1261,7 +1271,10 @@ class PostgresDb(BaseDb):
                 for row in result.fetchall():
                     memory_dict = dict(row._mapping)
                     if deserialize:
-                        results.append(UserMemory.from_dict(memory_dict))
+                        deserialized_memory = UserMemory.from_dict(memory_dict)
+                        if deserialized_memory is None:
+                            continue
+                        results.append(deserialized_memory)
                     else:
                         results.append(memory_dict)
 

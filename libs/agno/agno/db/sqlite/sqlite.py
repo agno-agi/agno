@@ -780,10 +780,10 @@ class SqliteDb(BaseDb):
                         for row in result:
                             session_dict = deserialize_session_json_fields(dict(row._mapping))
                             if deserialize:
-                                deserialized_session = AgentSession.from_dict(session_dict)
-                                if deserialized_session is None:
+                                deserialized_agent_session = AgentSession.from_dict(session_dict)
+                                if deserialized_agent_session is None:
                                     continue
-                                results.append(deserialized_session)
+                                results.append(deserialized_agent_session)
                             else:
                                 results.append(session_dict)
 
@@ -833,10 +833,10 @@ class SqliteDb(BaseDb):
                         for row in result:
                             session_dict = deserialize_session_json_fields(dict(row._mapping))
                             if deserialize:
-                                deserialized_session = TeamSession.from_dict(session_dict)
-                                if deserialized_session is None:
+                                deserialized_team_session = TeamSession.from_dict(session_dict)
+                                if deserialized_team_session is None:
                                     continue
-                                results.append(deserialized_session)
+                                results.append(deserialized_team_session)
                             else:
                                 results.append(session_dict)
 
@@ -886,10 +886,10 @@ class SqliteDb(BaseDb):
                         for row in result:
                             session_dict = deserialize_session_json_fields(dict(row._mapping))
                             if deserialize:
-                                deserialized_session = WorkflowSession.from_dict(session_dict)
-                                if deserialized_session is None:
+                                deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                                if deserialized_workflow_session is None:
                                     continue
-                                results.append(deserialized_session)
+                                results.append(deserialized_workflow_session)
                             else:
                                 results.append(session_dict)
 

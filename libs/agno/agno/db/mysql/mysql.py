@@ -749,7 +749,7 @@ class MySQLDb(BaseDb):
                 elif isinstance(session, WorkflowSession):
                     workflow_sessions.append(session)
 
-            results = []
+            results: List[Union[Session, Dict[str, Any]]] = []
 
             # Process each session type in bulk
             with self.Session() as sess, sess.begin():
@@ -796,7 +796,10 @@ class MySQLDb(BaseDb):
                         for row in result:
                             session_dict = dict(row._mapping)
                             if deserialize:
-                                results.append(AgentSession.from_dict(session_dict))
+                                deserialized_agent_session = AgentSession.from_dict(session_dict)
+                                if deserialized_agent_session is None:
+                                    continue
+                                results.append(deserialized_agent_session)
                             else:
                                 results.append(session_dict)
 
@@ -843,7 +846,10 @@ class MySQLDb(BaseDb):
                         for row in result:
                             session_dict = dict(row._mapping)
                             if deserialize:
-                                results.append(TeamSession.from_dict(session_dict))
+                                deserialized_team_session = TeamSession.from_dict(session_dict)
+                                if deserialized_team_session is None:
+                                    continue
+                                results.append(deserialized_team_session)
                             else:
                                 results.append(session_dict)
 
@@ -890,7 +896,10 @@ class MySQLDb(BaseDb):
                         for row in result:
                             session_dict = dict(row._mapping)
                             if deserialize:
-                                results.append(WorkflowSession.from_dict(session_dict))
+                                deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                                if deserialized_workflow_session is None:
+                                    continue
+                                results.append(deserialized_workflow_session)
                             else:
                                 results.append(session_dict)
 
@@ -1307,7 +1316,7 @@ class MySQLDb(BaseDb):
                     }
                 )
 
-            results = []
+            results: List[Union[UserMemory, Dict[str, Any]]] = []
 
             with self.Session() as sess, sess.begin():
                 # Bulk upsert memories using MySQL ON DUPLICATE KEY UPDATE

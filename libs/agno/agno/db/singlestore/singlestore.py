@@ -877,7 +877,10 @@ class SingleStoreDb(BaseDb):
 
                         for row in result:
                             if deserialize:
-                                results.append(AgentSession.from_dict(dict(row._mapping)))
+                                deserialized_session = AgentSession.from_dict(session_dict)
+                                if deserialized_session is None:
+                                    continue
+                                results.append(deserialized_session)
                             else:
                                 results.append(dict(row._mapping))
 
@@ -923,7 +926,10 @@ class SingleStoreDb(BaseDb):
 
                         for row in result:
                             if deserialize:
-                                results.append(TeamSession.from_dict(dict(row._mapping)))
+                                deserialized_session = TeamSession.from_dict(session_dict)
+                                if deserialized_session is None:
+                                    continue
+                                results.append(deserialized_session)
                             else:
                                 results.append(dict(row._mapping))
 
@@ -969,7 +975,10 @@ class SingleStoreDb(BaseDb):
 
                         for row in result:
                             if deserialize:
-                                results.append(WorkflowSession.from_dict(dict(row._mapping)))
+                                deserialized_session = WorkflowSession.from_dict(session_dict)
+                                if deserialized_session is None:
+                                    continue
+                                results.append(deserialized_session)
                             else:
                                 results.append(dict(row._mapping))
 

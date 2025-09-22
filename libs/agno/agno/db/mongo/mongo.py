@@ -621,7 +621,7 @@ class MongoDb(BaseDb):
             from pymongo import ReplaceOne
 
             operations = []
-            results = []
+            results: List[Union[Session, Dict[str, Any]]] = []
 
             for session in sessions:
                 if session is None:
@@ -688,14 +688,26 @@ class MongoDb(BaseDb):
 
                 for doc in cursor:
                     session_dict = deserialize_session_json_fields(doc)
+
                     if deserialize:
                         session_type = doc.get("session_type")
                         if session_type == SessionType.AGENT.value:
-                            results.append(AgentSession.from_dict(session_dict))
+                            deserialized_agent_session = AgentSession.from_dict(session_dict)
+                            if deserialized_agent_session is None:
+                                continue
+                            results.append(deserialized_agent_session)
+
                         elif session_type == SessionType.TEAM.value:
-                            results.append(TeamSession.from_dict(session_dict))
+                            deserialized_team_session = TeamSession.from_dict(session_dict)
+                            if deserialized_team_session is None:
+                                continue
+                            results.append(deserialized_team_session)
+
                         elif session_type == SessionType.WORKFLOW.value:
-                            results.append(WorkflowSession.from_dict(session_dict))
+                            deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                            if deserialized_workflow_session is None:
+                                continue
+                            results.append(deserialized_workflow_session)
                     else:
                         results.append(session_dict)
 
@@ -1044,7 +1056,7 @@ class MongoDb(BaseDb):
             from pymongo import ReplaceOne
 
             operations = []
-            results = []
+            results: List[Union[UserMemory, Dict[str, Any]]] = []
 
             for memory in memories:
                 if memory is None:
