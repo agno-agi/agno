@@ -28,7 +28,6 @@ def main():
     models_to_test = [
         # OpenAI models
         ("gpt-5-mini", "Latest GPT-5 Mini model"),
-        ("gpt-5-mini", "GPT-5 Mini model"),
         # Anthropic models
         ("claude-sonnet-4-20250514", "Claude Sonnet 4"),
         # Google models
