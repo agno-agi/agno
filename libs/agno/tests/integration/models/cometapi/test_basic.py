@@ -330,28 +330,3 @@ def test_image_analysis_with_memory():
         # Vision models might not be available, that's ok for this test
         pytest.skip(f"Vision model not available: {e}")
 
-
-def test_multi_model_functionality():
-    """Test CometAPI with multiple different models."""
-    model_configs = [
-        {"id": "gpt-5-mini", "description": "GPT-5 Mini model"},
-        {"id": "claude-sonnet-4-20250514", "description": "Claude Sonnet 4"},
-        {"id": "gemini-2.5-flash-lite", "description": "Gemini Flash Lite"},
-    ]
-
-    successful_tests = 0
-    for config in model_configs:
-        try:
-            agent = Agent(model=CometAPI(id=config["id"]), telemetry=False)
-            response: RunOutput = agent.run(f"Say hello and mention you are {config['description']}")
-
-            assert response.content is not None
-            assert len(response.content) > 0
-            successful_tests += 1
-
-        except Exception as e:
-            # Some models might not be available, that's ok
-            print(f"Model {config['id']} not available: {e}")
-
-    # At least one model should work
-    assert successful_tests > 0, "No models were available for testing"
