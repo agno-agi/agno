@@ -60,7 +60,7 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
             for message in step_executor_runs[0].get("messages", []):
                 if message.get("role") == "user":
                     return message.get("content", "")
-        
+
         # Check the input field directly as final fallback
         if run_dict.get("input") is not None:
             input_value = run_dict.get("input")
