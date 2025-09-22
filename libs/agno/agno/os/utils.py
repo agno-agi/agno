@@ -61,6 +61,14 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
                 if message.get("role") == "user":
                     return message.get("content", "")
 
+        # Check the input field directly as final fallback
+        if run_dict.get("input") is not None:
+            input_value = run_dict.get("input")
+            if isinstance(input_value, str):
+                return input_value
+            else:
+                return str(input_value)
+
     if run_dict.get("messages") is not None:
         for message in run_dict["messages"]:
             if message.get("role") == "user":
