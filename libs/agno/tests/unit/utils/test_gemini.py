@@ -1,4 +1,9 @@
-from agno.utils.gemini import convert_schema, format_function_definitions
+from agno.utils.gemini import (
+    convert_schema,
+    format_function_definitions,
+    needs_conversion,
+    prepare_response_schema,
+)
 
 
 def test_convert_schema_simple_string():
@@ -317,3 +322,195 @@ def test_convert_schema_union():
     assert result.any_of[1].description == "An integer value"
     assert result.any_of[2].type == "BOOLEAN"
     assert result.any_of[2].description == "A boolean value"
+
+
+def test_convert_schema_with_ref():
+    """Test converting a schema with $ref to $defs"""
+    schema_dict = {
+        "type": "object",
+        "properties": {"person": {"$ref": "#/$defs/Person"}},
+        "$defs": {
+            "Person": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
+                "required": ["name"],
+            }
+        },
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "OBJECT"
+    assert "person" in result.properties
+
+    person_schema = result.properties["person"]
+    assert person_schema.type == "OBJECT"
+    assert "name" in person_schema.properties
+    assert "age" in person_schema.properties
+    assert person_schema.properties["name"].type == "STRING"
+    assert person_schema.properties["age"].type == "INTEGER"
+    assert "name" in person_schema.required
+
+
+def test_convert_schema_with_circular_ref():
+    """Test converting a schema with circular references"""
+    schema_dict = {
+        "type": "object",
+        "properties": {"node": {"$ref": "#/$defs/Node"}},
+        "$defs": {
+            "Node": {
+                "type": "object",
+                "properties": {
+                    "value": {"type": "string"},
+                    "next": {"$ref": "#/$defs/Node"},  # Circular reference
+                },
+            }
+        },
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "OBJECT"
+    assert "node" in result.properties
+
+    node_schema = result.properties["node"]
+    assert node_schema.type == "OBJECT"
+    assert "value" in node_schema.properties
+    assert "next" in node_schema.properties
+
+    # The circular reference should be handled gracefully
+    next_schema = node_schema.properties["next"]
+    assert next_schema.type == "OBJECT"
+    assert "Circular reference" in next_schema.description
+
+
+def test_convert_schema_with_multiple_refs_to_same_def():
+    """Test converting a schema with multiple references to the same definition"""
+    schema_dict = {
+        "type": "object",
+        "properties": {"sender": {"$ref": "#/$defs/Person"}, "receiver": {"$ref": "#/$defs/Person"}},
+        "$defs": {
+            "Person": {"type": "object", "properties": {"name": {"type": "string"}, "email": {"type": "string"}}}
+        },
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "OBJECT"
+    assert "sender" in result.properties
+    assert "receiver" in result.properties
+
+    # Both should resolve to the same Person schema structure
+    for prop in ["sender", "receiver"]:
+        person_schema = result.properties[prop]
+        assert person_schema.type == "OBJECT"
+        assert "name" in person_schema.properties
+        assert "email" in person_schema.properties
+        assert person_schema.properties["name"].type == "STRING"
+        assert person_schema.properties["email"].type == "STRING"
+
+
+def test_prepare_response_schema_with_simple_model():
+    """Test that simple Pydantic models are returned directly"""
+    from pydantic import BaseModel
+
+    class SimpleModel(BaseModel):
+        name: str
+        age: int
+
+    result = prepare_response_schema(SimpleModel)
+
+    # Simple models should be returned directly
+    assert result == SimpleModel
+
+
+def test_prepare_response_schema_with_circular_ref():
+    """Test that models with circular refs get converted"""
+    from typing import Optional
+
+    from pydantic import BaseModel
+
+    class TreeNode(BaseModel):
+        value: str
+        left: Optional["TreeNode"] = None
+        right: Optional["TreeNode"] = None
+
+    result = prepare_response_schema(TreeNode)
+
+    # Should be converted to Schema, not the raw model
+    assert result != TreeNode
+    assert hasattr(result, "type")  # Should be a Schema object
+
+
+def test_needs_conversion_simple_schema():
+    """Test that simple schemas don't need conversion"""
+    schema = {"type": "object", "properties": {"name": {"type": "string"}, "age": {"type": "integer"}}}
+
+    assert needs_conversion(schema) is False
+
+
+def test_needs_conversion_with_circular_ref():
+    """Test that schemas with circular refs need conversion"""
+    schema = {
+        "type": "object",
+        "properties": {"node": {"$ref": "#/$defs/Node"}},
+        "$defs": {
+            "Node": {
+                "type": "object",
+                "properties": {
+                    "value": {"type": "string"},
+                    "next": {"$ref": "#/$defs/Node"},  # Circular
+                },
+            }
+        },
+    }
+
+    assert needs_conversion(schema) is True
+
+
+def test_needs_conversion_with_self_ref():
+    """Test that schemas with self-references need conversion"""
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}, "parent": {"$ref": "#/$defs/SameModel"}},
+        "$defs": {
+            "SameModel": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "parent": {"$ref": "#/$defs/SameModel"}},
+            }
+        },
+    }
+
+    assert needs_conversion(schema) is True
+
+
+def test_needs_conversion_nested_no_refs():
+    """Test that nested schemas without refs don't need conversion"""
+    schema = {
+        "type": "object",
+        "properties": {
+            "address": {"type": "object", "properties": {"street": {"type": "string"}, "city": {"type": "string"}}}
+        },
+    }
+
+    assert needs_conversion(schema) is False
+
+
+def test_prepare_response_schema_with_dict_field():
+    """Test that models with dict fields get converted"""
+    from typing import Dict
+
+    from pydantic import BaseModel
+
+    class ModelWithDict(BaseModel):
+        metadata: Dict[str, str]
+        scores: Dict[str, int]
+
+    result = prepare_response_schema(ModelWithDict)
+
+    # Should be converted due to additionalProperties
+    assert result != ModelWithDict
+    assert hasattr(result, "type")  # Should be a Schema object
