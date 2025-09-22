@@ -2,209 +2,315 @@ import asyncio
 
 import nest_asyncio
 import streamlit as st
-from agents import get_mcp_agent
-from agno.utils.log import logger
-from mcp_client import MCPClient
-from utils import (
-    about_widget,
+from agno.utils.streamlit import (
+    COMMON_CSS,
+    MODELS,
+    about_section,
     add_message,
-    apply_theme,
+    display_chat_messages,
     display_tool_calls,
-    example_inputs,
-    get_mcp_server_config,
-    get_num_history_responses,
-    get_selected_model,
+    export_chat_history,
+    initialize_agent,
+    reset_session_state,
     session_selector_widget,
-    utilities_widget,
 )
+from mcp_client import MCPClient, MCPServerConfig
+
+from mcp_agent import get_mcp_agent
 
 nest_asyncio.apply()
-apply_theme()
+st.set_page_config(
+    page_title="Universal MCP Agent",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# Add custom CSS
+st.markdown(COMMON_CSS, unsafe_allow_html=True)
+
+# MCP Server configurations
+MCP_SERVERS = {
+    "GitHub": MCPServerConfig(
+        id="github", command="npx", args=["-y", "@modelcontextprotocol/server-github"]
+    ),
+}
 
 
-async def main() -> None:
+async def initialize_mcp_client(server_config: MCPServerConfig):
+    """Initialize MCP client and connect to server."""
+    try:
+        if (
+            "mcp_client" not in st.session_state
+            or st.session_state.get("mcp_server_id") != server_config.id
+            or getattr(st.session_state.get("mcp_client", None), "session", None)
+            is None
+        ):
+            # Initialize new MCP client
+            st.session_state["mcp_client"] = MCPClient()
+
+        mcp_client = st.session_state["mcp_client"]
+        mcp_tools = await mcp_client.connect_to_server(server_config)
+        st.session_state["mcp_server_id"] = server_config.id
+
+        return mcp_tools
+    except Exception as e:
+        st.error(f"Failed to connect to MCP server {server_config.id}: {str(e)}")
+        return None
+
+
+def restart_agent(model_id: str = None, mcp_server: str = None):
+    """Restart agent with new configuration."""
+    target_model = model_id or st.session_state.get("current_model", MODELS[0])
+    target_server = mcp_server or st.session_state.get("current_mcp_server", "GitHub")
+
+    # Clear MCP client to force reconnection
+    if "mcp_client" in st.session_state:
+        del st.session_state["mcp_client"]
+
+    st.session_state["current_model"] = target_model
+    st.session_state["current_mcp_server"] = target_server
+    st.session_state["messages"] = []
+    st.session_state["is_new_session"] = True
+
+
+def on_model_change():
+    """Handle model selection change."""
+    selected_model = st.session_state.get("model_selector")
+    if selected_model:
+        if selected_model in MODELS:
+            current_model = st.session_state.get("current_model")
+            if current_model and current_model != selected_model:
+                try:
+                    restart_agent(model_id=selected_model)
+                except Exception as e:
+                    st.sidebar.error(f"Error switching to {selected_model}: {str(e)}")
+        else:
+            st.sidebar.error(f"Unknown model: {selected_model}")
+
+
+def on_mcp_server_change():
+    """Handle MCP server selection change."""
+    selected_server = st.session_state.get("mcp_server_selector")
+    if selected_server:
+        current_server = st.session_state.get("current_mcp_server", "GitHub")
+        if current_server != selected_server:
+            try:
+                restart_agent(mcp_server=selected_server)
+            except Exception as e:
+                st.sidebar.error(f"Error switching to {selected_server}: {str(e)}")
+
+
+async def main():
     ####################################################################
     # App header
     ####################################################################
     st.markdown(
-        "<h1 class='main-title'>Universal Agent Interface powered by MCP</h1>",
-        unsafe_allow_html=True,
+        "<h1 class='main-title'>Universal MCP Agent</h1>", unsafe_allow_html=True
     )
     st.markdown(
-        "<p class='subtitle'>A unified Agentic interface for MCP servers</p>",
+        "<p class='subtitle'>Your intelligent interface to MCP servers powered by Agno</p>",
         unsafe_allow_html=True,
     )
 
     ####################################################################
-    # Settings
+    # Model selector
     ####################################################################
-    selected_model = get_selected_model()
-    mcp_server_config = get_mcp_server_config()
-    mcp_server_id = mcp_server_config.id
-    num_history_responses = get_num_history_responses()
+    selected_model = st.sidebar.selectbox(
+        "Select Model",
+        options=MODELS,
+        index=0,
+        key="model_selector",
+        on_change=on_model_change,
+    )
 
     ####################################################################
-    # Initialize MCP Client and Agent
+    # MCP Server selector
     ####################################################################
-    try:
-        # Check if we need to reinitialize the MCP client
-        if (
-            "mcp_client" not in st.session_state
-            or st.session_state.get("mcp_server_id") != mcp_server_id
-            or getattr(st.session_state.get("mcp_client", None), "session", None)
-            is None
-        ):
-            # # Clean up existing client if it exists
-            # if "mcp_client" in st.session_state:
-            #     logger.info("Cleaning up existing MCP client")
-            #     await st.session_state["mcp_client"].cleanup()
+    selected_mcp_server = st.sidebar.selectbox(
+        "Select MCP Server",
+        options=list(MCP_SERVERS.keys()),
+        index=0,
+        key="mcp_server_selector",
+        on_change=on_mcp_server_change,
+    )
 
-            # Initialize new MCP client
-            logger.info(f"Creating new MCPClient for {mcp_server_id}")
-            st.session_state["mcp_client"] = MCPClient()
+    # Get current server configuration
+    current_server = st.session_state.get("current_mcp_server", selected_mcp_server)
+    server_config = MCP_SERVERS[current_server]
 
-        mcp_client = st.session_state["mcp_client"]
-        # Connect to the MCP server and get tools
-        mcp_tools = await mcp_client.connect_to_server(mcp_server_config)
+    ####################################################################
+    # Initialize MCP Client and Tools
+    ####################################################################
+    mcp_tools = await initialize_mcp_client(server_config)
+    if not mcp_tools:
+        st.error("Failed to initialize MCP server. Please check the configuration.")
+        return
 
-        # Initialize or retrieve the agent
-        if (
-            "mcp_agent" not in st.session_state
-            or st.session_state["mcp_agent"] is None
-            or st.session_state.get("current_model") != selected_model
-            or st.session_state.get("mcp_server_id") != mcp_server_id
-        ):
-            logger.info("---*--- Creating new MCP Agent ---*---")
-            mcp_agent = get_mcp_agent(
-                model_str=selected_model,
-                num_history_responses=num_history_responses,
-                mcp_tools=[mcp_tools],
-                mcp_server_ids=[mcp_server_id],
-            )
-            st.session_state["mcp_agent"] = mcp_agent
-            st.session_state["current_model"] = selected_model
-        else:
-            mcp_agent = st.session_state["mcp_agent"]
-
-        # Update the agent's MCP tools incase the session has been reinitialized
-        mcp_agent.tools = [mcp_tools]
-        ####################################################################
-        # Load the current Agent session from the database
-        ####################################################################
-        try:
-            st.session_state["mcp_agent_session_id"] = mcp_agent.load_session()
-        except Exception as e:
-            st.warning(
-                f"Could not create Agent session: {str(e)}. Is the database running?"
-            )
-            return
-
-        ####################################################################
-        # Load agent runs (i.e. chat history) from memory
-        ####################################################################
-        agent_runs = mcp_agent.memory.runs
-        if len(agent_runs) > 0:
-            # If there are runs, load the messages
-            logger.debug("Loading run history")
-            st.session_state["messages"] = []
-            # Loop through the runs and add the messages to the messages list
-            for _run in agent_runs:
-                if _run.message is not None:
-                    add_message(_run.message.role, _run.message.content)
-                if _run.response is not None:
-                    add_message("assistant", _run.response.content, _run.response.tools)
-        else:
-            # If there are no runs, create an empty messages list
-            logger.debug("No run history found")
-            st.session_state["messages"] = []
-
-        ####################################################################
-        # Get user input
-        ####################################################################
-        if prompt := st.chat_input("✨ How can I help, bestie?"):
-            add_message("user", prompt)
-
-        ####################################################################
-        # Show example inputs
-        ####################################################################
-        example_inputs(server_id=mcp_server_id)
-
-        ####################################################################
-        # Display agent messages
-        ####################################################################
-        for message in st.session_state["messages"]:
-            if message["role"] in ["user", "assistant"]:
-                _content = message["content"]
-                if _content is not None:
-                    with st.chat_message(message["role"]):
-                        # Display tool calls if they exist in the message
-                        if "tool_calls" in message and message["tool_calls"]:
-                            display_tool_calls(st.empty(), message["tool_calls"])
-                        st.markdown(_content)
-
-        ####################################################################
-        # Generate response for user message
-        ####################################################################
-        last_message = (
-            st.session_state["messages"][-1] if st.session_state["messages"] else None
+    ####################################################################
+    # Initialize Agent
+    ####################################################################
+    def create_agent(model_id: str, session_id: str = None):
+        return get_mcp_agent(
+            model_id=model_id,
+            session_id=session_id,
+            mcp_tools=[mcp_tools],
+            mcp_server_ids=[server_config.id],
         )
-        if last_message and last_message.get("role") == "user":
-            question = last_message["content"]
-            with st.chat_message("assistant"):
-                # Create container for tool calls
-                tool_calls_container = st.empty()
-                resp_container = st.empty()
-                with st.spinner(":thinking_face: Thinking..."):
-                    response = ""
-                    try:
-                        # Run the agent and stream the response
-                        run_response = await mcp_agent.arun(question, stream=True)
-                        async for _resp_chunk in run_response:
-                            # Display tool calls if available
-                            if hasattr(_resp_chunk, "tool") and _resp_chunk.tool:
-                                display_tool_calls(
-                                    tool_calls_container, [_resp_chunk.tool]
-                                )
 
-                            # Display response
-                            if _resp_chunk.content is not None:
-                                response += _resp_chunk.content
+    mcp_agent = initialize_agent(selected_model, create_agent)
+
+    # Update agent tools if they've changed
+    if hasattr(mcp_agent, "tools"):
+        mcp_agent.tools = [mcp_tools]
+
+    reset_session_state(mcp_agent)
+
+    if prompt := st.chat_input("✨ How can I help you with MCP?"):
+        add_message("user", prompt)
+
+    ####################################################################
+    # MCP Server Information
+    ####################################################################
+    st.sidebar.markdown("#### 🔗 MCP Server Info")
+    st.sidebar.info(f"**Connected to:** {server_config.id}")
+    st.sidebar.info(f"**Command:** {server_config.command}")
+    if server_config.args:
+        st.sidebar.info(f"**Args:** {' '.join(server_config.args)}")
+
+    ####################################################################
+    # Sample Questions
+    ####################################################################
+    st.sidebar.markdown("#### ❓ Sample Questions")
+
+    if current_server == "GitHub":
+        if st.sidebar.button("🔍 Search repositories"):
+            add_message("user", "Search for repositories related to machine learning")
+        if st.sidebar.button("📊 Repository info"):
+            add_message("user", "Tell me about a popular Python repository")
+        if st.sidebar.button("🗂️ List issues"):
+            add_message("user", "Show me recent issues in a repository")
+
+    elif current_server == "Filesystem":
+        if st.sidebar.button("📁 List files"):
+            add_message("user", "List files in the current directory")
+        if st.sidebar.button("📄 Read file"):
+            add_message("user", "Show me the contents of a text file")
+        if st.sidebar.button("✍️ Create file"):
+            add_message("user", "Create a new file with some sample content")
+
+    if st.sidebar.button("❓ What is MCP?"):
+        add_message("user", "What is the Model Context Protocol and how does it work?")
+
+    ####################################################################
+    # Utility buttons
+    ####################################################################
+    st.sidebar.markdown("#### 🛠️ Utilities")
+    col1, col2 = st.sidebar.columns([1, 1])
+
+    with col1:
+        if st.sidebar.button("🔄 New Chat", use_container_width=True):
+            restart_agent()
+            st.rerun()
+
+    with col2:
+        has_messages = (
+            st.session_state.get("messages") and len(st.session_state["messages"]) > 0
+        )
+
+        if has_messages:
+            session_id = st.session_state.get("session_id")
+            if session_id and mcp_agent.get_session_name():
+                filename = f"mcp_agent_chat_{mcp_agent.get_session_name()}.md"
+            elif session_id:
+                filename = f"mcp_agent_chat_{session_id}.md"
+            else:
+                filename = "mcp_agent_chat_new.md"
+
+            if st.sidebar.download_button(
+                "💾 Export Chat",
+                export_chat_history("Universal MCP Agent"),
+                file_name=filename,
+                mime="text/markdown",
+                use_container_width=True,
+                help=f"Export {len(st.session_state['messages'])} messages",
+            ):
+                st.sidebar.success("Chat history exported!")
+        else:
+            st.sidebar.button(
+                "💾 Export Chat",
+                disabled=True,
+                use_container_width=True,
+                help="No messages to export",
+            )
+
+    ####################################################################
+    # Display Chat Messages
+    ####################################################################
+    display_chat_messages()
+
+    ####################################################################
+    # Generate response for user message
+    ####################################################################
+    last_message = (
+        st.session_state["messages"][-1] if st.session_state["messages"] else None
+    )
+    if last_message and last_message.get("role") == "user":
+        question = last_message["content"]
+
+        # Custom response handling for MCP agent (async)
+        with st.chat_message("assistant"):
+            tool_calls_container = st.empty()
+            resp_container = st.empty()
+            with st.spinner("🤔 Thinking..."):
+                response = ""
+                try:
+                    # Run the agent asynchronously and stream the response
+                    async for resp_chunk in mcp_agent.arun(question, stream=True):
+                        try:
+                            # Display tool calls if available
+                            if hasattr(resp_chunk, "tool") and resp_chunk.tool:
+                                display_tool_calls(
+                                    tool_calls_container, [resp_chunk.tool]
+                                )
+                        except Exception:
+                            pass  # Continue even if tool display fails
+
+                        if resp_chunk.content is not None:
+                            content = str(resp_chunk.content)
+                            if not (
+                                content.strip().endswith("completed in")
+                                or "completed in" in content
+                                and "s." in content
+                            ):
+                                response += content
                                 resp_container.markdown(response)
 
-                        add_message("assistant", response, mcp_agent.run_response.tools)
-                    except Exception as e:
-                        logger.error(f"Error during agent run: {str(e)}", exc_info=True)
-                        error_message = f"Sorry, I encountered an error: {str(e)}"
-                        add_message("assistant", error_message)
-                        st.error(error_message)
+                    if resp_chunk and hasattr(resp_chunk, "tools") and resp_chunk.tools:
+                        add_message("assistant", response, resp_chunk.tools)
+                    else:
+                        add_message("assistant", response)
 
-        ####################################################################
-        # Session selector
-        ####################################################################
-        session_selector_widget(
-            agent=mcp_agent,
-            model_str=selected_model,
-            num_history_responses=num_history_responses,
-            mcp_tools=[mcp_tools],
-            mcp_server_ids=[mcp_server_id],
-        )
+                except Exception as e:
+                    st.error(f"Sorry, I encountered an error: {str(e)}")
 
-        ####################################################################
-        # About section
-        ####################################################################
-        utilities_widget(agent=mcp_agent)
-        about_widget()
+    ####################################################################
+    # Session management widgets
+    ####################################################################
+    session_selector_widget(mcp_agent, selected_model, create_agent)
 
-    except Exception as e:
-        logger.error(f"Error during agent run: {str(e)}", exc_info=True)
-        error_message = f"Sorry, I encountered an error: {str(e)}"
-        add_message("assistant", error_message)
-        st.error(error_message)
-    finally:
-        # Don't clean up resources here - we want to keep the connection alive
-        # between Streamlit reruns. We'll clean up when we need to reinitialize.
-        pass
+    ####################################################################
+    # About section
+    ####################################################################
+    about_section(
+        "This Universal MCP Agent provides a unified interface for interacting with MCP servers, enabling seamless access to various data sources and tools."
+    )
+
+
+def run_app():
+    """Run the async streamlit app."""
+    asyncio.run(main())
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    run_app()

@@ -4,7 +4,7 @@ from typing import Dict, List
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIResponses
 
 
@@ -31,7 +31,7 @@ def test_structured_response_with_integer_field():
     structured_output_agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
         description="You help people write movie scripts.",
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
     response = structured_output_agent.run("New York")
     assert response.content is not None
@@ -54,7 +54,7 @@ def test_structured_response_with_enum_fields():
     structured_output_agent = Agent(
         model=OpenAIResponses(id="gpt-4o"),
         description="You help generate recipe names and ratings.",
-        response_model=Recipe,
+        output_schema=Recipe,
     )
     response = structured_output_agent.run("Generate a recipe name and rating.")
     assert response.content is not None

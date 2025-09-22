@@ -5,6 +5,13 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
+      - "v2.0"
+  workflow_dispatch: # Allows manual triggering
+    inputs:
+      branch:
+        description: 'Branch to run checks on'
+        required: true
+        type: string
 
 jobs:
   style-check:
@@ -559,6 +566,37 @@ jobs:
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/models/aimlapi
 
+  # Run tests for DashScope
+  test-dashscope:
+    if: false # We need more credits
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    env:
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Run AImlAPI tests
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/models/dashscope
+
   # Run tests for LangDB
   test-langdb:
     if: false # We do not have a company account
@@ -617,6 +655,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run agent integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/agent
@@ -647,6 +687,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run teams integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/teams
@@ -675,9 +717,11 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run workflows integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/workflow
+          python -m pytest ./libs/agno/tests/integration/workflows
 
   test-embedder:
     runs-on: ubuntu-latest
@@ -687,6 +731,7 @@ jobs:
       fail-fast: true # Stop all matrix jobs if one fails
     env:
       HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+      JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -703,11 +748,13 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run embedder tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/embedder
 
-  test-knowledge:
+  test-knowledge-1:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -732,9 +779,50 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run knowledge integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/knowledge
+          python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_json_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_md_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_pdf_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_text_knowledge.py
+
+  test-knowledge-2:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Run knowledge integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/knowledge/test_arxiv_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_firecrawl_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_website_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_youtube_knowledge.py
 
   # Run remaining integration tests
   test-remaining:
@@ -762,6 +850,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run remaining integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 ./libs/agno/tests/integration

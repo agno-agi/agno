@@ -11,9 +11,10 @@ on:
       - reopened
     branches:
       - "main"
+      - "v2.0"
 
 jobs:
-  style-check:
+  style-check-agno:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -46,8 +47,77 @@ jobs:
         run: |
           mypy .
 
+  style-check-cookbook:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9"]
+
+    defaults:
+      run:
+        working-directory: cookbook
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade \
+            pip setuptools wheel \
+            ruff mypy pytest
+          pip install --no-deps -r ../libs/agno/requirements.txt
+      - name: Ruff format
+        run: |
+          ruff format .
+      - name: Ruff check
+        run: |
+          ruff check .
+      # - name: Mypy
+      #   run: |
+      #     mypy .
+
+
+  style-check-agno-infra:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9"]
+
+    defaults:
+      run:
+        working-directory: libs/agno_infra
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade \
+            pip setuptools wheel \
+            ruff mypy pytest
+          pip install -r requirements.txt
+      - name: Ruff format
+        run: |
+          ruff format .
+      - name: Ruff check
+        run: |
+          ruff check .
+      - name: Mypy
+        run: |
+          mypy .
+
   tests:
     runs-on: ubuntu-latest
+    # Skip push events if there's an open PR from the same branch
+    if: github.event_name != 'push' || !github.event.pull_request
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -71,6 +141,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run tests for Agno
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit

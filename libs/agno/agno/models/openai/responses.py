@@ -8,17 +8,19 @@ from typing_extensions import Literal
 
 from agno.exceptions import ModelProviderError
 from agno.media import File
-from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
+from agno.models.base import MessageData, Model
 from agno.models.message import Citations, Message, UrlCitation
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
+from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
-    from openai.resources.responses.responses import Response, ResponseStreamEvent
-except (ImportError, ModuleNotFoundError) as e:
+    from openai.types.responses import Response, ResponseReasoningItem, ResponseStreamEvent, ResponseUsage
+except ImportError as e:
     raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
 
 
@@ -42,12 +44,18 @@ class OpenAIResponses(Model):
     metadata: Optional[Dict[str, Any]] = None
     parallel_tool_calls: Optional[bool] = None
     reasoning: Optional[Dict[str, Any]] = None
+    verbosity: Optional[Literal["low", "medium", "high"]] = None
+    reasoning_effort: Optional[Literal["minimal", "medium", "high"]] = None
+    reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None
     store: Optional[bool] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     truncation: Optional[Literal["auto", "disabled"]] = None
     user: Optional[str] = None
-
+    service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
+    extra_headers: Optional[Any] = None
+    extra_query: Optional[Any] = None
+    extra_body: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -77,6 +85,22 @@ class OpenAIResponses(Model):
             "tool": "tool",
         }
     )
+
+    def _using_reasoning_model(self) -> bool:
+        """Return True if the contextual used model is a known reasoning model."""
+        return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
+
+    def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Set the reasoning request parameter."""
+        base_params["reasoning"] = self.reasoning or {}
+
+        if self.reasoning_effort is not None:
+            base_params["reasoning"]["effort"] = self.reasoning_effort
+
+        if self.reasoning_summary is not None:
+            base_params["reasoning"]["summary"] = self.reasoning_summary
+
+        return base_params
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
@@ -154,7 +178,7 @@ class OpenAIResponses(Model):
 
     def get_request_params(
         self,
-        messages: List[Message],
+        messages: Optional[List[Message]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -172,28 +196,43 @@ class OpenAIResponses(Model):
             "max_tool_calls": self.max_tool_calls,
             "metadata": self.metadata,
             "parallel_tool_calls": self.parallel_tool_calls,
-            "reasoning": self.reasoning,
             "store": self.store,
             "temperature": self.temperature,
             "top_p": self.top_p,
             "truncation": self.truncation,
             "user": self.user,
+            "service_tier": self.service_tier,
+            "extra_headers": self.extra_headers,
+            "extra_query": self.extra_query,
+            "extra_body": self.extra_body,
         }
+        # Populate the reasoning parameter
+        base_params = self._set_reasoning_request_param(base_params)
+
+        # Build text parameter
+        text_params: Dict[str, Any] = {}
+
+        # Add verbosity if specified
+        if self.verbosity is not None:
+            text_params["verbosity"] = self.verbosity
+
         # Set the response format
         if response_format is not None:
             if isinstance(response_format, type) and issubclass(response_format, BaseModel):
                 schema = get_response_schema_for_provider(response_format, "openai")
-                base_params["text"] = {
-                    "format": {
-                        "type": "json_schema",
-                        "name": response_format.__name__,
-                        "schema": schema,
-                        "strict": True,
-                    }
+                text_params["format"] = {
+                    "type": "json_schema",
+                    "name": response_format.__name__,
+                    "schema": schema,
+                    "strict": True,
                 }
             else:
                 # JSON mode
-                base_params["text"] = {"format": {"type": "json_object"}}
+                text_params["format"] = {"type": "json_object"}
+
+        # Add text parameter if there are any text-level params
+        if text_params:
+            base_params["text"] = text_params
 
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
@@ -214,30 +253,43 @@ class OpenAIResponses(Model):
                 log_debug(f"Added web_search_preview tool for deep research model: {self.id}")
 
         if tools:
-            request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)
+            request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)  # type: ignore
 
         if tool_choice is not None:
             request_params["tool_choice"] = tool_choice
 
         # Handle reasoning tools for o3 and o4-mini models
-        if self.id.startswith("o3") or self.id.startswith("o4-mini"):
-            request_params["store"] = True
+        if self._using_reasoning_model() and messages is not None:
+            if self.store is False:
+                request_params["store"] = False
 
-            # Check if the last assistant message has a previous_response_id to continue from
-            previous_response_id = None
-            for msg in reversed(messages):
-                if (
-                    msg.role == "assistant"
-                    and hasattr(msg, "provider_data")
-                    and msg.provider_data
-                    and "response_id" in msg.provider_data
-                ):
-                    previous_response_id = msg.provider_data["response_id"]
-                    log_debug(f"Using previous_response_id: {previous_response_id}")
-                    break
+                # Add encrypted reasoning content to include if not already present
+                include_list = request_params.get("include", []) or []
+                if "reasoning.encrypted_content" not in include_list:
+                    include_list.append("reasoning.encrypted_content")
+                    if request_params.get("include") is None:
+                        request_params["include"] = include_list
+                    elif isinstance(request_params["include"], list):
+                        request_params["include"].extend(include_list)
 
-            if previous_response_id:
-                request_params["previous_response_id"] = previous_response_id
+            else:
+                request_params["store"] = True
+
+                # Check if the last assistant message has a previous_response_id to continue from
+                previous_response_id = None
+                for msg in reversed(messages):
+                    if (
+                        msg.role == "assistant"
+                        and hasattr(msg, "provider_data")
+                        and msg.provider_data
+                        and "response_id" in msg.provider_data
+                    ):
+                        previous_response_id = msg.provider_data["response_id"]
+                        log_debug(f"Using previous_response_id: {previous_response_id}")
+                        break
+
+                if previous_response_id:
+                    request_params["previous_response_id"] = previous_response_id
 
         # Add additional request params if provided
         if self.request_params:
@@ -310,11 +362,11 @@ class OpenAIResponses(Model):
         formatted_tools = []
         if tools:
             for _tool in tools:
-                if _tool["type"] == "function":
-                    _tool_dict = _tool["function"]
+                if _tool.get("type") == "function":
+                    _tool_dict = _tool.get("function", {})
                     _tool_dict["type"] = "function"
-                    for prop in _tool_dict["parameters"]["properties"].values():
-                        if isinstance(prop["type"], list):
+                    for prop in _tool_dict.get("parameters", {}).get("properties", {}).values():
+                        if isinstance(prop.get("type", ""), list):
                             prop["type"] = prop["type"][0]
 
                     formatted_tools.append(_tool_dict)
@@ -340,7 +392,7 @@ class OpenAIResponses(Model):
 
         return formatted_tools
 
-    def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
+    def _format_messages(self, messages: List[Message]) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
         """
         Format a message into the format expected by OpenAI.
 
@@ -350,8 +402,43 @@ class OpenAIResponses(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        formatted_messages: List[Dict[str, Any]] = []
-        for message in messages:
+        formatted_messages: List[Union[Dict[str, Any], ResponseReasoningItem]] = []
+
+        messages_to_format = messages
+        previous_response_id: Optional[str] = None
+        
+        if self._using_reasoning_model() and self.store is not False:
+            # Detect whether we're chaining via previous_response_id. If so, we should NOT
+            # re-send prior function_call items; the Responses API already has the state and
+            # expects only the corresponding function_call_output items.
+        
+            for msg in reversed(messages):
+                if (
+                    msg.role == "assistant" 
+                    and hasattr(msg, "provider_data") 
+                    and msg.provider_data 
+                    and "response_id" in msg.provider_data
+                ):
+                    previous_response_id = msg.provider_data["response_id"]
+                    msg_index = messages.index(msg)
+                    
+                    # Include messages after this assistant message
+                    messages_to_format = messages[msg_index + 1:]
+                    
+                    break
+
+        # Build a mapping from function_call id (fc_*) → call_id (call_*) from prior assistant tool_calls
+        fc_id_to_call_id: Dict[str, str] = {}
+        for msg in messages:
+            tool_calls = getattr(msg, "tool_calls", None)
+            if tool_calls:
+                for tc in tool_calls:
+                    fc_id = tc.get("id")
+                    call_id = tc.get("call_id") or fc_id
+                    if isinstance(fc_id, str) and isinstance(call_id, str):
+                        fc_id_to_call_id[fc_id] = call_id
+
+        for message in messages_to_format:
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
@@ -377,18 +464,32 @@ class OpenAIResponses(Model):
 
                 formatted_messages.append(message_dict)
 
+            # Tool call result
             elif message.role == "tool":
                 if message.tool_call_id and message.content is not None:
+                    function_call_id = message.tool_call_id
+                    # Normalize: if a fc_* id was provided, translate to its corresponding call_* id
+                    if isinstance(function_call_id, str) and function_call_id in fc_id_to_call_id:
+                        call_id_value = fc_id_to_call_id[function_call_id]
+                    else:
+                        call_id_value = function_call_id
                     formatted_messages.append(
-                        {"type": "function_call_output", "call_id": message.tool_call_id, "output": message.content}
+                        {"type": "function_call_output", "call_id": call_id_value, "output": message.content}
                     )
+            # Tool Calls
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
+                # Only skip re-sending prior function_call items when we have a previous_response_id
+                # (reasoning models). For non-reasoning models, we must include the prior function_call
+                # so the API can associate the subsequent function_call_output by call_id.
+                if self._using_reasoning_model() and previous_response_id is not None:
+                    continue
+
                 for tool_call in message.tool_calls:
                     formatted_messages.append(
                         {
                             "type": "function_call",
-                            "id": tool_call["id"],
-                            "call_id": tool_call["call_id"],
+                            "id": tool_call.get("id"),
+                            "call_id": tool_call.get("call_id", tool_call.get("id")),
                             "name": tool_call["function"]["name"],
                             "arguments": tool_call["function"]["arguments"],
                             "status": "completed",
@@ -399,15 +500,23 @@ class OpenAIResponses(Model):
                 content = message.content if message.content is not None else ""
                 formatted_messages.append({"role": self.role_map[message.role], "content": content})
 
+                if self.store is False and hasattr(message, "provider_data") and message.provider_data is not None:
+                    if message.provider_data.get("reasoning_output") is not None:
+                        reasoning_output = ResponseReasoningItem.model_validate(
+                            message.provider_data["reasoning_output"]
+                        )
+                        formatted_messages.append(reasoning_output)
         return formatted_messages
 
     def invoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Response:
+        run_response: Optional[RunOutput] = None,
+    ) -> ModelResponse:
         """
         Send a request to the OpenAI Responses API.
         """
@@ -416,11 +525,23 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            return self.get_client().responses.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
+            provider_response = self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
                 **request_params,
             )
+
+            assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+
+            return model_response
+
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
             error_message = exc.response.json().get("error", {})
@@ -459,10 +580,12 @@ class OpenAIResponses(Model):
     async def ainvoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Response:
+        run_response: Optional[RunOutput] = None,
+    ) -> ModelResponse:
         """
         Sends an asynchronous request to the OpenAI Responses API.
         """
@@ -471,11 +594,23 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            return await self.get_async_client().responses.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
+            provider_response = await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
                 **request_params,
             )
+
+            assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+
+            return model_response
+
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
             error_message = exc.response.json().get("error", {})
@@ -514,10 +649,12 @@ class OpenAIResponses(Model):
     def invoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Iterator[ResponseStreamEvent]:
+        run_response: Optional[RunOutput] = None,
+    ) -> Iterator[ModelResponse]:
         """
         Send a streaming request to the OpenAI Responses API.
         """
@@ -525,13 +662,28 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
+            tool_use: Dict[str, Any] = {}
 
-            yield from self.get_client().responses.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
+            for chunk in self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
                 stream=True,
                 **request_params,
-            )  # type: ignore
+            ):
+                model_response, tool_use = self._parse_provider_response_delta(
+                    stream_event=chunk,  # type: ignore
+                    assistant_message=assistant_message,
+                    tool_use=tool_use,  # type: ignore
+                )
+                yield model_response
+
+            assistant_message.metrics.stop_timer()
+
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
             error_message = exc.response.json().get("error", {})
@@ -570,10 +722,12 @@ class OpenAIResponses(Model):
     async def ainvoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AsyncIterator[ResponseStreamEvent]:
+        run_response: Optional[RunOutput] = None,
+    ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
         """
@@ -581,6 +735,13 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
+            tool_use: Dict[str, Any] = {}
+
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
@@ -588,7 +749,11 @@ class OpenAIResponses(Model):
                 **request_params,
             )
             async for chunk in async_stream:  # type: ignore
-                yield chunk
+                model_response, tool_use = self._parse_provider_response_delta(chunk, assistant_message, tool_use)  # type: ignore
+                yield model_response
+
+            assistant_message.metrics.stop_timer()
+
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
             error_message = exc.response.json().get("error", {})
@@ -640,7 +805,64 @@ class OpenAIResponses(Model):
                 _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
                 messages.append(_fc_message)
 
-    def parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
+    def process_response_stream(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+    ) -> Iterator[ModelResponse]:
+        """Process the synchronous response stream."""
+        for model_response_delta in self.invoke_stream(
+            messages=messages,
+            assistant_message=assistant_message,
+            tools=tools,
+            response_format=response_format,
+            tool_choice=tool_choice,
+            run_response=run_response,
+        ):
+            yield from self._populate_stream_data_and_assistant_message(
+                stream_data=stream_data,
+                assistant_message=assistant_message,
+                model_response_delta=model_response_delta,
+            )
+
+        # Add final metrics to assistant message
+        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response_delta)
+
+    async def aprocess_response_stream(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+    ) -> AsyncIterator[ModelResponse]:
+        """Process the asynchronous response stream."""
+        async for model_response_delta in self.ainvoke_stream(
+            messages=messages,
+            assistant_message=assistant_message,
+            tools=tools,
+            response_format=response_format,
+            tool_choice=tool_choice,
+            run_response=run_response,
+        ):
+            for model_response in self._populate_stream_data_and_assistant_message(
+                stream_data=stream_data,
+                assistant_message=assistant_message,
+                model_response_delta=model_response_delta,
+            ):
+                yield model_response
+
+        # Add final metrics to assistant message
+        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response_delta)
+
+    def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
 
@@ -667,7 +889,10 @@ class OpenAIResponses(Model):
 
         # Add role
         model_response.role = "assistant"
+        reasoning_summary: Optional[str] = None
+
         for output in response.output:
+            # Add content
             if output.type == "message":
                 model_response.content = response.output_text
 
@@ -683,13 +908,16 @@ class OpenAIResponses(Model):
                                 citations.urls.append(UrlCitation(url=annotation.url, title=annotation.title))
                         if citations.urls or citations.documents:
                             model_response.citations = citations
+
+            # Add tool calls
             elif output.type == "function_call":
                 if model_response.tool_calls is None:
                     model_response.tool_calls = []
                 model_response.tool_calls.append(
                     {
                         "id": output.id,
-                        "call_id": output.call_id,
+                        # Store additional call_id from OpenAI responses
+                        "call_id": output.call_id or output.id,
                         "type": "function",
                         "function": {
                             "name": output.name,
@@ -701,86 +929,97 @@ class OpenAIResponses(Model):
                 model_response.extra = model_response.extra or {}
                 model_response.extra.setdefault("tool_call_ids", []).append(output.call_id)
 
-        # i.e. we asked for reasoning, so we need to add the reasoning content
-        if self.reasoning is not None:
+            # Handle reasoning output items
+            elif output.type == "reasoning":
+                # Save encrypted reasoning content for ZDR mode
+                if self.store is False:
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    model_response.provider_data["reasoning_output"] = output.model_dump(exclude_none=True)
+
+                if reasoning_summaries := getattr(output, "summary", None):
+                    for summary in reasoning_summaries:
+                        if isinstance(summary, dict):
+                            summary_text = summary.get("text")
+                        else:
+                            summary_text = getattr(summary, "text", None)
+                        if summary_text:
+                            reasoning_summary = (reasoning_summary or "") + summary_text
+
+        # Add reasoning content
+        if reasoning_summary is not None:
+            model_response.reasoning_content = reasoning_summary
+        elif self.reasoning is not None:
             model_response.reasoning_content = response.output_text
 
+        # Add metrics
         if response.usage is not None:
-            model_response.response_usage = response.usage
+            model_response.response_usage = self._get_metrics(response.usage)
 
         return model_response
 
-    def _process_stream_response(
-        self,
-        stream_event: ResponseStreamEvent,
-        assistant_message: Message,
-        stream_data: MessageData,
-        tool_use: Dict[str, Any],
-    ) -> Tuple[Optional[ModelResponse], Dict[str, Any]]:
+    def _parse_provider_response_delta(
+        self, stream_event: ResponseStreamEvent, assistant_message: Message, tool_use: Dict[str, Any]
+    ) -> Tuple[ModelResponse, Dict[str, Any]]:
         """
-        Common handler for processing stream responses from Cohere.
+        Parse the streaming response from the model provider into a ModelResponse object.
 
         Args:
-            stream_event: The streamed response from Cohere
-            assistant_message: The assistant message being built
-            stream_data: Data accumulated during streaming
-            tool_use: Current tool use data being built
+            response: Raw response chunk from the model provider
 
         Returns:
-            Tuple containing the ModelResponse to yield and updated tool_use dict
+            ModelResponse: Parsed response delta
         """
-        model_response = None
+        model_response = ModelResponse()
 
+        # 1. Add response ID
         if stream_event.type == "response.created":
-            model_response = ModelResponse()
-            # Store the response ID for continuity
             if stream_event.response.id:
-                if stream_data.response_provider_data is None:
-                    stream_data.response_provider_data = {}
-                stream_data.response_provider_data["response_id"] = stream_event.response.id
-            # Update metrics
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["response_id"] = stream_event.response.id
             if not assistant_message.metrics.time_to_first_token:
                 assistant_message.metrics.set_time_to_first_token()
+
+        # 2. Add citations
         elif stream_event.type == "response.output_text.annotation.added":
-            model_response = ModelResponse()
-            if stream_data.response_citations is None:
-                stream_data.response_citations = Citations(raw=[stream_event.annotation])
+            if model_response.citations is None:
+                model_response.citations = Citations(raw=[stream_event.annotation])
             else:
-                stream_data.response_citations.raw.append(stream_event.annotation)  # type: ignore
+                model_response.citations.raw.append(stream_event.annotation)  # type: ignore
 
             if isinstance(stream_event.annotation, dict):
                 if stream_event.annotation.get("type") == "url_citation":
-                    if stream_data.response_citations.urls is None:
-                        stream_data.response_citations.urls = []
-                    stream_data.response_citations.urls.append(
+                    if model_response.citations.urls is None:
+                        model_response.citations.urls = []
+                    model_response.citations.urls.append(
                         UrlCitation(url=stream_event.annotation.get("url"), title=stream_event.annotation.get("title"))
                     )
             else:
-                if stream_event.annotation.type == "url_citation":
-                    if stream_data.response_citations.urls is None:
-                        stream_data.response_citations.urls = []
-                    stream_data.response_citations.urls.append(
-                        UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)
+                if stream_event.annotation.type == "url_citation":  # type: ignore
+                    if model_response.citations.urls is None:
+                        model_response.citations.urls = []
+                    model_response.citations.urls.append(
+                        UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)  # type: ignore
                     )
 
-            model_response.citations = stream_data.response_citations
-
+        # 3. Add content
         elif stream_event.type == "response.output_text.delta":
-            model_response = ModelResponse()
-            # Add content
             model_response.content = stream_event.delta
-            stream_data.response_content += stream_event.delta
 
-            if self.reasoning is not None:
+            # Treat the output_text deltas as reasoning content if the reasoning summary is not requested.
+            if self.reasoning is not None and self.reasoning_summary is None:
                 model_response.reasoning_content = stream_event.delta
-                stream_data.response_thinking += stream_event.delta
 
+        # 4. Add tool calls information
+
+        # 4.1 Add starting tool call
         elif stream_event.type == "response.output_item.added":
             item = stream_event.item
             if item.type == "function_call":
                 tool_use = {
-                    "id": item.id,
-                    "call_id": item.call_id,
+                    "id": getattr(item, "id", None),
+                    "call_id": getattr(item, "call_id", None) or getattr(item, "id", None),
                     "type": "function",
                     "function": {
                         "name": item.name,
@@ -788,81 +1027,75 @@ class OpenAIResponses(Model):
                     },
                 }
 
+        # 4.2 Add tool call arguments
         elif stream_event.type == "response.function_call_arguments.delta":
             tool_use["function"]["arguments"] += stream_event.delta
 
+        # 4.3 Add tool call completion data
         elif stream_event.type == "response.output_item.done" and tool_use:
-            model_response = ModelResponse()
             model_response.tool_calls = [tool_use]
             if assistant_message.tool_calls is None:
                 assistant_message.tool_calls = []
             assistant_message.tool_calls.append(tool_use)
 
-            stream_data.extra = stream_data.extra or {}
-            stream_data.extra.setdefault("tool_call_ids", []).append(tool_use["call_id"])
+            model_response.extra = model_response.extra or {}
+            model_response.extra.setdefault("tool_call_ids", []).append(tool_use["call_id"])
             tool_use = {}
 
+        # 5. Add metrics
         elif stream_event.type == "response.completed":
             model_response = ModelResponse()
-            # Add usage metrics if present
-            if stream_event.response.usage is not None:
-                model_response.response_usage = stream_event.response.usage
 
-            _add_usage_metrics_to_assistant_message(
-                assistant_message=assistant_message,
-                response_usage=model_response.response_usage,
-            )
+            # Handle reasoning output items
+            if self.reasoning_summary is not None or self.store is False:
+                summary_text: str = ""
+                for out in getattr(stream_event.response, "output", []) or []:
+                    if getattr(out, "type", None) == "reasoning":
+                        # In ZDR mode (store=False), store reasoning data for next request
+                        if self.store is False and hasattr(out, "encrypted_content"):
+                            if model_response.provider_data is None:
+                                model_response.provider_data = {}
+                            # Store the complete output item
+                            model_response.provider_data["reasoning_output"] = out.model_dump(exclude_none=True)
+                        if self.reasoning_summary is not None:
+                            summaries = getattr(out, "summary", None)
+                            if summaries:
+                                for s in summaries:
+                                    text_val = s.get("text") if isinstance(s, dict) else getattr(s, "text", None)
+                                    if text_val:
+                                        if summary_text:
+                                            summary_text += "\n\n"
+                                        summary_text += text_val
+
+                if summary_text:
+                    model_response.reasoning_content = summary_text
+
+            # Add metrics
+            if stream_event.response.usage is not None:
+                model_response.response_usage = self._get_metrics(stream_event.response.usage)
 
         return model_response, tool_use
 
-    def process_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Iterator[ModelResponse]:
-        """Process the synchronous response stream."""
-        tool_use: Dict[str, Any] = {}
+    def _get_metrics(self, response_usage: ResponseUsage) -> Metrics:
+        """
+        Parse the given OpenAI-specific usage into an Agno Metrics object.
 
-        for stream_event in self.invoke_stream(
-            messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice
-        ):
-            model_response, tool_use = self._process_stream_response(
-                stream_event=stream_event,
-                assistant_message=assistant_message,
-                stream_data=stream_data,
-                tool_use=tool_use,
-            )
+        Args:
+            response: The response from the provider.
 
-            if model_response is not None:
-                yield model_response
+        Returns:
+            Metrics: Parsed metrics data
+        """
+        metrics = Metrics()
 
-    async def aprocess_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AsyncIterator[ModelResponse]:
-        """Process the asynchronous response stream."""
-        tool_use: Dict[str, Any] = {}
+        metrics.input_tokens = response_usage.input_tokens or 0
+        metrics.output_tokens = response_usage.output_tokens or 0
+        metrics.total_tokens = response_usage.total_tokens or 0
 
-        async for stream_event in self.ainvoke_stream(
-            messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice
-        ):
-            model_response, tool_use = self._process_stream_response(
-                stream_event=stream_event,
-                assistant_message=assistant_message,
-                stream_data=stream_data,
-                tool_use=tool_use,
-            )
-            if model_response is not None:
-                yield model_response
+        if input_tokens_details := response_usage.input_tokens_details:
+            metrics.cache_read_tokens = input_tokens_details.cached_tokens
 
-    def parse_provider_response_delta(self, response: Any) -> ModelResponse:  # type: ignore
-        pass
+        if output_tokens_details := response_usage.output_tokens_details:
+            metrics.reasoning_tokens = output_tokens_details.reasoning_tokens
+
+        return metrics

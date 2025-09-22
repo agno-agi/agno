@@ -1,3 +1,5 @@
+import asyncio
+import weakref
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass
 from datetime import timedelta
@@ -6,7 +8,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool
 
 try:
@@ -16,6 +18,47 @@ try:
     from mcp.client.streamable_http import streamablehttp_client
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
+
+
+def _prepare_command(command: str) -> list[str]:
+    """Sanitize a command and split it into parts before using it to run a MCP server."""
+    from shlex import split
+
+    # Block dangerous characters
+    if any(char in command for char in ["&", "|", ";", "`", "$", "(", ")"]):
+        raise ValueError("MCP command can't contain shell metacharacters")
+
+    parts = split(command)
+    if not parts:
+        raise ValueError("MCP command can't be empty")
+
+    # Only allow specific executables
+    ALLOWED_COMMANDS = {
+        # Python
+        "python",
+        "python3",
+        "uv",
+        "uvx",
+        "pipx",
+        # Node
+        "node",
+        "npm",
+        "npx",
+        "yarn",
+        "pnpm",
+        "bun",
+        # Other runtimes
+        "deno",
+        "java",
+        "ruby",
+        "docker",
+    }
+
+    executable = parts[0].split("/")[-1]
+    if executable not in ALLOWED_COMMANDS:
+        raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")
+
+    return parts
 
 
 @dataclass
@@ -59,7 +102,7 @@ class MCPTools(Toolkit):
         transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
         server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = None,
         session: Optional[ClientSession] = None,
-        timeout_seconds: int = 5,
+        timeout_seconds: int = 10,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -138,11 +181,7 @@ class MCPTools(Toolkit):
             env = get_default_environment()
 
         if command is not None and transport not in ["sse", "streamable-http"]:
-            from shlex import split
-
-            parts = split(command)
-            if not parts:
-                raise ValueError("Empty command string")
+            parts = _prepare_command(command)
             cmd = parts[0]
             arguments = parts[1:] if len(parts) > 1 else []
             self.server_params = StdioServerParameters(command=cmd, args=arguments, env=env)
@@ -151,23 +190,49 @@ class MCPTools(Toolkit):
         self._context = None
         self._session_context = None
         self._initialized = False
+        self._connection_task = None
 
-    async def __aenter__(self) -> "MCPTools":
-        """Enter the async context manager."""
+        def cleanup():
+            """Cancel active connections"""
+            if self._connection_task and not self._connection_task.done():
+                self._connection_task.cancel()
+
+        # Setup cleanup logic before the instance is garbage collected
+        self._cleanup_finalizer = weakref.finalize(self, cleanup)
+
+    async def connect(self):
+        """Initialize a MCPTools instance and connect to the contextual MCP server"""
+        if self._initialized:
+            return
+
+        await self._connect()
+
+    def _start_connection(self):
+        """Ensure there are no active connections and setup a new one"""
+        if self._connection_task is None or self._connection_task.done():
+            self._connection_task = asyncio.create_task(self._connect())  # type: ignore
+
+    async def _connect(self) -> None:
+        """Connects to the MCP server and initializes the tools"""
+        if self._initialized:
+            return
 
         if self.session is not None:
-            # Already has a session, just initialize
-            if not self._initialized:
-                await self.initialize()
-            return self
+            await self.initialize()
+            return
 
-        # Create a new session using stdio_client, sse_client or streamablehttp_client based on transport
+        if not hasattr(self, "_active_contexts"):
+            self._active_contexts: list[Any] = []
+
+        # Create a new studio session
         if self.transport == "sse":
             sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
             if "url" not in sse_params:
                 sse_params["url"] = self.url
             self._context = sse_client(**sse_params)  # type: ignore
             client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
+
+        # Create a new streamable HTTP session
         elif self.transport == "streamable-http":
             streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
             if "url" not in streamable_http_params:
@@ -177,6 +242,7 @@ class MCPTools(Toolkit):
             if isinstance(params_timeout, timedelta):
                 params_timeout = int(params_timeout.total_seconds())
             client_timeout = min(self.timeout_seconds, params_timeout)
+
         else:
             if self.server_params is None:
                 raise ValueError("server_params must be provided when using stdio transport.")
@@ -184,24 +250,42 @@ class MCPTools(Toolkit):
             client_timeout = self.timeout_seconds
 
         session_params = await self._context.__aenter__()  # type: ignore
+        self._active_contexts.append(self._context)
         read, write = session_params[0:2]
 
         self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
         self.session = await self._session_context.__aenter__()  # type: ignore
+        self._active_contexts.append(self._session_context)
 
         # Initialize with the new session
         await self.initialize()
-        return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Exit the async context manager."""
+    async def close(self) -> None:
+        """Close the MCP connection and clean up resources"""
         if self._session_context is not None:
-            await self._session_context.__aexit__(exc_type, exc_val, exc_tb)
+            await self._session_context.__aexit__(None, None, None)
             self.session = None
             self._session_context = None
 
         if self._context is not None:
-            await self._context.__aexit__(exc_type, exc_val, exc_tb)
+            await self._context.__aexit__(None, None, None)
+            self._context = None
+
+        self._initialized = False
+
+    async def __aenter__(self) -> "MCPTools":
+        await self._connect()
+        return self
+
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
+        """Exit the async context manager."""
+        if self._session_context is not None:
+            await self._session_context.__aexit__(_exc_type, _exc_val, _exc_tb)
+            self.session = None
+            self._session_context = None
+
+        if self._context is not None:
+            await self._context.__aexit__(_exc_type, _exc_val, _exc_tb)
             self._context = None
 
         self._initialized = False
@@ -213,7 +297,7 @@ class MCPTools(Toolkit):
 
         try:
             if self.session is None:
-                raise ValueError("Session is not available. Use as context manager or provide a session.")
+                raise ValueError("Failed to establish session connection")
 
             # Initialize the session if not already initialized
             await self.session.initialize()
@@ -254,12 +338,13 @@ class MCPTools(Toolkit):
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
-                    logger.error(f"Failed to register tool {tool.name}: {e}")
+                    log_error(f"Failed to register tool {tool.name}: {e}")
 
             log_debug(f"{self.name} initialized with {len(filtered_tools)} tools")
             self._initialized = True
+
         except Exception as e:
-            logger.error(f"Failed to get MCP tools: {e}")
+            log_error(f"Failed to get MCP tools: {e}")
             raise
 
 
@@ -282,12 +367,13 @@ class MultiMCPTools(Toolkit):
         *,
         env: Optional[dict[str, str]] = None,
         server_params_list: Optional[
-            List[Union[SSEClientParams, StdioServerParameters, StreamableHTTPClientParams]]
+            list[Union[SSEClientParams, StdioServerParameters, StreamableHTTPClientParams]]
         ] = None,
         timeout_seconds: int = 5,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
+        allow_partial_failure: bool = False,
         **kwargs,
     ):
         """
@@ -303,6 +389,7 @@ class MultiMCPTools(Toolkit):
             timeout_seconds: Timeout in seconds for managing timeouts for Client Session if Agent or Tool doesn't respond.
             include_tools: Optional list of tool names to include (if None, includes all).
             exclude_tools: Optional list of tool names to exclude (if None, excludes none).
+            allow_partial_failure: If True, allows toolkit to initialize even if some MCP servers fail to connect. If False, any failure will raise an exception.
         """
         super().__init__(name="MultiMCPTools", **kwargs)
 
@@ -343,12 +430,8 @@ class MultiMCPTools(Toolkit):
             env = get_default_environment()
 
         if commands is not None:
-            from shlex import split
-
             for command in commands:
-                parts = split(command)
-                if not parts:
-                    raise ValueError("Empty command string")
+                parts = _prepare_command(command)
                 cmd = parts[0]
                 arguments = parts[1:] if len(parts) > 1 else []
                 self.server_params_list.append(StdioServerParameters(command=cmd, args=arguments, env=env))
@@ -365,39 +448,132 @@ class MultiMCPTools(Toolkit):
                     self.server_params_list.append(StreamableHTTPClientParams(url=url))
 
         self._async_exit_stack = AsyncExitStack()
+        self._successful_connections = 0
+
+        self._initialized = False
+        self._connection_task = None
+        self._active_contexts: list[Any] = []
+        self._used_as_context_manager = False
 
         self._client = client
+        self._initialized = False
+        self.allow_partial_failure = allow_partial_failure
+
+        def cleanup():
+            """Cancel active connections"""
+            if self._connection_task and not self._connection_task.done():
+                self._connection_task.cancel()
+
+        # Setup cleanup logic before the instance is garbage collected
+        self._cleanup_finalizer = weakref.finalize(self, cleanup)
+
+    async def connect(self):
+        """Initialize a MultiMCPTools instance and connect to the MCP servers"""
+        if self._initialized:
+            return
+
+        await self._connect()
+
+    @classmethod
+    async def create_and_connect(
+        cls,
+        commands: Optional[List[str]] = None,
+        urls: Optional[List[str]] = None,
+        urls_transports: Optional[List[Literal["sse", "streamable-http"]]] = None,
+        *,
+        env: Optional[dict[str, str]] = None,
+        server_params_list: Optional[
+            List[Union[SSEClientParams, StdioServerParameters, StreamableHTTPClientParams]]
+        ] = None,
+        timeout_seconds: int = 5,
+        client=None,
+        include_tools: Optional[list[str]] = None,
+        exclude_tools: Optional[list[str]] = None,
+        **kwargs,
+    ) -> "MultiMCPTools":
+        """Initialize a MultiMCPTools instance and connect to the MCP servers"""
+        instance = cls(
+            commands=commands,
+            urls=urls,
+            urls_transports=urls_transports,
+            env=env,
+            server_params_list=server_params_list,
+            timeout_seconds=timeout_seconds,
+            client=client,
+            include_tools=include_tools,
+            exclude_tools=exclude_tools,
+            **kwargs,
+        )
+
+        await instance._connect()
+        return instance
+
+    def _start_connection(self):
+        """Ensure there are no active connections and setup a new one"""
+        if self._connection_task is None or self._connection_task.done():
+            self._connection_task = asyncio.create_task(self._connect())  # type: ignore
+
+    async def _connect(self) -> None:
+        """Connects to the MCP servers and initializes the tools"""
+        if self._initialized:
+            return
+
+        server_connection_errors = []
+
+        for server_params in self.server_params_list:
+            try:
+                # Handle stdio connections
+                if isinstance(server_params, StdioServerParameters):
+                    stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
+                    read, write = stdio_transport
+                    session = await self._async_exit_stack.enter_async_context(
+                        ClientSession(read, write, read_timeout_seconds=timedelta(seconds=self.timeout_seconds))
+                    )
+                    await self.initialize(session)
+                    self._successful_connections += 1
+
+                # Handle SSE connections
+                elif isinstance(server_params, SSEClientParams):
+                    client_connection = await self._async_exit_stack.enter_async_context(
+                        sse_client(**asdict(server_params))
+                    )
+                    read, write = client_connection
+                    session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+                    await self.initialize(session)
+                    self._successful_connections += 1
+
+                # Handle Streamable HTTP connections
+                elif isinstance(server_params, StreamableHTTPClientParams):
+                    client_connection = await self._async_exit_stack.enter_async_context(
+                        streamablehttp_client(**asdict(server_params))
+                    )
+                    read, write = client_connection[0:2]
+                    session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+                    await self.initialize(session)
+                    self._successful_connections += 1
+
+            except Exception as e:
+                if not self.allow_partial_failure:
+                    raise ValueError(f"MCP connection failed: {e}")
+
+                log_error(f"Failed to initialize MCP server with params {server_params}: {e}")
+                server_connection_errors.append(str(e))
+                continue
+
+        if self._successful_connections == 0 and server_connection_errors:
+            raise ValueError(f"All MCP connections failed: {server_connection_errors}")
+
+        if not self._initialized and self._successful_connections > 0:
+            self._initialized = True
+
+    async def close(self) -> None:
+        """Close the MCP connections and clean up resources"""
+        await self._async_exit_stack.aclose()
+        self._initialized = False
 
     async def __aenter__(self) -> "MultiMCPTools":
         """Enter the async context manager."""
-
-        for server_params in self.server_params_list:
-            # Handle stdio connections
-            if isinstance(server_params, StdioServerParameters):
-                stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
-                read, write = stdio_transport
-                session = await self._async_exit_stack.enter_async_context(
-                    ClientSession(read, write, read_timeout_seconds=timedelta(seconds=self.timeout_seconds))
-                )
-                await self.initialize(session)
-            # Handle SSE connections
-            elif isinstance(server_params, SSEClientParams):
-                client_connection = await self._async_exit_stack.enter_async_context(
-                    sse_client(**asdict(server_params))
-                )
-                read, write = client_connection
-                session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
-                await self.initialize(session)
-
-            # Handle Streamable HTTP connections
-            elif isinstance(server_params, StreamableHTTPClientParams):
-                client_connection = await self._async_exit_stack.enter_async_context(
-                    streamablehttp_client(**asdict(server_params))
-                )
-                read, write = client_connection[0:2]
-                session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
-                await self.initialize(session)
-
+        await self._connect()
         return self
 
     async def __aexit__(
@@ -408,6 +584,8 @@ class MultiMCPTools(Toolkit):
     ):
         """Exit the async context manager."""
         await self._async_exit_stack.aclose()
+        self._initialized = False
+        self._successful_connections = 0
 
     async def initialize(self, session: ClientSession) -> None:
         """Initialize the MCP toolkit by getting available tools from the MCP server"""
@@ -447,10 +625,10 @@ class MultiMCPTools(Toolkit):
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
-                    logger.error(f"Failed to register tool {tool.name}: {e}")
+                    log_error(f"Failed to register tool {tool.name}: {e}")
 
-            log_debug(f"{self.name} initialized with {len(filtered_tools)} tools")
+            log_debug(f"{self.name} initialized with {len(filtered_tools)} tools from one MCP server")
             self._initialized = True
         except Exception as e:
-            logger.error(f"Failed to get MCP tools: {e}")
+            log_error(f"Failed to get MCP tools: {e}")
             raise

@@ -1,5 +1,5 @@
 """Please install dependencies using:
-pip install openai duckduckgo-search newspaper4k lxml_html_clean agno
+pip install openai ddgs newspaper4k lxml_html_clean agno
 """
 
 from agno.agent import Agent
@@ -17,7 +17,6 @@ agent = Agent(
         "Analyse and prepare an NYT worthy article based on the information.",
     ],
     markdown=True,
-    show_tool_calls=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 agent.print_response("Simulation theory", stream=True)
