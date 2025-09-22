@@ -351,6 +351,7 @@ class Workflow:
             # This ensures run state takes precedence over agent defaults
             if self.session_state:
                 from agno.utils.merge_dict import merge_dictionaries
+
                 base_state = self.session_state.copy()
                 merge_dictionaries(base_state, session_state)
                 session_state.clear()

@@ -16,26 +16,15 @@ def test_session_state_precedence_all_three_layers(shared_db):
     session_id = f"precedence_test_{uuid.uuid4()}"
 
     # Layer 1: Agent default session_state (lowest priority)
-    agent_default_state = {
-        "name": "agent_default",
-        "shared_key": "from_agent_default",
-        "agent_only": "agent_value"
-    }
+    agent_default_state = {"name": "agent_default", "shared_key": "from_agent_default", "agent_only": "agent_value"}
 
     # Create agent with default state
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        db=shared_db,
-        session_state=agent_default_state,
-        session_id=session_id
+        model=OpenAIChat(id="gpt-4o-mini"), db=shared_db, session_state=agent_default_state, session_id=session_id
     )
 
     # First run to establish DB state
-    db_state = {
-        "name": "db_saved",
-        "shared_key": "from_db",
-        "db_only": "db_value"
-    }
+    db_state = {"name": "db_saved", "shared_key": "from_db", "db_only": "db_value"}
     agent.run("First run", session_state=db_state)
 
     # Verify DB state was saved
@@ -43,11 +32,7 @@ def test_session_state_precedence_all_three_layers(shared_db):
     assert session_from_db.session_data["session_state"]["name"] == "db_saved"
 
     # Layer 3: Run-level session_state (highest priority)
-    run_state = {
-        "name": "run_override",
-        "shared_key": "from_run",
-        "run_only": "run_value"
-    }
+    run_state = {"name": "run_override", "shared_key": "from_run", "run_only": "run_value"}
 
     # Second run with run-level state should override DB state for conflicting keys
     agent.run("Second run", session_state=run_state)
@@ -73,11 +58,7 @@ def test_session_state_precedence_db_and_run_only(shared_db):
     session_id = f"db_run_test_{uuid.uuid4()}"
 
     # Create agent with no default session_state
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        db=shared_db,
-        session_id=session_id
-    )
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db, session_id=session_id)
 
     # First run establishes DB state
     db_state = {"db_key": "db_value", "shared": "from_db"}
@@ -102,12 +83,7 @@ def test_session_state_precedence_agent_and_run_only(shared_db):
 
     agent_state = {"agent_key": "agent_value", "shared": "from_agent"}
 
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        db=shared_db,
-        session_state=agent_state,
-        session_id=session_id
-    )
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db, session_state=agent_state, session_id=session_id)
 
     # Single run with run state
     run_state = {"run_key": "run_value", "shared": "from_run"}
@@ -130,7 +106,7 @@ def test_session_state_precedence_empty_run_state_preserves_db(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
         session_state={"agent_key": "agent_value"},
-        session_id=session_id
+        session_id=session_id,
     )
 
     # First run establishes DB state
@@ -199,23 +175,17 @@ def test_session_state_precedence_with_nested_dicts(shared_db):
         db=shared_db,
         session_state={
             "user_profile": {"name": "default", "age": 25},
-            "settings": {"theme": "light", "notifications": True}
+            "settings": {"theme": "light", "notifications": True},
         },
-        session_id=session_id
+        session_id=session_id,
     )
 
     # First run - establish DB state with nested updates
-    db_state = {
-        "user_profile": {"name": "db_user", "email": "db@example.com"},
-        "settings": {"theme": "dark"}
-    }
+    db_state = {"user_profile": {"name": "db_user", "email": "db@example.com"}, "settings": {"theme": "dark"}}
     agent.run("First run", session_state=db_state)
 
     # Second run - run state should override at nested level
-    run_state = {
-        "user_profile": {"name": "run_user", "phone": "123-456-7890"},
-        "new_section": {"new_key": "new_value"}
-    }
+    run_state = {"user_profile": {"name": "run_user", "phone": "123-456-7890"}, "new_section": {"new_key": "new_value"}}
     agent.run("Second run", session_state=run_state)
 
     # Verify nested precedence
@@ -245,7 +215,7 @@ async def test_session_state_precedence_async(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
         session_state={"async_test": "agent_default"},
-        session_id=session_id
+        session_id=session_id,
     )
 
     # Async first run
@@ -271,7 +241,7 @@ def test_session_state_precedence_streaming(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
         session_state={"stream_test": "agent_default"},
-        session_id=session_id
+        session_id=session_id,
     )
 
     # Streaming first run
