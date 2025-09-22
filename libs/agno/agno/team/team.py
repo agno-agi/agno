@@ -4746,6 +4746,9 @@ class Team:
                 if len(input_message) > 0 and isinstance(input_message[0], dict) and "type" in input_message[0]:
                     # This is multimodal content (text + images/audio/video), preserve the structure
                     input_content = input_message
+                elif len(input_message) > 0 and isinstance(input_message[0], Message):
+                    # This is a list of Message objects, extract text content from them
+                    input_content = get_text_from_message(input_message)
                 elif all(isinstance(item, str) for item in input_message):
                     input_content = "\n".join([str(item) for item in input_message])
                 else:

@@ -954,9 +954,7 @@ class Workflow:
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
-                    if step_output.stop:
-                        logger.info(f"Early termination requested by step {step_name}")
-                        break
+                    collected_step_outputs.append(step_output)
 
                     # Update shared media for next step
                     shared_images.extend(step_output.images or [])
@@ -968,7 +966,9 @@ class Workflow:
                     output_audio.extend(step_output.audio or [])
                     output_files.extend(step_output.files or [])
 
-                    collected_step_outputs.append(step_output)
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by step {step_name}")
+                        break
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
@@ -1390,9 +1390,7 @@ class Workflow:
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
-                    if step_output.stop:
-                        logger.info(f"Early termination requested by step {step_name}")
-                        break
+                    collected_step_outputs.append(step_output)
 
                     # Update shared media for next step
                     shared_images.extend(step_output.images or [])
@@ -1404,7 +1402,10 @@ class Workflow:
                     output_audio.extend(step_output.audio or [])
                     output_files.extend(step_output.files or [])
 
-                    collected_step_outputs.append(step_output)
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by step {step_name}")
+                        break
+
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
