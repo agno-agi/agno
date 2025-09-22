@@ -149,15 +149,16 @@ def convert_v1_media_to_v2(media_data: Dict[str, Any]) -> Dict[str, Any]:
     """Convert v1 media objects to v2 format."""
     if not isinstance(media_data, dict):
         return media_data
-    
+
     # Create a copy to avoid modifying the original
     v2_media = media_data.copy()
-    
+
     # Add id if missing (required in v2)
     if "id" not in v2_media or v2_media["id"] is None:
         from uuid import uuid4
+
         v2_media["id"] = str(uuid4())
-    
+
     # Handle VideoArtifact → Video conversion
     if "eta" in v2_media or "length" in v2_media:
         # Convert length to duration if it's numeric
@@ -169,14 +170,14 @@ def convert_v1_media_to_v2(media_data: Dict[str, Any]) -> Dict[str, Any]:
                 v2_media["duration"] = float(length)
             except ValueError:
                 pass  # Keep as is if not convertible
-    
+
     # Handle AudioArtifact → Audio conversion
     if "base64_audio" in v2_media:
         # Map base64_audio to content
         base64_audio = v2_media.pop("base64_audio", None)
         if base64_audio:
             v2_media["content"] = base64_audio
-    
+
     # Handle AudioResponse content conversion (base64 string to bytes if needed)
     if "transcript" in v2_media and "content" in v2_media:
         content = v2_media.get("content")
@@ -184,11 +185,12 @@ def convert_v1_media_to_v2(media_data: Dict[str, Any]) -> Dict[str, Any]:
             # Try to decode base64 content to bytes for v2
             try:
                 import base64
+
                 v2_media["content"] = base64.b64decode(content)
             except Exception:
                 # If not valid base64, keep as string
                 pass
-    
+
     # Ensure format and mime_type are set appropriately
     if "format" in v2_media and "mime_type" not in v2_media:
         format_val = v2_media["format"]
@@ -196,7 +198,7 @@ def convert_v1_media_to_v2(media_data: Dict[str, Any]) -> Dict[str, Any]:
             # Set mime_type based on format for common types
             mime_type_map = {
                 "mp4": "video/mp4",
-                "mov": "video/quicktime", 
+                "mov": "video/quicktime",
                 "avi": "video/x-msvideo",
                 "webm": "video/webm",
                 "mp3": "audio/mpeg",
@@ -206,11 +208,11 @@ def convert_v1_media_to_v2(media_data: Dict[str, Any]) -> Dict[str, Any]:
                 "jpg": "image/jpeg",
                 "jpeg": "image/jpeg",
                 "gif": "image/gif",
-                "webp": "image/webp"
+                "webp": "image/webp",
             }
             if format_val.lower() in mime_type_map:
                 v2_media["mime_type"] = mime_type_map[format_val.lower()]
-    
+
     return v2_media
 
 
@@ -251,7 +253,7 @@ def convert_v1_fields_to_v2(data: Dict[str, Any]) -> Dict[str, Any]:
     # Both thinking and reasoning_content from v1 should become reasoning_content in v2
     thinking = v2_data.get("thinking")
     reasoning_content = v2_data.get("reasoning_content")
-    
+
     # Consolidate thinking and reasoning_content into reasoning_content
     if thinking and reasoning_content:
         # Both exist, combine them (thinking first, then reasoning_content)
@@ -271,8 +273,9 @@ def convert_v1_fields_to_v2(data: Dict[str, Any]) -> Dict[str, Any]:
         if field in v2_data and v2_data[field]:
             if isinstance(v2_data[field], list):
                 # Handle list of media objects
-                v2_data[field] = [convert_v1_media_to_v2(item) if isinstance(item, dict) else item 
-                                 for item in v2_data[field]]
+                v2_data[field] = [
+                    convert_v1_media_to_v2(item) if isinstance(item, dict) else item for item in v2_data[field]
+                ]
             elif isinstance(v2_data[field], dict):
                 # Handle single media object
                 v2_data[field] = convert_v1_media_to_v2(v2_data[field])
