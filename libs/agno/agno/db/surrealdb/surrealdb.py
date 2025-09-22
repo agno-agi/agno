@@ -80,8 +80,12 @@ class SurrealDb(BaseDb):
             self._client = build_client(self._db_url, self._db_creds, self._db_ns, self._db_db)
         return self._client
 
-    def _get_table(self, table_type: str):
-        raise NotImplementedError(f"TODO for {table_type}")
+    def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = True):
+        if table_type == "sessions":
+            return self.session_table_name
+
+        else:
+            raise NotImplementedError(f"Unknown table type: {table_type}")
 
     def _query(
         self,
@@ -96,13 +100,17 @@ class SurrealDb(BaseDb):
         query: str,
         vars: dict[str, Any],
         record_type: type[utils.RecordType],
-    ) -> utils.RecordType:
+    ) -> utils.RecordType | None:
         return utils.query_one(self.client, query, vars, record_type)
 
-    def _count(self, table: str, where_clause: str, where_vars: dict[str, Any], group_by: str = "id") -> int:
-        total_count_query = COUNT_QUERY.format(table=table, where_clause=where_clause, group_by=group_by)
+    def _count(self, table: str, where_clause: str, where_vars: dict[str, Any], group_by: str | None = None) -> int:
+        total_count_query = COUNT_QUERY.format(
+            table=table,
+            where_clause=where_clause,
+            group_clause="GROUP ALL" if group_by is None else f"GROUP BY{group_by}",
+        )
         count_result = self._query_one(total_count_query, where_vars, dict)
-        total_count = count_result.get("count")
+        total_count = count_result.get("count") if count_result else 0
         assert isinstance(total_count, int), f"Expected int, got {type(total_count)}"
         total_count = int(total_count)
         return total_count
@@ -133,18 +141,22 @@ class SurrealDb(BaseDb):
         table_type = "sessions"
         table = self._get_table(table_type)
         record = RecordID(table, session_id)
-        filter_clause = "AND user = $user" if user_id is not None else ""
+        where = WhereClause()
+        if user_id is not None:
+            where = where.and_("user", RecordID("user", user_id))
+        if session_type == SessionType.AGENT:
+            where = where.and_("agent", None, "!=")
+        elif session_type == SessionType.TEAM:
+            where = where.and_("team", None, "!=")
+        elif session_type == SessionType.WORKFLOW:
+            where = where.and_("workflow", None, "!=")
+        where_clause, where_vars = where.build()
         query = dedent(f"""
-            SELECT VALUE *
+            SELECT *
             FROM ONLY $record
-            WHERE session_type = $session_type
-            {filter_clause}
+            {where_clause}
         """)
-        vars = {
-            "record": record,
-            "session_type": session_type,
-            "user": RecordID(self._users_table, user_id or ""),
-        }
+        vars = {"record": record, **where_vars}
         raw = self._query_one(query, vars, dict)
         if not raw or not deserialize:
             return raw
@@ -170,20 +182,18 @@ class SurrealDb(BaseDb):
         # -- Filters
         where = WhereClause()
 
-        # session_type
-        where = where.and_("session_type", session_type)
-
         # user_id
-        where = where.and_("user", RecordID("user", user_id))
+        if user_id is not None:
+            where = where.and_("user", RecordID("user", user_id))
 
         # component_id
         if component_id is not None:
             if session_type == SessionType.AGENT:
                 where = where.and_("agent", RecordID("agent", component_id))
             elif session_type == SessionType.TEAM:
-                where = where.and_("agent", RecordID("team", component_id))
+                where = where.and_("team", RecordID("team", component_id))
             elif session_type == SessionType.WORKFLOW:
-                where = where.and_("agent", RecordID("workflow", component_id))
+                where = where.and_("workflow", RecordID("workflow", component_id))
 
         # session_name
         if session_name is not None:
@@ -207,7 +217,6 @@ class SurrealDb(BaseDb):
         query = dedent(f"""
             SELECT *
             FROM {table}
-            WHERE session_type = $session_type
             {where_clause}
             {order_limit_start_clause}
         """)
@@ -242,7 +251,7 @@ class SurrealDb(BaseDb):
         session_type = get_session_type(session)
         table = self._get_table(table_type)
         session_raw = self._query_one(
-            "UPSERT $record CONTENT $content",
+            "UPSERT ONLY $record CONTENT $content",
             {
                 "record": RecordID(table, session.session_id),
                 "content": serialize_session(session),
@@ -274,7 +283,7 @@ class SurrealDb(BaseDb):
     def get_all_memory_topics(self) -> List[str]:
         table_type = "memories"
         table = self._get_table(table_type)
-        vars = {}
+        vars: dict[str, Any] = {}
 
         # Query
         query = dedent(f"""
@@ -287,7 +296,7 @@ class SurrealDb(BaseDb):
             ).topics;
         """)
         result = self._query_one(query, vars, list[str])
-        return result
+        return result or []
 
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True
@@ -353,7 +362,7 @@ class SurrealDb(BaseDb):
         # Order
         order_limit_start_clause = order_limit_start("last_memory_updated_at", "DESC", limit, page)
         # Total count
-        total_count = self._count(table, where_clause, where_vars, "user")
+        total_count = self._count(table, where_clause, where_vars, "GROUP BY user")
         # Query
         query = dedent(f"""
             SELECT
@@ -374,7 +383,7 @@ class SurrealDb(BaseDb):
         table_type = "memories"
         table = self._get_table(table_type)
         record = RecordID(table, memory.memory_id)
-        query = "UPSERT $record CONTENT $content"
+        query = "UPSERT ONLY $record CONTENT $content"
         result = self._query_one(query, {"record": record, "content": serialize_user_memory(memory)}, dict)
         if not result or not deserialize:
             return result
@@ -401,8 +410,7 @@ class SurrealDb(BaseDb):
         table_type = "knowledge"
         record_id = RecordID(table_type, id)
         raw = self._query_one("SELECT * FROM $record_id", {"record_id": record_id}, dict)
-        result = deserialize_knowledge_row(raw)
-        return result
+        return deserialize_knowledge_row(raw) if raw else None
 
     def get_knowledge_contents(
         self,
@@ -430,13 +438,13 @@ class SurrealDb(BaseDb):
         result = self._query(query, where_vars, dict)
         return [deserialize_knowledge_row(row) for row in result], total_count
 
-    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
+    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow) -> Optional[KnowledgeRow]:
         table_type = "knowledge"
         table = self._get_table(table_type)
         record = RecordID(table, knowledge_row.id)
-        query = "UPSERT $record CONTENT $content"
+        query = "UPSERT ONLY $record CONTENT $content"
         result = self._query_one(query, {"record": record, "content": serialize_knowledge_row(knowledge_row)}, dict)
-        return deserialize_user_memory(result)
+        return deserialize_knowledge_row(result) if result else None
 
     # --- Evals ---
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
@@ -444,7 +452,7 @@ class SurrealDb(BaseDb):
         table = self._get_table(table_type)
         query = f"CREATE {table} CONTENT $content"
         result = self._query_one(query, {"content": serialize_eval_run_record(eval_run)}, dict)
-        return deserialize_eval_run_record(result)
+        return deserialize_eval_run_record(result) if result else None
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         table_type = "evals"
@@ -472,6 +480,7 @@ class SurrealDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
+        # TODO: implement filter_type
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,

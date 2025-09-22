@@ -21,7 +21,7 @@ COUNT_QUERY: Final[str] = dedent("""
         SELECT count(id) AS count
         FROM {table}
         {where_clause}
-        GROUP BY {group_by}
+        {group_clause}
     )[0] OR {{count: 0}}
 """)
 

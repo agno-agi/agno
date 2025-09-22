@@ -13,14 +13,16 @@
 # Then, run this test like this:
 #
 # ```
-# pytest libs/agno/tests/integration/memory/test_memory_surrealdb.py
+# pytest libs/agno/tests/integration/db/surrealdb/test_surrealdb_memory.py
 # ```
 
 import pytest
-from agno.memory.v2.db.schema import MemoryRow
-from agno.memory.v2.db.surrealdb import SurrealMemoryDb
+from surrealdb import RecordID
 
+from agno.db.base import SessionType
+from agno.db.surrealdb import SurrealDb
 from agno.debug import enable_debug_mode
+from agno.session.agent import AgentSession
 
 enable_debug_mode()
 
@@ -33,50 +35,49 @@ SURREALDB_DATABASE = "test"
 
 
 @pytest.fixture
-def memory_db():
+def db() -> SurrealDb:
     """Create a SurrealDB memory database for testing."""
-    # client = Surreal(url=SURREALDB_URL)
-    # client.signin({"username": SURREALDB_USER, "password": SURREALDB_PASSWORD})
-    # client.use(namespace=SURREALDB_NAMESPACE, database=SURREALDB_DATABASE)
-    client = build_client(SURREALDB_URL, SURREALDB_USER, SURREALDB_PASSWORD, SURREALDB_NAMESPACE, SURREALDB_DATABASE)
-    db = SurrealMemoryDb(client=client)
-    db.drop_table()
-    db.create()
+    creds = {"username": SURREALDB_USER, "password": SURREALDB_PASSWORD}
+    db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABASE)
     return db
 
 
-def test_table_exists(memory_db):
-    assert memory_db.table_exists()
+def test_crud_memory(db: SurrealDb):
+    session = AgentSession(session_id="123", agent_id="1")
 
+    # upsert
+    db.upsert_session(session)
 
-def test_crud_memory(memory_db):
-    memory = MemoryRow(memory={"foo": 42}, user_id="martin")
-    memory_db.upsert_memory(memory)
-    memories = memory_db.read_memories()
-    assert len(memories) == 1
-    assert memories[0].memory == {"foo": 42}
-    assert memories[0].user_id == "martin"
-    assert memory_db.memory_exists(memories[0])
+    # list
+    sessions = db.get_sessions(SessionType.AGENT)
+    assert isinstance(sessions, list)
+    assert len(sessions) == 1
+    assert sessions[0].session_id == "123"
 
-    memory_2 = MemoryRow(memory={"callsign": "spin"}, user_id="spensa")
-    memory_db.upsert_memory(memory_2)
+    # list, unserialized
+    sessions = db.get_sessions(SessionType.AGENT, deserialize=False)
+    assert isinstance(sessions, tuple) and len(sessions[0]) == 1 and sessions[1] == 1
 
-    memories = memory_db.read_memories()
-    assert len(memories) == 2
+    # find one
+    session_got = db.get_session("123", SessionType.AGENT)
+    assert isinstance(session_got, AgentSession) and session_got.session_id == "123"
 
-    memories = memory_db.read_memories(user_id="martin")
-    assert len(memories) == 1
+    # find one, wrong type
+    wrong = db.get_session("123", SessionType.TEAM)
+    assert wrong is None
 
-    # upsert duplicate
-    memory.memory["bar"] = 200
-    memory_db.upsert_memory(memory)
-    memories = memory_db.read_memories(user_id="martin")
-    assert len(memories) == 1
-    assert memories[0].memory == {"foo": 42, "bar": 200}
+    # rename
+    renamed = db.rename_session("123", SessionType.AGENT, "new name", False)
+    assert (
+        isinstance(renamed, dict)
+        and renamed.get("agent") == RecordID("agent", "1")
+        and renamed.get("session_name") == "new name"
+    )
 
-    # delete memory
-    memory_db.delete_memory(memory.id)
-    memories = memory_db.read_memories()
-    assert len(memories) == 1
-    assert memories[0].memory == {"callsign": "spin"}
-    assert memories[0].user_id == "spensa"
+    # delete
+    deleted = db.delete_session("123")
+    assert deleted
+
+    # list, emtpy
+    sessions = db.get_sessions(SessionType.AGENT, deserialize=False)
+    assert isinstance(sessions, tuple) and len(sessions[0]) == 0 and sessions[1] == 0

@@ -1,5 +1,7 @@
 from typing import Sequence
 
+from surrealdb import RecordID
+
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -12,31 +14,33 @@ from agno.session.workflow import WorkflowSession
 
 
 def serialize_session(session: Session) -> dict:
-    return session.to_dict()
+    _dict = session.to_dict()
+    if isinstance(session, AgentSession):
+        _dict["agent"] = RecordID("agent", session.agent_id)
+    elif isinstance(session, TeamSession):
+        _dict["team"] = RecordID("team", session.team_id)
+    elif isinstance(session, WorkflowSession):
+        _dict["workflow"] = RecordID("workflow", session.workflow_id)
+    return _dict
 
 
 def deserialize_session(session_type: SessionType, session_raw: dict) -> Session | None:
     session_raw = deserialize_session_json_fields(session_raw)
     if session_type == SessionType.AGENT:
+        session_raw["agent"] = RecordID("agent", session_raw.get("agent_id"))
         return AgentSession.from_dict(session_raw)
     elif session_type == SessionType.TEAM:
+        session_raw["team"] = RecordID("team", session_raw.get("team_id"))
         return TeamSession.from_dict(session_raw)
     elif session_type == SessionType.WORKFLOW:
+        session_raw["workflow"] = RecordID("workflow", session_raw.get("workflow_id"))
         return WorkflowSession.from_dict(session_raw)
     else:
         raise ValueError(f"Invalid session type: {session_type}")
 
 
 def deserialize_sessions(session_type: SessionType, sessions_raw: list[dict]) -> list[Session]:
-    if session_type == SessionType.AGENT:
-        sessions = [y for y in [AgentSession.from_dict(x) for x in sessions_raw] if y is not None]
-    elif session_type == SessionType.TEAM:
-        sessions = [y for y in [TeamSession.from_dict(x) for x in sessions_raw] if y is not None]
-    elif session_type == SessionType.WORKFLOW:
-        sessions = [y for y in [WorkflowSession.from_dict(x) for x in sessions_raw] if y is not None]
-    else:
-        raise ValueError(f"Invalid session type: {session_type}")
-    return [x for x in sessions if x is not None]
+    return [x for x in [deserialize_session(session_type, x) for x in sessions_raw] if x is not None]
 
 
 def get_session_type(session: Session) -> SessionType:

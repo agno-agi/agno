@@ -24,9 +24,9 @@ def _query_aux(
 ) -> list | dict:
     try:
         response = client.query(query, vars)
-        logger.debug(f"Query: {query}, Response: {response}")
+        logger.debug(f"Query: {query} with {vars}, Response: {response}")
     except Exception as e:
-        logger.error(f"Query execution error: {e}")
+        logger.error(f"Query execution error: {query} with {vars}, Error: {e}")
         raise e
     return response
 
@@ -52,9 +52,11 @@ def query_one(
     query: str,
     vars: dict[str, Any],
     record_type: type[RecordType],
-) -> RecordType:
+) -> RecordType | None:
     response = _query_aux(client, query, vars)
-    if not isinstance(response, list):
+    if response is None:
+        return None
+    elif not isinstance(response, list):
         if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):
             return getattr(record_type, "from_dict").__call__(response)
         else:
