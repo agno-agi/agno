@@ -293,6 +293,11 @@ class OpenAIResponses(Model):
 
                 if previous_response_id:
                     request_params["previous_response_id"] = previous_response_id
+                    # When using previous_response_id, we need to filter messages to only include
+                    # new messages after the one referenced by previous_response_id
+                    # This prevents OpenAI from concatenating server-side history with client-side history
+                    filtered_messages = self._filter_messages_for_previous_response_id(messages, previous_response_id)
+                    request_params["_filtered_messages"] = filtered_messages
 
         # Add additional request params if provided
         if self.request_params:
@@ -504,6 +509,47 @@ class OpenAIResponses(Model):
                         formatted_messages.append(reasoning_output)
         return formatted_messages
 
+    def _filter_messages_for_previous_response_id(
+        self, messages: List[Message], previous_response_id: str
+    ) -> List[Message]:
+        """
+        Filter messages to only include new messages after the one referenced by previous_response_id.
+
+        When using previous_response_id, OpenAI stores the conversation server-side and we should only
+        send new messages to avoid duplication.
+
+        Args:
+            messages: The full list of messages
+            previous_response_id: The response ID to continue from
+
+        Returns:
+            List of messages that should be sent to the API
+        """
+        # Find the index of the message with the previous_response_id
+        cutoff_index = -1
+        for i, msg in enumerate(messages):
+            if (
+                msg.role == "assistant"
+                and hasattr(msg, "provider_data")
+                and msg.provider_data
+                and msg.provider_data.get("response_id") == previous_response_id
+            ):
+                cutoff_index = i
+                break
+
+        if cutoff_index == -1:
+            # If we can't find the message with previous_response_id, return all messages
+            # This shouldn't happen in normal operation, but provides a fallback
+            log_warning(
+                f"Could not find message with previous_response_id {previous_response_id}, sending all messages"
+            )
+            return messages
+
+        # Return only messages after the cutoff point
+        filtered_messages = messages[cutoff_index + 1 :]
+        log_debug(f"Filtered {len(messages)} messages to {len(filtered_messages)} messages after previous_response_id")
+        return filtered_messages
+
     def invoke(
         self,
         messages: List[Message],
@@ -521,6 +567,9 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
+            # Use filtered messages if available (when previous_response_id is used)
+            messages_to_send = request_params.pop("_filtered_messages", messages)
+
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
@@ -528,7 +577,7 @@ class OpenAIResponses(Model):
 
             provider_response = self.get_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages_to_send),  # type: ignore
                 **request_params,
             )
 
@@ -590,6 +639,9 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
+            # Use filtered messages if available (when previous_response_id is used)
+            messages_to_send = request_params.pop("_filtered_messages", messages)
+
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
@@ -597,7 +649,7 @@ class OpenAIResponses(Model):
 
             provider_response = await self.get_async_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages_to_send),  # type: ignore
                 **request_params,
             )
 
@@ -658,6 +710,9 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
+
+            # Use filtered messages if available (when previous_response_id is used)
+            messages_to_send = request_params.pop("_filtered_messages", messages)
             tool_use: Dict[str, Any] = {}
 
             if run_response and run_response.metrics:
@@ -667,7 +722,7 @@ class OpenAIResponses(Model):
 
             for chunk in self.get_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages_to_send),  # type: ignore
                 stream=True,
                 **request_params,
             ):
