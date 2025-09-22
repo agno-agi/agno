@@ -72,7 +72,7 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
-        skip_if_exists: bool = True,
+        skip_if_exists: bool = False,
         remote_content: Optional[RemoteContent] = None,
     ) -> None: ...
 
@@ -80,7 +80,7 @@ class Knowledge:
         if args and isinstance(args[0], list):
             arguments = args[0]
             upsert = kwargs.get("upsert", True)
-            skip_if_exists = kwargs.get("skip_if_exists", True)
+            skip_if_exists = kwargs.get("skip_if_exists", False)
             for argument in arguments:
                 await self.add_content_async(
                     name=argument.get("name"),
@@ -110,7 +110,7 @@ class Knowledge:
             include = kwargs.get("include")
             exclude = kwargs.get("exclude")
             upsert = kwargs.get("upsert", True)
-            skip_if_exists = kwargs.get("skip_if_exists", True)
+            skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
             for path in paths:
                 await self.add_content_async(
@@ -186,7 +186,7 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
-        skip_if_exists: bool = True,
+        skip_if_exists: bool = False,
     ) -> None: ...
 
     def add_contents(self, *args, **kwargs) -> None:
@@ -224,7 +224,7 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
-        skip_if_exists: bool = True,
+        skip_if_exists: bool = False,
         reader: Optional[Reader] = None,
         auth: Optional[ContentAuth] = None,
     ) -> None: ...
@@ -291,7 +291,7 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
-        skip_if_exists: bool = True,
+        skip_if_exists: bool = False,
         reader: Optional[Reader] = None,
         auth: Optional[ContentAuth] = None,
     ) -> None: ...
@@ -313,7 +313,7 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
-        skip_if_exists: bool = True,
+        skip_if_exists: bool = False,
         auth: Optional[ContentAuth] = None,
     ) -> None:
         """
@@ -582,7 +582,7 @@ class Knowledge:
         self,
         content: Content,
         upsert: bool = True,
-        skip_if_exists: bool = True,
+        skip_if_exists: bool = False,
     ):
         if content.name:
             name = content.name
