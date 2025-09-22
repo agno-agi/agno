@@ -5811,8 +5811,6 @@ class Team:
                     for t in tasks:
                         with contextlib.suppress(Exception):
                             await t
-                return 
-
             else:
                 # Non-streaming concurrent run of members; collect results when done
                 tasks = []
