@@ -41,7 +41,7 @@ def prepare_response_schema(pydantic_model: Type[BaseModel]) -> Union[Type[BaseM
         except Exception as e:
             log_warning(f"Failed to convert schema for {pydantic_model}: {e}")
             converted = None
-            
+
         if converted is None:
             # If conversion fails, let Gemini handle it directly
             return pydantic_model

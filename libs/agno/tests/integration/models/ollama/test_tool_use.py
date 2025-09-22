@@ -100,7 +100,9 @@ def test_multiple_tool_calls():
             tool_calls.extend(msg.tool_calls)
     assert len([call for call in tool_calls if call.get("type", "") == "function"]) >= 2
     assert response.content is not None
-    assert "TSLA" in response.content and ("latest news" in response.content.lower() or "news" in response.content.lower())
+    assert "TSLA" in response.content and (
+        "latest news" in response.content.lower() or "news" in response.content.lower()
+    )
 
 
 def test_tool_call_custom_tool_no_parameters():
