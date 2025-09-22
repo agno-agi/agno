@@ -8,9 +8,6 @@ from uuid import uuid4
 from agno.knowledge.chunking.strategy import ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
-
-# Assuming ContentType is defined elsewhere as in the original code
-# from agno.knowledge.types import ContentType
 from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
@@ -97,7 +94,7 @@ class ImageReader(Reader):
                 name=doc_name,
                 id=str(uuid4()),
                 content=full_text,
-                meta_data={"source_file": source_info},  # "processing_mode": self.mode.value
+                meta_data={"source_file": source_info},
             )
         ]
 
