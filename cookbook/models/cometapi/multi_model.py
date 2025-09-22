@@ -30,8 +30,7 @@ def main():
         ("gpt-5-mini", "Latest GPT-5 Mini model"),
         ("gpt-5-mini", "GPT-5 Mini model"),
         # Anthropic models
-        ("gpt-5-mini", "gpt-5-mini"),
-        ("gpt-5-mini", "gpt-5-mini"),
+        ("claude-sonnet-4-20250514", "Claude Sonnet 4"),
         # Google models
         ("gemini-2.5-pro", "Gemini 2.5 Pro"),
         ("gemini-2.0-flash", "Gemini 2.0 Flash"),
