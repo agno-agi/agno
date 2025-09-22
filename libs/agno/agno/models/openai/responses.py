@@ -404,12 +404,13 @@ class OpenAIResponses(Model):
         """
         formatted_messages: List[Union[Dict[str, Any], ResponseReasoningItem]] = []
 
+        messages_to_format = messages
+        previous_response_id: Optional[str] = None
+        
         if self._using_reasoning_model() and self.store is not False:
             # Detect whether we're chaining via previous_response_id. If so, we should NOT
             # re-send prior function_call items; the Responses API already has the state and
             # expects only the corresponding function_call_output items.
-            messages_to_format = messages
-            previous_response_id: Optional[str] = None
         
             for msg in reversed(messages):
                 if (
