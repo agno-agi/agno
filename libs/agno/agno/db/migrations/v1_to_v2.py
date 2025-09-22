@@ -380,17 +380,17 @@ def migrate_table_in_batches(
         else:
             raise ValueError(f"Invalid table type: {v1_table_type}")
 
-        # Insert the batch into the new table
+        # Insert the batch into the new table using bulk operations
         if v1_table_type in ["agent_sessions", "team_sessions", "workflow_sessions"]:
-            # TODO: bulk
-            for session in sessions:
-                db.upsert_session(session)
-            total_migrated += len(sessions)
+            if sessions:
+                db.bulk_upsert_sessions(sessions)
+                total_migrated += len(sessions)
+                log_info(f"Bulk upserted {len(sessions)} sessions in batch {batch_count}")
         elif v1_table_type == "memories":
-            # TODO: bulk
-            for memory in memories:
-                db.upsert_user_memory(memory)
-            total_migrated += len(memories)
+            if memories:
+                db.bulk_upsert_memories(memories)
+                total_migrated += len(memories)
+                log_info(f"Bulk upserted {len(memories)} memories in batch {batch_count}")
 
         log_info(f"Completed batch {batch_count}: migrated {batch_size_actual} records")
 
