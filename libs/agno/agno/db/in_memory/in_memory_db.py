@@ -299,7 +299,7 @@ class InMemoryDb(BaseDb):
             return existing_session.get("workflow_id") == session.workflow_id
         return False
 
-    def bulk_upsert_sessions(
+    def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
@@ -504,7 +504,7 @@ class InMemoryDb(BaseDb):
             log_warning(f"Exception upserting user memory: {e}")
             return None
 
-    def bulk_upsert_memories(
+    def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """

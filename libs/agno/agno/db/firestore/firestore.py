@@ -556,7 +556,7 @@ class FirestoreDb(BaseDb):
             log_error(f"Exception upserting session: {e}")
             return None
 
-    def bulk_upsert_sessions(
+    def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
@@ -898,7 +898,7 @@ class FirestoreDb(BaseDb):
             log_error(f"Exception upserting user memory: {e}")
             return None
 
-    def bulk_upsert_memories(
+    def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """

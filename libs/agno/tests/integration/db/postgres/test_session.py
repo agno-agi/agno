@@ -696,8 +696,8 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
     assert result.runs[0].run_id == team_run.run_id
 
 
-def test_bulk_upsert_sessions(postgres_db_real: PostgresDb):
-    """Test bulk_upsert_sessions with mixed session types (Agent, Team, Workflow)"""
+def test_upsert_sessions(postgres_db_real: PostgresDb):
+    """Test upsert_sessions with mixed session types (Agent, Team, Workflow)"""
     from agno.run.workflow import WorkflowRunOutput
     from agno.session.workflow import WorkflowSession
 
@@ -754,7 +754,7 @@ def test_bulk_upsert_sessions(postgres_db_real: PostgresDb):
 
     # Bulk upsert all sessions
     sessions = [agent_session, team_session, workflow_session]
-    results = postgres_db_real.bulk_upsert_sessions(sessions)
+    results = postgres_db_real.upsert_sessions(sessions)
 
     # Verify results
     assert len(results) == 3
@@ -780,8 +780,8 @@ def test_bulk_upsert_sessions(postgres_db_real: PostgresDb):
     assert workflow_result.workflow_data == workflow_session.workflow_data
 
 
-def test_bulk_upsert_sessions_update(postgres_db_real: PostgresDb):
-    """Test bulk_upsert_sessions correctly updates existing sessions"""
+def test_upsert_sessions_update(postgres_db_real: PostgresDb):
+    """Test upsert_sessions correctly updates existing sessions"""
 
     # Insert sessions
     session1 = AgentSession(
@@ -800,7 +800,7 @@ def test_bulk_upsert_sessions_update(postgres_db_real: PostgresDb):
         session_data={"version": 1},
         created_at=int(time.time()),
     )
-    postgres_db_real.bulk_upsert_sessions([session1, session2])
+    postgres_db_real.upsert_sessions([session1, session2])
 
     # Update sessions
     updated_session1 = AgentSession(
@@ -819,7 +819,7 @@ def test_bulk_upsert_sessions_update(postgres_db_real: PostgresDb):
         session_data={"version": 2, "updated": True},
         created_at=session2.created_at,  # Keep original created_at
     )
-    results = postgres_db_real.bulk_upsert_sessions([updated_session1, updated_session2])
+    results = postgres_db_real.upsert_sessions([updated_session1, updated_session2])
     assert len(results) == 2
 
     # Verify sessions were updated
@@ -836,7 +836,7 @@ def test_bulk_upsert_sessions_update(postgres_db_real: PostgresDb):
             assert result.created_at == session2.created_at
 
 
-def test_bulk_upsert_sessions_performance(postgres_db_real: PostgresDb):
+def test_upsert_sessions_performance(postgres_db_real: PostgresDb):
     """Ensure the bulk upsert method is considerably faster than individual upserts"""
     import time as time_module
 
@@ -865,7 +865,7 @@ def test_bulk_upsert_sessions_performance(postgres_db_real: PostgresDb):
 
     # Test bulk upsert
     start_time = time_module.time()
-    postgres_db_real.bulk_upsert_sessions(sessions)
+    postgres_db_real.upsert_sessions(sessions)
     bulk_time = time_module.time() - start_time
 
     # Verify all sessions were created

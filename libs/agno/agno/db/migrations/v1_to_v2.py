@@ -383,12 +383,12 @@ def migrate_table_in_batches(
         # Insert the batch into the new table using bulk operations
         if v1_table_type in ["agent_sessions", "team_sessions", "workflow_sessions"]:
             if sessions:
-                db.bulk_upsert_sessions(sessions)
+                db.upsert_sessions(sessions)  # type: ignore
                 total_migrated += len(sessions)
                 log_info(f"Bulk upserted {len(sessions)} sessions in batch {batch_count}")
         elif v1_table_type == "memories":
             if memories:
-                db.bulk_upsert_memories(memories)
+                db.upsert_memories(memories)
                 total_migrated += len(memories)
                 log_info(f"Bulk upserted {len(memories)} memories in batch {batch_count}")
 

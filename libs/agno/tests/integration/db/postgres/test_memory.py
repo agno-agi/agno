@@ -243,8 +243,8 @@ def test_comprehensive_user_memory_fields(postgres_db_real: PostgresDb):
     assert retrieved.team_id == comprehensive_memory.team_id
 
 
-def test_bulk_upsert_memories(postgres_db_real: PostgresDb):
-    """Test bulk_upsert_memories for inserting new memories"""
+def test_upsert_memories(postgres_db_real: PostgresDb):
+    """Test upsert_memories for inserting new memories"""
 
     # Create memories
     memories = []
@@ -261,7 +261,7 @@ def test_bulk_upsert_memories(postgres_db_real: PostgresDb):
         memories.append(memory)
 
     # Bulk upsert memories
-    results = postgres_db_real.bulk_upsert_memories(memories)
+    results = postgres_db_real.upsert_memories(memories)
 
     # Verify results
     assert len(results) == 5
@@ -275,8 +275,8 @@ def test_bulk_upsert_memories(postgres_db_real: PostgresDb):
         assert "bulk_test" in result.topics
 
 
-def test_bulk_upsert_memories_update(postgres_db_real: PostgresDb):
-    """Test bulk_upsert_memories for updating existing memories"""
+def test_upsert_memories_update(postgres_db_real: PostgresDb):
+    """Test upsert_memories for updating existing memories"""
 
     # Create memories
     initial_memories = []
@@ -290,7 +290,7 @@ def test_bulk_upsert_memories_update(postgres_db_real: PostgresDb):
             updated_at=datetime.now(),
         )
         initial_memories.append(memory)
-    postgres_db_real.bulk_upsert_memories(initial_memories)
+    postgres_db_real.upsert_memories(initial_memories)
 
     # Update memories
     updated_memories = []
@@ -306,7 +306,7 @@ def test_bulk_upsert_memories_update(postgres_db_real: PostgresDb):
             updated_at=datetime.now(),
         )
         updated_memories.append(memory)
-    results = postgres_db_real.bulk_upsert_memories(updated_memories)
+    results = postgres_db_real.upsert_memories(updated_memories)
     assert len(results) == 3
 
     # Verify updates
@@ -318,7 +318,7 @@ def test_bulk_upsert_memories_update(postgres_db_real: PostgresDb):
         assert result.agent_id == f"new_agent_{i}"
 
 
-def test_bulk_upsert_memories_performance(postgres_db_real: PostgresDb):
+def test_upsert_memories_performance(postgres_db_real: PostgresDb):
     """Ensure the bulk upsert method is considerably faster than individual upserts"""
     import time as time_module
 
@@ -347,7 +347,7 @@ def test_bulk_upsert_memories_performance(postgres_db_real: PostgresDb):
 
     # Test bulk upsert
     start_time = time_module.time()
-    postgres_db_real.bulk_upsert_memories(memories)
+    postgres_db_real.upsert_memories(memories)
     bulk_time = time_module.time() - start_time
 
     # Verify all memories were created

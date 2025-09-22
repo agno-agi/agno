@@ -82,7 +82,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def bulk_upsert_sessions(
+    def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True
     ) -> List[Union[Session, Dict[str, Any]]]:
         """Bulk upsert multiple sessions for improved performance on large datasets."""
@@ -143,7 +143,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def bulk_upsert_memories(
+    def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """Bulk upsert multiple memories for improved performance on large datasets."""
