@@ -2260,7 +2260,7 @@ class Team:
                 content_type = "str"
 
                 should_yield = False
-                # Process content and thinking
+                # Process content
                 if model_response_event.content is not None:
                     if parse_structured_output:
                         full_model_response.content = model_response_event.content
@@ -2276,7 +2276,31 @@ class Team:
                         full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     should_yield = True
 
-                # Process thinking
+                # Process reasoning content
+                if model_response_event.reasoning_content is not None:
+                    full_model_response.reasoning_content = (
+                        full_model_response.reasoning_content or ""
+                    ) + model_response_event.reasoning_content
+                    run_response.reasoning_content = full_model_response.reasoning_content
+                    should_yield = True
+
+                if model_response_event.redacted_reasoning_content is not None:
+                    if not full_model_response.reasoning_content:
+                        full_model_response.reasoning_content = model_response_event.redacted_reasoning_content
+                    else:
+                        full_model_response.reasoning_content += model_response_event.redacted_reasoning_content
+                    run_response.reasoning_content = full_model_response.reasoning_content
+                    should_yield = True
+
+                # Handle provider data (one chunk)
+                if model_response_event.provider_data is not None:
+                    run_response.model_provider_data = model_response_event.provider_data
+
+                # Handle citations (one chunk)
+                if model_response_event.citations is not None:
+                    run_response.citations = model_response_event.citations
+
+                # Process audio
                 if model_response_event.audio is not None:
                     if full_model_response.audio is None:
                         full_model_response.audio = Audio(id=str(uuid4()), content=b"", transcript="")
