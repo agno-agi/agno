@@ -19,10 +19,7 @@ from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
-    from openai.types.responses.response import Response
-    from openai.types.responses.response_reasoning_item import ResponseReasoningItem
-    from openai.types.responses.response_stream_event import ResponseStreamEvent
-    from openai.types.responses.response_usage import ResponseUsage
+    from openai.types.responses import Response, ResponseReasoningItem, ResponseStreamEvent, ResponseUsage
 except ImportError as e:
     raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
 
