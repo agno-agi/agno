@@ -154,7 +154,7 @@ class Ollama(Model):
                     function_data = tool_call["function"]
                     formatted_tool_call = {
                         "id": tool_call.get("id"),
-                        "type": tool_call.get("type"),
+                        "type": "function",
                         "function": {
                             "name": function_data["name"],
                             "arguments": json.loads(function_data["arguments"])
