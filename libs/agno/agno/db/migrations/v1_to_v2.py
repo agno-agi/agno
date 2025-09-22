@@ -383,12 +383,20 @@ def migrate_table_in_batches(
         # Insert the batch into the new table
         if v1_table_type in ["agent_sessions", "team_sessions", "workflow_sessions"]:
             if sessions:
+                # Clear any existing scoped session state for SQL databases to prevent transaction conflicts
+                if hasattr(db, "Session"):
+                    db.Session.remove()  # type: ignore
+
                 db.upsert_sessions(sessions)  # type: ignore
                 total_migrated += len(sessions)
                 log_info(f"Bulk upserted {len(sessions)} sessions in batch {batch_count}")
 
         elif v1_table_type == "memories":
             if memories:
+                # Clear any existing scoped session state for SQL databases to prevent transaction conflicts
+                if hasattr(db, "Session"):
+                    db.Session.remove()  # type: ignore
+
                 db.upsert_memories(memories)
                 total_migrated += len(memories)
                 log_info(f"Bulk upserted {len(memories)} memories in batch {batch_count}")

@@ -832,7 +832,7 @@ class SingleStoreDb(BaseDb):
                 elif isinstance(session, WorkflowSession):
                     workflow_sessions.append(session)
 
-            results = []
+            results: List[Union[Session, Dict[str, Any]]] = []
 
             with self.Session() as sess, sess.begin():
                 # Bulk upsert agent sessions
@@ -840,19 +840,21 @@ class SingleStoreDb(BaseDb):
                     agent_data = []
                     for session in agent_sessions:
                         session_dict = session.to_dict()
-                        agent_data.append({
-                            "session_id": session_dict.get("session_id"),
-                            "session_type": SessionType.AGENT.value,
-                            "agent_id": session_dict.get("agent_id"),
-                            "user_id": session_dict.get("user_id"),
-                            "runs": session_dict.get("runs"),
-                            "agent_data": session_dict.get("agent_data"),
-                            "session_data": session_dict.get("session_data"),
-                            "summary": session_dict.get("summary"),
-                            "metadata": session_dict.get("metadata"),
-                            "created_at": session_dict.get("created_at"),
-                            "updated_at": session_dict.get("created_at"),
-                        })
+                        agent_data.append(
+                            {
+                                "session_id": session_dict.get("session_id"),
+                                "session_type": SessionType.AGENT.value,
+                                "agent_id": session_dict.get("agent_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "runs": session_dict.get("runs"),
+                                "agent_data": session_dict.get("agent_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "summary": session_dict.get("summary"),
+                                "metadata": session_dict.get("metadata"),
+                                "created_at": session_dict.get("created_at"),
+                                "updated_at": session_dict.get("created_at"),
+                            }
+                        )
 
                     if agent_data:
                         stmt = mysql.insert(table)
@@ -884,19 +886,21 @@ class SingleStoreDb(BaseDb):
                     team_data = []
                     for session in team_sessions:
                         session_dict = session.to_dict()
-                        team_data.append({
-                            "session_id": session_dict.get("session_id"),
-                            "session_type": SessionType.TEAM.value,
-                            "team_id": session_dict.get("team_id"),
-                            "user_id": session_dict.get("user_id"),
-                            "runs": session_dict.get("runs"),
-                            "team_data": session_dict.get("team_data"),
-                            "session_data": session_dict.get("session_data"),
-                            "summary": session_dict.get("summary"),
-                            "metadata": session_dict.get("metadata"),
-                            "created_at": session_dict.get("created_at"),
-                            "updated_at": session_dict.get("created_at"),
-                        })
+                        team_data.append(
+                            {
+                                "session_id": session_dict.get("session_id"),
+                                "session_type": SessionType.TEAM.value,
+                                "team_id": session_dict.get("team_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "runs": session_dict.get("runs"),
+                                "team_data": session_dict.get("team_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "summary": session_dict.get("summary"),
+                                "metadata": session_dict.get("metadata"),
+                                "created_at": session_dict.get("created_at"),
+                                "updated_at": session_dict.get("created_at"),
+                            }
+                        )
 
                     if team_data:
                         stmt = mysql.insert(table)
@@ -928,19 +932,21 @@ class SingleStoreDb(BaseDb):
                     workflow_data = []
                     for session in workflow_sessions:
                         session_dict = session.to_dict()
-                        workflow_data.append({
-                            "session_id": session_dict.get("session_id"),
-                            "session_type": SessionType.WORKFLOW.value,
-                            "workflow_id": session_dict.get("workflow_id"),
-                            "user_id": session_dict.get("user_id"),
-                            "runs": session_dict.get("runs"),
-                            "workflow_data": session_dict.get("workflow_data"),
-                            "session_data": session_dict.get("session_data"),
-                            "summary": session_dict.get("summary"),
-                            "metadata": session_dict.get("metadata"),
-                            "created_at": session_dict.get("created_at"),
-                            "updated_at": session_dict.get("created_at"),
-                        })
+                        workflow_data.append(
+                            {
+                                "session_id": session_dict.get("session_id"),
+                                "session_type": SessionType.WORKFLOW.value,
+                                "workflow_id": session_dict.get("workflow_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "runs": session_dict.get("runs"),
+                                "workflow_data": session_dict.get("workflow_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "summary": session_dict.get("summary"),
+                                "metadata": session_dict.get("metadata"),
+                                "created_at": session_dict.get("created_at"),
+                                "updated_at": session_dict.get("created_at"),
+                            }
+                        )
 
                     if workflow_data:
                         stmt = mysql.insert(table)
@@ -1335,18 +1341,21 @@ class SingleStoreDb(BaseDb):
             for memory in memories:
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
-                memory_data.append({
-                    "memory_id": memory.memory_id,
-                    "memory": memory.memory,
-                    "input": memory.input,
-                    "user_id": memory.user_id,
-                    "agent_id": memory.agent_id,
-                    "team_id": memory.team_id,
-                    "topics": memory.topics,
-                    "updated_at": int(time.time()),
-                })
+                memory_data.append(
+                    {
+                        "memory_id": memory.memory_id,
+                        "memory": memory.memory,
+                        "input": memory.input,
+                        "user_id": memory.user_id,
+                        "agent_id": memory.agent_id,
+                        "team_id": memory.team_id,
+                        "topics": memory.topics,
+                        "updated_at": int(time.time()),
+                    }
+                )
 
-            results = []
+            results: List[Union[UserMemory, Dict[str, Any]]] = []
+
             with self.Session() as sess, sess.begin():
                 if memory_data:
                     stmt = mysql.insert(table)

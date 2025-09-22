@@ -731,7 +731,7 @@ class SqliteDb(BaseDb):
                 elif isinstance(session, WorkflowSession):
                     workflow_sessions.append(session)
 
-            results = []
+            results: List[Union[Session, Dict[str, Any]]] = []
 
             with self.Session() as sess, sess.begin():
                 # Bulk upsert agent sessions
@@ -780,7 +780,10 @@ class SqliteDb(BaseDb):
                         for row in result:
                             session_dict = deserialize_session_json_fields(dict(row._mapping))
                             if deserialize:
-                                results.append(AgentSession.from_dict(session_dict))
+                                deserialized_session = AgentSession.from_dict(session_dict)
+                                if deserialized_session is None:
+                                    continue
+                                results.append(deserialized_session)
                             else:
                                 results.append(session_dict)
 
@@ -830,7 +833,10 @@ class SqliteDb(BaseDb):
                         for row in result:
                             session_dict = deserialize_session_json_fields(dict(row._mapping))
                             if deserialize:
-                                results.append(TeamSession.from_dict(session_dict))
+                                deserialized_session = TeamSession.from_dict(session_dict)
+                                if deserialized_session is None:
+                                    continue
+                                results.append(deserialized_session)
                             else:
                                 results.append(session_dict)
 
@@ -880,7 +886,10 @@ class SqliteDb(BaseDb):
                         for row in result:
                             session_dict = deserialize_session_json_fields(dict(row._mapping))
                             if deserialize:
-                                results.append(WorkflowSession.from_dict(session_dict))
+                                deserialized_session = WorkflowSession.from_dict(session_dict)
+                                if deserialized_session is None:
+                                    continue
+                                results.append(deserialized_session)
                             else:
                                 results.append(session_dict)
 
@@ -1271,7 +1280,7 @@ class SqliteDb(BaseDb):
                     }
                 )
 
-            results = []
+            results: List[Union[UserMemory, Dict[str, Any]]] = []
 
             with self.Session() as sess, sess.begin():
                 # Bulk upsert memories using SQLite ON CONFLICT DO UPDATE
