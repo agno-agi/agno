@@ -4,11 +4,15 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from agno.db.surrealdb.utils import (
     build_client,
+    deserialize_eval_run_record,
+    deserialize_knowledge_row,
     deserialize_session,
     deserialize_sessions,
     deserialize_user_memories,
     deserialize_user_memory,
     get_session_type,
+    serialize_eval_run_record,
+    serialize_knowledge_row,
     serialize_session,
     serialize_user_memory,
 )
@@ -95,8 +99,8 @@ class SurrealDb(BaseDb):
     ) -> utils.RecordType:
         return utils.query_one(self.client, query, vars, record_type)
 
-    def _count(self, table: str, where_clause: str, where_vars: dict[str, Any]) -> int:
-        total_count_query = COUNT_QUERY.format(table=table, where_clause=where_clause)
+    def _count(self, table: str, where_clause: str, where_vars: dict[str, Any], group_by: str = "id") -> int:
+        total_count_query = COUNT_QUERY.format(table=table, where_clause=where_clause, group_by=group_by)
         count_result = self._query_one(total_count_query, where_vars, dict)
         total_count = count_result.get("count")
         assert isinstance(total_count, int), f"Expected int, got {type(total_count)}"
@@ -290,7 +294,7 @@ class SurrealDb(BaseDb):
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         table_type = "memories"
         record = RecordID(table_type, memory_id)
-        result = self._query_one(f"SELECT * FROM {record}", {"record": record}, dict)
+        result = self._query_one("SELECT * FROM $record", {"record": record}, dict)
         if not result or not deserialize:
             return result
         return deserialize_user_memory(result)
@@ -339,7 +343,30 @@ class SurrealDb(BaseDb):
         limit: Optional[int] = None,
         page: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        raise NotImplementedError
+        table_type = "memories"
+        table = self._get_table(table_type)
+        where = WhereClause()
+        where.and_("!!user", "false", "=")
+        where_clause, where_vars = where.build()
+        # Group
+        group_clause = "GROUP BY user_id"
+        # Order
+        order_limit_start_clause = order_limit_start("last_memory_updated_at", "DESC", limit, page)
+        # Total count
+        total_count = self._count(table, where_clause, where_vars, "user")
+        # Query
+        query = dedent(f"""
+            SELECT
+                user,
+                count(id) AS total_memories,
+                max(updated_at) AS last_memory_updated_at
+            FROM {table}
+            {where_clause}
+            {group_clause}
+            {order_limit_start_clause}
+        """)
+        result = self._query(query, where_vars, dict)
+        return list(result), total_count
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -366,10 +393,16 @@ class SurrealDb(BaseDb):
 
     # --- Knowledge ---
     def delete_knowledge_content(self, id: str):
-        raise NotImplementedError
+        table_type = "knowledge"
+        table = self._get_table(table_type)
+        self.client.delete(RecordID(table, id))
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        raise NotImplementedError
+        table_type = "knowledge"
+        record_id = RecordID(table_type, id)
+        raw = self._query_one("SELECT * FROM $record_id", {"record_id": record_id}, dict)
+        result = deserialize_knowledge_row(raw)
+        return result
 
     def get_knowledge_contents(
         self,
@@ -378,22 +411,56 @@ class SurrealDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        raise NotImplementedError
+        table_type = "knowledge"
+        table = self._get_table(table_type)
+        where = WhereClause()
+        where_clause, where_vars = where.build()
+
+        # Total count
+        total_count = self._count(table, where_clause, where_vars)
+
+        # Query
+        order_limit_start_clause = order_limit_start(sort_by, sort_order, limit, page)
+        query = dedent(f"""
+            SELECT *
+            FROM {table}
+            {where_clause}
+            {order_limit_start_clause}
+        """)
+        result = self._query(query, where_vars, dict)
+        return [deserialize_knowledge_row(row) for row in result], total_count
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        raise NotImplementedError
+        table_type = "knowledge"
+        table = self._get_table(table_type)
+        record = RecordID(table, knowledge_row.id)
+        query = "UPSERT $record CONTENT $content"
+        result = self._query_one(query, {"record": record, "content": serialize_knowledge_row(knowledge_row)}, dict)
+        return deserialize_user_memory(result)
 
     # --- Evals ---
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
-        raise NotImplementedError
+        table_type = "evals"
+        table = self._get_table(table_type)
+        query = f"CREATE {table} CONTENT $content"
+        result = self._query_one(query, {"content": serialize_eval_run_record(eval_run)}, dict)
+        return deserialize_eval_run_record(result)
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
-        raise NotImplementedError
+        table_type = "evals"
+        table = self._get_table(table_type)
+        records = [RecordID(table, id) for id in eval_run_ids]
+        _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-        raise NotImplementedError
+        table_type = "evals"
+        record = RecordID(table_type, eval_run_id)
+        result = self._query_one("SELECT * FROM $record", {"record": record}, dict)
+        if not result or not deserialize:
+            return result
+        return deserialize_eval_run_record(result)
 
     def get_eval_runs(
         self,
@@ -409,96 +476,52 @@ class SurrealDb(BaseDb):
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
-        raise NotImplementedError
+        table_type = "evals"
+        table = self._get_table(table_type)
+        where = WhereClause()
+        if agent_id is not None:
+            where.and_("agent", RecordID("agent", agent_id))
+        where.and_("team", RecordID("team", team_id))
+        where.and_("workflow", RecordID("workflow", workflow_id))
+        where.and_("model", RecordID("model", model_id))
+        where.and_("eval_type", eval_type)
+        where_clause, where_vars = where.build()
+        # Group
+        group_clause = "GROUP BY user_id"
+        # Order
+        order_limit_start_clause = order_limit_start(sort_by, sort_order, limit, page)
+        # Total count
+        total_count = self._count(table, where_clause, where_vars)
+        # Query
+        query = dedent(f"""
+            SELECT
+                user,
+                count(id) AS total_memories,
+                max(updated_at) AS last_memory_updated_at
+            FROM {table}
+            {where_clause}
+            {group_clause}
+            {order_limit_start_clause}
+        """)
+        result = self._query(query, where_vars, dict)
+        if not result or not deserialize:
+            return list(result), total_count
+        return [deserialize_eval_run_record(x) for x in result]
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-        raise NotImplementedError
+        table_type = "evals"
+        table = self._get_table(table_type)
+        vars = {"record": RecordID(table, eval_run_id), "name": name}
 
-    # def create(self) -> None:
-    #     """Create indexes for the table"""
-    #     if not self.table_exists():
-    #         log_debug(f"Creating table: {self.table}")
-    #         query = CREATE_TABLE_QUERY.format(table=self.table)
-    #         self.client.query(query)
+        # Query
+        query = dedent("""
+            UPDATE ONLY $record
+            SET name = $name
+        """)
+        raw = self._query_one(query, vars, dict)
 
-    # def memory_exists(self, memory: MemoryRow) -> bool:
-    #     """Check if a memory exists
-
-    #     Args:
-    #         memory: MemoryRow to check
-    #     Returns:
-    #         bool: True if the memory exists, False otherwise
-    #     """
-    #     try:
-    #         result = self.client.select(RecordID(self.table, memory.id))
-    #         logger.debug(f"Found: {result}")
-    #         return bool(result)
-    #     except Exception as e:
-    #         logger.error(f"Error checking memory existence: {e}")
-    #         return False
-
-    # def read_memories(
-    #     self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None
-    # ) -> List[MemoryRow]:
-    #     """Read memories from the table
-
-    #     Args:
-    #         user_id: ID of the user to read
-    #         limit: Maximum number of memories to read
-    #         sort: Sort order ("asc" or "desc")
-    #     Returns:
-    #         List[MemoryRow]: List of memories
-    #     """
-    #     filter_clause = "WHERE user = $user" if user_id is not None else ""
-    #     limit_clause = f"LIMIT {limit}" if limit is not None else ""
-    #     order_clause = f"ORDER BY time.created_at {sort}" if sort is not None else ""
-    #     query = dedent(f"""
-    #         SELECT *
-    #         FROM {self.table}
-    #         {filter_clause}
-    #         {order_clause}
-    #         {limit_clause}
-    #     """)
-    #     try:
-    #         response = self.client.query(
-    #             query, {"table": self.table, "user": RecordID(self.users_table, user_id or "")}
-    #         )
-    #         logger.debug(f"Read memories: {response}. Query: {query}")
-    #     except Exception as e:
-    #         logger.error(f"Error reading memories: {e}")
-    #         raise e
-    #     if isinstance(response, list):
-    #         memories: List[MemoryRow] = []
-    #         for row in response:
-    #             memory_rec_id = row.get("id")
-    #             user_rec_id = row.get("user")
-    #             assert isinstance(user_rec_id, RecordID)
-    #             assert isinstance(memory_rec_id, RecordID)
-    #             memories.append(MemoryRow(id=memory_rec_id.id, user_id=user_rec_id.id, memory=row.get("memory", {})))
-    #         return memories
-    #     else:
-    #         raise ValueError(f"Unexpected response type: {type(response)}")
-
-    # def drop_table(self) -> None:
-    #     """Drop the table
-
-    #     Returns:
-    #         None
-    #     """
-    #     self.client.query(f"REMOVE TABLE IF EXISTS {self.table}")
-
-    # def table_exists(self) -> bool:
-    #     """Check if the table exists
-
-    #     Returns:
-    #         bool: True if the table exists, False otherwise
-    #     """
-    #     log_debug(f"Checking if table exists: {self.table}")
-    #     response = self.client.query("INFO FOR DB;")
-    #     if isinstance(response, dict) and "tables" in response:
-    #         return self.table in response["tables"]
-    #     else:
-    #         logger.error(f"Unexpected response from SurrealDB: {response}")
-    #     return False
+        if not raw or not deserialize:
+            return raw
+        return deserialize_eval_run_record(raw)

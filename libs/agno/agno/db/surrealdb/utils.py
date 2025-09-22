@@ -4,6 +4,8 @@ from typing import Any, Sequence, TypeVar
 from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, Surreal
 
 from agno.db.base import SessionType
+from agno.db.schemas.evals import EvalRunRecord
+from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import deserialize_session_json_fields
 from agno.session import Session
@@ -109,7 +111,7 @@ def get_session_type(session: Session) -> SessionType:
         raise ValueError(f"Invalid session instance: {type(session)}")
 
 
-def deserialize_user_memory(memory_raw: dict) -> UserMemory | None:
+def deserialize_user_memory(memory_raw: dict) -> UserMemory:
     return UserMemory.from_dict(memory_raw)
 
 
@@ -119,3 +121,20 @@ def deserialize_user_memories(memories_raw: Sequence[dict]) -> list[UserMemory]:
 
 def serialize_user_memory(memory: UserMemory) -> dict:
     return memory.to_dict()
+
+
+def deserialize_knowledge_row(knowledge_row_raw: dict) -> KnowledgeRow:
+    return KnowledgeRow.model_validate(knowledge_row_raw)
+
+
+def serialize_knowledge_row(knowledge_row: KnowledgeRow) -> dict:
+    return knowledge_row.to_dict()
+
+
+def deserialize_eval_run_record(eval_run_record_raw: dict) -> EvalRunRecord:
+    return EvalRunRecord.model_validate(eval_run_record_raw)
+
+
+def serialize_eval_run_record(eval_run_record: EvalRunRecord) -> dict:
+    _dict = eval_run_record.model_dump()
+    return _dict

@@ -14,14 +14,14 @@ CREATE_TABLE_QUERY: Final[str] = dedent("""
 """)
 
 
-OPERATOR = Literal["=", "<=", ">=", "~", "IN", "CONTAINSANY"]
+OPERATOR = Literal["=", "!=", "<=", ">=", "~", "IN", "CONTAINSANY"]
 
 COUNT_QUERY: Final[str] = dedent("""
     RETURN (
         SELECT count(id) AS count
         FROM {table}
         {where_clause}
-        GROUP BY id
+        GROUP BY {group_by}
     )[0] OR {{count: 0}}
 """)
 
