@@ -2,8 +2,7 @@ from datetime import date
 from textwrap import dedent
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-from agno.db.surrealdb.utils import (
-    build_client,
+from agno.db.surrealdb.models import (
     deserialize_eval_run_record,
     deserialize_knowledge_row,
     deserialize_session,
@@ -16,6 +15,7 @@ from agno.db.surrealdb.utils import (
     serialize_session,
     serialize_user_memory,
 )
+from agno.db.surrealdb.utils import build_client
 
 try:
     from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, RecordID
