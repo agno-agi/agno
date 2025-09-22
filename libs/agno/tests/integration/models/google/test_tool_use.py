@@ -102,14 +102,13 @@ async def test_async_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
-@pytest.mark.skip("The SDK does not yet support native structured output with tool use")
 def test_tool_use_with_native_structured_outputs():
     class StockPrice(BaseModel):
         price: float = Field(..., description="The price of the stock")
         currency: str = Field(..., description="The currency of the stock")
 
     agent = Agent(
-        model=Gemini(id="gemini-2.5-flash-preview-04-17"),
+        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         output_schema=StockPrice,
