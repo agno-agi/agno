@@ -1,14 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
-from typing import List
+from typing import List, Optional
+
+import httpx
 
 from agno.models.openai.like import OpenAILike
 from agno.utils.log import log_debug
-
-try:
-    import httpx
-except ImportError:
-    raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
 
 
 @dataclass
@@ -26,20 +23,8 @@ class CometAPI(OpenAILike):
 
     name: str = "CometAPI"
     id: str = "gpt-5-mini"
-
-    def __post_init__(self):
-        """Initialize CometAPI with default values."""
-        # Set default base_url if not provided
-        if not self.base_url:
-            self.base_url = "https://api.cometapi.com/v1"
-
-        # Set default api_key from environment if not provided or if it's the default value
-        if not self.api_key or self.api_key == "not-provided":
-            env_key = getenv("COMETAPI_KEY")
-            if env_key:
-                self.api_key = env_key
-
-        super().__post_init__()
+    api_key: Optional[str] = field(default_factory=lambda: getenv("COMETAPI_KEY"))
+    base_url: str = "https://api.cometapi.com/v1"
 
     def get_available_models(self) -> List[str]:
         """
