@@ -41,6 +41,9 @@ v1_memories_table_name = ""
 v2_sessions_table_name = ""
 v2_memories_table_name = ""
 
+# Migration batch size (adjust based on available memory and table size)
+migration_batch_size = 5000
+
 # --- Set your database connection ---
 
 # For Postgres:
@@ -95,4 +98,5 @@ migrate(
     team_sessions_table_name=v1_team_sessions_table_name,
     workflow_sessions_table_name=v1_workflow_sessions_table_name,
     memories_table_name=v1_memories_table_name,
+    batch_size=migration_batch_size,
 )
