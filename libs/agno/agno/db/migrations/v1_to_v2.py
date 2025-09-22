@@ -397,11 +397,12 @@ def migrate_table_in_batches(
     log_info(f"✅ Migration completed for table {v1_table_name}: {total_migrated} total records migrated")
 
 
-def get_table_content_in_batches(db, db_schema: str, table_name: str, batch_size: int = 5000):
+def get_table_content_in_batches(
+    db: Union[PostgresDb, MySQLDb, SqliteDb, MongoDb], db_schema: str, table_name: str, batch_size: int = 5000
+):
     """Get table content in batches to avoid memory issues with large tables"""
     try:
-        # Check if this is a MongoDB instance
-        if hasattr(db, "database") and hasattr(db, "db_client"):
+        if isinstance(db, MongoDb):
             # MongoDB implementation with cursor and batching
             collection = db.database[table_name]
             cursor = collection.find({}).batch_size(batch_size)
@@ -421,7 +422,7 @@ def get_table_content_in_batches(db, db_schema: str, table_name: str, batch_size
             if batch:
                 yield batch
         else:
-            # SQL database implementation with LIMIT/OFFSET
+            # SQL database implementations (PostgresDb, MySQLDb, SqliteDb)
             offset = 0
             with db.Session() as sess:
                 while True:
