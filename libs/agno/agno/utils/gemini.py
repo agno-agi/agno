@@ -36,7 +36,12 @@ def prepare_response_schema(pydantic_model: Type[BaseModel]) -> Union[Type[BaseM
 
     # Convert to Gemini Schema if the model has problematic patterns
     if needs_conversion(schema_dict):
-        converted = convert_schema(schema_dict)
+        try:
+            converted = convert_schema(schema_dict)
+        except Exception as e:
+            log_warning(f"Failed to convert schema for {pydantic_model}: {e}")
+            converted = None
+            
         if converted is None:
             # If conversion fails, let Gemini handle it directly
             return pydantic_model
