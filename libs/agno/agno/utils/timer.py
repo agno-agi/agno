@@ -24,11 +24,18 @@ class Timer:
             self.elapsed_time = self.end_time - self.start_time
         return self.end_time
 
-    def __enter__(self):
+    def __enter__(self) -> "Timer":
         self.start_time = perf_counter()
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args) -> None:
         self.end_time = perf_counter()
         if self.start_time is not None:
             self.elapsed_time = self.end_time - self.start_time
+
+    def to_dict(self):
+        return {
+            "start_time": str(self.start_time) if self.start_time is not None else None,
+            "end_time": str(self.end_time) if self.end_time is not None else None,
+            "elapsed": self.elapsed,
+        }

@@ -3,29 +3,41 @@ from typing import AsyncIterable, Iterable, Union, get_args
 
 from pydantic import BaseModel
 
-from agno.run.response import RunResponse, RunResponseEvent
-from agno.run.team import TeamRunResponse, TeamRunResponseEvent
-from agno.run.workflow import WorkflowRunResponseEvent
+from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.team import TeamRunOutput, TeamRunOutputEvent
+from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
 from agno.utils.log import logger
 from agno.utils.timer import Timer
 
 
 def pprint_run_response(
-    run_response: Union[RunResponse, Iterable[RunResponseEvent], TeamRunResponse, Iterable[TeamRunResponseEvent]],
+    run_response: Union[
+        RunOutput,
+        Iterable[RunOutputEvent],
+        TeamRunOutput,
+        Iterable[TeamRunOutputEvent],
+        WorkflowRunOutput,
+        Iterable[WorkflowRunOutputEvent],
+    ],
     markdown: bool = False,
     show_time: bool = False,
 ) -> None:
     from rich.box import ROUNDED
+    from rich.console import Console
     from rich.json import JSON
     from rich.live import Live
     from rich.markdown import Markdown
     from rich.status import Status
     from rich.table import Table
 
-    from agno.cli.console import console
+    console = Console()
 
-    # If run_response is a single RunResponse, wrap it in a list to make it iterable
-    if isinstance(run_response, RunResponse) or isinstance(run_response, TeamRunResponse):
+    # If run_response is a single RunOutput, wrap it in a list to make it iterable
+    if (
+        isinstance(run_response, RunOutput)
+        or isinstance(run_response, TeamRunOutput)
+        or isinstance(run_response, WorkflowRunOutput)
+    ):
         single_response_content: Union[str, JSON, Markdown] = ""
         if isinstance(run_response.content, str):
             single_response_content = (
@@ -55,20 +67,22 @@ def pprint_run_response(
             for resp in run_response:
                 if (
                     (
-                        isinstance(resp, tuple(get_args(RunResponseEvent)))
-                        or isinstance(resp, tuple(get_args(TeamRunResponseEvent)))
-                        or isinstance(resp, tuple(get_args(WorkflowRunResponseEvent)))
+                        isinstance(resp, tuple(get_args(RunOutputEvent)))
+                        or isinstance(resp, tuple(get_args(TeamRunOutputEvent)))
+                        or isinstance(resp, tuple(get_args(WorkflowRunOutputEvent)))
                     )
                     and hasattr(resp, "content")
                     and resp.content is not None
                 ):
                     if isinstance(resp.content, BaseModel):
                         try:
-                            streaming_response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                            JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
                             logger.warning(f"Failed to convert response to Markdown: {e}")
                     else:
-                        streaming_response_content += resp.content
+                        if isinstance(streaming_response_content, JSON):
+                            streaming_response_content = streaming_response_content.text + "\n"  # type: ignore
+                        streaming_response_content += resp.content  # type: ignore
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore
                 table = Table(box=ROUNDED, border_style="blue", show_header=False)
@@ -81,21 +95,32 @@ def pprint_run_response(
 
 
 async def apprint_run_response(
-    run_response: Union[RunResponse, AsyncIterable[RunResponse], TeamRunResponse, AsyncIterable[TeamRunResponse]],
+    run_response: Union[
+        RunOutput,
+        AsyncIterable[RunOutput],
+        TeamRunOutput,
+        AsyncIterable[TeamRunOutput],
+        WorkflowRunOutput,
+        AsyncIterable[WorkflowRunOutputEvent],
+    ],
     markdown: bool = False,
     show_time: bool = False,
 ) -> None:
     from rich.box import ROUNDED
+    from rich.console import Console
     from rich.json import JSON
     from rich.live import Live
     from rich.markdown import Markdown
     from rich.status import Status
     from rich.table import Table
 
-    from agno.cli.console import console
-
-    # If run_response is a single RunResponse, wrap it in a list to make it iterable
-    if isinstance(run_response, RunResponse) or isinstance(run_response, TeamRunResponse):
+    console = Console()
+    # If run_response is a single RunOutput, wrap it in a list to make it iterable
+    if (
+        isinstance(run_response, RunOutput)
+        or isinstance(run_response, TeamRunOutput)
+        or isinstance(run_response, WorkflowRunOutput)
+    ):
         single_response_content: Union[str, JSON, Markdown] = ""
         if isinstance(run_response.content, str):
             single_response_content = (
@@ -126,9 +151,9 @@ async def apprint_run_response(
             async for resp in run_response:
                 if (
                     (
-                        isinstance(resp, tuple(get_args(RunResponseEvent)))
-                        or isinstance(resp, tuple(get_args(TeamRunResponseEvent)))
-                        or isinstance(resp, tuple(get_args(WorkflowRunResponseEvent)))
+                        isinstance(resp, tuple(get_args(RunOutputEvent)))
+                        or isinstance(resp, tuple(get_args(TeamRunOutputEvent)))
+                        or isinstance(resp, tuple(get_args(WorkflowRunOutputEvent)))
                     )
                     and hasattr(resp, "content")
                     and resp.content is not None
@@ -139,7 +164,9 @@ async def apprint_run_response(
                         except Exception as e:
                             logger.warning(f"Failed to convert response to Markdown: {e}")
                     else:
-                        streaming_response_content += resp.content
+                        if isinstance(streaming_response_content, JSON):
+                            streaming_response_content = streaming_response_content.text + "\n"  # type: ignore
+                        streaming_response_content += resp.content  # type: ignore
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore
                 table = Table(box=ROUNDED, border_style="blue", show_header=False)

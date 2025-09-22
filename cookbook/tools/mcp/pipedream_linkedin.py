@@ -6,7 +6,7 @@ This example shows how to use Pipedream MCP servers (in this case the LinkedIn o
 1. Connect your Pipedream and LinkedIn accounts: https://mcp.pipedream.com/app/linkedin
 2. Get your Pipedream MCP server url: https://mcp.pipedream.com/app/linkedin
 3. Set the MCP_SERVER_URL environment variable to the MCP server url you got above
-4. Install dependencies: pip install agno mcp-sdk
+4. Install dependencies: pip install agno mcp
 """
 
 import asyncio
@@ -30,7 +30,7 @@ async def run_agent(task: str) -> None:
                 tools=[mcp],
                 markdown=True,
             )
-            await agent.aprint_response(message=task, stream=True)
+            await agent.aprint_response(input=task, stream=True)
     except Exception as e:
         log_exception(f"Unexpected error: {e}")
 

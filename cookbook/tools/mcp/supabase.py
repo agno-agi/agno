@@ -6,7 +6,7 @@ Setup:
 1. Install Python dependencies:
 
 ```bash
-pip install agno mcp-sdk
+pip install agno mcp
 ```
 
 2. Create a Supabase Access Token: https://supabase.com/dashboard/account/tokens and set it as the SUPABASE_ACCESS_TOKEN environment variable.
@@ -60,7 +60,7 @@ async def run_agent(task: str) -> None:
 
             log_info(f"Running Supabase project agent for: {task}")
             await agent.aprint_response(
-                message=task,
+                input=task,
                 stream=True,
                 stream_intermediate_steps=True,
                 show_full_reasoning=True,

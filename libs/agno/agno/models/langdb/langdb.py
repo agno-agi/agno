@@ -1,9 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
 from agno.models.openai.like import OpenAILike
-from agno.utils.log import logger
 
 
 @dataclass
@@ -23,23 +22,27 @@ class LangDB(OpenAILike):
     name: str = "LangDB"
     provider: str = "LangDB"
 
-    api_key: Optional[str] = getenv("LANGDB_API_KEY")
-    project_id: Optional[str] = getenv("LANGDB_PROJECT_ID")
-    if not project_id:
-        logger.warning("LANGDB_PROJECT_ID not set in the environment")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("LANGDB_API_KEY"))
+    project_id: Optional[str] = field(default_factory=lambda: getenv("LANGDB_PROJECT_ID"))
 
-    base_host_url: str = getenv("LANGDB_API_BASE_URL", "https://api.us-east-1.langdb.ai")
+    base_host_url: str = field(default_factory=lambda: getenv("LANGDB_API_BASE_URL", "https://api.us-east-1.langdb.ai"))
 
-    base_url: str = f"{base_host_url}/{project_id}/v1"
+    base_url: Optional[str] = None
     label: Optional[str] = None
     default_headers: Optional[dict] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
+        if not self.project_id:
+            raise ValueError("LANGDB_PROJECT_ID not set in the environment")
+
+        if not self.base_url:
+            self.base_url = f"{self.base_host_url}/{self.project_id}/v1"
+
         # Initialize headers with label if present
         if self.label and not self.default_headers:
             self.default_headers = {
                 "x-label": self.label,
             }
-        client_params = super()._get_client_params()
 
+        client_params = super()._get_client_params()
         return client_params

@@ -14,13 +14,25 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.agentql import AgentQLTools
 
-# Create agent with default AgentQL tool
+# Example 1: Enable specific AgentQL functions
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"), tools=[AgentQLTools()], show_tool_calls=True
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        AgentQLTools(
+            enable_scrape_website=True,
+            enable_custom_scrape_website=False,
+            agentql_query="your_query_here",
+        )
+    ],
 )
-agent.print_response("https://docs.agno.com/introduction", markdown=True)
 
-# Define custom AgentQL query for specific data extraction (see https://docs.agentql.com/concepts/query-language)
+# Example 2: Enable all AgentQL functions
+agent_all = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[AgentQLTools(all=True, agentql_query="your_query_here")],
+)
+
+# Example 3: Custom query with specific function enabled
 custom_query = """
 {
     title
@@ -28,11 +40,21 @@ custom_query = """
 }
 """
 
-# Create AgentQL tool with custom query
-custom_scraper = AgentQLTools(agentql_query=custom_query)
-
-# Create agent with custom AgentQL tool
 custom_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"), tools=[custom_scraper], show_tool_calls=True
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        AgentQLTools(
+            enable_scrape_website=True,
+            enable_custom_scrape_website=True,
+            agentql_query=custom_query,
+        )
+    ],
 )
-custom_agent.print_response("https://docs.agno.com/introduction", markdown=True)
+
+# Test the agents
+agent.print_response(
+    "Scrape the main content from https://docs.agno.com/introduction", markdown=True
+)
+custom_agent.print_response(
+    "Extract title and content from https://docs.agno.com/introduction", markdown=True
+)

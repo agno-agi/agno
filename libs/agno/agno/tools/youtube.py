@@ -17,9 +17,10 @@ except ImportError:
 class YouTubeTools(Toolkit):
     def __init__(
         self,
-        get_video_captions: bool = True,
-        get_video_data: bool = True,
-        get_video_timestamps: bool = True,
+        enable_get_video_captions: bool = True,
+        enable_get_video_data: bool = True,
+        enable_get_video_timestamps: bool = True,
+        all: bool = False,
         languages: Optional[List[str]] = None,
         proxies: Optional[Dict[str, Any]] = None,
         **kwargs,
@@ -28,11 +29,11 @@ class YouTubeTools(Toolkit):
         self.proxies: Optional[Dict[str, Any]] = proxies
 
         tools: List[Any] = []
-        if get_video_captions:
+        if all or enable_get_video_captions:
             tools.append(self.get_youtube_video_captions)
-        if get_video_data:
+        if all or enable_get_video_data:
             tools.append(self.get_youtube_video_data)
-        if get_video_timestamps:
+        if all or enable_get_video_timestamps:
             tools.append(self.get_video_timestamps)
 
         super().__init__(name="youtube_tools", tools=tools, **kwargs)
@@ -132,12 +133,15 @@ class YouTubeTools(Toolkit):
                 kwargs["languages"] = self.languages or ["en"]
             if self.proxies:
                 kwargs["proxies"] = self.proxies
-            captions = YouTubeTranscriptApi.get_transcript(video_id, **kwargs)
-            # log_debug(f"Captions for video {video_id}: {captions}")
+            if video_id is not None:
+                captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
+            else:
+                return "No video ID found"
             if captions:
-                return " ".join(line["text"] for line in captions)
+                return " ".join(line.text for line in captions)
             return "No captions found for video"
         except Exception as e:
+            # log_info(f"Error getting captions for video {video_id}: {e}")
             return f"Error getting captions for video: {e}"
 
     def get_video_timestamps(self, url: str) -> str:
@@ -159,6 +163,9 @@ class YouTubeTools(Toolkit):
         except Exception:
             return "Error getting video ID from URL, please provide a valid YouTube url"
 
+        if video_id is None:
+            return "No video ID found"
+
         try:
             kwargs: Dict = {}
             if self.languages:
@@ -166,12 +173,12 @@ class YouTubeTools(Toolkit):
             if self.proxies:
                 kwargs["proxies"] = self.proxies
 
-            captions = YouTubeTranscriptApi.get_transcript(video_id, **kwargs)
+            captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
             timestamps = []
             for line in captions:
-                start = int(line["start"])
+                start = int(line.start)
                 minutes, seconds = divmod(start, 60)
-                timestamps.append(f"{minutes}:{seconds:02d} - {line['text']}")
+                timestamps.append(f"{minutes}:{seconds:02d} - {line.text}")
             return "\n".join(timestamps)
         except Exception as e:
             return f"Error generating timestamps: {e}"

@@ -46,18 +46,20 @@ def sheets_tools(mock_credentials, mock_sheets_service):
 def test_init_with_default_scopes():
     """Test initialization with default scopes."""
     # Test read-only initialization
-    read_tools = GoogleSheetsTools(read=True, create=False, update=False)
+    read_tools = GoogleSheetsTools(enable_read_sheet=True, enable_create_sheet=False, enable_update_sheet=False)
     assert read_tools.scopes == [GoogleSheetsTools.DEFAULT_SCOPES["read"]]
 
     # Test write operations initialization
-    write_tools = GoogleSheetsTools(read=False, create=True, update=True)
+    write_tools = GoogleSheetsTools(enable_read_sheet=False, enable_create_sheet=True, enable_update_sheet=True)
     assert GoogleSheetsTools.DEFAULT_SCOPES["write"] in write_tools.scopes
 
 
 def test_init_with_custom_scopes():
     """Test initialization with custom scopes."""
     custom_scopes = [GoogleSheetsTools.DEFAULT_SCOPES["read"]]
-    tools = GoogleSheetsTools(scopes=custom_scopes, read=True, create=False, update=False)
+    tools = GoogleSheetsTools(
+        scopes=custom_scopes, enable_read_sheet=True, enable_create_sheet=False, enable_update_sheet=False
+    )
     assert tools.scopes == custom_scopes
 
 
@@ -67,8 +69,8 @@ def test_init_with_invalid_scopes():
     with pytest.raises(ValueError, match="required for write operations"):
         GoogleSheetsTools(
             scopes=read_only_scope,
-            read=True,
-            create=True,  # Should raise error as write scope is missing
+            enable_read_sheet=True,
+            enable_create_sheet=True,  # Should raise error as write scope is missing
         )
 
 

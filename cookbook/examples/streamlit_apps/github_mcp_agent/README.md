@@ -2,6 +2,8 @@
 
 A Streamlit application that allows you to explore and analyze GitHub repositories using natural language queries through the Model Context Protocol (MCP).
 
+> Note: Fork and clone this repository if needed
+
 ## Features
 
 - **Natural Language Interface**: Ask questions about repositories in plain English
@@ -12,35 +14,32 @@ A Streamlit application that allows you to explore and analyze GitHub repositori
 
 ## Setup
 
-### Requirements
+### 1. Create a virtual environment
 
-- Python 3.8+
-- Node.js and npm (for MCP GitHub server)
-  - This is a critical requirement! The app uses `npx` to run the MCP GitHub server
-  - Download and install from [nodejs.org](https://nodejs.org/)
-- GitHub Personal Access Token with appropriate permissions
-- OpenAI API Key
+```shell
+python3 -m venv .venv
+source .venv/bin/activate
+```
 
-### Installation
+### 2. Install dependencies
 
 1. Install the required Python packages:
    ```bash
    pip install -r cookbook/examples/streamlit_apps/github_mcp_agent/requirements.txt
    ```
 
-2. Verify Node.js and npm are installed:
-   ```bash
-   node --version
-   npm --version
-   npx --version
-   ```
-   All of these commands should return version numbers. If they don't, please install Node.js.
-
 3. Set up your API keys:
    - Set OpenAI API Key as an environment variable:
      ```bash
-     export OPENAI_API_KEY=your-openai-api-key
+     export OPENAI_API_KEY=xxx
      ```
+
+     Optional (for additional models):
+
+      ```bash
+      export ANTHROPIC_API_KEY=your_anthropic_key_here
+      export GOOGLE_API_KEY=your_google_key_here
+      ```
    - GitHub token will be entered directly in the app interface
 
 4. Create a GitHub Personal Access Token:
@@ -77,3 +76,15 @@ A Streamlit application that allows you to explore and analyze GitHub repositori
 - "Show repository health metrics"
 - "Show repository activity patterns"
 - "Analyze code quality trends"
+
+## 📚 Documentation
+
+For more detailed information:
+
+- [Agno Documentation](https://docs.agno.com)
+- [Model Context Protocol](https://modelcontextprotocol.io)
+- [Streamlit Documentation](https://docs.streamlit.io)
+
+## 🤝 Support
+
+Need help? Join our [Discord community](https://agno.link/discord)
