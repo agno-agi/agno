@@ -169,14 +169,14 @@ print(f"Found {len(available_models)} available models")
 ## Resources & Support
 
 ### 🔗 Official Links
-- **Website**: https://www.cometapi.com/
-- **API Documentation**: https://api.cometapi.com/doc
-- **Model List & Pricing**: https://api.cometapi.com/pricing
-- **Get API Key**: https://api.cometapi.com/console/token
+- [Website](https://www.cometapi.com/?utm_source=agno&utm_campaign=integration&utm_medium=integration&utm_content=integration)
+- [API Documentation](https://api.cometapi.com/doc)
+- [Model List & Pricing](https://api.cometapi.com/pricing)
+- [Get API Key](https://api.cometapi.com/console/token)
 
 ### 👥 Community & Development
-- **GitHub**: https://github.com/cometapi-dev
-- **Discord Community**: https://discord.com/invite/HMpuV6FCrG
+- [GitHub](https://github.com/cometapi-dev)
+- [Discord Community](https://discord.com/invite/HMpuV6FCrG)
 
 ### 📖 API Reference
 - **Base URL**: `https://api.cometapi.com/v1/`
