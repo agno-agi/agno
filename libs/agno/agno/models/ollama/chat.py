@@ -153,12 +153,14 @@ class Ollama(Model):
                 if "function" in tool_call:
                     function_data = tool_call["function"]
                     formatted_tool_call = {
+                        "id": tool_call.get("id"),
+                        "type": tool_call.get("type"),
                         "function": {
                             "name": function_data["name"],
                             "arguments": json.loads(function_data["arguments"])
                             if isinstance(function_data["arguments"], str)
                             else function_data["arguments"],
-                        }
+                        },
                     }
                     formatted_tool_calls.append(formatted_tool_call)
 
