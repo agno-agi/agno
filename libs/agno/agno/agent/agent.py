@@ -5935,6 +5935,48 @@ class Agent:
         if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
+            from agno.reasoning.ollama import is_ollama_reasoning_model
+
+            # Check if this is an Ollama reasoning model - they need special handling
+            if is_ollama_reasoning_model(reasoning_model):
+                from agno.reasoning.ollama import get_ollama_reasoning, get_ollama_reasoning_agent
+
+                reasoning_agent = self.reasoning_agent or get_ollama_reasoning_agent(
+                    reasoning_model=reasoning_model,
+                    telemetry=self.telemetry,
+                    debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
+                    session_state=self.session_state,
+                    dependencies=self.dependencies,
+                    metadata=self.metadata,
+                )
+                
+                log_debug("Starting Ollama Reasoning", center=True, symbol="=")
+                reasoning_message = get_ollama_reasoning(
+                    reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                )
+                
+                if reasoning_message is None:
+                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    return
+                    
+                run_messages.messages.append(reasoning_message)
+                # Add reasoning step to the Agent's run_response
+                update_run_output_with_reasoning(
+                    run_response=run_response,
+                    reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
+                    reasoning_agent_messages=[reasoning_message],
+                )
+                if self.stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_reasoning_completed_event(
+                            from_run_response=run_response,
+                            content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
+                            content_type=ReasoningSteps.__name__,
+                        ),
+                        run_response,
+                    )
+                return
 
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
@@ -6116,10 +6158,10 @@ class Agent:
                         reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
                     )
                 elif is_ollama:
-                    from agno.reasoning.ollama import get_ollama_reasoning
+                    from agno.reasoning.ollama import aget_ollama_reasoning
 
                     log_debug("Starting Ollama Reasoning", center=True, symbol="=")
-                    reasoning_message = get_ollama_reasoning(
+                    reasoning_message = await aget_ollama_reasoning(
                         reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
                     )
                 elif is_ai_foundry:
@@ -6161,6 +6203,48 @@ class Agent:
         if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
+            from agno.reasoning.ollama import is_ollama_reasoning_model
+
+            # Check if this is an Ollama reasoning model - they need special handling
+            if is_ollama_reasoning_model(reasoning_model):
+                from agno.reasoning.ollama import get_ollama_reasoning, get_ollama_reasoning_agent
+
+                reasoning_agent = self.reasoning_agent or get_ollama_reasoning_agent(
+                    reasoning_model=reasoning_model,
+                    telemetry=self.telemetry,
+                    debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
+                    session_state=self.session_state,
+                    dependencies=self.dependencies,
+                    metadata=self.metadata,
+                )
+                
+                log_debug("Starting Ollama Reasoning", center=True, symbol="=")
+                reasoning_message = get_ollama_reasoning(
+                    reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                )
+                
+                if reasoning_message is None:
+                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    return
+                    
+                run_messages.messages.append(reasoning_message)
+                # Add reasoning step to the Agent's run_response
+                update_run_output_with_reasoning(
+                    run_response=run_response,
+                    reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
+                    reasoning_agent_messages=[reasoning_message],
+                )
+                if self.stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_reasoning_completed_event(
+                            from_run_response=run_response,
+                            content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
+                            content_type=ReasoningSteps.__name__,
+                        ),
+                        run_response,
+                    )
+                return
 
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
