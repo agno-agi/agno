@@ -80,6 +80,6 @@ agent = Agent(
 
 agent.print_response(
     "Tell me about Jordan Mitchell's experience and skills",
-    knowledge_filters={"user_id": "jordan_mitchell"},
+    knowledge_filters={"user_id": "jordan_mitchell", "document_type": "cv", "year": 2025},
     markdown=True,
 )

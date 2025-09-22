@@ -4,9 +4,11 @@ from pathlib import Path
 
 from agents.agno_assist import agno_assist
 from agents.web_search import web_search_agent
+from agno.os.interfaces.whatsapp import Whatsapp
 from agno.os import AgentOS
 from teams.multilingual_team import multilingual_team
 from teams.reasoning_finance_team import reasoning_finance_team
+from teams.personal_assistant_team.personal_assistant_team import personal_assistant_team
 from workflows.investment_workflow import investment_workflow
 from workflows.research_workflow import research_workflow
 
@@ -18,7 +20,8 @@ config_path = str(Path(__file__).parent.joinpath("config.yaml"))
 agent_os = AgentOS(
     description="Demo AgentOS",
     agents=[agno_assist, web_search_agent],
-    teams=[reasoning_finance_team, multilingual_team],
+    teams=[reasoning_finance_team, multilingual_team, personal_assistant_team],
+    interfaces=[Whatsapp(team=personal_assistant_team)],
     workflows=[research_workflow, investment_workflow],
     config=config_path,
 )
