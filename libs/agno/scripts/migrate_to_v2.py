@@ -11,7 +11,7 @@ from agno.utils.log import log_info
 # --- Set these variables before running the script ---
 
 ## Your db_url ##
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db_url = ""
 
 ## Postgres Sample ##
 # db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
