@@ -279,6 +279,15 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                             type="tool_use",
                         )
                     )
+        elif message.role == "tool":
+            content = []
+            content.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": message.tool_call_id,
+                    "content": str(message.content),
+                }
+            )
 
         # Skip empty assistant responses
         if message.role == "assistant" and not content:

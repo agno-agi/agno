@@ -33,6 +33,7 @@ from agno.agent import Agent
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import ModelProviderError, RunCancelledException
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
@@ -3508,6 +3509,7 @@ class Team:
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
+                    tool_call_limit=self.tool_call_limit,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
                     debug_level=self.debug_level,
@@ -4155,6 +4157,7 @@ class Team:
                     if name not in self._functions_for_model:
                         func._team = self
                         func._session_state = session_state
+                        func._dependencies = dependencies
                         func.process_entrypoint(strict=strict)
                         if strict:
                             func.strict = True
@@ -4174,6 +4177,7 @@ class Team:
                 if tool.name not in self._functions_for_model:
                     tool._team = self
                     tool._session_state = session_state
+                    tool._dependencies = dependencies
                     tool.process_entrypoint(strict=strict)
                     if strict and tool.strict is None:
                         tool.strict = True
@@ -4195,6 +4199,7 @@ class Team:
                     func = Function.from_callable(tool, strict=strict)
                     func._team = self
                     func._session_state = session_state
+                    func._dependencies = dependencies
                     if strict:
                         func.strict = True
                     if self.tool_hooks:
@@ -6733,17 +6738,18 @@ class Team:
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
-        def search_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+        def search_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
             """Use this function to search the knowledge base for information about a query.
 
             Args:
                 query: The query to search for.
-                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
 
             Returns:
                 str: A string containing the response from the knowledge base.
             """
-            search_filters = get_agentic_or_user_search_filters(filters, knowledge_filters)
+            filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+            search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
 
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
@@ -6764,17 +6770,18 @@ class Team:
                 return "No documents found"
             return self._convert_documents_to_string(docs_from_knowledge)
 
-        async def asearch_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+        async def asearch_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
             """Use this function to search the knowledge base for information about a query asynchronously.
 
             Args:
                 query: The query to search for.
-                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
 
             Returns:
                 str: A string containing the response from the knowledge base.
             """
-            search_filters = get_agentic_or_user_search_filters(filters, knowledge_filters)
+            filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+            search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
 
             retrieval_timer = Timer()
             retrieval_timer.start()

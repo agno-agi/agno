@@ -2,8 +2,8 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.document import Document
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb
 
 
@@ -163,5 +163,3 @@ async def test_add_content_async_replaces_invalid_surrogates() -> None:
     docs = fake_db.get_all_inserted_documents()
     contents = "\n".join([getattr(d, "content", "") for d in docs])
     assert "\ufffd" in contents or "�" in contents or "?" in contents
-
-
