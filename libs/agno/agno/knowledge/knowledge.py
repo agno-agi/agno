@@ -138,15 +138,15 @@ class Knowledge:
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
                 log_debug(f"Adding text content: {content_name}")
                 await self.add_content_async(
-                        name=content_name,
-                        description=description,
-                        text_content=text_content,
-                        metadata=metadata,
-                        include=include,
-                        exclude=exclude,
-                        upsert=upsert,
-                        skip_if_exists=skip_if_exists,
-                    )
+                    name=content_name,
+                    description=description,
+                    text_content=text_content,
+                    metadata=metadata,
+                    include=include,
+                    exclude=exclude,
+                    upsert=upsert,
+                    skip_if_exists=skip_if_exists,
+                )
             if topics:
                 await self.add_content_async(
                     name=name,
@@ -1001,19 +1001,19 @@ class Knowledge:
     def _ensure_string_field(self, value: Any, field_name: str, default: str = "") -> str:
         """
         Safely ensure a field is a string, handling various edge cases.
-        
+
         Args:
             value: The value to convert to string
             field_name: Name of the field for logging purposes
             default: Default string value if conversion fails
-            
+
         Returns:
             str: A safe string value
         """
         # Handle None/falsy values
         if value is None or value == "":
             return default
-            
+
         # Handle unexpected list types (the root cause of our Pydantic warning)
         if isinstance(value, list):
             if len(value) == 0:
@@ -1027,7 +1027,7 @@ class Knowledge:
                 # Multiple items, join them
                 log_debug(f"Multi-item list found for {field_name}, joining: {value}")
                 return " | ".join(str(item) for item in value if item is not None)
-        
+
         # Handle other unexpected types
         if not isinstance(value, str):
             log_debug(f"Non-string type {type(value)} found for {field_name}, converting: '{value}'")
@@ -1036,7 +1036,7 @@ class Knowledge:
             except Exception as e:
                 log_warning(f"Failed to convert {field_name} to string: {e}, using default")
                 return default
-        
+
         # Already a string, return as-is
         return value
 
@@ -1056,8 +1056,10 @@ class Knowledge:
             safe_name = self._ensure_string_field(content.name, "content.name", default="")
             safe_description = self._ensure_string_field(content.description, "content.description", default="")
             safe_linked_to = self._ensure_string_field(self.name, "knowledge.name", default="")
-            safe_status_message = self._ensure_string_field(content.status_message, "content.status_message", default="")
-            
+            safe_status_message = self._ensure_string_field(
+                content.status_message, "content.status_message", default=""
+            )
+
             content_row = KnowledgeRow(
                 id=content.id,
                 name=safe_name,
@@ -1094,15 +1096,21 @@ class Knowledge:
             if content.name is not None:
                 content_row.name = self._ensure_string_field(content.name, "content.name", default="")
             if content.description is not None:
-                content_row.description = self._ensure_string_field(content.description, "content.description", default="")
+                content_row.description = self._ensure_string_field(
+                    content.description, "content.description", default=""
+                )
             if content.metadata is not None:
                 content_row.metadata = content.metadata
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:
-                content_row.status_message = self._ensure_string_field(content.status_message, "content.status_message", default="")
+                content_row.status_message = self._ensure_string_field(
+                    content.status_message, "content.status_message", default=""
+                )
             if content.external_id is not None:
-                content_row.external_id = self._ensure_string_field(content.external_id, "content.external_id", default="")
+                content_row.external_id = self._ensure_string_field(
+                    content.external_id, "content.external_id", default=""
+                )
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
