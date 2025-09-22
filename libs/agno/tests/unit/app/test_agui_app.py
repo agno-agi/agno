@@ -3,19 +3,16 @@ from unittest.mock import MagicMock
 import pytest
 from ag_ui.core import EventType
 
-from agno.app.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events
-from agno.run.response import RunResponseContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
+from agno.os.interfaces.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events
+from agno.run.agent import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 
 def test_event_buffer_initial_state():
     """Test EventBuffer initial state"""
     buffer = EventBuffer()
 
-    assert not buffer.is_blocked()
-    assert buffer.blocking_tool_call_id is None
     assert len(buffer.active_tool_call_ids) == 0
     assert len(buffer.ended_tool_call_ids) == 0
-    assert len(buffer.buffer) == 0
 
 
 def test_event_buffer_tool_call_lifecycle():
@@ -23,19 +20,14 @@ def test_event_buffer_tool_call_lifecycle():
     buffer = EventBuffer()
 
     # Initial state
-    assert not buffer.is_blocked()
     assert len(buffer.active_tool_call_ids) == 0
 
     # Start tool call
     buffer.start_tool_call("tool_1")
-    assert buffer.is_blocked()
-    assert buffer.blocking_tool_call_id == "tool_1"
     assert "tool_1" in buffer.active_tool_call_ids
 
     # End tool call
-    unblocked = buffer.end_tool_call("tool_1")
-    assert unblocked is True
-    assert not buffer.is_blocked()
+    buffer.end_tool_call("tool_1")
     assert "tool_1" in buffer.ended_tool_call_ids
     assert "tool_1" not in buffer.active_tool_call_ids
 
@@ -44,26 +36,27 @@ def test_event_buffer_multiple_tool_calls():
     """Test multiple concurrent tool calls"""
     buffer = EventBuffer()
 
-    # Start first tool call (becomes blocking)
+    # Start first tool call
     buffer.start_tool_call("tool_1")
-    assert buffer.blocking_tool_call_id == "tool_1"
+    assert "tool_1" in buffer.active_tool_call_ids
 
-    # Start second tool call (doesn't change blocking)
+    # Start second tool call
     buffer.start_tool_call("tool_2")
-    assert buffer.blocking_tool_call_id == "tool_1"  # Still blocked by first
     assert len(buffer.active_tool_call_ids) == 2
+    assert "tool_1" in buffer.active_tool_call_ids
+    assert "tool_2" in buffer.active_tool_call_ids
 
-    # End non-blocking tool call
-    unblocked = buffer.end_tool_call("tool_2")
-    assert unblocked is False
-    assert buffer.is_blocked()  # Still blocked by tool_1
-    assert buffer.blocking_tool_call_id == "tool_1"
+    # End first tool call
+    buffer.end_tool_call("tool_2")
+    assert "tool_2" in buffer.ended_tool_call_ids
+    assert "tool_2" not in buffer.active_tool_call_ids
+    assert "tool_1" in buffer.active_tool_call_ids  # Still active
 
-    # End blocking tool call
-    unblocked = buffer.end_tool_call("tool_1")
-    assert unblocked is True
-    assert not buffer.is_blocked()
-    assert buffer.blocking_tool_call_id is None
+    # End second tool call
+    buffer.end_tool_call("tool_1")
+    assert "tool_1" in buffer.ended_tool_call_ids
+    assert "tool_1" not in buffer.active_tool_call_ids
+    assert len(buffer.active_tool_call_ids) == 0
 
 
 def test_event_buffer_end_nonexistent_tool_call():
@@ -71,9 +64,7 @@ def test_event_buffer_end_nonexistent_tool_call():
     buffer = EventBuffer()
 
     # End tool call that was never started
-    unblocked = buffer.end_tool_call("nonexistent_tool")
-    assert unblocked is False
-    assert not buffer.is_blocked()
+    buffer.end_tool_call("nonexistent_tool")
     assert "nonexistent_tool" in buffer.ended_tool_call_ids
 
 
@@ -85,7 +76,6 @@ def test_event_buffer_duplicate_start_tool_call():
     buffer.start_tool_call("tool_1")
     buffer.start_tool_call("tool_1")  # Should not cause issues
 
-    assert buffer.blocking_tool_call_id == "tool_1"
     assert len(buffer.active_tool_call_ids) == 1  # Should still be 1
     assert "tool_1" in buffer.active_tool_call_ids
 
@@ -97,13 +87,11 @@ def test_event_buffer_duplicate_end_tool_call():
     buffer.start_tool_call("tool_1")
 
     # End same tool call twice
-    unblocked_1 = buffer.end_tool_call("tool_1")
-    unblocked_2 = buffer.end_tool_call("tool_1")
+    buffer.end_tool_call("tool_1")
+    buffer.end_tool_call("tool_1")  # Second end should be no-op
 
-    assert unblocked_1 is True
-    assert unblocked_2 is False  # Second end should not unblock
-    assert not buffer.is_blocked()
     assert "tool_1" in buffer.ended_tool_call_ids
+    assert "tool_1" not in buffer.active_tool_call_ids
 
 
 def test_event_buffer_complex_sequence():
@@ -111,59 +99,55 @@ def test_event_buffer_complex_sequence():
     buffer = EventBuffer()
 
     # Start multiple tool calls
-    buffer.start_tool_call("tool_1")  # This becomes blocking
+    buffer.start_tool_call("tool_1")
     buffer.start_tool_call("tool_2")
     buffer.start_tool_call("tool_3")
 
-    assert buffer.blocking_tool_call_id == "tool_1"
     assert len(buffer.active_tool_call_ids) == 3
 
-    # End middle tool call (should not unblock)
-    unblocked = buffer.end_tool_call("tool_2")
-    assert unblocked is False
-    assert buffer.is_blocked()
-    assert buffer.blocking_tool_call_id == "tool_1"
+    # End middle tool call
+    buffer.end_tool_call("tool_2")
+    assert "tool_2" in buffer.ended_tool_call_ids
+    assert len(buffer.active_tool_call_ids) == 2
 
-    # End blocking tool call (should unblock)
-    unblocked = buffer.end_tool_call("tool_1")
-    assert unblocked is True
-    assert not buffer.is_blocked()
+    # End first tool call
+    buffer.end_tool_call("tool_1")
+    assert "tool_1" in buffer.ended_tool_call_ids
 
     # End remaining tool call
-    unblocked = buffer.end_tool_call("tool_3")
-    assert unblocked is False  # Already unblocked
+    buffer.end_tool_call("tool_3")
+    assert "tool_3" in buffer.ended_tool_call_ids
 
     # Check final state
     assert len(buffer.active_tool_call_ids) == 0
     assert len(buffer.ended_tool_call_ids) == 3
 
 
-def test_event_buffer_blocking_behavior_edge_cases():
-    """Test edge cases in blocking behavior"""
+def test_event_buffer_edge_cases():
+    """Test edge cases in tool call handling"""
     buffer = EventBuffer()
 
     # Test that empty string tool_call_id is handled gracefully
     buffer.start_tool_call("")  # Empty string
-    assert buffer.is_blocked()
-    assert buffer.blocking_tool_call_id == ""
+    assert "" in buffer.active_tool_call_ids
 
     # End with empty string
-    unblocked = buffer.end_tool_call("")
-    assert unblocked is True
-    assert not buffer.is_blocked()
+    buffer.end_tool_call("")
+    assert "" in buffer.ended_tool_call_ids
+    assert "" not in buffer.active_tool_call_ids
 
 
 @pytest.mark.asyncio
 async def test_stream_basic():
     """Test the async_stream_agno_response_as_agui_events function emits all expected events in a basic case."""
-    from agno.run.response import RunEvent
+    from agno.run.agent import RunEvent
 
     async def mock_stream():
-        text_response = RunResponseContentEvent()
-        text_response.event = RunEvent.run_response_content
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
         text_response.content = "Hello world"
         yield text_response
-        completed_response = RunResponseContentEvent()
+        completed_response = RunContentEvent()
         completed_response.event = RunEvent.run_completed
         completed_response.content = ""
         yield completed_response
@@ -183,12 +167,12 @@ async def test_stream_basic():
 @pytest.mark.asyncio
 async def test_stream_with_tool_call_blocking():
     """Test that events are properly buffered during tool calls"""
-    from agno.run.response import RunEvent
+    from agno.run.agent import RunEvent
 
     async def mock_stream_with_tool_calls():
         # Start with a text response
-        text_response = RunResponseContentEvent()
-        text_response.event = RunEvent.run_response_content
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
         text_response.content = "I'll help you"
         yield text_response
 
@@ -203,8 +187,8 @@ async def test_stream_with_tool_call_blocking():
         tool_start_response.tool = tool_call
         yield tool_start_response
 
-        buffered_text_response = RunResponseContentEvent()
-        buffered_text_response.event = RunEvent.run_response_content
+        buffered_text_response = RunContentEvent()
+        buffered_text_response.event = RunEvent.run_content
         buffered_text_response.content = "Searching..."
         yield buffered_text_response
         tool_end_response = ToolCallCompletedEvent()
@@ -212,7 +196,7 @@ async def test_stream_with_tool_call_blocking():
         tool_end_response.content = ""
         tool_end_response.tool = tool_call
         yield tool_end_response
-        completed_response = RunResponseContentEvent()
+        completed_response = RunContentEvent()
         completed_response.event = RunEvent.run_completed
         completed_response.content = ""
         yield completed_response
@@ -235,3 +219,720 @@ async def test_stream_with_tool_call_blocking():
     tool_start_idx = event_types.index(EventType.TOOL_CALL_START)
     tool_end_idx = event_types.index(EventType.TOOL_CALL_END)
     assert tool_start_idx < tool_end_idx
+
+
+@pytest.mark.asyncio
+async def test_concurrent_tool_calls_no_infinite_loop():
+    """Tests multiple concurrent tool calls without infinite loop"""
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_three_concurrent_tools():
+        # Initial text response
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "I'll check multiple stocks for you"
+        yield text_response
+
+        # Start 3 concurrent tool calls (this previously caused infinite loop)
+        tool_call_1 = ToolExecution(
+            tool_call_id="call_TSLA_123", tool_name="get_stock_price", tool_args={"symbol": "TSLA"}
+        )
+        tool_start_1 = ToolCallStartedEvent()
+        tool_start_1.tool = tool_call_1
+        yield tool_start_1
+
+        tool_call_2 = ToolExecution(
+            tool_call_id="call_AAPL_456", tool_name="get_stock_price", tool_args={"symbol": "AAPL"}
+        )
+        tool_start_2 = ToolCallStartedEvent()
+        tool_start_2.tool = tool_call_2
+        yield tool_start_2
+
+        tool_call_3 = ToolExecution(
+            tool_call_id="call_MSFT_789", tool_name="get_stock_price", tool_args={"symbol": "MSFT"}
+        )
+        tool_start_3 = ToolCallStartedEvent()
+        tool_start_3.tool = tool_call_3
+        yield tool_start_3
+
+        # Some buffered content during tool calls
+        buffered_response = RunContentEvent()
+        buffered_response.event = RunEvent.run_content
+        buffered_response.content = "Fetching stock data..."
+        yield buffered_response
+
+        # Complete all tool calls
+        tool_call_1.result = {"price": 250.50, "symbol": "TSLA"}
+        tool_end_1 = ToolCallCompletedEvent()
+        tool_end_1.tool = tool_call_1
+        yield tool_end_1
+
+        tool_call_2.result = {"price": 175.25, "symbol": "AAPL"}
+        tool_end_2 = ToolCallCompletedEvent()
+        tool_end_2.tool = tool_call_2
+        yield tool_end_2
+
+        tool_call_3.result = {"price": 320.75, "symbol": "MSFT"}
+        tool_end_3 = ToolCallCompletedEvent()
+        tool_end_3.tool = tool_call_3
+        yield tool_end_3
+
+        # Final content and completion
+        final_response = RunContentEvent()
+        final_response.event = RunEvent.run_content
+        final_response.content = "Here are the stock prices"
+        yield final_response
+
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_three_concurrent_tools(), "thread_1", "run_1"
+    ):
+        events.append(event)
+        # Safety valve - if we get too many events, we might have an infinite loop
+        if len(events) > 50:
+            pytest.fail("Too many events generated - possible infinite loop detected")
+
+    # Verify we got all expected events (should be around 19 events total)
+    assert len(events) >= 15, f"Expected at least 15 events, got {len(events)}"
+
+    event_types = [event.type for event in events]
+
+    # Check all event types are present
+    assert EventType.TEXT_MESSAGE_START in event_types
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
+    assert EventType.TEXT_MESSAGE_END in event_types
+    assert EventType.TOOL_CALL_START in event_types
+    assert EventType.TOOL_CALL_ARGS in event_types
+    assert EventType.TOOL_CALL_END in event_types
+    assert EventType.TOOL_CALL_RESULT in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+    # Verify we have events for all 3 tool calls
+    tool_start_events = [e for e in events if e.type == EventType.TOOL_CALL_START]
+    tool_end_events = [e for e in events if e.type == EventType.TOOL_CALL_END]
+    assert len(tool_start_events) == 3, f"Expected 3 tool starts, got {len(tool_start_events)}"
+    assert len(tool_end_events) == 3, f"Expected 3 tool ends, got {len(tool_end_events)}"
+
+
+@pytest.mark.asyncio
+async def test_text_message_end_before_tool_call_start():
+    """
+    Regression test for Issues #3554 and #4601: Missing TEXT_MESSAGE_END before TOOL_CALL_START.
+
+    Tests that TEXT_MESSAGE_END is properly emitted before TOOL_CALL_START to prevent
+    AG-UI protocol violations that cause errors like:
+    "Cannot send event type 'TOOL_CALL_START' after 'TEXT_MESSAGE_START': Send 'TEXT_MESSAGE_END' first."
+    """
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_text_then_tool():
+        # Start with text content (this starts a TEXT_MESSAGE)
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Let me check that for you"
+        yield text_response
+
+        # Immediately start a tool call (this should properly end the text message first)
+        tool_call = ToolExecution(
+            tool_call_id="call_search_123", tool_name="search_tool", tool_args={"query": "test query"}
+        )
+        tool_start = ToolCallStartedEvent()
+        tool_start.tool = tool_call
+        yield tool_start
+
+        # Complete the tool call
+        tool_call.result = {"results": "search results"}
+        tool_end = ToolCallCompletedEvent()
+        tool_end.tool = tool_call
+        yield tool_end
+
+        # More text after tool call
+        final_response = RunContentEvent()
+        final_response.event = RunEvent.run_content
+        final_response.content = "Based on the search results..."
+        yield final_response
+
+        # Complete the run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_text_then_tool(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Find the indices of critical events
+    text_start_idx = event_types.index(EventType.TEXT_MESSAGE_START)
+    text_content_idx = event_types.index(EventType.TEXT_MESSAGE_CONTENT)
+    text_end_idx = event_types.index(EventType.TEXT_MESSAGE_END)
+    tool_start_idx = event_types.index(EventType.TOOL_CALL_START)
+
+    # Verify proper ordering: TEXT_MESSAGE_END must come before TOOL_CALL_START
+    assert text_start_idx < text_content_idx, "TEXT_MESSAGE_START should come before TEXT_MESSAGE_CONTENT"
+    assert text_content_idx < text_end_idx, "TEXT_MESSAGE_CONTENT should come before TEXT_MESSAGE_END"
+    assert text_end_idx < tool_start_idx, "TEXT_MESSAGE_END should come before TOOL_CALL_START (Issue #3554/#4601 fix)"
+
+    # Ensure we have all expected event types
+    assert EventType.TEXT_MESSAGE_START in event_types
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
+    assert EventType.TEXT_MESSAGE_END in event_types
+    assert EventType.TOOL_CALL_START in event_types
+    assert EventType.TOOL_CALL_ARGS in event_types
+    assert EventType.TOOL_CALL_END in event_types
+    assert EventType.TOOL_CALL_RESULT in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+
+@pytest.mark.asyncio
+async def test_missing_text_message_content_events():
+    """
+    Regression test for Issue #3554: Missing TEXT_MESSAGE_CONTENT events.
+
+    Tests that TEXT_MESSAGE_CONTENT events are properly emitted when the agent
+    generates text content, ensuring the frontend UI shows the response content.
+    """
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_content():
+        # Text response with actual content
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Hello! How can I help you today?"
+        yield text_response
+
+        # Another chunk of content
+        text_response2 = RunContentEvent()
+        text_response2.event = RunEvent.run_content
+        text_response2.content = " I'm here to assist with any questions."
+        yield text_response2
+
+        # Complete the run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_with_content(), "thread_1", "run_1"):
+        events.append(event)
+
+    # Filter for TEXT_MESSAGE_CONTENT events
+    content_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
+
+    # Should have TEXT_MESSAGE_CONTENT events (not empty like in the original issue)
+    assert len(content_events) > 0, "Should have TEXT_MESSAGE_CONTENT events (Issue #3554 fix)"
+
+    # Verify the content is properly captured
+    total_content = "".join([e.delta for e in content_events])
+    assert "Hello! How can I help you today?" in total_content
+    assert "I'm here to assist with any questions." in total_content
+
+    # Verify complete event sequence
+    event_types = [event.type for event in events]
+    assert EventType.TEXT_MESSAGE_START in event_types
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types  # This was missing in Issue #3554
+    assert EventType.TEXT_MESSAGE_END in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+
+@pytest.mark.asyncio
+async def test_duplicate_tool_call_result_events():
+    """
+    Regression test for Issue #3554: Duplicate ToolCallResultEvent with same results but different msg_id.
+
+    Tests that tool call results are only emitted once per tool call completion.
+    """
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_tool_completion():
+        # Start a tool call
+        tool_call = ToolExecution(tool_call_id="call_unique_123", tool_name="test_tool", tool_args={"param": "value"})
+        tool_start = ToolCallStartedEvent()
+        tool_start.tool = tool_call
+        yield tool_start
+
+        # Complete the tool call with a result
+        tool_call.result = {"unique_result": "test_data", "id": "unique_123"}
+        tool_end = ToolCallCompletedEvent()
+        tool_end.tool = tool_call
+        yield tool_end
+
+        # Complete the run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_tool_completion(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    # Filter for TOOL_CALL_RESULT events
+    result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+    # Should have exactly one TOOL_CALL_RESULT event (not duplicates)
+    assert len(result_events) == 1, (
+        f"Expected exactly 1 TOOL_CALL_RESULT event, got {len(result_events)} (Issue #3554 fix)"
+    )
+
+    # Verify the result content
+    result_event = result_events[0]
+    assert result_event.tool_call_id == "call_unique_123"
+    assert "unique_result" in result_event.content
+    assert "test_data" in result_event.content
+
+
+@pytest.mark.asyncio
+async def test_empty_content_chunks_handling():
+    """Test that empty content chunks don't create unnecessary events"""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_empty_content():
+        # Empty content chunk
+        empty_response = RunContentEvent()
+        empty_response.event = RunEvent.run_content
+        empty_response.content = ""
+        yield empty_response
+
+        # None content chunk
+        none_response = RunContentEvent()
+        none_response.event = RunEvent.run_content
+        none_response.content = None
+        yield none_response
+
+        # Valid content
+        valid_response = RunContentEvent()
+        valid_response.event = RunEvent.run_content
+        valid_response.content = "Valid content"
+        yield valid_response
+
+        # Complete the run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_with_empty_content(), "thread_1", "run_1"):
+        events.append(event)
+
+    # Should only have content events for non-empty content
+    content_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
+    assert len(content_events) == 1, f"Expected 1 content event for non-empty content, got {len(content_events)}"
+    assert content_events[0].delta == "Valid content"
+
+
+@pytest.mark.asyncio
+async def test_stream_ends_without_completion_event():
+    """Test synthetic completion when stream ends naturally without completion event"""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_ending_abruptly():
+        # Text response
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Hello"
+        yield text_response
+        # Stream ends without RunCompleted event
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_ending_abruptly(), "thread_1", "run_1"):
+        events.append(event)
+
+    # Should have synthetic completion events
+    event_types = [event.type for event in events]
+    assert EventType.TEXT_MESSAGE_START in event_types
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
+    assert EventType.TEXT_MESSAGE_END in event_types, "Should have synthetic TEXT_MESSAGE_END"
+    assert EventType.RUN_FINISHED in event_types, "Should have synthetic RUN_FINISHED"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_events_handling():
+    """Test that reasoning events are properly converted to step events"""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_reasoning():
+        # Start reasoning
+        reasoning_start = RunContentEvent()
+        reasoning_start.event = RunEvent.reasoning_started
+        reasoning_start.content = ""
+        yield reasoning_start
+
+        # Some reasoning content
+        reasoning_content = RunContentEvent()
+        reasoning_content.event = RunEvent.run_content
+        reasoning_content.content = "Thinking about this problem..."
+        yield reasoning_content
+
+        # End reasoning
+        reasoning_end = RunContentEvent()
+        reasoning_end.event = RunEvent.reasoning_completed
+        reasoning_end.content = ""
+        yield reasoning_end
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_with_reasoning(), "thread_1", "run_1"):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Should have step events for reasoning
+    assert EventType.STEP_STARTED in event_types, "Should have STEP_STARTED for reasoning"
+    assert EventType.STEP_FINISHED in event_types, "Should have STEP_FINISHED for reasoning"
+
+    # Should have text content during reasoning
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+
+@pytest.mark.asyncio
+async def test_tool_call_without_result():
+    """Test tool calls that complete without results (edge case)"""
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_tool_no_result():
+        # Start tool call
+        tool_call = ToolExecution(tool_call_id="call_no_result", tool_name="void_tool", tool_args={"action": "ping"})
+        tool_start = ToolCallStartedEvent()
+        tool_start.tool = tool_call
+        yield tool_start
+
+        # Complete tool call without setting result (result=None)
+        tool_end = ToolCallCompletedEvent()
+        tool_end.tool = tool_call
+        yield tool_end
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_tool_no_result(), "thread_1", "run_1"):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Should have tool call events
+    assert EventType.TOOL_CALL_START in event_types
+    assert EventType.TOOL_CALL_ARGS in event_types
+    assert EventType.TOOL_CALL_END in event_types
+
+    # Should NOT have TOOL_CALL_RESULT since result is None
+    result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+    assert len(result_events) == 0, (
+        f"Expected no TOOL_CALL_RESULT events for tool with no result, got {len(result_events)}"
+    )
+
+    assert EventType.RUN_FINISHED in event_types
+
+
+@pytest.mark.asyncio
+async def test_mixed_content_and_tools_complex():
+    """Complex test with interleaved content and tool calls (comprehensive scenario)"""
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunEvent
+
+    async def mock_complex_interleaved_stream():
+        # Initial content
+        initial_content = RunContentEvent()
+        initial_content.event = RunEvent.run_content
+        initial_content.content = "Starting analysis..."
+        yield initial_content
+
+        # Start first tool
+        tool_1 = ToolExecution(tool_call_id="tool_1", tool_name="analyze", tool_args={"data": "A"})
+        tool_start_1 = ToolCallStartedEvent()
+        tool_start_1.tool = tool_1
+        yield tool_start_1
+
+        # More content while tool 1 is running
+        middle_content = RunContentEvent()
+        middle_content.event = RunEvent.run_content
+        middle_content.content = "Processing data..."
+        yield middle_content
+
+        # Start second tool concurrently
+        tool_2 = ToolExecution(tool_call_id="tool_2", tool_name="verify", tool_args={"check": "B"})
+        tool_start_2 = ToolCallStartedEvent()
+        tool_start_2.tool = tool_2
+        yield tool_start_2
+
+        # Complete first tool
+        tool_1.result = "Analysis complete"
+        tool_end_1 = ToolCallCompletedEvent()
+        tool_end_1.tool = tool_1
+        yield tool_end_1
+
+        # More content after first tool
+        post_tool_content = RunContentEvent()
+        post_tool_content.event = RunEvent.run_content
+        post_tool_content.content = "First analysis done..."
+        yield post_tool_content
+
+        # Complete second tool
+        tool_2.result = "Verification passed"
+        tool_end_2 = ToolCallCompletedEvent()
+        tool_end_2.tool = tool_2
+        yield tool_end_2
+
+        # Final content
+        final_content = RunContentEvent()
+        final_content.event = RunEvent.run_content
+        final_content.content = "All tasks completed!"
+        yield final_content
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_complex_interleaved_stream(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Verify all expected event types
+    assert EventType.TEXT_MESSAGE_START in event_types
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
+    assert EventType.TEXT_MESSAGE_END in event_types
+    assert EventType.TOOL_CALL_START in event_types
+    assert EventType.TOOL_CALL_ARGS in event_types
+    assert EventType.TOOL_CALL_END in event_types
+    assert EventType.TOOL_CALL_RESULT in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+    # Verify tool call counts
+    tool_start_events = [e for e in events if e.type == EventType.TOOL_CALL_START]
+    tool_end_events = [e for e in events if e.type == EventType.TOOL_CALL_END]
+    tool_result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+    assert len(tool_start_events) == 2, f"Expected 2 tool starts, got {len(tool_start_events)}"
+    assert len(tool_end_events) == 2, f"Expected 2 tool ends, got {len(tool_end_events)}"
+    assert len(tool_result_events) == 2, f"Expected 2 tool results, got {len(tool_result_events)}"
+
+    # Verify content is properly captured and sequenced
+    content_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
+    total_content = "".join([e.delta for e in content_events])
+
+    assert "Starting analysis..." in total_content
+    assert "Processing data..." in total_content
+    assert "First analysis done..." in total_content
+    assert "All tasks completed!" in total_content
+
+    # Verify TEXT_MESSAGE_END comes before RUN_FINISHED
+    text_end_idx = event_types.index(EventType.TEXT_MESSAGE_END)
+    run_finished_idx = event_types.index(EventType.RUN_FINISHED)
+    assert text_end_idx < run_finished_idx, "TEXT_MESSAGE_END should come before RUN_FINISHED"
+
+
+@pytest.mark.asyncio
+async def test_large_scale_concurrent_tools():
+    """Stress test with many concurrent tool calls to verify scalability"""
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_many_tools():
+        # Create 10 concurrent tool calls to stress test the system
+        tools = []
+        for i in range(10):
+            tool = ToolExecution(tool_call_id=f"call_stress_{i}", tool_name=f"stress_tool_{i}", tool_args={"index": i})
+            tools.append(tool)
+
+            tool_start = ToolCallStartedEvent()
+            tool_start.tool = tool
+            yield tool_start
+
+        # Complete all tools
+        for i, tool in enumerate(tools):
+            tool.result = f"Result {i}"
+            tool_end = ToolCallCompletedEvent()
+            tool_end.tool = tool
+            yield tool_end
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_with_many_tools(), "thread_1", "run_1"):
+        events.append(event)
+        # Safety valve for stress test
+        if len(events) > 100:
+            pytest.fail("Too many events in stress test - possible infinite loop")
+
+    # Verify expected number of events
+    tool_start_events = [e for e in events if e.type == EventType.TOOL_CALL_START]
+    tool_end_events = [e for e in events if e.type == EventType.TOOL_CALL_END]
+    tool_result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+    assert len(tool_start_events) == 10, f"Expected 10 tool starts, got {len(tool_start_events)}"
+    assert len(tool_end_events) == 10, f"Expected 10 tool ends, got {len(tool_end_events)}"
+    assert len(tool_result_events) == 10, f"Expected 10 tool results, got {len(tool_result_events)}"
+
+    # Verify all tool call IDs are unique
+    start_tool_ids = {e.tool_call_id for e in tool_start_events}
+    end_tool_ids = {e.tool_call_id for e in tool_end_events}
+    result_tool_ids = {e.tool_call_id for e in tool_result_events}
+
+    assert len(start_tool_ids) == 10, "All tool call IDs should be unique"
+    assert start_tool_ids == end_tool_ids == result_tool_ids, "Tool call IDs should match across event types"
+
+
+@pytest.mark.asyncio
+async def test_event_ordering_invariants():
+    """Test critical event ordering invariants that must never be violated"""
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_for_ordering():
+        # Text content
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Processing your request"
+        yield text_response
+
+        # Tool call
+        tool_call = ToolExecution(tool_call_id="order_test", tool_name="process", tool_args={})
+        tool_start = ToolCallStartedEvent()
+        tool_start.tool = tool_call
+        yield tool_start
+
+        tool_call.result = "Done"
+        tool_end = ToolCallCompletedEvent()
+        tool_end.tool = tool_call
+        yield tool_end
+
+        # Final content
+        final_text = RunContentEvent()
+        final_text.event = RunEvent.run_content
+        final_text.content = "Complete!"
+        yield final_text
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_for_ordering(), "thread_1", "run_1"):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Critical ordering invariants
+
+    # 1. TEXT_MESSAGE_START must come before any TEXT_MESSAGE_CONTENT
+    start_indices = [i for i, t in enumerate(event_types) if t == EventType.TEXT_MESSAGE_START]
+    content_indices = [i for i, t in enumerate(event_types) if t == EventType.TEXT_MESSAGE_CONTENT]
+
+    for start_idx in start_indices:
+        related_content_indices = [i for i in content_indices if i > start_idx]
+        if related_content_indices:
+            next_end_idx = next(
+                (i for i, t in enumerate(event_types[start_idx:], start_idx) if t == EventType.TEXT_MESSAGE_END),
+                len(event_types),
+            )
+            related_content_indices = [i for i in related_content_indices if i < next_end_idx]
+            for content_idx in related_content_indices:
+                assert start_idx < content_idx, (
+                    f"TEXT_MESSAGE_START at {start_idx} should come before TEXT_MESSAGE_CONTENT at {content_idx}"
+                )
+
+    # 2. TOOL_CALL_START must come before TOOL_CALL_ARGS for same tool
+    tool_starts = [(i, e) for i, e in enumerate(events) if e.type == EventType.TOOL_CALL_START]
+    tool_args = [(i, e) for i, e in enumerate(events) if e.type == EventType.TOOL_CALL_ARGS]
+
+    for start_idx, start_event in tool_starts:
+        matching_args = [(i, e) for i, e in tool_args if e.tool_call_id == start_event.tool_call_id]
+        for args_idx, _ in matching_args:
+            assert start_idx < args_idx, (
+                f"TOOL_CALL_START at {start_idx} should come before TOOL_CALL_ARGS at {args_idx}"
+            )
+
+    # 3. RUN_FINISHED must be the last event
+    run_finished_idx = event_types.index(EventType.RUN_FINISHED)
+    assert run_finished_idx == len(event_types) - 1, "RUN_FINISHED must be the last event"
+
+
+@pytest.mark.asyncio
+async def test_completion_event_race_condition():
+    """Test the specific race condition that was causing protocol violations"""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_race_condition():
+        # Multiple content chunks
+        for i in range(5):
+            content_response = RunContentEvent()
+            content_response.event = RunEvent.run_content
+            content_response.content = f"Chunk {i} "
+            yield content_response
+
+        # Completion event with content (potential race condition)
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = "Final content in completion event"
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_race_condition(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Verify proper sequence: all content, then TEXT_MESSAGE_END, then RUN_FINISHED
+    text_end_idx = event_types.index(EventType.TEXT_MESSAGE_END)
+    run_finished_idx = event_types.index(EventType.RUN_FINISHED)
+
+    # All TEXT_MESSAGE_CONTENT events should come before TEXT_MESSAGE_END
+    content_indices = [i for i, t in enumerate(event_types) if t == EventType.TEXT_MESSAGE_CONTENT]
+    for content_idx in content_indices:
+        assert content_idx < text_end_idx, (
+            f"TEXT_MESSAGE_CONTENT at {content_idx} should come before TEXT_MESSAGE_END at {text_end_idx}"
+        )
+
+    # TEXT_MESSAGE_END should come before RUN_FINISHED
+    assert text_end_idx < run_finished_idx, "TEXT_MESSAGE_END should come before RUN_FINISHED"
+
+    # Verify content accumulation is correct
+    content_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
+    total_content = "".join([e.delta for e in content_events])
+
+    # Should NOT include completion event content (this was the bug)
+    assert "Final content in completion event" not in total_content, "Completion event content should not be duplicated"
+    assert "Chunk 0 Chunk 1 Chunk 2 Chunk 3 Chunk 4 " == total_content, (
+        "Content should be properly sequenced without duplication"
+    )

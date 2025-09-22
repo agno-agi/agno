@@ -78,8 +78,8 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - The `VectorDb` interface is defined in `libs/agno/agno/vectordb/base
    - Import your `VectorDb` Class in `libs/agno/agno/vectordb/<your_db>/__init__.py`.
    - Checkout the [`libs/agno/agno/vectordb/pgvector/pgvector`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/vectordb/pgvector/pgvector.py) file for an example.
-4. Add a recipe for using your `VectorDb` under `cookbook/agent_concepts/knowledge/vector_dbs/<your_db>`.
-   - Checkout [`cookbook/agent_concepts/knowledge/vector_dbs/pgvector_db/pg_vector`](https://github.com/agno-agi/agno/blob/main/cookbook/agent_concepts/knowledge/vector_dbs/pgvector_db/pg_vector.py) for an example.
+4. Add a recipe for using your `VectorDb` under `cookbook/knowledge/vector_dbs/<your_db>`.
+   - Checkout [`cookbook/knowledge/vector_dbs/pgvector_db/pg_vector`](https://github.com/agno-agi/agno/blob/main/cookbook/agent_concepts/knowledge/vector_dbs/pgvector_db/pg_vector.py) for an example.
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 6. Submit a pull request.
 
@@ -124,4 +124,4 @@ Message us on [Discord](https://discord.gg/4MtYHHrgA8) or post on [Discourse](ht
 
 ## 📝 License
 
-This project is licensed under the terms of the [MPL-2.0 license](/LICENSE)
+This project is licensed under the terms of the [Apache-2.0 license](/LICENSE)

@@ -33,7 +33,6 @@ async def run_agent(message: str) -> None:
             - qdrant-find: Retrieve data/output from the Qdrant vector database.
             """,
             markdown=True,
-            show_tool_calls=True,
         )
 
         response = await agent.arun(message, stream=True)

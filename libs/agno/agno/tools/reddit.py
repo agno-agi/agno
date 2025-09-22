@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -20,14 +20,6 @@ class RedditTools(Toolkit):
         user_agent: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
-        get_user_info: bool = True,
-        get_top_posts: bool = True,
-        get_subreddit_info: bool = True,
-        get_trending_subreddits: bool = True,
-        get_subreddit_stats: bool = True,
-        create_post: bool = True,
-        reply_to_post: bool = True,
-        reply_to_comment: bool = True,
         **kwargs,
     ):
         if reddit_instance is not None:
@@ -65,23 +57,16 @@ class RedditTools(Toolkit):
             else:
                 logger.warning("Missing Reddit API credentials")
 
-        tools: List[Any] = []
-        if get_user_info:
-            tools.append(self.get_user_info)
-        if get_top_posts:
-            tools.append(self.get_top_posts)
-        if get_subreddit_info:
-            tools.append(self.get_subreddit_info)
-        if get_trending_subreddits:
-            tools.append(self.get_trending_subreddits)
-        if get_subreddit_stats:
-            tools.append(self.get_subreddit_stats)
-        if create_post:
-            tools.append(self.create_post)
-        if reply_to_post:
-            tools.append(self.reply_to_post)
-        if reply_to_comment:
-            tools.append(self.reply_to_comment)
+        tools: List[Callable] = [
+            self.get_user_info,
+            self.get_top_posts,
+            self.get_subreddit_info,
+            self.get_trending_subreddits,
+            self.get_subreddit_stats,
+            self.create_post,
+            self.reply_to_post,
+            self.reply_to_comment,
+        ]
 
         super().__init__(name="reddit", tools=tools, **kwargs)
 

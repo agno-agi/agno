@@ -66,7 +66,6 @@ async def run_agent(message: str) -> None:
                 Be methodical, extract structured data, and provide valuable insights.
             """),
             markdown=True,
-            show_tool_calls=True,
         )
         await agent.aprint_response(message, stream=True)
 

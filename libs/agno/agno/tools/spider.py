@@ -7,16 +7,33 @@ except ImportError:
 
 from typing import Any, List, Optional
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
 
 
 class SpiderTools(Toolkit):
+    """
+    Spider is a toolkit for web searching, scraping, and crawling.
+
+    Args:
+        enable_search (bool): Enable web search functionality. Default is True.
+        enable_scrape (bool): Enable web scraping functionality. Default is True.
+        enable_crawl (bool): Enable web crawling functionality. Default is True.
+        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        max_results (Optional[int]): Default maximum number of results.
+        url (Optional[str]): Default URL for operations.
+        optional_params (Optional[dict]): Additional parameters for operations.
+    """
+
     def __init__(
         self,
         max_results: Optional[int] = None,
         url: Optional[str] = None,
         optional_params: Optional[dict] = None,
+        enable_search: bool = True,
+        enable_scrape: bool = True,
+        enable_crawl: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.max_results = max_results
@@ -24,9 +41,12 @@ class SpiderTools(Toolkit):
         self.optional_params = optional_params or {}
 
         tools: List[Any] = []
-        tools.append(self.search)
-        tools.append(self.scrape)
-        tools.append(self.crawl)
+        if enable_search or all:
+            tools.append(self.search)
+        if enable_scrape or all:
+            tools.append(self.scrape)
+        if enable_crawl or all:
+            tools.append(self.crawl)
 
         super().__init__(name="spider", tools=tools, **kwargs)
 

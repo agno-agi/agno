@@ -17,36 +17,32 @@
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.memory.v2.db.sqlite import SqliteMemoryDb
-from agno.memory.v2.memory import Memory
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.playground import Playground, serve_playground_app
-from agno.storage.sqlite import SqliteStorage
+from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 
 finance_agent_with_memory = Agent(
     name="Finance Agent with Memory",
-    agent_id="financial_agent_with_memory",
+    id="financial_agent_with_memory",
     model=OpenAIChat(id="gpt-4.1"),
     tools=[YFinanceTools(enable_all=True), DuckDuckGoTools()],
-    memory=Memory(
-        db=SqliteMemoryDb(table_name="agent_memory", db_file="tmp/agent_data.db"),
-        model=OpenAIChat(id="gpt-4o-mini"),
-        clear_memories=True,
-        delete_memories=True,
-    ),
     # Let the Agent create and manage user memories
     enable_agentic_memory=True,
     # Uncomment to always create memories from the input
     # can be used instead of enable_agentic_memory
     # enable_user_memories=True,
-    storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_data.db"),
+    db=SqliteDb(
+        session_table="agent_sessions",
+        db_file="tmp/agent_data.db",
+        memory_table="agent_memory",
+    ),
     # Add messages from the last 3 runs to the messages
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_runs=3,
     # Add the current datetime to the instructions
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     # Use markdown formatting
     markdown=True,
     instructions=dedent("""\
@@ -66,7 +62,12 @@ finance_agent_with_memory = Agent(
     """),
 )
 
-app = Playground(agents=[finance_agent_with_memory]).get_app()
+# Initialize the AgentOS with the workflows
+agent_os = AgentOS(
+    description="Example OS setup",
+    agents=[finance_agent_with_memory],
+)
+app = agent_os.get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("financial_agent_with_memory:app", port=7777)
+    agent_os.serve(app="financial_agent_with_memory:app", reload=True)
