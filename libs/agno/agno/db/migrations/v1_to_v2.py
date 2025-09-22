@@ -363,7 +363,7 @@ def migrate_table_in_batches(
     for batch_content in get_table_content_in_batches(db, v1_db_schema, v1_table_name, batch_size):
         batch_count += 1
         batch_size_actual = len(batch_content)
-        log_info(f"Processing batch {batch_count} with {batch_size_actual} records from table{v1_table_name}")
+        log_info(f"Processing batch {batch_count} with {batch_size_actual} records from table {v1_table_name}")
 
         # Parse the content into the new format
         memories: List[UserMemory] = []
