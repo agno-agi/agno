@@ -926,10 +926,10 @@ class SingleStoreDb(BaseDb):
 
                         for row in result:
                             if deserialize:
-                                deserialized_session = TeamSession.from_dict(session_dict)
-                                if deserialized_session is None:
+                                deserialized_team_session = TeamSession.from_dict(session_dict)
+                                if deserialized_team_session is None:
                                     continue
-                                results.append(deserialized_session)
+                                results.append(deserialized_team_session)
                             else:
                                 results.append(dict(row._mapping))
 
@@ -975,10 +975,10 @@ class SingleStoreDb(BaseDb):
 
                         for row in result:
                             if deserialize:
-                                deserialized_session = WorkflowSession.from_dict(session_dict)
-                                if deserialized_session is None:
+                                deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                                if deserialized_workflow_session is None:
                                     continue
-                                results.append(deserialized_session)
+                                results.append(deserialized_workflow_session)
                             else:
                                 results.append(dict(row._mapping))
 

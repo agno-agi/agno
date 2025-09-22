@@ -736,8 +736,8 @@ class PostgresDb(BaseDb):
             # Bulk upsert agent sessions
             if agent_sessions:
                 session_records = []
-                for session in agent_sessions:
-                    session_dict = session.to_dict()
+                for agent_session in agent_sessions:
+                    session_dict = agent_session.to_dict()
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -779,8 +779,8 @@ class PostgresDb(BaseDb):
             # Bulk upsert team sessions
             if team_sessions:
                 session_records = []
-                for session in team_sessions:
-                    session_dict = session.to_dict()
+                for team_session in team_sessions:
+                    session_dict = team_session.to_dict()
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -822,8 +822,8 @@ class PostgresDb(BaseDb):
             # Bulk upsert workflow sessions
             if workflow_sessions:
                 session_records = []
-                for session in workflow_sessions:
-                    session_dict = session.to_dict()
+                for workflow_session in workflow_sessions:
+                    session_dict = workflow_session.to_dict()
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
