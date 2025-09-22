@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool
 
 try:
@@ -251,12 +251,13 @@ class MCPTools(Toolkit):
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
-                    logger.error(f"Failed to register tool {tool.name}: {e}")
+                    log_error(f"Failed to register tool {tool.name}: {e}")
 
             log_debug(f"{self.name} initialized with {len(filtered_tools)} tools")
             self._initialized = True
+
         except Exception as e:
-            logger.error(f"Failed to get MCP tools: {e}")
+            log_error(f"Failed to get MCP tools: {e}")
             raise
 
 
@@ -367,7 +368,7 @@ class MultiMCPTools(Toolkit):
 
     async def __aenter__(self) -> "MultiMCPTools":
         """Enter the async context manager."""
-        errors = []
+        server_connection_errors = []
 
         for server_params in self.server_params_list:
             try:
@@ -402,14 +403,15 @@ class MultiMCPTools(Toolkit):
                     self._successful_connections += 1
 
             except Exception as e:
-                logger.error(f"Failed to initialize MCP server with params {server_params}: {e}")
-                errors.append(str(e))
                 if not self.allow_partial_failure:
                     raise ValueError(f"MCP connection failed: {e}")
+
+                log_error(f"Failed to initialize MCP server with params {server_params}: {e}")
+                server_connection_errors.append(str(e))
                 continue
 
-        if self._successful_connections == 0 and errors:
-            raise ValueError(f"All MCP connections failed: {errors}")
+        if self._successful_connections == 0 and server_connection_errors:
+            raise ValueError(f"All MCP connections failed: {server_connection_errors}")
 
         if not self._initialized and self._successful_connections > 0:
             self._initialized = True
@@ -465,10 +467,10 @@ class MultiMCPTools(Toolkit):
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
-                    logger.error(f"Failed to register tool {tool.name}: {e}")
+                    log_error(f"Failed to register tool {tool.name}: {e}")
 
             log_debug(f"{self.name} initialized with {len(filtered_tools)} tools from one MCP server")
             self._initialized = True
         except Exception as e:
-            logger.error(f"Failed to get MCP tools: {e}")
+            log_error(f"Failed to get MCP tools: {e}")
             raise
