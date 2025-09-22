@@ -380,12 +380,13 @@ def migrate_table_in_batches(
         else:
             raise ValueError(f"Invalid table type: {v1_table_type}")
 
-        # Insert the batch into the new table using bulk operations
+        # Insert the batch into the new table
         if v1_table_type in ["agent_sessions", "team_sessions", "workflow_sessions"]:
             if sessions:
                 db.upsert_sessions(sessions)  # type: ignore
                 total_migrated += len(sessions)
                 log_info(f"Bulk upserted {len(sessions)} sessions in batch {batch_count}")
+
         elif v1_table_type == "memories":
             if memories:
                 db.upsert_memories(memories)
@@ -424,8 +425,9 @@ def get_table_content_in_batches(
         else:
             # SQL database implementations (PostgresDb, MySQLDb, SqliteDb)
             offset = 0
-            with db.Session() as sess:
-                while True:
+            while True:
+                # Create a new session for each batch to avoid transaction conflicts
+                with db.Session() as sess:
                     # Handle empty schema by omitting the schema prefix (needed for SQLite)
                     if db_schema and db_schema.strip():
                         sql_query = f"SELECT * FROM {db_schema}.{table_name} LIMIT {batch_size} OFFSET {offset}"
