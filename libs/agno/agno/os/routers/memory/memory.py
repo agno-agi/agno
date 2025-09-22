@@ -396,7 +396,7 @@ def parse_topics(
     topics: Optional[List[str]] = Query(
         default=None,
         description="Comma-separated list of topics to filter by",
-        example=["preferences,technical,communication_style"],
+        examples=["preferences,technical,communication_style"],
     ),
 ) -> Optional[List[str]]:
     """Parse comma-separated topics into a list for filtering memories by topic."""
