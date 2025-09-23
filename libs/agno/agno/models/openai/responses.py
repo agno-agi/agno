@@ -406,25 +406,25 @@ class OpenAIResponses(Model):
 
         messages_to_format = messages
         previous_response_id: Optional[str] = None
-        
+
         if self._using_reasoning_model() and self.store is not False:
             # Detect whether we're chaining via previous_response_id. If so, we should NOT
             # re-send prior function_call items; the Responses API already has the state and
             # expects only the corresponding function_call_output items.
-        
+
             for msg in reversed(messages):
                 if (
-                    msg.role == "assistant" 
-                    and hasattr(msg, "provider_data") 
-                    and msg.provider_data 
+                    msg.role == "assistant"
+                    and hasattr(msg, "provider_data")
+                    and msg.provider_data
                     and "response_id" in msg.provider_data
                 ):
                     previous_response_id = msg.provider_data["response_id"]
                     msg_index = messages.index(msg)
-                    
+
                     # Include messages after this assistant message
-                    messages_to_format = messages[msg_index + 1:]
-                    
+                    messages_to_format = messages[msg_index + 1 :]
+
                     break
 
         # Build a mapping from function_call id (fc_*) → call_id (call_*) from prior assistant tool_calls

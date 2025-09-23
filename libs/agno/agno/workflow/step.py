@@ -1,5 +1,5 @@
 import inspect
-from copy import copy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
@@ -17,6 +17,7 @@ from agno.run.workflow import (
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
 )
+from agno.session.workflow import WorkflowSession
 from agno.team import Team
 from agno.utils.log import log_debug, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.utils.merge_dict import merge_dictionaries
@@ -204,6 +205,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_session: Optional["WorkflowSession"] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
@@ -292,9 +294,31 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Update the history check to use workflow flag instead of agent flag:
+                        history = None
+                        if workflow_session:  # Always try to get history if workflow has session
+                            # Get workflow conversation history
+                            history_messages = workflow_session.get_messages_for_workflow_history(
+                                num_history_runs=3  # Default or from workflow setting
+                            )
+
+                            if history_messages:
+                                # Create deep copy and tag as history
+                                history = [deepcopy(msg) for msg in history_messages]
+                                for msg in history:
+                                    msg.from_history = True
+
+                                # Add current message to history
+                                from agno.models.message import Message
+
+                                if isinstance(message, str):
+                                    history.append(Message(role="user", content=message))
+                                elif isinstance(message, Message):
+                                    history.append(message)
+
                         session_state_copy = copy(session_state)
                         response = self.active_executor.run(  # type: ignore
-                            input=message,  # type: ignore
+                            input=message if not history else history,  # type: ignore
                             images=images,
                             videos=videos,
                             audio=audios,

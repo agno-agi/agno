@@ -167,6 +167,9 @@ class Workflow:
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
 
+    # Add this flag to control if the workflow should add history to the context
+    add_history_to_context_for_steps: bool = False
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -187,6 +190,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         cache_session: bool = False,
         telemetry: bool = True,
+        add_history_to_context_for_steps: bool = False,
     ):
         self.id = id
         self.name = name
@@ -206,6 +210,7 @@ class Workflow:
         self.cache_session = cache_session
         self.db = db
         self.telemetry = telemetry
+        self.add_history_to_context_for_steps = add_history_to_context_for_steps
 
         self._workflow_session: Optional[WorkflowSession] = None
 
@@ -947,6 +952,7 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_session=session if self.add_history_to_context_for_steps else None,
                     )
 
                     # Check for cancellation after step execution
@@ -1405,7 +1411,6 @@ class Workflow:
                     if step_output.stop:
                         logger.info(f"Early termination requested by step {step_name}")
                         break
-
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:

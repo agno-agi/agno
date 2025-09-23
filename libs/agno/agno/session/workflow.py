@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional
 
+from agno.models.message import Message
 from agno.run.workflow import WorkflowRunOutput
 from agno.utils.log import logger
 
@@ -74,6 +75,40 @@ class WorkflowSession:
                 break
         else:
             self.runs.append(run)
+
+    def get_messages_for_workflow_history(
+        self,
+        num_history_runs: int = 3,
+        user_role: str = "user",
+        assistant_role: str = "assistant",
+    ) -> List[Message]:
+        """Get conversation messages from workflow history for context"""
+        from agno.models.message import Message
+        from agno.run.base import RunStatus
+
+        final_messages: List[Message] = []
+
+        if not self.runs:
+            return []
+
+        # Get completed runs only (exclude current/pending run)
+        completed_runs = [run for run in self.runs if run.status == RunStatus.completed]
+        recent_runs = completed_runs[-num_history_runs:] if len(completed_runs) > num_history_runs else completed_runs
+
+        for run in recent_runs:
+            # Extract user input as user message
+            if run.input:
+                if isinstance(run.input, str):
+                    user_msg = Message(role=user_role, content=run.input)
+                    final_messages.append(user_msg)
+
+            # Extract workflow response as assistant message
+            if run.content:
+                if isinstance(run.content, str):
+                    assistant_msg = Message(role=assistant_role, content=run.content)
+                    final_messages.append(assistant_msg)
+
+        return final_messages
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage, serializing runs to dicts"""
