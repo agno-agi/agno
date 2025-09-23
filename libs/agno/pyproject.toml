@@ -148,6 +148,7 @@ clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
 surrealdb = ["surrealdb>=1.0.4"]
 upstash = ["upstash-vector"]
+databend = ["databend-driver"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -266,6 +267,7 @@ vectordbs = [
   "agno[pinecone]",
   "agno[surrealdb]",
   "agno[upstash]",
+  "agno[databend]",
 ]
 
 # All knowledge
