@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.knowledge.chunking.agentic import AgenticChunking
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reader.pdf_reader import PDFUrlReader
+from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -12,7 +12,7 @@ knowledge = Knowledge(
 
 knowledge.add_content(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    reader=PDFUrlReader(
+    reader=PDFReader(
         name="Agentic Chunking Reader",
         chunking_strategy=AgenticChunking(),
     ),

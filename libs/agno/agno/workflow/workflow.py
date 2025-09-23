@@ -343,9 +343,19 @@ class Workflow:
         if user_id is None:
             user_id = self.user_id
 
-        # Determine the session_state
+        # Determine the session_state with proper precedence
         if session_state is None:
             session_state = self.session_state or {}
+        else:
+            # If run session_state is provided, merge agent defaults under it
+            # This ensures run state takes precedence over agent defaults
+            if self.session_state:
+                from agno.utils.merge_dict import merge_dictionaries
+
+                base_state = self.session_state.copy()
+                merge_dictionaries(base_state, session_state)
+                session_state.clear()
+                session_state.update(base_state)
 
         if user_id is not None:
             session_state["current_user_id"] = user_id
@@ -594,7 +604,8 @@ class Workflow:
 
         from agno.utils.merge_dict import merge_dictionaries
 
-        # Get the session_state from the database and update the current session_state
+        # Get the session_state from the database and merge with proper precedence
+        # At this point session_state contains: agent_defaults + run_params
         if session.session_data and "session_state" in session.session_data:
             session_state_from_db = session.session_data.get("session_state")
 
@@ -603,10 +614,11 @@ class Workflow:
                 and isinstance(session_state_from_db, dict)
                 and len(session_state_from_db) > 0
             ):
-                # This updates session_state_from_db
-                # If there are conflicting keys, values from provided session_state will take precedence
-                merge_dictionaries(session_state_from_db, session_state)
-                session_state = session_state_from_db
+                # This preserves precedence: run_params > db_state > agent_defaults
+                merged_state = session_state_from_db.copy()
+                merge_dictionaries(merged_state, session_state)
+                session_state.clear()
+                session_state.update(merged_state)
 
         # Update the session_state in the session
         if session.session_data is None:
@@ -616,7 +628,10 @@ class Workflow:
         return session_state
 
     def _get_workflow_data(self) -> Dict[str, Any]:
-        workflow_data = {}
+        workflow_data: Dict[str, Any] = {
+            "workflow_id": self.id,
+            "name": self.name,
+        }
 
         if self.steps and not callable(self.steps):
             steps_dict = []
@@ -939,9 +954,7 @@ class Workflow:
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
-                    if step_output.stop:
-                        logger.info(f"Early termination requested by step {step_name}")
-                        break
+                    collected_step_outputs.append(step_output)
 
                     # Update shared media for next step
                     shared_images.extend(step_output.images or [])
@@ -953,7 +966,9 @@ class Workflow:
                     output_audio.extend(step_output.audio or [])
                     output_files.extend(step_output.files or [])
 
-                    collected_step_outputs.append(step_output)
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by step {step_name}")
+                        break
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
@@ -1375,9 +1390,7 @@ class Workflow:
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
-                    if step_output.stop:
-                        logger.info(f"Early termination requested by step {step_name}")
-                        break
+                    collected_step_outputs.append(step_output)
 
                     # Update shared media for next step
                     shared_images.extend(step_output.images or [])
@@ -1389,7 +1402,10 @@ class Workflow:
                     output_audio.extend(step_output.audio or [])
                     output_files.extend(step_output.files or [])
 
-                    collected_step_outputs.append(step_output)
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by step {step_name}")
+                        break
+
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
@@ -1708,6 +1724,7 @@ class Workflow:
         # Create workflow run response with PENDING status
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            input=input,
             session_id=session_id,
             workflow_id=self.id,
             workflow_name=self.name,
@@ -1798,6 +1815,7 @@ class Workflow:
         # Create workflow run response with PENDING status
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            input=input,
             session_id=session_id,
             workflow_id=self.id,
             workflow_name=self.name,
@@ -1971,6 +1989,7 @@ class Workflow:
         # Create workflow run response that will be updated by reference
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            input=input,
             session_id=session_id,
             workflow_id=self.id,
             workflow_name=self.name,
@@ -2139,6 +2158,7 @@ class Workflow:
         # Create workflow run response that will be updated by reference
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            input=input,
             session_id=session_id,
             workflow_id=self.id,
             workflow_name=self.name,
@@ -2367,6 +2387,34 @@ class Workflow:
         """Convert workflow to dictionary representation"""
 
         def serialize_step(step):
+            # Handle callable functions (not wrapped in Step objects)
+            if callable(step) and hasattr(step, "__name__"):
+                step_dict = {
+                    "name": step.__name__,
+                    "description": "User-defined callable step",
+                    "type": StepType.STEP.value,
+                }
+                return step_dict
+
+            # Handle Agent and Team objects directly
+            if isinstance(step, Agent):
+                step_dict = {
+                    "name": step.name or "unnamed_agent",
+                    "description": step.description or "Agent step",
+                    "type": StepType.STEP.value,
+                    "agent": step,
+                }
+                return step_dict
+
+            if isinstance(step, Team):
+                step_dict = {
+                    "name": step.name or "unnamed_team",
+                    "description": step.description or "Team step",
+                    "type": StepType.STEP.value,
+                    "team": step,
+                }
+                return step_dict
+
             step_dict = {
                 "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
                 "description": step.description if hasattr(step, "description") else "User-defined callable step",

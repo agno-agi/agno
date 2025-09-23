@@ -21,7 +21,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.exceptions import AgentRunException
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
@@ -46,6 +46,7 @@ class MessageData:
     response_audio: Optional[Audio] = None
     response_image: Optional[Image] = None
     response_video: Optional[Video] = None
+    response_file: Optional[File] = None
 
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
@@ -195,6 +196,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         run_response: Optional[RunOutput] = None,
+        send_media_to_model: bool = True,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -266,6 +268,11 @@ class Model(ABC):
                                 model_response.videos = []
                             model_response.videos.extend(function_call_response.videos)
 
+                        if function_call_response.files is not None:
+                            if model_response.files is None:
+                                model_response.files = []
+                            model_response.files.extend(function_call_response.files)
+
                         if (
                             function_call_response.event
                             in [
@@ -293,9 +300,13 @@ class Model(ABC):
                     messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                 )
 
-                if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
-                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results)
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -333,6 +344,7 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        send_media_to_model: bool = True,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -402,6 +414,11 @@ class Model(ABC):
                                 model_response.videos = []
                             model_response.videos.extend(function_call_response.videos)
 
+                        if function_call_response.files is not None:
+                            if model_response.files is None:
+                                model_response.files = []
+                            model_response.files.extend(function_call_response.files)
+
                         if (
                             function_call_response.event
                             in [
@@ -428,9 +445,13 @@ class Model(ABC):
                     messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                 )
 
-                if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
-                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results)
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -607,6 +628,10 @@ class Model(ABC):
             if provider_response.videos:
                 assistant_message.video_output = provider_response.videos[-1]  # Taking last (most recent) video
 
+        if provider_response.files is not None:
+            if provider_response.files:
+                assistant_message.file_output = provider_response.files[-1]  # Taking last (most recent) file
+
         if provider_response.audios is not None:
             if provider_response.audios:
                 assistant_message.audio_output = provider_response.audios[-1]  # Taking last (most recent) audio
@@ -674,6 +699,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
+        send_media_to_model: bool = True,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -763,7 +789,11 @@ class Model(ABC):
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
-                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results)
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -833,6 +863,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
+        send_media_to_model: bool = True,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -922,7 +953,11 @@ class Model(ABC):
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
-                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results)
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -1026,7 +1061,13 @@ class Model(ABC):
         if model_response_delta.extra is not None:
             if stream_data.extra is None:
                 stream_data.extra = {}
-            stream_data.extra.update(model_response_delta.extra)
+            for key in model_response_delta.extra:
+                if isinstance(model_response_delta.extra[key], list):
+                    if not stream_data.extra.get(key):
+                        stream_data.extra[key] = []
+                    stream_data.extra[key].extend(model_response_delta.extra[key])
+                else:
+                    stream_data.extra[key] = model_response_delta.extra[key]
 
         if should_yield:
             yield model_response_delta
@@ -1213,6 +1254,8 @@ class Model(ABC):
                     function_execution_result.videos = tool_result.videos
                 if tool_result.audios:
                     function_execution_result.audios = tool_result.audios
+                if tool_result.files:
+                    function_execution_result.files = tool_result.files
             else:
                 function_call_output = str(function_execution_result.result) if function_execution_result.result else ""
 
@@ -1246,6 +1289,7 @@ class Model(ABC):
             images=function_execution_result.images,
             videos=function_execution_result.videos,
             audios=function_execution_result.audios,
+            files=function_execution_result.files,
         )
 
         # Add function call to function call results
@@ -1617,6 +1661,8 @@ class Model(ABC):
                         function_execution_result.videos = tool_result.videos
                     if tool_result.audios:
                         function_execution_result.audios = tool_result.audios
+                    if tool_result.files:
+                        function_execution_result.files = tool_result.files
                 else:
                     function_call_output = str(function_call.result)
 
@@ -1649,6 +1695,7 @@ class Model(ABC):
                 images=function_execution_result.images,
                 videos=function_execution_result.videos,
                 audios=function_execution_result.audios,
+                files=function_execution_result.files,
             )
 
             # Add function call result to function call results
@@ -1687,7 +1734,9 @@ class Model(ABC):
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
 
-    def _handle_function_call_media(self, messages: List[Message], function_call_results: List[Message]) -> None:
+    def _handle_function_call_media(
+        self, messages: List[Message], function_call_results: List[Message], send_media_to_model: bool = True
+    ) -> None:
         """
         Handle media artifacts from function calls by adding follow-up user messages for generated media if needed.
         """
@@ -1698,6 +1747,7 @@ class Model(ABC):
         all_images: List[Image] = []
         all_videos: List[Video] = []
         all_audio: List[Audio] = []
+        all_files: List[File] = []
 
         for result_message in function_call_results:
             if result_message.images:
@@ -1713,15 +1763,21 @@ class Model(ABC):
                 all_audio.extend(result_message.audio)
                 result_message.audio = None
 
-        # If we have media artifacts, add a follow-up "user" message instead of a "tool"
-        # message with the media artifacts which throws error for some models
-        if all_images or all_videos or all_audio:
+            if result_message.files:
+                all_files.extend(result_message.files)
+                result_message.files = None
+
+        # Only add media message if we should send media to model
+        if send_media_to_model and (all_images or all_videos or all_audio or all_files):
+            # If we have media artifacts, add a follow-up "user" message instead of a "tool"
+            # message with the media artifacts which throws error for some models
             media_message = Message(
                 role="user",
                 content="Take note of the following content",
                 images=all_images if all_images else None,
                 videos=all_videos if all_videos else None,
                 audio=all_audio if all_audio else None,
+                files=all_files if all_files else None,
             )
             messages.append(media_message)
 

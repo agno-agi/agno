@@ -30,6 +30,7 @@ from pydantic import BaseModel
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import ModelProviderError, RunCancelledException, StopAgentRun
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
@@ -107,7 +108,7 @@ from agno.utils.response import (
     get_paused_content,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model_str
+from agno.utils.string import generate_id_from_name, parse_response_model_str
 from agno.utils.timer import Timer
 
 
@@ -371,7 +372,7 @@ class Agent:
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         metadata: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
+        tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -455,6 +456,11 @@ class Agent:
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
 
+        if add_history_to_context and not db:
+            log_warning(
+                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+            )
+
         self.store_media = store_media
 
         self.knowledge = knowledge
@@ -466,7 +472,7 @@ class Agent:
 
         self.metadata = metadata
 
-        self.tools = tools
+        self.tools = list(tools) if tools else []
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
@@ -545,10 +551,7 @@ class Agent:
 
     def set_id(self) -> None:
         if self.id is None:
-            if self.name is not None:
-                self.id = self.name.lower().replace(" ", "-")
-            else:
-                self.id = str(uuid4())
+            self.id = generate_id_from_name(self.name)
 
     def _set_debug(self, debug_mode: Optional[bool] = None) -> None:
         # If the default debug mode is set, or passed on run, or via environment variable, set the debug mode to True
@@ -684,8 +687,8 @@ class Agent:
         self.tools.append(tool)
         self._rebuild_tools = True
 
-    def set_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]]):
-        self.tools = tools
+    def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]):
+        self.tools = list(tools) if tools else []
         self._rebuild_tools = True
 
     def _initialize_session(
@@ -714,6 +717,14 @@ class Agent:
         # Determine the session_state
         if session_state is None:
             session_state = self.session_state or {}
+        else:
+            # If run session_state is provided, merge agent defaults under it
+            # This ensures run state takes precedence over agent defaults
+            if self.session_state:
+                base_state = self.session_state.copy()
+                merge_dictionaries(base_state, session_state)
+                session_state.clear()
+                session_state.update(base_state)
 
         if user_id is not None:
             session_state["current_user_id"] = user_id
@@ -765,6 +776,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         )
 
         # Check for cancellation after model call
@@ -790,14 +802,7 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-        # 4. Update Agent Memory
-        response_iterator = self._make_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        )
-        # Consume the response iterator to ensure the memory is updated before the run is completed
-        deque(response_iterator, maxlen=0)
-
-        # 5. Calculate session metrics
+        # 4. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
         run_response.status = RunStatus.completed
@@ -809,13 +814,20 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # 6. Optional: Save output to file if save_response_to_file is set
+        # 5. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
-        # 7. Add the RunOutput to Agent Session
+        # 6. Add the RunOutput to Agent Session
         session.upsert_run(run=run_response)
+
+        # 7. Update Agent Memory
+        response_iterator = self._make_memories_and_summaries(
+            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+        )
+        # Consume the response iterator to ensure the memory is updated before the run is completed
+        deque(response_iterator, maxlen=0)
 
         # 8. Save session to memory
         self.save_session(session=session)
@@ -930,12 +942,7 @@ class Agent:
                 )
                 return
 
-            # 3. Update Agent Memory
-            yield from self._make_memories_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-            )
-
-            # 4. Calculate session metrics
+            # 3. Calculate session metrics
             self._update_session_metrics(session=session, run_response=run_response)
 
             run_response.status = RunStatus.completed
@@ -948,7 +955,7 @@ class Agent:
             if run_response.metrics:
                 run_response.metrics.stop_timer()
 
-            # 5. Optional: Save output to file if save_response_to_file is set
+            # 4. Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
                 run_response=run_response,
                 input=run_messages.user_message,
@@ -956,8 +963,13 @@ class Agent:
                 user_id=user_id,
             )
 
-            # 6. Add RunOutput to Agent Session
+            # 5. Add RunOutput to Agent Session
             session.upsert_run(run=run_response)
+
+            # 6. Update Agent Memory
+            yield from self._make_memories_and_summaries(
+                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+            )
 
             # 7. Save session to storage
             self.save_session(session=session)
@@ -1083,13 +1095,17 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
-            images=images, videos=videos, audios=audio
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
         )
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
         )
 
         # Read existing session from database
@@ -1175,6 +1191,7 @@ class Agent:
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
+            dependencies=run_dependencies,
             user_id=user_id,
             async_mode=False,
             knowledge_filters=effective_filters,
@@ -1358,6 +1375,7 @@ class Agent:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
+            send_media_to_model=self.send_media_to_model,
         )
 
         # Check for cancellation after model call
@@ -1383,13 +1401,7 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-        # 6. Update Agent Memory
-        async for _ in self._amake_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        ):
-            pass
-
-        # 7. Calculate session metrics
+        # 6. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
         run_response.status = RunStatus.completed
@@ -1406,8 +1418,14 @@ class Agent:
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
-        # 8. Add RunOutput to Agent Session
+        # 7. Add RunOutput to Agent Session
         session.upsert_run(run=run_response)
+
+        # 8. Update Agent Memory
+        async for _ in self._amake_memories_and_summaries(
+            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+        ):
+            pass
 
         # 9. Save session to storage
         self.save_session(session=session)
@@ -1563,13 +1581,7 @@ class Agent:
                     yield item
                 return
 
-            # 5. Update Agent Memory
-            async for event in self._amake_memories_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-            ):
-                yield event
-
-            # 6. Calculate session metrics
+            # 5. Calculate session metrics
             self._update_session_metrics(session=session, run_response=run_response)
 
             run_response.status = RunStatus.completed
@@ -1590,8 +1602,14 @@ class Agent:
                 user_id=user_id,
             )
 
-            # 7. Add RunOutput to Agent Session
+            # 6. Add RunOutput to Agent Session
             session.upsert_run(run=run_response)
+
+            # 7. Update Agent Memory
+            async for event in self._amake_memories_and_summaries(
+                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+            ):
+                yield event
 
             # 8. Save session to storage
             self.save_session(session=session)
@@ -1716,13 +1734,17 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._validate_media_object_id(
-            images=images, videos=videos, audios=audio
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
         )
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
         )
 
         # Read existing session from storage
@@ -1802,6 +1824,7 @@ class Agent:
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
+            dependencies=run_dependencies,
             user_id=user_id,
             async_mode=True,
             knowledge_filters=effective_filters,
@@ -2177,14 +2200,7 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-        # 4. Update Agent Memory
-        response_iterator = self._make_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        )
-        # Consume the response iterator to ensure the memory is updated before the run is completed
-        deque(response_iterator, maxlen=0)
-
-        # 5. Calculate session metrics
+        # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
         run_response.status = RunStatus.completed
@@ -2196,13 +2212,20 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # 5. Save output to file if save_response_to_file is set
+        # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
-        # 6. Add the run to memory
+        # 5. Add the run to memory
         session.upsert_run(run=run_response)
+
+        # 6. Update Agent Memory
+        response_iterator = self._make_memories_and_summaries(
+            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+        )
+        # Consume the response iterator to ensure the memory is updated before the run is completed
+        deque(response_iterator, maxlen=0)
 
         # 7. Save session to storage
         self.save_session(session=session)
@@ -2261,12 +2284,7 @@ class Agent:
             )
             return
 
-        # 4. Update Agent Memory
-        yield from self._make_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        )
-
-        # 5. Calculate session metrics
+        # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
         run_response.status = RunStatus.completed
@@ -2277,13 +2295,18 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # 5. Save output to file if save_response_to_file is set
+        # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
-        # 6. Add the run to memory
+        # 5. Add the run to memory
         session.upsert_run(run=run_response)
+
+        # 6. Update Agent Memory
+        yield from self._make_memories_and_summaries(
+            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+        )
 
         # 7. Save session to storage
         self.save_session(session=session)
@@ -2563,13 +2586,7 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-        # 4. Update Agent Memory
-        async for _ in self._amake_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        ):
-            pass
-
-        # 5. Calculate session metrics
+        # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
         run_response.status = RunStatus.completed
@@ -2581,14 +2598,21 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # 7. Save output to file if save_response_to_file is set
+        # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
+        # 5. Add the run to memory
         session.upsert_run(run=run_response)
 
-        # 6. Save session to storage
+        # 6. Update Agent Memory
+        async for _ in self._amake_memories_and_summaries(
+            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+        ):
+            pass
+
+        # 7. Save session to storage
         self.save_session(session=session)
 
         # Log Agent Telemetry
@@ -2644,9 +2668,6 @@ class Agent:
         ):
             yield event
 
-        # 3. Add the run to memory
-        session.upsert_run(run=run_response)
-
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             for item in self._handle_agent_run_paused_stream(
@@ -2655,13 +2676,7 @@ class Agent:
                 yield item
             return
 
-        # 4. Update Agent Memory
-        async for event in self._amake_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        ):
-            yield event
-
-        # 5. Calculate session metrics
+        # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
         run_response.status = RunStatus.completed
@@ -2672,14 +2687,21 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # 6. Save output to file if save_response_to_file is set
+        # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
+        # 5. Add the run to memory
         session.upsert_run(run=run_response)
 
-        # 6. Save session to storage
+        # 6. Update Agent Memory
+        async for event in self._amake_memories_and_summaries(
+            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+        ):
+            yield event
+
+        # 7. Save session to storage
         self.save_session(session=session)
 
         if stream_intermediate_steps:
@@ -3067,6 +3089,10 @@ class Agent:
             for audio in model_response.audios:
                 self._add_audio(audio, run_response)  # Generated audio go to run_response.audio
 
+        if model_response.files is not None:
+            for file in model_response.files:
+                self._add_file(file, run_response)  # Generated files go to run_response.files
+
     def _update_run_response(self, model_response: ModelResponse, run_response: RunOutput, run_messages: RunMessages):
         # Handle structured outputs
         if self.output_schema is not None and model_response.parsed is not None:
@@ -3092,6 +3118,8 @@ class Agent:
         # Update the run_response citations with the model response citations
         if model_response.citations is not None:
             run_response.citations = model_response.citations
+        if model_response.provider_data is not None:
+            run_response.model_provider_data = model_response.provider_data
 
         # Update the run_response tools with the model response tool_executions
         if model_response.tool_executions is not None:
@@ -3129,7 +3157,8 @@ class Agent:
         """Calculate session metrics"""
         session_metrics = self._get_session_metrics(session=session)
         # Add the metrics for the current run to the session metrics
-        session_metrics += run_response.metrics
+        if run_response.metrics is not None:
+            session_metrics += run_response.metrics
         session_metrics.time_to_first_token = None
         if session.session_data is not None:
             session.session_data["session_metrics"] = session_metrics
@@ -3165,6 +3194,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -3241,6 +3271,7 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             run_response=run_response,
+            send_media_to_model=self.send_media_to_model,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -3330,17 +3361,11 @@ class Agent:
                         run_response.content = model_response.content
                         run_response.content_type = "str"
 
+                # Process reasoning content
                 if model_response_event.reasoning_content is not None:
                     model_response.reasoning_content = (
                         model_response.reasoning_content or ""
                     ) + model_response_event.reasoning_content
-                    run_response.reasoning_content = model_response.reasoning_content
-
-                if model_response_event.reasoning_content is not None:
-                    if not model_response.reasoning_content:
-                        model_response.reasoning_content = model_response_event.reasoning_content
-                    else:
-                        model_response.reasoning_content += model_response_event.reasoning_content
                     run_response.reasoning_content = model_response.reasoning_content
 
                 if model_response_event.redacted_reasoning_content is not None:
@@ -3350,8 +3375,12 @@ class Agent:
                         model_response.reasoning_content += model_response_event.redacted_reasoning_content
                     run_response.reasoning_content = model_response.reasoning_content
 
+                # Handle provider data (one chunk)
+                if model_response_event.provider_data is not None:
+                    run_response.model_provider_data = model_response_event.provider_data
+
+                # Handle citations (one chunk)
                 if model_response_event.citations is not None:
-                    # We get citations in one chunk
                     run_response.citations = model_response_event.citations
 
                 # Only yield if we have content to show
@@ -3370,6 +3399,7 @@ class Agent:
                     or model_response_event.reasoning_content is not None
                     or model_response_event.redacted_reasoning_content is not None
                     or model_response_event.citations is not None
+                    or model_response_event.provider_data is not None
                 ):
                     yield self._handle_event(
                         create_run_output_content_event(
@@ -3378,6 +3408,7 @@ class Agent:
                             reasoning_content=model_response_event.reasoning_content,
                             redacted_reasoning_content=model_response_event.redacted_reasoning_content,
                             citations=model_response_event.citations,
+                            model_provider_data=model_response_event.provider_data,
                         ),
                         run_response,
                         workflow_context=workflow_context,
@@ -3776,29 +3807,21 @@ class Agent:
 
             # If any of the tools has "agent" as parameter, set _rebuild_tools to True
             for tool in agent_tools:
+                param_names = {"agent", "session_state", "team", "images", "videos", "audios", "files"}
+
                 if isinstance(tool, Function):
-                    if "agent" in tool.parameters:
+                    if param_names & set(tool.parameters):
                         self._rebuild_tools = True
                         break
-                    if "team" in tool.parameters:
-                        self._rebuild_tools = True
-                        break
-                if isinstance(tool, Toolkit):
+                elif isinstance(tool, Toolkit):
                     for func in tool.functions.values():
-                        if "agent" in func.parameters:
+                        if param_names & set(func.parameters):
                             self._rebuild_tools = True
                             break
-                        if "team" in func.parameters:
-                            self._rebuild_tools = True
-                            break
-                if callable(tool):
+                elif callable(tool):
                     from inspect import signature
 
-                    sig = signature(tool)
-                    if "agent" in sig.parameters:
-                        self._rebuild_tools = True
-                        break
-                    if "team" in sig.parameters:
+                    if param_names & set(signature(tool).parameters):
                         self._rebuild_tools = True
                         break
 
@@ -3811,7 +3834,9 @@ class Agent:
             self._rebuild_tools = True
         if self.search_session_history:
             agent_tools.append(
-                self._get_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions)
+                self._get_previous_sessions_messages_function(
+                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                )
             )
             self._rebuild_tools = True
 
@@ -3991,6 +4016,7 @@ class Agent:
         run_response: RunOutput,
         session: AgentSession,
         session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         async_mode: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
@@ -4100,6 +4126,7 @@ class Agent:
 
             for func in self._functions_for_model.values():
                 func._session_state = session_state
+                func._dependencies = dependencies
                 func._images = joint_images
                 func._files = joint_files
                 func._audios = joint_audios
@@ -4228,7 +4255,8 @@ class Agent:
     def _update_session_state(self, session: AgentSession, session_state: Dict[str, Any]):
         """Load the existing Agent from an AgentSession (from the database)"""
 
-        # Get the session_state from the database and update the current session_state
+        # Get the session_state from the database and merge with proper precedence
+        # At this point session_state contains: agent_defaults + run_params
         if session.session_data is not None and "session_state" in session.session_data:
             session_state_from_db = session.session_data.get("session_state")
 
@@ -4237,10 +4265,11 @@ class Agent:
                 and isinstance(session_state_from_db, dict)
                 and len(session_state_from_db) > 0
             ):
-                # This updates session_state_from_db
-                # If there are conflicting keys, values from provided session_state will take precedence
-                merge_dictionaries(session_state_from_db, session_state)
-                session_state = session_state_from_db
+                # This preserves precedence: run_params > db_state > agent_defaults
+                merged_state = session_state_from_db.copy()
+                merge_dictionaries(merged_state, session_state)
+                session_state.clear()
+                session_state.update(merged_state)
 
         # Update the session_state in the session
         if session.session_data is not None:
@@ -4917,7 +4946,7 @@ class Agent:
             system_message_content += f"{get_response_model_format_prompt(self.output_schema)}"
 
         # 3.3.15 Add the session state to the system message
-        if self.add_session_state_to_context and session_state is not None:
+        if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
         # Return the system message
@@ -4959,7 +4988,7 @@ class Agent:
         # 1. If build_user_context is False or message is a list, return the message as is.
         if not self.build_user_context:
             return Message(
-                role=self.user_message_role,
+                role=self.user_message_role or "user",
                 content=input,
                 images=None if not self.send_media_to_model else images,
                 audio=None if not self.send_media_to_model else audio,
@@ -4972,7 +5001,7 @@ class Agent:
             # If we have any media, return a message with empty content
             if images is not None or audio is not None or videos is not None or files is not None:
                 return Message(
-                    role=self.user_message_role,
+                    role=self.user_message_role or "user",
                     content="",
                     images=None if not self.send_media_to_model else images,
                     audio=None if not self.send_media_to_model else audio,
@@ -5188,9 +5217,16 @@ class Agent:
         if add_history_to_context:
             from copy import deepcopy
 
+            # Only skip messages from history when system_message_role is NOT a standard conversation role.
+            # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+            # to preserve conversation continuity.
+            skip_role = (
+                self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
+            )
+
             history: List[Message] = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
-                skip_role=self.system_message_role,
+                skip_role=skip_role,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
@@ -5727,6 +5763,13 @@ class Agent:
             run_response.audio = []
         run_response.audio.append(audio)
 
+    def _add_file(self, file: File, run_response: RunOutput) -> None:
+        """Add file to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.files is None:
+            run_response.files = []
+        run_response.files.append(file)
+
     ###########################################################################
     # Reasoning
     ###########################################################################
@@ -5901,6 +5944,7 @@ class Agent:
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
+                    tool_call_limit=self.tool_call_limit,
                     use_json_mode=self.use_json_mode,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
@@ -6126,6 +6170,7 @@ class Agent:
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
+                    tool_call_limit=self.tool_call_limit,
                     use_json_mode=self.use_json_mode,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
@@ -6697,17 +6742,18 @@ class Agent:
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
-        def search_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+        def search_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
             """Use this function to search the knowledge base for information about a query.
 
             Args:
                 query: The query to search for.
-                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
 
             Returns:
                 str: A string containing the response from the knowledge base.
             """
-            search_filters = get_agentic_or_user_search_filters(filters, knowledge_filters)
+            filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+            search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
 
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
@@ -6730,17 +6776,18 @@ class Agent:
                 return "No documents found"
             return self._convert_documents_to_string(docs_from_knowledge)
 
-        async def asearch_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+        async def asearch_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
             """Use this function to search the knowledge base for information about a query asynchronously.
 
             Args:
                 query: The query to search for.
-                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
 
             Returns:
                 str: A string containing the response from the knowledge base.
             """
-            search_filters = get_agentic_or_user_search_filters(filters, knowledge_filters)
+            filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+            search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
 
             retrieval_timer = Timer()
             retrieval_timer.start()
@@ -6790,11 +6837,14 @@ class Agent:
         )
         return "Successfully added to knowledge base"
 
-    def _get_previous_sessions_messages_function(self, num_history_sessions: Optional[int] = 2) -> Callable:
+    def _get_previous_sessions_messages_function(
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+    ) -> Callable:
         """Factory function to create a get_previous_session_messages function.
 
         Args:
             num_history_sessions: The last n sessions to be taken from db
+            user_id: The user ID to filter sessions by
 
         Returns:
             Callable: A function that retrieves messages from previous sessions
@@ -6813,7 +6863,9 @@ class Agent:
             if self.db is None:
                 return "Previous session messages not available"
 
-            selected_sessions = self.db.get_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
+            selected_sessions = self.db.get_sessions(
+                session_type=SessionType.AGENT, limit=num_history_sessions, user_id=user_id
+            )
 
             all_messages = []
             seen_message_pairs = set()
@@ -6866,21 +6918,21 @@ class Agent:
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
         console: Optional[Any] = None,
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Optional[Set[str]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        add_history_to_context: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -6917,8 +6969,10 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
-                add_history_to_context=add_history,
+                add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 **kwargs,
             )
@@ -6943,8 +6997,10 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
-                add_history_to_context=add_history,
+                add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 **kwargs,
             )
@@ -6963,21 +7019,21 @@ class Agent:
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
         console: Optional[Any] = None,
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Optional[Set[str]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        add_history_to_context: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -7013,8 +7069,10 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
-                add_history_to_context=add_history,
+                add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 **kwargs,
             )
@@ -7038,8 +7096,10 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
-                add_history_to_context=add_history,
+                add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 **kwargs,
             )
@@ -7210,6 +7270,7 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         audios: Optional[Sequence[Audio]] = None,
+        files: Optional[Sequence[File]] = None,
     ) -> tuple:
         """Convert raw Image/Video/Audio objects - now unified, so just return as-is."""
         # With unified classes, no conversion needed - just ensure IDs are set
@@ -7244,7 +7305,17 @@ class Agent:
                     aud.id = str(uuid4())
                 audio_list.append(aud)
 
-        return image_list, video_list, audio_list
+        file_list = None
+        if files:
+            file_list = []
+            for file in files:
+                if not file.id:
+                    from uuid import uuid4
+
+                    file.id = str(uuid4())
+                file_list.append(file)
+
+        return image_list, video_list, audio_list, file_list
 
     def cli_app(
         self,

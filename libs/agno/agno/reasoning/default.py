@@ -14,6 +14,7 @@ def get_default_reasoning_agent(
     min_steps: int,
     max_steps: int,
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
+    tool_call_limit: Optional[int] = None,
     use_json_mode: bool = False,
     telemetry: bool = True,
     debug_mode: bool = False,
@@ -56,7 +57,7 @@ def get_default_reasoning_agent(
             - **validate**: When you reach a potential answer, signaling it's ready for validation.
             - **final_answer**: Only if you have confidently validated the solution.
             - **reset**: Immediately restart analysis if a critical error or incorrect result is identified.
-        6. **Confidence Score**: Provide a numeric confidence score (0.0–1.0) indicating your certainty in the step’s correctness and its outcome.
+        6. **Confidence Score**: Provide a numeric confidence score (0.0–1.0) indicating your certainty in the step's correctness and its outcome.
 
         Step 5 - Validation (mandatory before finalizing an answer):
         - Explicitly validate your solution by:
@@ -82,6 +83,7 @@ def get_default_reasoning_agent(
         - Only create a single instance of ReasoningSteps for your response.\
         """),
         tools=tools,
+        tool_call_limit=tool_call_limit,
         output_schema=ReasoningSteps,
         use_json_mode=use_json_mode,
         telemetry=telemetry,

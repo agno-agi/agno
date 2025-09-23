@@ -57,8 +57,9 @@ class AgentSession:
             return None
 
         runs = data.get("runs")
+        serialized_runs: List[RunOutput] = []
         if runs is not None and isinstance(runs[0], dict):
-            runs = [RunOutput.from_dict(run) for run in runs]
+            serialized_runs = [RunOutput.from_dict(run) for run in runs]
 
         summary = data.get("summary")
         if summary is not None and isinstance(summary, dict):
@@ -77,7 +78,7 @@ class AgentSession:
             metadata=metadata,
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
-            runs=runs,
+            runs=serialized_runs,
             summary=summary,
         )
 
@@ -151,12 +152,14 @@ class AgentSession:
                 continue
 
             for message in run_response.messages or []:
-                # Skip messages with specified role
-                if skip_role and message.role == skip_role:
-                    continue
                 # Skip messages that were tagged as history in previous runs
                 if hasattr(message, "from_history") and message.from_history and skip_history_messages:
                     continue
+
+                # Skip messages with specified role
+                if skip_role and message.role == skip_role:
+                    continue
+
                 if message.role == "system":
                     # Only add the system message once
                     if system_message is None:

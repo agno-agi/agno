@@ -1,5 +1,5 @@
 """
-Example AgentOS app with a custom FastAPI app.
+Example AgentOS app with a custom FastAPI app with basic routes.
 
 You can also run this using the FastAPI cli (pip install fastapi["standard"]):
 ```
@@ -13,7 +13,6 @@ from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
 from fastapi import FastAPI
-from starlette.middleware.cors import CORSMiddleware
 
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -36,15 +35,6 @@ app: FastAPI = FastAPI(
     version="1.0.0",
 )
 
-# Add Middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 # Add your own routes
 @app.post("/customers")
@@ -64,6 +54,7 @@ async def get_customers():
 
 
 # Setup our AgentOS app by passing your FastAPI app
+# Use route_prefix to avoid conflicts with your custom routes
 agent_os = AgentOS(
     description="Example app with custom routers",
     agents=[web_research_agent],
@@ -78,10 +69,10 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    """Run our AgentOS.
+    """Run your AgentOS.
 
-    You can see the docs at:
-    http://localhost:7777/docs
+    With this setup:
+    - API docs: http://localhost:7777/docs
 
     """
     agent_os.serve(app="custom_fastapi_app:app", reload=True)

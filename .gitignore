@@ -39,6 +39,7 @@ dist
 # ignore virtualenvs
 .venv*
 .perfenv*
+.demoenv*
 venv*
 agnoenv*
 aienv*

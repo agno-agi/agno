@@ -16,9 +16,10 @@ from agno.db.mongo.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields, generate_deterministic_id, serialize_session_json_fields
+from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.string import generate_id
 
 try:
     from pymongo import MongoClient, ReturnDocument
@@ -63,7 +64,7 @@ class MongoDb(BaseDb):
             base_seed = db_url or str(db_client)
             db_name_suffix = db_name if db_name is not None else "agno"
             seed = f"{base_seed}#{db_name_suffix}"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,
@@ -252,8 +253,8 @@ class MongoDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
+            session_type (SessionType): The type of session to get.
             user_id (Optional[str]): The ID of the user to get the session for.
-            session_type (Optional[SessionType]): The type of session to get.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -284,12 +285,14 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT.value:
+            if session_type == SessionType.AGENT:
                 return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM.value:
+            elif session_type == SessionType.TEAM:
                 return TeamSession.from_dict(session)
-            else:
+            elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception reading session: {e}")
@@ -583,6 +586,144 @@ class MongoDb(BaseDb):
         except Exception as e:
             log_error(f"Exception upserting session: {e}")
             return None
+
+    def upsert_sessions(
+        self, sessions: List[Session], deserialize: Optional[bool] = True
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple sessions for improved performance on large datasets.
+
+        Args:
+            sessions (List[Session]): List of sessions to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+
+        Returns:
+            List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not sessions:
+            return []
+
+        try:
+            collection = self._get_collection(table_type="sessions", create_collection_if_not_found=True)
+            if collection is None:
+                log_info("Sessions collection not available, falling back to individual upserts")
+                return [
+                    result
+                    for session in sessions
+                    if session is not None
+                    for result in [self.upsert_session(session, deserialize=deserialize)]
+                    if result is not None
+                ]
+
+            from pymongo import ReplaceOne
+
+            operations = []
+            results: List[Union[Session, Dict[str, Any]]] = []
+
+            for session in sessions:
+                if session is None:
+                    continue
+
+                serialized_session_dict = serialize_session_json_fields(session.to_dict())
+
+                if isinstance(session, AgentSession):
+                    record = {
+                        "session_id": serialized_session_dict.get("session_id"),
+                        "session_type": SessionType.AGENT.value,
+                        "agent_id": serialized_session_dict.get("agent_id"),
+                        "user_id": serialized_session_dict.get("user_id"),
+                        "runs": serialized_session_dict.get("runs"),
+                        "agent_data": serialized_session_dict.get("agent_data"),
+                        "session_data": serialized_session_dict.get("session_data"),
+                        "summary": serialized_session_dict.get("summary"),
+                        "metadata": serialized_session_dict.get("metadata"),
+                        "created_at": serialized_session_dict.get("created_at"),
+                        "updated_at": int(time.time()),
+                    }
+                elif isinstance(session, TeamSession):
+                    record = {
+                        "session_id": serialized_session_dict.get("session_id"),
+                        "session_type": SessionType.TEAM.value,
+                        "team_id": serialized_session_dict.get("team_id"),
+                        "user_id": serialized_session_dict.get("user_id"),
+                        "runs": serialized_session_dict.get("runs"),
+                        "team_data": serialized_session_dict.get("team_data"),
+                        "session_data": serialized_session_dict.get("session_data"),
+                        "summary": serialized_session_dict.get("summary"),
+                        "metadata": serialized_session_dict.get("metadata"),
+                        "created_at": serialized_session_dict.get("created_at"),
+                        "updated_at": int(time.time()),
+                    }
+                elif isinstance(session, WorkflowSession):
+                    record = {
+                        "session_id": serialized_session_dict.get("session_id"),
+                        "session_type": SessionType.WORKFLOW.value,
+                        "workflow_id": serialized_session_dict.get("workflow_id"),
+                        "user_id": serialized_session_dict.get("user_id"),
+                        "runs": serialized_session_dict.get("runs"),
+                        "workflow_data": serialized_session_dict.get("workflow_data"),
+                        "session_data": serialized_session_dict.get("session_data"),
+                        "summary": serialized_session_dict.get("summary"),
+                        "metadata": serialized_session_dict.get("metadata"),
+                        "created_at": serialized_session_dict.get("created_at"),
+                        "updated_at": int(time.time()),
+                    }
+                else:
+                    continue
+
+                operations.append(
+                    ReplaceOne(filter={"session_id": record["session_id"]}, replacement=record, upsert=True)
+                )
+
+            if operations:
+                # Execute bulk write
+                collection.bulk_write(operations)
+
+                # Fetch the results
+                session_ids = [session.session_id for session in sessions if session and session.session_id]
+                cursor = collection.find({"session_id": {"$in": session_ids}})
+
+                for doc in cursor:
+                    session_dict = deserialize_session_json_fields(doc)
+
+                    if deserialize:
+                        session_type = doc.get("session_type")
+                        if session_type == SessionType.AGENT.value:
+                            deserialized_agent_session = AgentSession.from_dict(session_dict)
+                            if deserialized_agent_session is None:
+                                continue
+                            results.append(deserialized_agent_session)
+
+                        elif session_type == SessionType.TEAM.value:
+                            deserialized_team_session = TeamSession.from_dict(session_dict)
+                            if deserialized_team_session is None:
+                                continue
+                            results.append(deserialized_team_session)
+
+                        elif session_type == SessionType.WORKFLOW.value:
+                            deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                            if deserialized_workflow_session is None:
+                                continue
+                            results.append(deserialized_workflow_session)
+                    else:
+                        results.append(session_dict)
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+
+            # Fallback to individual upserts
+            return [
+                result
+                for session in sessions
+                if session is not None
+                for result in [self.upsert_session(session, deserialize=deserialize)]
+                if result is not None
+            ]
 
     # -- Memory methods --
 
@@ -880,6 +1021,91 @@ class MongoDb(BaseDb):
         except Exception as e:
             log_error(f"Exception upserting user memory: {e}")
             return None
+
+    def upsert_memories(
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple user memories for improved performance on large datasets.
+
+        Args:
+            memories (List[UserMemory]): List of memories to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+
+        Returns:
+            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not memories:
+            return []
+
+        try:
+            collection = self._get_collection(table_type="memories", create_collection_if_not_found=True)
+            if collection is None:
+                log_info("Memories collection not available, falling back to individual upserts")
+                return [
+                    result
+                    for memory in memories
+                    if memory is not None
+                    for result in [self.upsert_user_memory(memory, deserialize=deserialize)]
+                    if result is not None
+                ]
+
+            from pymongo import ReplaceOne
+
+            operations = []
+            results: List[Union[UserMemory, Dict[str, Any]]] = []
+
+            for memory in memories:
+                if memory is None:
+                    continue
+
+                if memory.memory_id is None:
+                    memory.memory_id = str(uuid4())
+
+                record = {
+                    "user_id": memory.user_id,
+                    "agent_id": memory.agent_id,
+                    "team_id": memory.team_id,
+                    "memory_id": memory.memory_id,
+                    "memory": memory.memory,
+                    "topics": memory.topics,
+                    "updated_at": int(time.time()),
+                }
+
+                operations.append(ReplaceOne(filter={"memory_id": memory.memory_id}, replacement=record, upsert=True))
+
+            if operations:
+                # Execute bulk write
+                collection.bulk_write(operations)
+
+                # Fetch the results
+                memory_ids = [memory.memory_id for memory in memories if memory and memory.memory_id]
+                cursor = collection.find({"memory_id": {"$in": memory_ids}})
+
+                for doc in cursor:
+                    if deserialize:
+                        # Remove MongoDB's _id field before creating UserMemory object
+                        doc_filtered = {k: v for k, v in doc.items() if k != "_id"}
+                        results.append(UserMemory.from_dict(doc_filtered))
+                    else:
+                        results.append(doc)
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+
+            # Fallback to individual upserts
+            return [
+                result
+                for memory in memories
+                if memory is not None
+                for result in [self.upsert_user_memory(memory, deserialize=deserialize)]
+                if result is not None
+            ]
 
     def clear_memories(self) -> None:
         """Delete all memories from the database.
@@ -1423,3 +1649,61 @@ class MongoDb(BaseDb):
         except Exception as e:
             log_error(f"Error updating eval run name {eval_run_id}: {e}")
             raise
+
+    def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
+        """Migrate all content in the given collection to the right v2 collection"""
+
+        from typing import List, Sequence, Union
+
+        from agno.db.migrations.v1_to_v2 import (
+            get_all_table_content,
+            parse_agent_sessions,
+            parse_memories,
+            parse_team_sessions,
+            parse_workflow_sessions,
+        )
+
+        # Get all content from the old collection
+        old_content: list[dict[str, Any]] = get_all_table_content(
+            db=self,
+            db_schema=v1_db_schema,
+            table_name=v1_table_name,
+        )
+        if not old_content:
+            log_info(f"No content to migrate from collection {v1_table_name}")
+            return
+
+        # Parse the content into the new format
+        memories: List[UserMemory] = []
+        sessions: Sequence[Union[AgentSession, TeamSession, WorkflowSession]] = []
+        if v1_table_type == "agent_sessions":
+            sessions = parse_agent_sessions(old_content)
+        elif v1_table_type == "team_sessions":
+            sessions = parse_team_sessions(old_content)
+        elif v1_table_type == "workflow_sessions":
+            sessions = parse_workflow_sessions(old_content)
+        elif v1_table_type == "memories":
+            memories = parse_memories(old_content)
+        else:
+            raise ValueError(f"Invalid table type: {v1_table_type}")
+
+        # Insert the new content into the new collection
+        if v1_table_type == "agent_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Agent sessions to collection: {self.session_table_name}")
+
+        elif v1_table_type == "team_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Team sessions to collection: {self.session_table_name}")
+
+        elif v1_table_type == "workflow_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Workflow sessions to collection: {self.session_table_name}")
+
+        elif v1_table_type == "memories":
+            for memory in memories:
+                self.upsert_user_memory(memory)
+            log_info(f"Migrated {len(memories)} memories to collection: {self.memory_table_name}")
