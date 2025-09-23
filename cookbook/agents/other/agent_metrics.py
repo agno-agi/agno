@@ -6,7 +6,7 @@ from agno.utils import pprint
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[YFinanceTools(stock_price=True)],
+    tools=[YFinanceTools()],
     markdown=True,
     session_id="test-session-metrics",
     db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),

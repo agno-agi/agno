@@ -6,29 +6,30 @@ from pydantic import BaseModel, Field
 from agno.agent.agent import Agent
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.team.team import Team
-from agno.workflow.workflow import Workflow
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_info
+from agno.workflow.workflow import Workflow
+
 
 class SlackEventResponse(BaseModel):
     """Response model for Slack event processing"""
+
     status: str = Field(default="ok", description="Processing status")
+
 
 class SlackChallengeResponse(BaseModel):
     """Response model for Slack URL verification challenge"""
+
     challenge: str = Field(description="Challenge string to echo back to Slack")
 
+
 def attach_routes(
-    router: APIRouter, 
-    agent: Optional[Agent] = None, 
-    team: Optional[Team] = None, 
-    workflow: Optional[Workflow] = None
+    router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None, workflow: Optional[Workflow] = None
 ) -> APIRouter:
-    
     # Determine entity type for documentation
     entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"
-    entity_name = getattr(agent or team or workflow, 'name', f'Unnamed {entity_type}')
-    
+    entity_name = getattr(agent or team or workflow, "name", f"Unnamed {entity_type}")
+
     @router.post(
         "/events",
         operation_id=f"slack_events_{entity_type}",
@@ -93,11 +94,14 @@ def attach_routes(
                 response = await workflow.arun(message_text, user_id=user if user else None, session_id=session_id)  # type: ignore
 
             if response:
-                if hasattr(response, 'reasoning_content') and response.reasoning_content:
+                if hasattr(response, "reasoning_content") and response.reasoning_content:
                     _send_slack_message(
-                        channel=channel_id, message=f"Reasoning: \n{response.reasoning_content}", thread_ts=ts, italics=True
+                        channel=channel_id,
+                        message=f"Reasoning: \n{response.reasoning_content}",
+                        thread_ts=ts,
+                        italics=True,
                     )
-                
+
                 _send_slack_message(channel=channel_id, message=response.content or "", thread_ts=ts)
 
     def _send_slack_message(channel: str, thread_ts: str, message: str, italics: bool = False):
