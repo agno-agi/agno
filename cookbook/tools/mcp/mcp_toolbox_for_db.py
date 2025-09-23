@@ -6,7 +6,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.tools.mcp_toolbox import MCPToolbox
 
-url = "http://127.0.0.1:5001" 
+url = "http://127.0.0.1:5001"
 
 
 async def run_agent(message: str = None) -> None:
