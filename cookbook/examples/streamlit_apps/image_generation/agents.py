@@ -1,75 +1,101 @@
-# Recipe agent for image generation
-from textwrap import dedent
 from typing import Optional
 
 from agno.agent import Agent
-from agno.document.reader.pdf_reader import PDFImageReader
-from agno.embedder.cohere import CohereEmbedder
-from agno.knowledge.pdf import PDFKnowledgeBase
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.models.groq import Groq
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.pdf_reader import PDFImageReader
 from agno.tools.openai import OpenAITools
+from agno.utils.streamlit import get_model_from_id
 from agno.vectordb.pgvector import PgVector
 
-# Database connection string for recipe knowledge base
-# Adjust as needed for your environment
-DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# Constants for recipe agent
 DEFAULT_RECIPE_URL = "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-DEFAULT_RECIPE_TABLE = "recipe_documents"
 
 
-def get_recipe_agent(
+def get_recipe_image_agent(
+    model_id: str = "openai:gpt-4o",
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
     local_pdf_path: Optional[str] = None,
 ) -> Agent:
-    """
-    Returns a RecipeImageAgent backed by a recipe PDF knowledge base.
-    """
+    """Get a Recipe Image Generation Agent with Knowledge Base"""
+
     # Choose the appropriate knowledge base
     if local_pdf_path:
-        knowledge_base = PDFKnowledgeBase(
+        knowledge = Knowledge(
+            name="Recipe Knowledge Base",
+            description="Custom uploaded recipe collection",
+            vector_db=PgVector(
+                db_url=db_url,
+                table_name="recipe_image_documents",
+                embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+            ),
+            max_results=3,
+        )
+        knowledge.add_content(
+            name=f"Uploaded Recipe: {local_pdf_path.split('/')[-1]}",
             path=local_pdf_path,
             reader=PDFImageReader(),
-            vector_db=PgVector(
-                db_url=DB_URL,
-                table_name=DEFAULT_RECIPE_TABLE,
-                embedder=CohereEmbedder(id="embed-v4.0"),
-            ),
+            description="Custom uploaded recipe PDF",
         )
     else:
-        knowledge_base = PDFUrlKnowledgeBase(
-            urls=[DEFAULT_RECIPE_URL],
+        knowledge = Knowledge(
+            name="Recipe Knowledge Base",
+            description="Thai recipe collection with step-by-step instructions",
             vector_db=PgVector(
-                db_url=DB_URL,
-                table_name=DEFAULT_RECIPE_TABLE,
-                embedder=CohereEmbedder(id="embed-v4.0"),
+                db_url=db_url,
+                table_name="recipe_image_documents",
+                embedder=OpenAIEmbedder(id="text-embedding-3-small"),
             ),
+            max_results=3,
+        )
+        knowledge.add_content(
+            name="Thai Recipes Collection",
+            url=DEFAULT_RECIPE_URL,
+            description="Comprehensive Thai recipe book with traditional dishes",
         )
 
-    model = Groq(id="meta-llama/llama-4-scout-17b-16e-instruct")
-
-    # Instantiate and return the recipe agent
-    return Agent(
-        name="RecipeImageAgent",
-        model=model,
-        knowledge=knowledge_base,
+    agent = Agent(
+        name="Recipe Image Generator",
+        model=get_model_from_id(model_id),
+        id="recipe-image-agent",
+        user_id=user_id,
+        knowledge=knowledge,
+        add_history_to_context=True,
+        num_history_runs=3,
+        session_id=session_id,
         tools=[OpenAITools(image_model="gpt-image-1")],
-        instructions=[
-            dedent("""\
-            You are a specialized recipe assistant.
+        instructions="""
+            You are a specialized recipe assistant that creates visual cooking guides.
+            
             When asked for a recipe:
-            1. Use the `search_knowledge_base` tool to find and load the most relevant recipe from the knowledge base.
-            2. Extract and output exactly two formatted markdown sections:
+            1. **Search Knowledge Base**: Use the `search_knowledge_base` tool to find the most relevant recipe
+            2. **Format Recipe**: Extract and present the recipe in exactly this format:
+            
                ## Ingredients
-               - List each ingredient with a hyphen and space prefix.
-               ## Directions
-               1. Describe each cooking step succinctly, numbering steps starting at 1.
-            3. After listing the Directions, invoke the `generate_image` tool exactly once, passing the entire recipe text and using a prompt like '<DishName>: a step-by-step visual guide showing all steps in one overhead image with bright natural lighting. In the prompt make sure to include the all the recipe ingredients and directions that were listed in the Ingredients and Directions sections.'.
-            4. Maintain a consistent visual style across the image.
-            5. After the image is generated, conclude with 'Recipe generation complete.'
-        """),
-        ],
+               - List each ingredient with quantities using bullet points
+               
+               ## Directions  
+               1. Step-by-step numbered instructions
+               2. Be clear and concise for each cooking step
+               3. Include cooking times and temperatures where relevant
+               
+            3. **Generate Visual Guide**: After presenting the recipe, use the `generate_image` tool with a prompt like:
+               '{Dish Name}: A step-by-step visual cooking guide showing all preparation and cooking steps in one overhead view with bright natural lighting. Include all ingredients and show the progression from raw ingredients to final plated dish.'
+               
+            4. **Maintain Quality**: 
+               - Ensure visual consistency across images
+               - Include all ingredients and key steps in the image
+               - Use bright, appetizing lighting and overhead perspective
+               - Show the complete cooking process in one comprehensive view
+               
+            5. **Complete the Response**: End with 'Recipe generation complete!'
+            
+            Keep responses focused, clear, and visually appealing. Always search the knowledge base first before responding.
+        """,
         markdown=True,
         debug_mode=True,
     )
+
+    return agent

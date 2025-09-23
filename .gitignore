@@ -39,10 +39,12 @@ dist
 # ignore virtualenvs
 .venv*
 .perfenv*
+.demoenv*
 venv*
 agnoenv*
 aienv*
 phienv*
+set-env.ps1
 
 # ignore tmp dirs
 scratch
@@ -65,6 +67,12 @@ token.json
 coverage_report
 .coverage
 
+# JSON files used as testing DB
+agno_json_data/
+
 # AI
 .claude/
 .cursor/
+
+# ignore pyrightconfig.json
+pyrightconfig.json

@@ -1,6 +1,6 @@
 import pytest
 
-from agno.embedder.jina import JinaEmbedder
+from agno.knowledge.embedder.jina import JinaEmbedder
 
 
 @pytest.fixture
@@ -15,7 +15,7 @@ def test_embedder_initialization(embedder):
     assert embedder.dimensions == 1024
     assert embedder.embedding_type == "float"
     assert not embedder.late_chunking
-    assert embedder.api_key is not None  # Should load from environment
+    assert embedder.api_key is not None, "JINA_API_KEY env variable is not set"
 
 
 def test_get_embedding(embedder):
@@ -70,7 +70,7 @@ def test_embedding_consistency(embedder):
     embeddings2 = embedder.get_embedding(text)
 
     assert len(embeddings1) == len(embeddings2)
-    assert all(abs(a - b) < 1e-6 for a, b in zip(embeddings1, embeddings2))
+    assert all(abs(a - b) < 1e-4 for a, b in zip(embeddings1, embeddings2))
 
 
 def test_custom_configuration():

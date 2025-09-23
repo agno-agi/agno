@@ -7,20 +7,14 @@ reasoning_agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
     tools=[
         ReasoningTools(
-            think=True,
-            analyze=True,
+            enable_think=True,
+            enable_analyze=True,
             add_instructions=True,
         ),
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
+        YFinanceTools(),
     ],
     instructions="Use tables where possible",
     markdown=True,
-    show_tool_calls=True,
 )
 reasoning_agent.print_response(
     "What is the NVDA stock price? Write me a report",

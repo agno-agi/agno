@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
@@ -23,7 +23,7 @@ class Nebius(OpenAILike):
     name: str = "Nebius"
     provider: str = "Nebius"
 
-    api_key: Optional[str] = getenv("NEBIUS_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("NEBIUS_API_KEY"))
     base_url: str = "https://api.studio.nebius.com/v1/"
 
     def _get_client_params(self) -> Dict[str, Any]:

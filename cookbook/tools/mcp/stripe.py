@@ -56,7 +56,6 @@ async def run_agent(message: str) -> None:
                 """),
                 tools=[mcp_toolkit],
                 markdown=True,
-                show_tool_calls=True,
             )
 
             # Run the agent with the provided task

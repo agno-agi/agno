@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.surrealdb import SurrealDb
 
 try:
@@ -138,19 +138,6 @@ def test_exists(surrealdb_vector, mock_surrealdb_client):
     assert surrealdb_vector.exists() is False
 
 
-def test_doc_exists(surrealdb_vector, mock_surrealdb_client, sample_documents):
-    """Test document existence check"""
-    # Test when document exists
-    mock_surrealdb_client.query.return_value = [{"result": [{"content": sample_documents[0].content}]}]
-
-    assert surrealdb_vector.doc_exists(sample_documents[0]) is True
-
-    # Test when document doesn't exist
-    mock_surrealdb_client.query.return_value = [{"result": []}]
-
-    assert surrealdb_vector.doc_exists(sample_documents[0]) is False
-
-
 def test_name_exists(surrealdb_vector, mock_surrealdb_client):
     """Test name existence check"""
     # Test when name exists
@@ -166,7 +153,7 @@ def test_name_exists(surrealdb_vector, mock_surrealdb_client):
 
 def test_insert(surrealdb_vector, mock_surrealdb_client, sample_documents):
     """Test inserting documents"""
-    surrealdb_vector.insert(sample_documents)
+    surrealdb_vector.insert(content_hash="test_hash", documents=sample_documents)
 
     # Verify create was called for each document
     assert mock_surrealdb_client.create.call_count == 3
@@ -180,7 +167,7 @@ def test_insert(surrealdb_vector, mock_surrealdb_client, sample_documents):
 
 
 def test_upsert(surrealdb_vector, mock_surrealdb_client, sample_documents):
-    surrealdb_vector.upsert(sample_documents)
+    surrealdb_vector.upsert(content_hash="test_hash", documents=sample_documents)
 
     # Verify query was called for each document
     assert mock_surrealdb_client.query.call_count == 3
@@ -274,22 +261,6 @@ async def test_async_create(async_surrealdb_vector, mock_async_surrealdb_client)
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(async_surrealdb_vector, mock_async_surrealdb_client, sample_documents):
-    """Test async document existence check"""
-    # Test when document exists
-    mock_async_surrealdb_client.query.return_value = [{"result": [{"content": sample_documents[0].content}]}]
-
-    result = await async_surrealdb_vector.async_doc_exists(sample_documents[0])
-    assert result is True
-
-    # Test when document doesn't exist
-    mock_async_surrealdb_client.query.return_value = [{"result": []}]
-
-    result = await async_surrealdb_vector.async_doc_exists(sample_documents[0])
-    assert result is False
-
-
-@pytest.mark.asyncio
 async def test_async_name_exists(async_surrealdb_vector, mock_async_surrealdb_client):
     """Test async name existence check"""
     # Test when name exists
@@ -308,7 +279,7 @@ async def test_async_name_exists(async_surrealdb_vector, mock_async_surrealdb_cl
 @pytest.mark.asyncio
 async def test_async_insert(async_surrealdb_vector, mock_async_surrealdb_client, sample_documents):
     """Test async inserting documents"""
-    await async_surrealdb_vector.async_insert(sample_documents)
+    await async_surrealdb_vector.async_insert(content_hash="test_hash", documents=sample_documents)
 
     # Verify create was called for each document
     assert mock_async_surrealdb_client.create.await_count == 3
@@ -324,7 +295,7 @@ async def test_async_insert(async_surrealdb_vector, mock_async_surrealdb_client,
 @pytest.mark.asyncio
 async def test_async_upsert(async_surrealdb_vector, mock_async_surrealdb_client, sample_documents):
     """Test async upserting documents"""
-    await async_surrealdb_vector.async_upsert(sample_documents)
+    await async_surrealdb_vector.async_upsert(content_hash="test_hash", documents=sample_documents)
 
     # Verify query was called for each document
     assert mock_async_surrealdb_client.query.await_count == 3

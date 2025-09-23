@@ -246,21 +246,23 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
         elif message.role == "assistant":
             content = []
 
-            if message.thinking is not None and message.provider_data is not None:
+            if message.reasoning_content is not None and message.provider_data is not None:
                 from anthropic.types import RedactedThinkingBlock, ThinkingBlock
 
                 content.append(
                     ThinkingBlock(
-                        thinking=message.thinking,
+                        thinking=message.reasoning_content,
                         signature=message.provider_data.get("signature"),
                         type="thinking",
                     )
                 )
 
-            if message.redacted_thinking is not None:
+            if message.redacted_reasoning_content is not None:
                 from anthropic.types import RedactedThinkingBlock
 
-                content.append(RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking"))
+                content.append(
+                    RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_reasoning_content")
+                )
 
             if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
@@ -277,6 +279,15 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                             type="tool_use",
                         )
                     )
+        elif message.role == "tool":
+            content = []
+            content.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": message.tool_call_id,
+                    "content": str(message.content),
+                }
+            )
 
         # Skip empty assistant responses
         if message.role == "assistant" and not content:
@@ -304,14 +315,6 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
         properties: Dict[str, Any] = parameters.get("properties", {})
         required: List[str] = parameters.get("required", [])
         required_params: List[str] = required
-
-        if not required_params:
-            for param_name, param_info in properties.items():
-                param_type = param_info.get("type", "")
-                param_type_list: List[str] = [param_type] if isinstance(param_type, str) else param_type or []
-
-                if "null" not in param_type_list:
-                    required_params.append(param_name)
 
         input_properties: Dict[str, Any] = {}
         for param_name, param_info in properties.items():

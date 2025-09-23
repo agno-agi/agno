@@ -1,13 +1,14 @@
-import os
 from os import getenv
-from typing import Any, Iterable, Iterator, List, Optional, Union
+from pathlib import Path
+from typing import Any, Iterable, Iterator, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact, VideoArtifact
+from agno.media import Image, Video
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import logger
 
 try:
@@ -22,83 +23,95 @@ class ReplicateTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         model: str = "minimax/video-01",
+        enable_generate_media: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        self.api_key = api_key or getenv("REPLICATE_API_TOKEN")
+        self.api_key = api_key or getenv("REPLICATE_API_KEY")
         if not self.api_key:
-            logger.error("REPLICATE_API_TOKEN not set. Please set the REPLICATE_API_TOKEN environment variable.")
+            logger.error("REPLICATE_API_KEY not set. Please set the REPLICATE_API_KEY environment variable.")
         self.model = model
 
         tools: List[Any] = []
-        tools.append(self.generate_media)
+        if all or enable_generate_media:
+            tools.append(self.generate_media)
 
         super().__init__(name="replicate_toolkit", tools=tools, **kwargs)
 
-    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> str:
+    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
         """
         Use this function to generate an image or a video using a replicate model.
         Args:
             prompt (str): A text description of the content.
         Returns:
-            str: Return a URI to the generated video or image.
+            ToolResult: A ToolResult containing the generated media or error message.
         """
         if not self.api_key:
             logger.error("API key is not set. Please provide a valid API key.")
-            return "API key is not set."
+            return ToolResult(content="API key is not set.")
 
-        outputs = replicate.run(ref=self.model, input={"prompt": prompt})
-        if isinstance(outputs, FileOutput):
-            outputs = [outputs]
-        elif isinstance(outputs, (Iterable, Iterator)) and not isinstance(outputs, str):
-            outputs = list(outputs)
-        else:
-            logger.error(f"Unexpected output type: {type(outputs)}")
-            return f"Unexpected output type: {type(outputs)}"
+        try:
+            outputs = replicate.run(ref=self.model, input={"prompt": prompt})
+            if isinstance(outputs, FileOutput):
+                outputs = [outputs]
+            elif isinstance(outputs, (Iterable, Iterator)) and not isinstance(outputs, str):
+                outputs = list(outputs)
+            else:
+                logger.error(f"Unexpected output type: {type(outputs)}")
+                return ToolResult(content=f"Unexpected output type: {type(outputs)}")
 
-        results = []
-        for output in outputs:
-            if not isinstance(output, FileOutput):
-                logger.error(f"Unexpected output type: {type(output)}")
-                return f"Unexpected output type: {type(output)}"
+            images = []
+            videos = []
+            results = []
 
-            result = self._parse_output(agent, output)
-            results.append(result)
-        return "\n".join(results)
+            for output in outputs:
+                if not isinstance(output, FileOutput):
+                    logger.error(f"Unexpected output type: {type(output)}")
+                    return ToolResult(content=f"Unexpected output type: {type(output)}")
 
-    def _parse_output(self, agent: Union[Agent, Team], output: FileOutput) -> str:
+                result_msg, media_artifact = self._parse_output(output)
+                results.append(result_msg)
+
+                if isinstance(media_artifact, Image):
+                    images.append(media_artifact)
+                elif isinstance(media_artifact, Video):
+                    videos.append(media_artifact)
+
+            content = "\n".join(results)
+            return ToolResult(
+                content=content,
+                images=images if images else None,
+                videos=videos if videos else None,
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate media: {e}")
+            return ToolResult(content=f"Error: {e}")
+
+    def _parse_output(self, output: FileOutput) -> Tuple[str, Union[Image, Video]]:
         """
         Parse the outputs from the replicate model.
         """
         # Parse the URL to extract the file extension
         parsed_url = urlparse(output.url)
         path = parsed_url.path
-        _, ext = os.path.splitext(path)
-        ext = ext.lower()
+        ext = Path(path).suffix.lower()
 
         # Define supported extensions
         image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
         video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".flv", ".wmv", ".webm"}
 
         media_id = str(uuid4())
+        artifact: Union[Image, Video]
+        media_type: str
 
         if ext in image_extensions:
-            agent.add_image(
-                ImageArtifact(
-                    id=media_id,
-                    url=output.url,
-                )
-            )
+            artifact = Image(id=media_id, url=output.url)
             media_type = "image"
         elif ext in video_extensions:
-            agent.add_video(
-                VideoArtifact(
-                    id=media_id,
-                    url=output.url,
-                )
-            )
+            artifact = Video(id=media_id, url=output.url)
             media_type = "video"
         else:
             logger.error(f"Unsupported media type with extension '{ext}' for URL: {output.url}")
-            return f"Unsupported media type with extension '{ext}'."
+            raise ValueError(f"Unsupported media type with extension '{ext}'.")
 
-        return f"{media_type.capitalize()} generated successfully at {output.url}"
+        return f"{media_type.capitalize()} generated successfully at {output.url}", artifact

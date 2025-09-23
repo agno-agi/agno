@@ -6,7 +6,6 @@ from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
-from agno.tools.yfinance import YFinanceTools
 
 web_agent = Agent(
     name="Web Search Agent",
@@ -14,16 +13,14 @@ web_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
-    ],
+    tools=[DuckDuckGoTools(search=True)],
     instructions=[
         "You are a financial data specialist. Provide concise and accurate data.",
         "Use tables to display stock prices, fundamentals (P/E, Market Cap), and recommendations.",
@@ -31,12 +28,11 @@ finance_agent = Agent(
         "Briefly summarize recent company-specific news if available.",
         "Focus on delivering the requested financial data points clearly.",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 team_leader = Team(
     name="Reasoning Finance Team Leader",
-    mode="coordinate",
     model=Claude(id="claude-3-7-sonnet-latest"),
     members=[
         web_agent,
@@ -49,9 +45,7 @@ team_leader = Team(
     ],
     markdown=True,
     show_members_responses=True,
-    enable_agentic_context=True,
-    add_datetime_to_instructions=True,
-    success_criteria="The team has successfully completed the task.",
+    add_datetime_to_context=True,
 )
 
 
