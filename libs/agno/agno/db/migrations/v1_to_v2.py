@@ -516,7 +516,12 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
             "updated_at": item.get("updated_at"),
         }
 
-        agent_session = AgentSession.from_dict(session)
+        try:
+            agent_session = AgentSession.from_dict(session)
+        except Exception as e:
+            log_error(f"Error parsing agent session: {e}. This is the complete session that failed: {session}")
+            continue
+
         if agent_session is not None:
             sessions_v2.append(agent_session)
 
@@ -539,7 +544,12 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
-        team_session = TeamSession.from_dict(session)
+        try:
+            team_session = TeamSession.from_dict(session)
+        except Exception as e:
+            log_error(f"Error parsing team session: {e}. This is the complete session that failed: {session}")
+            continue
+
         if team_session is not None:
             sessions_v2.append(team_session)
 
@@ -564,7 +574,12 @@ def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSe
             "workflow_name": item.get("workflow_name"),
             "runs": convert_any_metrics_in_data(item.get("runs")),
         }
-        workflow_session = WorkflowSession.from_dict(session)
+        try:
+            workflow_session = WorkflowSession.from_dict(session)
+        except Exception as e:
+            log_error(f"Error parsing workflow session: {e}. This is the complete session that failed: {session}")
+            continue
+
         if workflow_session is not None:
             sessions_v2.append(workflow_session)
 
