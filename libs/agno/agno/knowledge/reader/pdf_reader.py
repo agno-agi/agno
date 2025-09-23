@@ -217,7 +217,7 @@ class BasePDFReader(Reader):
         for document in documents:
             chunked_documents.extend(self.chunk_document(document))
         return chunked_documents
-    
+
     def _get_doc_name(self, pdf_source: Union[str, Path, IO[Any]], name: Optional[str] = None) -> str:
         """Determines the document name from the source or a provided name."""
         try:
@@ -345,7 +345,6 @@ class PDFReader(BasePDFReader):
     def read(
         self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None, password: Optional[str] = None
     ) -> List[Document]:
-        
         doc_name = self._get_doc_name(pdf, name)
         log_info(f"Reading: {doc_name}")
 
