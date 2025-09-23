@@ -250,8 +250,10 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         if kwargs.get("stop_after_tool_call") is True:
             if "show_result" not in kwargs or kwargs.get("show_result") is None:
                 tool_config["show_result"] = True
-
-        return Function(**tool_config)
+        function = Function(**tool_config)
+        # Determine parameters for the function
+        function.process_entrypoint()
+        return function
 
     # Handle both @tool and @tool() cases
     if len(args) == 1 and callable(args[0]) and not kwargs:

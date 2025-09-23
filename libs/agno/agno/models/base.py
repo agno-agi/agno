@@ -196,6 +196,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         run_response: Optional[RunOutput] = None,
+        send_media_to_model: bool = True,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -301,7 +302,11 @@ class Model(ABC):
 
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
-                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results)
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -339,6 +344,7 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        send_media_to_model: bool = True,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -441,7 +447,11 @@ class Model(ABC):
 
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
-                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results)
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -689,6 +699,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
+        send_media_to_model: bool = True,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -778,7 +789,11 @@ class Model(ABC):
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
-                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results)
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -848,6 +863,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
+        send_media_to_model: bool = True,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -937,7 +953,11 @@ class Model(ABC):
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
-                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results)
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -1041,7 +1061,13 @@ class Model(ABC):
         if model_response_delta.extra is not None:
             if stream_data.extra is None:
                 stream_data.extra = {}
-            stream_data.extra.update(model_response_delta.extra)
+            for key in model_response_delta.extra:
+                if isinstance(model_response_delta.extra[key], list):
+                    if not stream_data.extra.get(key):
+                        stream_data.extra[key] = []
+                    stream_data.extra[key].extend(model_response_delta.extra[key])
+                else:
+                    stream_data.extra[key] = model_response_delta.extra[key]
 
         if should_yield:
             yield model_response_delta
@@ -1708,7 +1734,9 @@ class Model(ABC):
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
 
-    def _handle_function_call_media(self, messages: List[Message], function_call_results: List[Message]) -> None:
+    def _handle_function_call_media(
+        self, messages: List[Message], function_call_results: List[Message], send_media_to_model: bool = True
+    ) -> None:
         """
         Handle media artifacts from function calls by adding follow-up user messages for generated media if needed.
         """
@@ -1739,9 +1767,10 @@ class Model(ABC):
                 all_files.extend(result_message.files)
                 result_message.files = None
 
-        # If we have media artifacts, add a follow-up "user" message instead of a "tool"
-        # message with the media artifacts which throws error for some models
-        if all_images or all_videos or all_audio or all_files:
+        # Only add media message if we should send media to model
+        if send_media_to_model and (all_images or all_videos or all_audio or all_files):
+            # If we have media artifacts, add a follow-up "user" message instead of a "tool"
+            # message with the media artifacts which throws error for some models
             media_message = Message(
                 role="user",
                 content="Take note of the following content",

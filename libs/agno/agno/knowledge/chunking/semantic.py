@@ -1,4 +1,5 @@
-from typing import List, Optional
+import inspect
+from typing import Any, Dict, List, Optional
 
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
@@ -26,11 +27,37 @@ class SemanticChunking(ChunkingStrategy):
                     "Please install it using `pip install chonkie` to use SemanticChunking."
                 )
 
-            self.chunker = SemanticChunker(
-                embedding_model=self.embedder.id,  # type: ignore
-                chunk_size=self.chunk_size,
-                threshold=self.similarity_threshold,
-            )
+            # Build arguments dynamically based on chonkie's supported signature
+            params: Dict[str, Any] = {
+                "chunk_size": self.chunk_size,
+                "threshold": self.similarity_threshold,
+            }
+
+            try:
+                sig = inspect.signature(SemanticChunker)
+                param_names = set(sig.parameters.keys())
+
+                # Prefer passing a callable to avoid Chonkie initializing its own client
+                if "embedding_fn" in param_names:
+                    params["embedding_fn"] = self.embedder.get_embedding  # type: ignore[attr-defined]
+                    # If chonkie allows specifying dimensions, provide them
+                    if "embedding_dimensions" in param_names and getattr(self.embedder, "dimensions", None):
+                        params["embedding_dimensions"] = self.embedder.dimensions  # type: ignore[attr-defined]
+                elif "embedder" in param_names:
+                    # Some versions may accept an embedder object directly
+                    params["embedder"] = self.embedder
+                else:
+                    # Fallback to model id
+                    params["embedding_model"] = getattr(self.embedder, "id", None) or "text-embedding-3-small"
+
+                self.chunker = SemanticChunker(**params)
+            except Exception:
+                # As a final fallback, use the original behavior
+                self.chunker = SemanticChunker(
+                    embedding_model=getattr(self.embedder, "id", None) or "text-embedding-3-small",
+                    chunk_size=self.chunk_size,
+                    threshold=self.similarity_threshold,
+                )
 
     def chunk(self, document: Document) -> List[Document]:
         """Split document into semantic chunks using chonkie"""

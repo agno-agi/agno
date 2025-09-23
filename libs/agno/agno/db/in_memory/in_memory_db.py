@@ -299,6 +299,40 @@ class InMemoryDb(BaseDb):
             return existing_session.get("workflow_id") == session.workflow_id
         return False
 
+    def upsert_sessions(
+        self, sessions: List[Session], deserialize: Optional[bool] = True
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple sessions for improved performance on large datasets.
+
+        Args:
+            sessions (List[Session]): List of sessions to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+
+        Returns:
+            List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not sessions:
+            return []
+
+        try:
+            log_info(f"In-memory database: processing {len(sessions)} sessions with individual upsert operations")
+
+            results = []
+            for session in sessions:
+                if session is not None:
+                    result = self.upsert_session(session, deserialize=deserialize)
+                    if result is not None:
+                        results.append(result)
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk session upsert: {e}")
+            return []
+
     # -- Memory methods --
     def delete_user_memory(self, memory_id: str):
         try:
@@ -469,6 +503,41 @@ class InMemoryDb(BaseDb):
         except Exception as e:
             log_warning(f"Exception upserting user memory: {e}")
             return None
+
+    def upsert_memories(
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple user memories for improved performance on large datasets.
+
+        Args:
+            memories (List[UserMemory]): List of memories to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+
+        Returns:
+            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not memories:
+            return []
+
+        try:
+            log_info(f"In-memory database: processing {len(memories)} memories with individual upsert operations")
+            # For in-memory database, individual upserts are actually efficient
+            # since we're just manipulating Python lists and dictionaries
+            results = []
+            for memory in memories:
+                if memory is not None:
+                    result = self.upsert_user_memory(memory, deserialize=deserialize)
+                    if result is not None:
+                        results.append(result)
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk memory upsert: {e}")
+            return []
 
     def clear_memories(self) -> None:
         """Delete all memories.

@@ -35,10 +35,16 @@ class EventBuffer:
 
     active_tool_call_ids: Set[str]  # All currently active tool calls
     ended_tool_call_ids: Set[str]  # All tool calls that have ended
+    current_text_message_id: str = ""  # ID of the current text message context (for tool call parenting)
+    next_text_message_id: str = ""  # Pre-generated ID for the next text message
+    pending_tool_calls_parent_id: str = ""  # Parent message ID for pending tool calls
 
     def __init__(self):
         self.active_tool_call_ids = set()
         self.ended_tool_call_ids = set()
+        self.current_text_message_id = ""
+        self.next_text_message_id = str(uuid.uuid4())
+        self.pending_tool_calls_parent_id = ""
 
     def start_tool_call(self, tool_call_id: str) -> None:
         """Start a new tool call."""
@@ -48,6 +54,29 @@ class EventBuffer:
         """End a tool call."""
         self.active_tool_call_ids.discard(tool_call_id)
         self.ended_tool_call_ids.add(tool_call_id)
+
+    def start_text_message(self) -> str:
+        """Start a new text message and return its ID."""
+        # Use the pre-generated next ID as current, and generate a new next ID
+        self.current_text_message_id = self.next_text_message_id
+        self.next_text_message_id = str(uuid.uuid4())
+        return self.current_text_message_id
+
+    def get_parent_message_id_for_tool_call(self) -> str:
+        """Get the message ID to use as parent for tool calls."""
+        # If we have a pending parent ID set (from text message end), use that
+        if self.pending_tool_calls_parent_id:
+            return self.pending_tool_calls_parent_id
+        # Otherwise use current text message ID
+        return self.current_text_message_id
+
+    def set_pending_tool_calls_parent_id(self, parent_id: str) -> None:
+        """Set the parent message ID for upcoming tool calls."""
+        self.pending_tool_calls_parent_id = parent_id
+
+    def clear_pending_tool_calls_parent_id(self) -> None:
+        """Clear the pending parent ID when a new text message starts."""
+        self.pending_tool_calls_parent_id = ""
 
 
 def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
@@ -113,10 +142,18 @@ def _create_events_from_chunk(
     message_id: str,
     message_started: bool,
     event_buffer: EventBuffer,
-) -> Tuple[List[BaseEvent], bool]:
+) -> Tuple[List[BaseEvent], bool, str]:
     """
     Process a single chunk and return events to emit + updated message_started state.
-    Returns: (events_to_emit, new_message_started_state)
+
+    Args:
+        chunk: The event chunk to process
+        message_id: Current message identifier
+        message_started: Whether a message is currently active
+        event_buffer: Event buffer for tracking tool call state
+
+    Returns:
+        Tuple of (events_to_emit, new_message_started_state, message_id)
     """
     events_to_emit: List[BaseEvent] = []
 
@@ -133,6 +170,11 @@ def _create_events_from_chunk(
         # Handle the message start event, emitted once per message
         if not message_started:
             message_started = True
+            message_id = event_buffer.start_text_message()
+
+            # Clear pending tool calls parent ID when starting new text message
+            event_buffer.clear_pending_tool_calls_parent_id()
+
             start_event = TextMessageStartEvent(
                 type=EventType.TEXT_MESSAGE_START,
                 message_id=message_id,
@@ -149,21 +191,37 @@ def _create_events_from_chunk(
             )
             events_to_emit.append(content_event)  # type: ignore
 
-    # Handle starting a new tool call
-    elif chunk.event == RunEvent.tool_call_started:
-        # End the current text message if one is active before starting tool calls
-        if message_started:
-            end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
-            events_to_emit.append(end_message_event)
-            message_started = False  # Reset message_started state
-
+    # Handle starting a new tool
+    elif chunk.event == RunEvent.tool_call_started or chunk.event == TeamRunEvent.tool_call_started:
         if chunk.tool is not None:  # type: ignore
             tool_call = chunk.tool  # type: ignore
+
+            # End current text message and handle for tool calls
+            current_message_id = message_id
+            if message_started:
+                # End the current text message
+                end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_message_id)
+                events_to_emit.append(end_message_event)
+
+                # Set this message as the parent for any upcoming tool calls
+                # This ensures multiple sequential tool calls all use the same parent
+                event_buffer.set_pending_tool_calls_parent_id(current_message_id)
+
+                # Reset message started state and generate new message_id for future messages
+                message_started = False
+                message_id = str(uuid.uuid4())
+
+            # Get the parent message ID - this will use pending parent if set, ensuring multiple tool calls in sequence have the same parent
+            parent_message_id = event_buffer.get_parent_message_id_for_tool_call()
+
+            if not parent_message_id:
+                parent_message_id = current_message_id
+
             start_event = ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
                 tool_call_id=tool_call.tool_call_id,  # type: ignore
                 tool_call_name=tool_call.tool_name,  # type: ignore
-                parent_message_id=message_id,
+                parent_message_id=parent_message_id,
             )
             events_to_emit.append(start_event)
 
@@ -175,7 +233,7 @@ def _create_events_from_chunk(
             events_to_emit.append(args_event)  # type: ignore
 
     # Handle tool call completion
-    elif chunk.event == RunEvent.tool_call_completed:
+    elif chunk.event == RunEvent.tool_call_completed or chunk.event == TeamRunEvent.tool_call_completed:
         if chunk.tool is not None:  # type: ignore
             tool_call = chunk.tool  # type: ignore
             if tool_call.tool_call_id not in event_buffer.ended_tool_call_ids:
@@ -203,7 +261,7 @@ def _create_events_from_chunk(
         step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
         events_to_emit.append(step_finished_event)
 
-    return events_to_emit, message_started
+    return events_to_emit, message_started, message_id
 
 
 def _create_completion_events(
@@ -237,11 +295,16 @@ def _create_completion_events(
             if tool.tool_call_id is None or tool.tool_name is None:
                 continue
 
+            # Use the current text message ID from event buffer as parent
+            parent_message_id = event_buffer.get_parent_message_id_for_tool_call()
+            if not parent_message_id:
+                parent_message_id = message_id  # Fallback to the passed message_id
+
             start_event = ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
                 tool_call_id=tool.tool_call_id,
                 tool_call_name=tool.tool_name,
-                parent_message_id=message_id,
+                parent_message_id=parent_message_id,
             )
             events_to_emit.append(start_event)
 
@@ -285,7 +348,7 @@ def stream_agno_response_as_agui_events(
     response_stream: Iterator[Union[RunOutputEvent, TeamRunOutputEvent]], thread_id: str, run_id: str
 ) -> Iterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
-    message_id = str(uuid.uuid4())
+    message_id = ""  # Will be set by EventBuffer when text message starts
     message_started = False
     event_buffer = EventBuffer()
     stream_completed = False
@@ -304,7 +367,7 @@ def stream_agno_response_as_agui_events(
             stream_completed = True
         else:
             # Process regular chunk immediately
-            events_from_chunk, message_started = _create_events_from_chunk(
+            events_from_chunk, message_started, message_id = _create_events_from_chunk(
                 chunk, message_id, message_started, event_buffer
             )
 
@@ -345,7 +408,7 @@ async def async_stream_agno_response_as_agui_events(
     run_id: str,
 ) -> AsyncIterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
-    message_id = str(uuid.uuid4())
+    message_id = ""  # Will be set by EventBuffer when text message starts
     message_started = False
     event_buffer = EventBuffer()
     stream_completed = False
@@ -364,7 +427,7 @@ async def async_stream_agno_response_as_agui_events(
             stream_completed = True
         else:
             # Process regular chunk immediately
-            events_from_chunk, message_started = _create_events_from_chunk(
+            events_from_chunk, message_started, message_id = _create_events_from_chunk(
                 chunk, message_id, message_started, event_buffer
             )
 
