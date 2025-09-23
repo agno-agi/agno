@@ -7,6 +7,7 @@ class Embedder:
     """Base class for managing embedders"""
 
     dimensions: Optional[int] = 1536
+    enable_batch: bool = False
 
     def get_embedding(self, text: str) -> List[float]:
         raise NotImplementedError
