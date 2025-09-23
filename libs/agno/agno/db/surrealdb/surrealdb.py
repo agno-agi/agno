@@ -29,8 +29,8 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.surrealdb import utils
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
-from agno.db.utils import generate_deterministic_id
 from agno.session import Session
+from agno.utils.string import generate_id
 
 
 class SurrealDb(BaseDb):
@@ -57,7 +57,7 @@ class SurrealDb(BaseDb):
         if id is None:
             base_seed = db_url
             seed = f"{base_seed}#{db_db}"
-            id = generate_deterministic_id(seed)
+            id = generate_id(seed)
 
         super().__init__(
             id=id,
