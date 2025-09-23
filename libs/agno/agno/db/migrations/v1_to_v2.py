@@ -127,7 +127,7 @@ def safe_get_runs_from_memory(memory_data: Any) -> Any:
     if memory_data is None:
         return None
 
-    runs = []
+    runs: Any = []
 
     # If memory_data is a string, try to parse it as JSON
     if isinstance(memory_data, str):
