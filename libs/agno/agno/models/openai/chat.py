@@ -22,13 +22,8 @@ try:
     from openai import AsyncOpenAI as AsyncOpenAIClient
     from openai import OpenAI as OpenAIClient
     from openai.types import CompletionUsage
-    from openai.types.chat import ChatCompletionAudio
-    from openai.types.chat.chat_completion import ChatCompletion
-    from openai.types.chat.chat_completion_chunk import (
-        ChatCompletionChunk,
-        ChoiceDelta,
-        ChoiceDeltaToolCall,
-    )
+    from openai.types.chat import ChatCompletion, ChatCompletionAudio, ChatCompletionChunk
+    from openai.types.chat.chat_completion_chunk import ChoiceDelta, ChoiceDeltaToolCall
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
