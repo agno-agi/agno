@@ -1,7 +1,18 @@
+"""
+This example shows how to use the add_history_to_steps flag to add workflow history to the steps.
+In this case we have a multi-step workflow with a single agent.
+
+We show different scenarios of a continuous execution of the workflow.
+We have 5 different demos:
+- Customer Support
+- Medical Consultation
+- Tutoring
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.workflow.step import Step, StepInput, StepOutput
+from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
 
@@ -57,7 +68,7 @@ def create_customer_support_workflow():
             Step(name="Technical Resolution", agent=technical_specialist), 
             Step(name="Final Resolution", agent=resolution_manager),
         ],
-        add_history_to_context_for_steps=True,
+        add_history_to_steps=True,
     )
 
 
@@ -112,64 +123,8 @@ def create_medical_consultation_workflow():
             Step(name="Physician Consultation", agent=consulting_physician),
             Step(name="Care Coordination", agent=care_coordinator),
         ],
-        add_history_to_context_for_steps=True,
+        add_history_to_steps=True,
     )
-
-
-# ==============================================================================
-# 3. FINANCIAL ADVISORY WORKFLOW
-# ==============================================================================
-
-def create_financial_advisory_workflow():
-    """Financial planning with risk assessment and personalized recommendations"""
-    
-    financial_intake = Agent(
-        name="Financial Intake Specialist",
-        model=OpenAIChat(id="gpt-4o"),
-        instructions=[
-            "You are a financial planning intake specialist.",
-            "Gather information about income, expenses, assets, and financial goals.",
-            "Ask about risk tolerance, time horizon, and investment experience.",
-            "Be professional and build trust through active listening."
-        ],
-    )
-
-    risk_analyst = Agent(
-        name="Risk Assessment Analyst",
-        model=OpenAIChat(id="gpt-4o"),
-        instructions=[
-            "You are a risk assessment specialist.",
-            "Review all financial information shared in the conversation.",
-            "Analyze risk tolerance based on the full discussion.",
-            "Don't re-ask questions - build on what was already shared.",
-            "Provide risk profile assessment and suitable investment categories."
-        ],
-    )
-
-    investment_advisor = Agent(
-        name="Investment Advisor",
-        model=OpenAIChat(id="gpt-4o"),
-        instructions=[
-            "You are a certified investment advisor providing personalized recommendations.",
-            "Consider the complete conversation including goals, risk tolerance, and financial situation.",
-            "Reference specific details discussed earlier to show continuity.",
-            "Provide concrete, actionable investment recommendations.",
-            "Explain how recommendations align with their stated goals and risk profile."
-        ],
-    )
-
-    return Workflow(
-        name="Financial Advisory Session",
-        description="Comprehensive financial planning with personalized advice",
-        db=SqliteDb(db_file="tmp/financial_workflow.db"),
-        steps=[
-            Step(name="Financial Assessment", agent=financial_intake),
-            Step(name="Risk Analysis", agent=risk_analyst),
-            Step(name="Investment Recommendations", agent=investment_advisor),
-        ],
-        add_history_to_context_for_steps=True,
-    )
-
 
 # ==============================================================================
 # 4. EDUCATIONAL TUTORING WORKFLOW
@@ -223,64 +178,8 @@ def create_tutoring_workflow():
             Step(name="Subject Tutoring", agent=subject_tutor),
             Step(name="Progress Planning", agent=progress_coach),
         ],
-        add_history_to_context_for_steps=True,
+        add_history_to_steps=True,
     )
-
-
-# ==============================================================================
-# 5. CREATIVE WRITING WORKSHOP
-# ==============================================================================
-
-def create_writing_workshop_workflow():
-    """Creative writing development with feedback and revision"""
-    
-    idea_facilitator = Agent(
-        name="Creative Idea Facilitator",
-        model=OpenAIChat(id="gpt-4o"),
-        instructions=[
-            "You help writers develop and refine creative ideas.",
-            "Explore themes, characters, settings, and plot possibilities.",
-            "Ask thought-provoking questions to deepen the concept.",
-            "Be supportive and encouraging of creative expression."
-        ],
-    )
-
-    writing_coach = Agent(
-        name="Writing Development Coach",
-        model=OpenAIChat(id="gpt-4o"),
-        instructions=[
-            "You are a writing coach who helps develop the ideas discussed earlier.",
-            "Build on the creative concepts from the previous conversation.",
-            "Help structure the writing and develop key elements.",
-            "Reference specific ideas and themes mentioned by the writer.",
-            "Provide concrete writing techniques and exercises."
-        ],
-    )
-
-    editor_mentor = Agent(
-        name="Editorial Mentor",
-        model=OpenAIChat(id="gpt-4o"),
-        instructions=[
-            "You are an editorial mentor providing constructive feedback.",
-            "Consider the full creative development process from the conversation.",
-            "Provide feedback that builds on the established direction.",
-            "Reference the writer's original vision and goals discussed earlier.",
-            "Offer specific, actionable revision suggestions."
-        ],
-    )
-
-    return Workflow(
-        name="Creative Writing Workshop",
-        description="Guided creative development with continuous feedback",
-        db=SqliteDb(db_file="tmp/writing_workflow.db"),
-        steps=[
-            Step(name="Idea Development", agent=idea_facilitator),
-            Step(name="Writing Coaching", agent=writing_coach),
-            Step(name="Editorial Feedback", agent=editor_mentor),
-        ],
-        add_history_to_context_for_steps=True,
-    )
-
 
 # ==============================================================================
 # DEMO FUNCTIONS USING CLI
@@ -298,6 +197,7 @@ def demo_customer_support_cli():
         session_id="support_demo",
         user="Customer",
         emoji="🆘",
+        stream=True,
         stream_intermediate_steps=True,
     )
 
@@ -314,22 +214,7 @@ def demo_medical_consultation_cli():
         session_id="medical_demo",
         user="Patient", 
         emoji="🩺",
-        stream_intermediate_steps=True,
-    )
-
-
-def demo_financial_advisory_cli():
-    """Demo financial advisory workflow with CLI"""
-    financial_workflow = create_financial_advisory_workflow()
-    
-    print("💰 Financial Advisory Demo - Type 'exit' to quit")
-    print("Try: 'I want to start investing for retirement, I'm 35 with $50k saved'")
-    print("-" * 60)
-    
-    financial_workflow.cli_app(
-        session_id="financial_demo",
-        user="Client",
-        emoji="💼", 
+        stream=True,
         stream_intermediate_steps=True,
     )
 
@@ -346,22 +231,7 @@ def demo_tutoring_cli():
         session_id="tutoring_demo",
         user="Student",
         emoji="🎓",
-        stream_intermediate_steps=True,
-    )
-
-
-def demo_writing_workshop_cli():
-    """Demo writing workshop workflow with CLI"""
-    writing_workflow = create_writing_workshop_workflow()
-    
-    print("✍️ Creative Writing Workshop Demo - Type 'exit' to quit")
-    print("Try: 'I want to write a science fiction story about time travel'")
-    print("-" * 60)
-    
-    writing_workflow.cli_app(
-        session_id="writing_demo",
-        user="Writer",
-        emoji="📝",
+        stream=True,
         stream_intermediate_steps=True,
     )
 
@@ -372,9 +242,7 @@ if __name__ == "__main__":
     demos = {
         "support": demo_customer_support_cli,
         "medical": demo_medical_consultation_cli,
-        "financial": demo_financial_advisory_cli,
         "tutoring": demo_tutoring_cli,
-        "writing": demo_writing_workshop_cli,
     }
     
     if len(sys.argv) > 1 and sys.argv[1] in demos:

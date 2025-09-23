@@ -1,7 +1,13 @@
+"""
+This example shows how to use the add_history_to_steps flag to add workflow history to the steps.
+In this case we have a single step workflow with a single agent.
+The agent has access to the workflow history and uses it to provide personalized educational support.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.workflow.step import Step, StepInput, StepOutput
+from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
 
@@ -35,7 +41,7 @@ def create_simple_tutoring_workflow():
         steps=[
             Step(name="AI Tutoring", agent=tutor_agent),
         ],
-        add_history_to_context_for_steps=True,  
+        add_history_to_steps=True,  
     )
 
 
@@ -55,6 +61,7 @@ def demo_simple_tutoring_cli():
         session_id="simple_tutor_demo",
         user="Student",
         emoji="📚",
+        stream=True,
         stream_intermediate_steps=True,
         show_step_details=True,
     )

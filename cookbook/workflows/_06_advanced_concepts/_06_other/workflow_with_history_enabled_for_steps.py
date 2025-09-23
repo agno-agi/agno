@@ -91,16 +91,16 @@ def analyze_food_preferences(step_input: StepInput) -> StepOutput:
         guidance.append(f"Prefer {preferences['cooking_style']} cooking style")
 
     analysis_result = f"""
-PREFERENCE ANALYSIS:
-Current Request: {current_request}
+        PREFERENCE ANALYSIS:
+        Current Request: {current_request}
 
-Detected Preferences:
-{chr(10).join(f"• {g}" for g in guidance) if guidance else "• No specific preferences detected"}
+        Detected Preferences:
+        {chr(10).join(f"• {g}" for g in guidance) if guidance else "• No specific preferences detected"}
 
-RECIPE AGENT GUIDANCE:
-Based on the conversation history, please provide recipe recommendations that align with these preferences.
-Reference the conversation naturally and explain why these recipes fit their needs.
-""".strip()
+        RECIPE AGENT GUIDANCE:
+        Based on the conversation history, please provide recipe recommendations that align with these preferences.
+        Reference the conversation naturally and explain why these recipes fit their needs.
+    """.strip()
 
     return StepOutput(content=analysis_result)
 

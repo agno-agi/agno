@@ -12,6 +12,7 @@ from agno.run.workflow import (
 )
 from agno.utils.log import log_debug, logger
 from agno.workflow.step import Step, StepInput, StepOutput, StepType
+from agno.session.workflow import WorkflowSession
 
 WorkflowSteps = List[
     Union[
@@ -119,6 +120,8 @@ class Steps:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_session: Optional[WorkflowSession] = None,
+        num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute all steps in sequence and return the final result"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -148,6 +151,8 @@ class Steps:
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
+                    workflow_session=workflow_session,
+                    num_history_runs=num_history_runs,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
@@ -204,6 +209,8 @@ class Steps:
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in sequence with streaming support"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -260,6 +267,8 @@ class Steps:
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
                     parent_step_id=steps_id,
+                    workflow_session=workflow_session,
+                    num_history_runs=num_history_runs,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -337,6 +346,8 @@ class Steps:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_session: Optional[WorkflowSession] = None,
+        num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute all steps in sequence asynchronously and return the final result"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -366,6 +377,8 @@ class Steps:
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
+                    workflow_session=workflow_session,
+                    num_history_runs=num_history_runs,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
@@ -421,6 +434,8 @@ class Steps:
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in sequence with async streaming support"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -477,6 +492,8 @@ class Steps:
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
                     parent_step_id=steps_id,
+                    workflow_session=workflow_session,
+                    num_history_runs=num_history_runs,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)

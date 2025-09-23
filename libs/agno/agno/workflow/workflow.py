@@ -167,8 +167,10 @@ class Workflow:
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
 
-    # Add this flag to control if the workflow should add history to the context
-    add_history_to_context_for_steps: bool = False
+    # Add this flag to control if the workflow should add history to the steps
+    add_history_to_steps: bool = False
+    # Number of historical runs to include in the messages
+    num_history_runs: int = 3
 
     def __init__(
         self,
@@ -190,7 +192,8 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         cache_session: bool = False,
         telemetry: bool = True,
-        add_history_to_context_for_steps: bool = False,
+        add_history_to_steps: bool = False,
+        num_history_runs: int = 3,
     ):
         self.id = id
         self.name = name
@@ -210,8 +213,8 @@ class Workflow:
         self.cache_session = cache_session
         self.db = db
         self.telemetry = telemetry
-        self.add_history_to_context_for_steps = add_history_to_context_for_steps
-
+        self.add_history_to_steps = add_history_to_steps
+        self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
 
     def set_id(self) -> None:
@@ -952,7 +955,8 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session if self.add_history_to_context_for_steps else None,
+                        workflow_session=session if self.add_history_to_steps else None,
+                        num_history_runs=self.num_history_runs,
                     )
 
                     # Check for cancellation after step execution
@@ -1115,6 +1119,8 @@ class Workflow:
                         session_state=session_state,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_session=session if self.add_history_to_steps else None,
+                        num_history_runs=self.num_history_runs,
                     ):
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                         # Handle events
@@ -1389,6 +1395,8 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_session=session if self.add_history_to_steps else None,
+                        num_history_runs=self.num_history_runs,
                     )
 
                     # Check for cancellation after step execution
@@ -1550,6 +1558,8 @@ class Workflow:
                         session_state=session_state,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_session=session if self.add_history_to_steps else None,
+                        num_history_runs=self.num_history_runs,
                     ):
                         if workflow_run_response.run_id:
                             raise_if_cancelled(workflow_run_response.run_id)

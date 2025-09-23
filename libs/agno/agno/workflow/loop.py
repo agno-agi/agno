@@ -16,6 +16,7 @@ from agno.run.workflow import (
 from agno.utils.log import log_debug, logger
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
+from agno.session.workflow import WorkflowSession
 
 WorkflowSteps = List[
     Union[
@@ -132,6 +133,8 @@ class Loop:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute loop steps with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for loop orchestration
@@ -157,6 +160,8 @@ class Loop:
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
+                    workflow_session=workflow_session,
+                    num_history_runs=num_history_runs,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
@@ -225,6 +230,8 @@ class Loop:
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute loop steps with streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
@@ -297,6 +304,8 @@ class Loop:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     parent_step_id=loop_step_id,
+                    workflow_session=workflow_session,
+                    num_history_runs=num_history_runs,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)
@@ -410,6 +419,8 @@ class Loop:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for async loop orchestration
@@ -437,6 +448,8 @@ class Loop:
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
+                    workflow_session=workflow_session,
+                    num_history_runs=num_history_runs,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
@@ -508,6 +521,8 @@ class Loop:
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute loop steps with async streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
@@ -580,6 +595,8 @@ class Loop:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     parent_step_id=loop_step_id,
+                    workflow_session=workflow_session,
+                    num_history_runs=num_history_runs,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)

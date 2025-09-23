@@ -206,6 +206,7 @@ class Step:
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional["WorkflowSession"] = None,
+        num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
@@ -297,14 +298,14 @@ class Step:
                         history = None
                         if workflow_session:  
                             history_messages = workflow_session.get_messages_for_workflow_history(
-                                num_history_runs=3 
+                                num_history_runs=num_history_runs 
                             )
 
                             if history_messages:
                                 history = [deepcopy(msg) for msg in history_messages]
                                 for msg in history:
                                     msg.from_history = True
-                                    
+
                                 from agno.models.message import Message
 
                                 if isinstance(message, str):
@@ -379,6 +380,8 @@ class Step:
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
+        workflow_session: Optional["WorkflowSession"] = None,
+        num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -482,9 +485,27 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        history = None
+                        if workflow_session:  
+                            history_messages = workflow_session.get_messages_for_workflow_history(
+                                num_history_runs=num_history_runs 
+                            )
+
+                            if history_messages:
+                                history = [deepcopy(msg) for msg in history_messages]
+                                for msg in history:
+                                    msg.from_history = True
+
+                                from agno.models.message import Message
+
+                                if isinstance(message, str):
+                                    history.append(Message(role="user", content=message))
+                                elif isinstance(message, Message):
+                                    history.append(message)
+
                         session_state_copy = copy(session_state)
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
-                            input=message,
+                            input=message if not history else history,
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -577,6 +598,8 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_session: Optional["WorkflowSession"] = None,
+        num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
@@ -688,6 +711,24 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        history = None
+                        if workflow_session:  
+                            history_messages = workflow_session.get_messages_for_workflow_history(
+                                num_history_runs=num_history_runs 
+                            )
+
+                            if history_messages:
+                                history = [deepcopy(msg) for msg in history_messages]
+                                for msg in history:
+                                    msg.from_history = True
+
+                                from agno.models.message import Message
+
+                                if isinstance(message, str):
+                                    history.append(Message(role="user", content=message))
+                                elif isinstance(message, Message):
+                                    history.append(message)
+
                         session_state_copy = copy(session_state)
                         response = await self.active_executor.arun(  # type: ignore
                             input=message,  # type: ignore
@@ -742,6 +783,8 @@ class Step:
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
+        workflow_session: Optional["WorkflowSession"] = None,
+        num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -859,6 +902,24 @@ class Step:
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
+
+                        history = None
+                        if workflow_session:  
+                            history_messages = workflow_session.get_messages_for_workflow_history(
+                                num_history_runs=num_history_runs 
+                            )
+
+                            if history_messages:
+                                history = [deepcopy(msg) for msg in history_messages]
+                                for msg in history:
+                                    msg.from_history = True
+
+                                from agno.models.message import Message
+
+                                if isinstance(message, str):
+                                    history.append(Message(role="user", content=message))
+                                elif isinstance(message, Message):
+                                    history.append(message)
 
                         session_state_copy = copy(session_state)
                         response_stream = self.active_executor.arun(  # type: ignore
