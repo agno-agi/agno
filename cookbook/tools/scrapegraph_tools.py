@@ -1,7 +1,7 @@
 """
-ScrapeGraphTools Examples
+ScrapeGraphTools
 
-This script demonstrates the various capabilities of ScrapeGraphTools:
+This script demonstrates the various capabilities of ScrapeGraphTools toolkit:
 
 1. smartscraper: Extract structured data using natural language prompts
 2. markdownify: Convert web pages to markdown format
