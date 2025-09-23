@@ -1,4 +1,4 @@
-from typing import Sequence
+from typing import Optional, Sequence
 
 from surrealdb import RecordID
 
@@ -24,7 +24,7 @@ def serialize_session(session: Session) -> dict:
     return _dict
 
 
-def deserialize_session(session_type: SessionType, session_raw: dict) -> Session | None:
+def deserialize_session(session_type: SessionType, session_raw: dict) -> Optional[Session]:
     session_raw = deserialize_session_json_fields(session_raw)
     if session_type == SessionType.AGENT:
         session_raw["agent"] = RecordID("agent", session_raw.get("agent_id"))
