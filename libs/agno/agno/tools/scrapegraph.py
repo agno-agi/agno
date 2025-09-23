@@ -24,7 +24,7 @@ class ScrapeGraphTools(Toolkit):
         enable_crawl: bool = False,
         enable_searchscraper: bool = False,
         enable_agentic_crawler: bool = False,
-        scrape: bool = False,
+        enable_scrape: bool = False,
         render_heavy_js: bool = False,
         all: bool = False,
         **kwargs,
@@ -49,7 +49,7 @@ class ScrapeGraphTools(Toolkit):
             tools.append(self.searchscraper)
         if enable_agentic_crawler or all:
             tools.append(self.agentic_crawler)
-        if scrape:
+        if enable_scrape or all:
             tools.append(self.scrape)
 
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
