@@ -2575,3 +2575,103 @@ class Workflow:
             )
         except Exception as e:
             log_debug(f"Could not create Workflow run telemetry event: {e}")
+
+    def cli_app(
+        self,
+        input: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        user: str = "User",
+        emoji: str = ":technologist:",
+        stream: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        markdown: bool = True,
+        show_time: bool = True,
+        show_step_details: bool = True,
+        exit_on: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Run an interactive command-line interface to interact with the workflow."""
+
+        from rich.prompt import Prompt
+
+        if input:
+            self.print_response(
+                input=input,
+                stream=stream,
+                stream_intermediate_steps=stream_intermediate_steps,
+                markdown=markdown,
+                show_time=show_time,
+                show_step_details=show_step_details,
+                user_id=user_id,
+                session_id=session_id,
+                **kwargs
+            )
+
+        _exit_on = exit_on or ["exit", "quit", "bye", "stop"]
+        while True:
+            message = Prompt.ask(f"[bold] {emoji} {user} [/bold]")
+            if message in _exit_on:
+                break
+
+            self.print_response(
+                input=message,
+                stream=stream,
+                stream_intermediate_steps=stream_intermediate_steps,
+                markdown=markdown,
+                show_time=show_time,
+                show_step_details=show_step_details,
+                user_id=user_id,
+                session_id=session_id,
+                **kwargs
+            )
+
+    async def acli_app(
+        self,
+        input: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        user: str = "User",
+        emoji: str = ":technologist:",
+        stream: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        markdown: bool = True,
+        show_time: bool = True,
+        show_step_details: bool = True,
+        exit_on: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Run an interactive command-line interface to interact with the workflow (async)."""
+
+        from rich.prompt import Prompt
+
+        if input:
+            await self.aprint_response(
+                input=input,
+                stream=stream,
+                stream_intermediate_steps=stream_intermediate_steps,
+                markdown=markdown,
+                show_time=show_time,
+                show_step_details=show_step_details,
+                user_id=user_id,
+                session_id=session_id,
+                **kwargs
+            )
+
+        _exit_on = exit_on or ["exit", "quit", "bye", "stop"]
+        while True:
+            message = Prompt.ask(f"[bold] {emoji} {user} [/bold]")
+            if message in _exit_on:
+                break
+
+            await self.aprint_response(
+                input=message,
+                stream=stream,
+                stream_intermediate_steps=stream_intermediate_steps,
+                markdown=markdown,
+                show_time=show_time,
+                show_step_details=show_step_details,
+                user_id=user_id,
+                session_id=session_id,
+                **kwargs
+            )
