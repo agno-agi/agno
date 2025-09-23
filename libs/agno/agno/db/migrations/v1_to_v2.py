@@ -127,22 +127,45 @@ def safe_get_runs_from_memory(memory_data: Any) -> Any:
     if memory_data is None:
         return None
 
+    runs = []
+
     # If memory_data is a string, try to parse it as JSON
     if isinstance(memory_data, str):
         try:
             memory_dict = json.loads(memory_data)
             if isinstance(memory_dict, dict):
-                return memory_dict.get("runs")
+                runs = memory_dict.get("runs")
         except (json.JSONDecodeError, AttributeError):
             # If JSON parsing fails, memory_data might just be a string value
             return None
 
     # If memory_data is already a dict, access runs directly
     elif isinstance(memory_data, dict):
-        return memory_data.get("runs")
+        runs = memory_data.get("runs")
 
-    # For any other type, return None
-    return None
+    for run in runs or []:
+        # Adjust fields mapping for Agent sessions
+        if run.get("agent_id") is not None:
+            if run.get("team_id") is not None:
+                run.pop("team_id")
+            if run.get("team_session_id") is not None:
+                run["session_id"] = run.pop("team_session_id")
+                if run.get("event"):
+                    run["events"] = [run.pop("event")]
+
+        # Adjust fields mapping for Team sessions
+        if run.get("team_id") is not None:
+            if run.get("agent_id") is not None:
+                run.pop("agent_id")
+            if member_responses := run.get("member_responses"):
+                for response in member_responses:
+                    if response.get("agent_id") is not None and response.get("team_id") is not None:
+                        response.pop("team_id")
+                    if response.get("agent_id") is not None and response.get("team_session_id") is not None:
+                        response["session_id"] = response.pop("team_session_id")
+                run["member_responses"] = member_responses
+
+    return runs
 
 
 def convert_v1_media_to_v2(media_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -492,6 +515,7 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
+
         agent_session = AgentSession.from_dict(session)
         if agent_session is not None:
             sessions_v2.append(agent_session)
