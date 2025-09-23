@@ -214,6 +214,9 @@ class Step:
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
 
+        if workflow_session:
+            step_input.workflow_session = workflow_session
+
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
@@ -387,6 +390,9 @@ class Step:
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
+
+        if workflow_session:
+            step_input.workflow_session = workflow_session
 
         # Emit StepStartedEvent
         if stream_intermediate_steps and workflow_run_response:
@@ -608,6 +614,9 @@ class Step:
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
 
+        if workflow_session:
+            step_input.workflow_session = workflow_session
+
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
@@ -790,6 +799,9 @@ class Step:
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
+
+        if workflow_session:
+            step_input.workflow_session = workflow_session
 
         if stream_intermediate_steps and workflow_run_response:
             # Emit StepStartedEvent

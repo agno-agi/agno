@@ -53,8 +53,6 @@ def demo_simple_tutoring_cli():
     print("Try asking about:")
     print("• 'I'm struggling with calculus derivatives'")
     print("• 'Can you help me with algebra?'") 
-    print("• 'What did I tell you about my math level?'")
-    print("• 'What is my conversation history?'")
     print("-" * 60)
     
     tutor_workflow.cli_app(

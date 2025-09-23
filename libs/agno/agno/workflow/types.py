@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from agno.media import Audio, File, Image, Video
 from agno.models.metrics import Metrics
 from agno.utils.log import log_warning
+from agno.session.workflow import WorkflowSession
 
 
 @dataclass
@@ -76,6 +77,8 @@ class StepInput:
     videos: Optional[List[Video]] = None
     audio: Optional[List[Audio]] = None
     files: Optional[List[File]] = None
+
+    workflow_session: Optional["WorkflowSession"] = None
 
     def get_input_as_string(self) -> Optional[str]:
         """Convert input to string representation"""
@@ -167,6 +170,41 @@ class StepInput:
 
         # Use the helper method to get the deepest content
         return self._get_deepest_step_content(last_output)  # type: ignore[return-value]
+
+    def get_workflow_history(
+        self, 
+        num_history_runs: int = 3,
+        user_role: str = "user", 
+        assistant_role: str = "assistant"
+    ) -> List:
+        """Get workflow conversation history for custom function steps"""
+        if not self.workflow_session:
+            return []
+        
+        return self.workflow_session.get_messages_for_workflow_history(
+            num_history_runs=num_history_runs,
+            user_role=user_role,
+            assistant_role=assistant_role
+        )
+
+    def get_workflow_history_as_string(
+        self, 
+        num_history_runs: int = 3,
+        user_role: str = "user", 
+        assistant_role: str = "assistant"
+    ) -> str:
+        """Get workflow conversation history as formatted string"""
+        messages = self.get_workflow_history(num_history_runs, user_role, assistant_role)
+        
+        if not messages:
+            return ""
+        
+        history_parts = []
+        for msg in messages:
+            role_label = "User" if msg.role == user_role else "Assistant"
+            history_parts.append(f"{role_label}: {msg.content}")
+        
+        return "\n".join(history_parts)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
