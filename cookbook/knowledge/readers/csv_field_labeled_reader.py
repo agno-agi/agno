@@ -12,6 +12,7 @@ Rating: 4.5
 Units Sold: 250
 
 """
+
 from pathlib import Path
 
 from agno.agent import Agent

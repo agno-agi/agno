@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from agno.knowledge.document.base import Document
 from agno.knowledge.reader.field_labeled_csv_reader import FieldLabeledCSVReader
 
 # Sample CSV data
@@ -110,7 +109,9 @@ City Location: New York"""
     assert documents[0].meta_data["source"] == "field_labeled_csv_reader"
 
 
-def test_read_file_object(field_labeled_reader, ):
+def test_read_file_object(
+    field_labeled_reader,
+):
     """Test reading from file-like object."""
     file_obj = io.BytesIO(SAMPLE_CSV.encode("utf-8"))
     file_obj.name = "memory.csv"
@@ -150,7 +151,7 @@ def test_format_headers(underscore_csv_file):
     documents = reader.read(underscore_csv_file)
 
     assert len(documents) == 2
-    
+
     # Check that underscores are replaced with spaces and title cased
     expected_content = """Product Name: Product123
 Unit Price: 15.99
@@ -164,23 +165,23 @@ def test_skip_empty_fields():
 Product A,,19.99
 Product B,Good product,
 Product C,Great product,29.99"""
-    
+
     reader = FieldLabeledCSVReader(skip_empty_fields=True)
     file_obj = io.BytesIO(csv_with_empty.encode("utf-8"))
     file_obj.name = "empty_fields.csv"
-    
+
     documents = reader.read(file_obj)
-    
+
     assert len(documents) == 3
-    
+
     # First product - missing description
     expected_content_1 = "Name: Product A\nPrice: 19.99"
     assert documents[0].content == expected_content_1
-    
+
     # Second product - missing price
     expected_content_2 = "Name: Product B\nDescription: Good product"
     assert documents[1].content == expected_content_2
-    
+
     # Third product - all fields present
     expected_content_3 = "Name: Product C\nDescription: Great product\nPrice: 29.99"
     assert documents[2].content == expected_content_3
@@ -190,15 +191,15 @@ def test_dont_skip_empty_fields():
     """Test including empty fields functionality."""
     csv_with_empty = """name,description,price
 Product A,,19.99"""
-    
+
     reader = FieldLabeledCSVReader(skip_empty_fields=False)
     file_obj = io.BytesIO(csv_with_empty.encode("utf-8"))
     file_obj.name = "empty_fields.csv"
-    
+
     documents = reader.read(file_obj)
-    
+
     assert len(documents) == 1
-    
+
     # Should include empty description field
     expected_content = "Name: Product A\nDescription: \nPrice: 19.99"
     assert documents[0].content == expected_content
@@ -210,21 +211,18 @@ def test_title_rotation():
 Item1,Value1
 Item2,Value2
 Item3,Value3"""
-    
-    reader = FieldLabeledCSVReader(
-        chunk_title=["🔵 Entry A", "🔴 Entry B"],
-        format_headers=True
-    )
+
+    reader = FieldLabeledCSVReader(chunk_title=["🔵 Entry A", "🔴 Entry B"], format_headers=True)
     file_obj = io.BytesIO(csv_data.encode("utf-8"))
     file_obj.name = "rotation.csv"
-    
+
     documents = reader.read(file_obj)
-    
+
     assert len(documents) == 3
-    
+
     # Check title rotation
     assert documents[0].content.startswith("🔵 Entry A")
-    assert documents[1].content.startswith("🔴 Entry B") 
+    assert documents[1].content.startswith("🔴 Entry B")
     assert documents[2].content.startswith("🔵 Entry A")  # Rotates back
 
 
@@ -239,7 +237,7 @@ def test_read_empty_csv_file(field_labeled_reader, temp_dir):
     """Test reading empty CSV file."""
     empty_path = temp_dir / "empty.csv"
     empty_path.touch()
-    
+
     documents = field_labeled_reader.read(empty_path)
     assert documents == []
 
@@ -249,7 +247,7 @@ def test_read_headers_only_csv(field_labeled_reader, temp_dir):
     headers_only_path = temp_dir / "headers_only.csv"
     with open(headers_only_path, "w", encoding="utf-8") as f:
         f.write("name,age,city")
-    
+
     documents = field_labeled_reader.read(headers_only_path)
     assert documents == []
 
@@ -258,18 +256,18 @@ def test_field_names_mismatch():
     """Test behavior when field_names length doesn't match CSV columns."""
     csv_data = """name,age,city
 John,30,New York"""
-    
+
     # Fewer field names than columns
     reader = FieldLabeledCSVReader(
         field_names=["Full Name", "Age"]  # Missing third field name
     )
     file_obj = io.BytesIO(csv_data.encode("utf-8"))
     file_obj.name = "mismatch.csv"
-    
+
     documents = reader.read(file_obj)
-    
+
     assert len(documents) == 1
-    
+
     # Should use custom names for first 2, formatted header for 3rd
     expected_content = "Full Name: John\nAge: 30\nCity: New York"
     assert documents[0].content == expected_content
@@ -294,7 +292,7 @@ def large_csv_file(temp_dir):
     content = ["name,age,city"]
     for i in range(1, 16):  # 15 data rows
         content.append(f"Person{i},{20 + i},City{i}")
-    
+
     file_path = temp_dir / "large.csv"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write("\n".join(content))
@@ -333,7 +331,7 @@ async def test_async_read_with_custom_config(large_csv_file):
         format_headers=False,
         skip_empty_fields=True,
     )
-    
+
     documents = await reader.async_read(large_csv_file, page_size=3)
 
     assert len(documents) == 15
@@ -370,13 +368,13 @@ def test_custom_delimiter():
     csv_data = """name;age;city
 John;30;New York
 Jane;25;San Francisco"""
-    
+
     reader = FieldLabeledCSVReader()
     file_obj = io.BytesIO(csv_data.encode("utf-8"))
     file_obj.name = "semicolon.csv"
-    
+
     documents = reader.read(file_obj, delimiter=";")
-    
+
     assert len(documents) == 2
     expected_content = "Name: John\nAge: 30\nCity: New York"
     assert documents[0].content == expected_content
@@ -387,13 +385,13 @@ def test_custom_quotechar():
     csv_data = """name,description,price
 'Product A','Description with, comma',19.99
 'Product B','Another description',29.99"""
-    
+
     reader = FieldLabeledCSVReader()
     file_obj = io.BytesIO(csv_data.encode("utf-8"))
     file_obj.name = "quotes.csv"
-    
+
     documents = reader.read(file_obj, quotechar="'")
-    
+
     assert len(documents) == 2
     expected_content = "Name: Product A\nDescription: Description with, comma\nPrice: 19.99"
     assert documents[0].content == expected_content
@@ -405,19 +403,19 @@ def test_row_length_normalization():
 John,30,New York
 Jane,25
 Bob,40,Chicago,Extra"""
-    
+
     reader = FieldLabeledCSVReader()
     file_obj = io.BytesIO(csv_data.encode("utf-8"))
     file_obj.name = "irregular.csv"
-    
+
     documents = reader.read(file_obj)
-    
+
     assert len(documents) == 3
-    
+
     # Jane has missing city (should be empty)
     expected_content_jane = "Name: Jane\nAge: 25"  # City skipped due to skip_empty_fields
     assert documents[1].content == expected_content_jane
-    
+
     # Bob has extra field (should be truncated)
     expected_content_bob = "Name: Bob\nAge: 40\nCity: Chicago"
     assert documents[2].content == expected_content_bob
@@ -428,11 +426,11 @@ def test_no_title():
     reader = FieldLabeledCSVReader(chunk_title=None)
     file_obj = io.BytesIO(SAMPLE_CSV.encode("utf-8"))
     file_obj.name = "no_title.csv"
-    
+
     documents = reader.read(file_obj)
-    
+
     assert len(documents) == 3
-    
+
     # Should not have title line
     expected_content = "Name: John\nAge: 30\nCity: New York"
     assert documents[0].content == expected_content
@@ -444,7 +442,7 @@ def test_format_headers_disabled(underscore_csv_file):
     documents = reader.read(underscore_csv_file)
 
     assert len(documents) == 2
-    
+
     # Headers should remain with underscores
     expected_content = "product_name: Product123\nunit_price: 15.99\nproduct_category: Electronics"
     assert documents[0].content == expected_content
@@ -453,8 +451,9 @@ def test_format_headers_disabled(underscore_csv_file):
 def test_get_supported_content_types():
     """Test supported content types."""
     content_types = FieldLabeledCSVReader.get_supported_content_types()
-    
+
     from agno.knowledge.types import ContentType
+
     expected_types = [ContentType.CSV, ContentType.XLSX, ContentType.XLS]
     assert content_types == expected_types
 
@@ -462,15 +461,15 @@ def test_get_supported_content_types():
 def test_metadata_structure(field_labeled_reader, csv_file):
     """Test that metadata contains all expected fields."""
     documents = field_labeled_reader.read(csv_file)
-    
+
     metadata = documents[0].meta_data
-    
+
     # Check required metadata fields
     assert "row_index" in metadata
     assert "headers" in metadata
     assert "total_rows" in metadata
     assert "source" in metadata
-    
+
     assert metadata["row_index"] == 0
     assert metadata["headers"] == ["name", "age", "city"]
     assert metadata["total_rows"] == 3
@@ -480,7 +479,7 @@ def test_metadata_structure(field_labeled_reader, csv_file):
 def test_document_id_generation(field_labeled_reader, csv_file):
     """Test document ID generation patterns."""
     documents = field_labeled_reader.read(csv_file)
-    
+
     assert documents[0].id == "test_row_1"
     assert documents[1].id == "test_row_2"
     assert documents[2].id == "test_row_3"
@@ -490,16 +489,16 @@ def test_document_id_generation(field_labeled_reader, csv_file):
 async def test_async_read_pagination_metadata(field_labeled_reader, large_csv_file):
     """Test that pagination metadata is correct in async mode."""
     documents = await field_labeled_reader.async_read(large_csv_file, page_size=5)
-    
+
     # Check page metadata for documents from different pages
     page_1_docs = [d for d in documents if d.meta_data.get("page") == 1]
     page_2_docs = [d for d in documents if d.meta_data.get("page") == 2]
     page_3_docs = [d for d in documents if d.meta_data.get("page") == 3]
-    
+
     assert len(page_1_docs) == 5  # First 5 rows
     assert len(page_2_docs) == 5  # Next 5 rows
     assert len(page_3_docs) == 5  # Last 5 rows
-    
+
     # Check row indices are correct across pages
     assert page_1_docs[0].meta_data["row_index"] == 0
     assert page_2_docs[0].meta_data["row_index"] == 5
@@ -512,14 +511,14 @@ def test_encoding_parameter(temp_dir):
     csv_content = """name,description
 Café,Très bien
 Naïve,Résumé"""
-    
+
     file_path = temp_dir / "utf8.csv"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(csv_content)
-    
+
     reader = FieldLabeledCSVReader(encoding="utf-8")
     documents = reader.read(file_path)
-    
+
     assert len(documents) == 2
     expected_content = "Name: Café\nDescription: Très bien"
     assert documents[0].content == expected_content
