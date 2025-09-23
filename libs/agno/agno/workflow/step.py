@@ -731,7 +731,7 @@ class Step:
 
                         session_state_copy = copy(session_state)
                         response = await self.active_executor.arun(  # type: ignore
-                            input=message,  # type: ignore
+                            input=message if not history else history,  # type: ignore
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -923,7 +923,7 @@ class Step:
 
                         session_state_copy = copy(session_state)
                         response_stream = self.active_executor.arun(  # type: ignore
-                            input=message,
+                            input=message if not history else history,
                             images=images,
                             videos=videos,
                             audio=audios,
