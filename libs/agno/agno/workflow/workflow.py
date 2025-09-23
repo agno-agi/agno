@@ -1406,7 +1406,6 @@ class Workflow:
                         logger.info(f"Early termination requested by step {step_name}")
                         break
 
-
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
                     workflow_run_response.metrics = self._aggregate_workflow_metrics(collected_step_outputs)
