@@ -10,6 +10,7 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
+from agno.utils.reasoning import extract_thinking_content
 
 try:
     from ollama import AsyncClient as AsyncOllamaClient
@@ -332,6 +333,16 @@ class Ollama(Model):
         if response_message.get("content") is not None:
             model_response.content = response_message.get("content")
 
+        # Extract thinking content between <think> tags if present
+        if model_response.content and model_response.content.find("<think>") != -1:
+            reasoning_content, clean_content = extract_thinking_content(model_response.content)
+
+            if reasoning_content:
+                # Store extracted thinking content separately
+                model_response.reasoning_content = reasoning_content
+                # Update main content with clean version
+                model_response.content = clean_content
+
         if response_message.get("tool_calls") is not None:
             if model_response.tool_calls is None:
                 model_response.tool_calls = []
@@ -373,6 +384,32 @@ class Ollama(Model):
             content_delta = response_message.get("content")
             if content_delta is not None and content_delta != "":
                 model_response.content = content_delta
+
+                # Extract thinking content for streaming responses (handle partial <think> tags carefully)
+                if model_response.content.find("<think>") != -1:
+                    # For streaming, we might have partial content
+                    # Only extract if we have complete </think> tag to avoid breaking partial tags
+                    if "</think>" in model_response.content:
+                        reasoning_content, clean_content = extract_thinking_content(model_response.content)
+
+                        if reasoning_content:
+                            # Store extracted thinking content separately
+                            model_response.reasoning_content = reasoning_content
+                            # Update main content with clean version
+                            model_response.content = clean_content
+                    elif "<think>" in model_response.content and "</think>" not in model_response.content:
+                        # We have an opening tag but no closing tag - this is likely partial thinking content
+                        # Extract everything after <think> as reasoning content and set main content to empty
+                        think_start = model_response.content.find("<think>")
+                        if think_start != -1:
+                            # Content before <think> goes to main content
+                            clean_content = model_response.content[:think_start]
+                            # Content after <think> goes to reasoning content (without the tag)
+                            reasoning_content = model_response.content[think_start + len("<think>") :]
+
+                            model_response.content = clean_content
+                            if reasoning_content.strip():  # Only set if not empty
+                                model_response.reasoning_content = reasoning_content
 
             tool_calls = response_message.get("tool_calls")
             if tool_calls is not None:
