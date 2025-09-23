@@ -1,6 +1,7 @@
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from pydantic import BaseModel, Field
 
 from agno.agent.agent import Agent
 from agno.os.interfaces.slack.security import verify_slack_signature
@@ -9,9 +10,39 @@ from agno.workflow.workflow import Workflow
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_info
 
+class SlackEventResponse(BaseModel):
+    """Response model for Slack event processing"""
+    status: str = Field(default="ok", description="Processing status")
 
-def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None, workflow: Optional[Workflow] = None) -> APIRouter:
-    @router.post("/events")
+class SlackChallengeResponse(BaseModel):
+    """Response model for Slack URL verification challenge"""
+    challenge: str = Field(description="Challenge string to echo back to Slack")
+
+def attach_routes(
+    router: APIRouter, 
+    agent: Optional[Agent] = None, 
+    team: Optional[Team] = None, 
+    workflow: Optional[Workflow] = None
+) -> APIRouter:
+    
+    # Determine entity type for documentation
+    entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"
+    entity_name = getattr(agent or team or workflow, 'name', f'Unnamed {entity_type}')
+    
+    @router.post(
+        "/events",
+        operation_id=f"slack_events_{entity_type}",
+        summary=f"Process Slack Events for {entity_type.title()}",
+        description=f"Process incoming Slack events and route them to the configured {entity_type}: {entity_name}",
+        tags=["Slack", f"Slack-{entity_type.title()}"],
+        response_model=SlackEventResponse,
+        response_model_exclude_none=True,
+        responses={
+            200: {"description": "Event processed successfully"},
+            400: {"description": "Missing Slack headers"},
+            403: {"description": "Invalid Slack signature"},
+        },
+    )
     async def slack_events(request: Request, background_tasks: BackgroundTasks):
         body = await request.body()
         timestamp = request.headers.get("X-Slack-Request-Timestamp")
@@ -27,7 +58,7 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
 
         # Handle URL verification
         if data.get("type") == "url_verification":
-            return {"challenge": data.get("challenge")}
+            return SlackChallengeResponse(challenge=data.get("challenge"))
 
         # Process other event types (e.g., message events) asynchronously
         if "event" in data:
@@ -38,7 +69,7 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
             else:
                 background_tasks.add_task(_process_slack_event, event)
 
-        return {"status": "ok"}
+        return SlackEventResponse(status="ok")
 
     async def _process_slack_event(event: dict):
         if event.get("type") == "message":
