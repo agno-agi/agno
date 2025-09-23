@@ -2260,7 +2260,7 @@ class Team:
                 content_type = "str"
 
                 should_yield = False
-                # Process content and thinking
+                # Process content
                 if model_response_event.content is not None:
                     if parse_structured_output:
                         full_model_response.content = model_response_event.content
@@ -2275,13 +2275,32 @@ class Team:
                     elif isinstance(model_response_event.content, str):
                         full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     should_yield = True
-                elif (
-                    model_response_event.reasoning_content is not None
-                    or model_response_event.redacted_reasoning_content is not None
-                ):
+
+                # Process reasoning content
+                if model_response_event.reasoning_content is not None:
+                    full_model_response.reasoning_content = (
+                        full_model_response.reasoning_content or ""
+                    ) + model_response_event.reasoning_content
+                    run_response.reasoning_content = full_model_response.reasoning_content
                     should_yield = True
 
-                # Process thinking
+                if model_response_event.redacted_reasoning_content is not None:
+                    if not full_model_response.reasoning_content:
+                        full_model_response.reasoning_content = model_response_event.redacted_reasoning_content
+                    else:
+                        full_model_response.reasoning_content += model_response_event.redacted_reasoning_content
+                    run_response.reasoning_content = full_model_response.reasoning_content
+                    should_yield = True
+
+                # Handle provider data (one chunk)
+                if model_response_event.provider_data is not None:
+                    run_response.model_provider_data = model_response_event.provider_data
+
+                # Handle citations (one chunk)
+                if model_response_event.citations is not None:
+                    run_response.citations = model_response_event.citations
+
+                # Process audio
                 if model_response_event.audio is not None:
                     if full_model_response.audio is None:
                         full_model_response.audio = Audio(id=str(uuid4()), content=b"", transcript="")
@@ -4091,50 +4110,51 @@ class Team:
         if self.knowledge is not None and self.update_knowledge:
             _tools.append(self.add_to_knowledge)
 
-        # Get the user message if we are using the input directly
-        user_message = None
-        if self.determine_input_for_members is False:
-            user_message = self._get_user_message(
+        if self.members:
+            # Get the user message if we are using the input directly
+            user_message = None
+            if self.determine_input_for_members is False:
+                user_message = self._get_user_message(
+                    run_response=run_response,
+                    session_state=session_state,
+                    input_message=input_message,
+                    user_id=user_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    metadata=metadata,
+                )
+
+            delegate_task_func = self._get_delegate_task_function(
                 run_response=run_response,
+                session=session,
                 session_state=session_state,
-                input_message=input_message,
+                team_run_context=team_run_context,
+                input=user_message,
                 user_id=user_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
+                stream=self.stream or False,
+                stream_intermediate_steps=self.stream_intermediate_steps,
+                async_mode=async_mode,
+                images=images,  # type: ignore
+                videos=videos,  # type: ignore
+                audio=audio,  # type: ignore
+                files=files,  # type: ignore
+                knowledge_filters=knowledge_filters,
+                add_history_to_context=add_history_to_context,
+                workflow_context=workflow_context,
                 dependencies=dependencies,
                 add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
+                debug_mode=debug_mode,
             )
 
-        delegate_task_func = self._get_delegate_task_function(
-            run_response=run_response,
-            session=session,
-            session_state=session_state,
-            team_run_context=team_run_context,
-            input=user_message,
-            user_id=user_id,
-            stream=self.stream or False,
-            stream_intermediate_steps=self.stream_intermediate_steps,
-            async_mode=async_mode,
-            images=images,  # type: ignore
-            videos=videos,  # type: ignore
-            audio=audio,  # type: ignore
-            files=files,  # type: ignore
-            knowledge_filters=knowledge_filters,
-            add_history_to_context=add_history_to_context,
-            workflow_context=workflow_context,
-            dependencies=dependencies,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            metadata=metadata,
-            debug_mode=debug_mode,
-        )
-
-        _tools.append(delegate_task_func)
-        if self.get_member_information_tool:
-            _tools.append(self.get_member_information)
+            _tools.append(delegate_task_func)
+            if self.get_member_information_tool:
+                _tools.append(self.get_member_information)
 
         self._functions_for_model = {}
         self._tools_for_model = []
@@ -4401,42 +4421,43 @@ class Team:
 
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
-        system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
-        system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
+        if self.members is not None and len(self.members) > 0:
+            system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
+            system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
 
-        system_message_content += "\nHere are the members in your team:\n"
-        system_message_content += "<team_members>\n"
-        system_message_content += self.get_members_system_message_content()
-        if self.get_member_information_tool:
-            system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
-        system_message_content += "</team_members>\n"
+            system_message_content += "\nHere are the members in your team:\n"
+            system_message_content += "<team_members>\n"
+            system_message_content += self.get_members_system_message_content()
+            if self.get_member_information_tool:
+                system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
+            system_message_content += "</team_members>\n"
 
-        system_message_content += "\n<how_to_respond>\n"
+            system_message_content += "\n<how_to_respond>\n"
 
-        if self.delegate_task_to_all_members:
-            system_message_content += (
-                "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
-                "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
-                "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
-                "- If you feel the task has been completed, you can stop and respond to the user.\n"
-            )
-        else:
-            system_message_content += (
-                "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
-                "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
-                "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
-                "- When you delegate a task to another member, make sure to include:\n"
-                "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
-                "  - task_description (str): A clear description of the task.\n"
-                "  - expected_output (str): The expected output.\n"
-                "- You can delegate tasks to multiple members at once.\n"
-                "- You must always analyze the responses from members before responding to the user.\n"
-                "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
-                "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
-                "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
-                "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
-            )
-        system_message_content += "</how_to_respond>\n\n"
+            if self.delegate_task_to_all_members:
+                system_message_content += (
+                    "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
+                    "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
+                    "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
+                    "- If you feel the task has been completed, you can stop and respond to the user.\n"
+                )
+            else:
+                system_message_content += (
+                    "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                    "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
+                    "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
+                    "- When you delegate a task to another member, make sure to include:\n"
+                    "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
+                    "  - task_description (str): A clear description of the task.\n"
+                    "  - expected_output (str): The expected output.\n"
+                    "- You can delegate tasks to multiple members at once.\n"
+                    "- You must always analyze the responses from members before responding to the user.\n"
+                    "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
+                    "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
+                    "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
+                    "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
+                )
+            system_message_content += "</how_to_respond>\n\n"
 
         # Attached media
         if audio is not None or images is not None or videos is not None or files is not None:
@@ -5803,6 +5824,7 @@ class Team:
                             member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
                         )
                     await queue.put(done_marker)
+
                 # Initialize and launch all members
                 tasks: List[asyncio.Task[None]] = []
                 for member_agent_index, member_agent in enumerate(self.members):

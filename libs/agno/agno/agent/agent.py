@@ -3361,6 +3361,7 @@ class Agent:
                         run_response.content = model_response.content
                         run_response.content_type = "str"
 
+                # Process reasoning content
                 if model_response_event.reasoning_content is not None:
                     model_response.reasoning_content = (
                         model_response.reasoning_content or ""
@@ -3374,12 +3375,12 @@ class Agent:
                         model_response.reasoning_content += model_response_event.redacted_reasoning_content
                     run_response.reasoning_content = model_response.reasoning_content
 
+                # Handle provider data (one chunk)
                 if model_response_event.provider_data is not None:
-                    # We get citations in one chunk
-                    run_response.model_provider_data = model_response.provider_data
+                    run_response.model_provider_data = model_response_event.provider_data
 
+                # Handle citations (one chunk)
                 if model_response_event.citations is not None:
-                    # We get citations in one chunk
                     run_response.citations = model_response_event.citations
 
                 # Only yield if we have content to show
