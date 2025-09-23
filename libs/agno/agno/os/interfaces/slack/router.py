@@ -5,11 +5,12 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from agno.agent.agent import Agent
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.team.team import Team
+from agno.workflow.workflow import Workflow
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_info
 
 
-def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
+def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None, workflow: Optional[Workflow] = None) -> APIRouter:
     @router.post("/events")
     async def slack_events(request: Request, background_tasks: BackgroundTasks):
         body = await request.body()
@@ -57,12 +58,16 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
                 response = await agent.arun(message_text, user_id=user if user else None, session_id=session_id)
             elif team:
                 response = await team.arun(message_text, user_id=user if user else None, session_id=session_id)  # type: ignore
+            elif workflow:
+                response = await workflow.arun(message_text, user_id=user if user else None, session_id=session_id)  # type: ignore
 
-            if response.reasoning_content:
-                _send_slack_message(
-                    channel=channel_id, message=f"Reasoning: \n{response.reasoning_content}", thread_ts=ts, italics=True
-                )
-            _send_slack_message(channel=channel_id, message=response.content or "", thread_ts=ts)
+            if response:
+                if hasattr(response, 'reasoning_content') and response.reasoning_content:
+                    _send_slack_message(
+                        channel=channel_id, message=f"Reasoning: \n{response.reasoning_content}", thread_ts=ts, italics=True
+                    )
+                
+                _send_slack_message(channel=channel_id, message=response.content or "", thread_ts=ts)
 
     def _send_slack_message(channel: str, thread_ts: str, message: str, italics: bool = False):
         if len(message) <= 40000:
@@ -85,6 +90,6 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
                 formatted_batch = "\n".join([f"_{line}_" for line in batch_message.split("\n")])
                 SlackTools().send_message_thread(channel=channel, text=formatted_batch or "", thread_ts=thread_ts)
             else:
-                SlackTools().send_message_thread(channel=channel, text=message or "", thread_ts=thread_ts)
+                SlackTools().send_message_thread(channel=channel, text=batch_message or "", thread_ts=thread_ts)
 
     return router
