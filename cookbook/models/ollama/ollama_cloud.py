@@ -1,4 +1,4 @@
-"""Use hosted models from Ollama.com. support api_key parameter or OLLAMA_API_KEY environment variable."""
+"""To use Ollama Cloud, you need to set the OLLAMA_API_KEY environment variable. Host is set to https://ollama.com by default."""
 
 from agno.agent import Agent
 from agno.models.ollama import Ollama
