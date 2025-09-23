@@ -59,7 +59,7 @@ class Ollama(Model):
             if not host:
                 host = "https://ollama.com"
             headers["authorization"] = f"Bearer {self.api_key}"
-            log_debug(f"Using Ollama cloud endpoint with API key: {host}")
+            log_debug(f"Using Ollama cloud endpoint: {host}")
 
         base_params = {
             "host": host,
