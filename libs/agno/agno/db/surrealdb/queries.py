@@ -1,5 +1,5 @@
 from textwrap import dedent
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, Optional
 
 OPERATOR = Literal["=", "!=", "<=", ">=", "~", "IN", "CONTAINSANY"]
 
@@ -42,7 +42,10 @@ class WhereClause:
 
 
 def order_limit_start(
-    sort_by: str | None = None, sort_order: str | None = None, limit: int | None = None, page: int | None = None
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = None,
+    limit: Optional[int] = None,
+    page: Optional[int] = None,
 ) -> str:
     order_clause = f"ORDER BY {sort_by} {sort_order or ''}" if sort_by is not None else ""
     limit_clause = f"LIMIT {limit}" if limit is not None else ""

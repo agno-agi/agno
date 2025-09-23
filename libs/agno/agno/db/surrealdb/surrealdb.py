@@ -75,7 +75,7 @@ class SurrealDb(BaseDb):
         self._users_table: str = "user"
 
     @property
-    def client(self) -> BlockingWsSurrealConnection | BlockingHttpSurrealConnection:
+    def client(self) -> Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection]:
         if self._client is None:
             self._client = build_client(self._db_url, self._db_creds, self._db_ns, self._db_db)
         return self._client
@@ -100,10 +100,10 @@ class SurrealDb(BaseDb):
         query: str,
         vars: dict[str, Any],
         record_type: type[utils.RecordType],
-    ) -> utils.RecordType | None:
+    ) -> Optional[utils.RecordType]:
         return utils.query_one(self.client, query, vars, record_type)
 
-    def _count(self, table: str, where_clause: str, where_vars: dict[str, Any], group_by: str | None = None) -> int:
+    def _count(self, table: str, where_clause: str, where_vars: dict[str, Any], group_by: Optional[str] = None) -> int:
         total_count_query = COUNT_QUERY.format(
             table=table,
             where_clause=where_clause,

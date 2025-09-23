@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Any, Sequence, TypeVar
+from typing import Any, Optional, Sequence, TypeVar, Union
 
 from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, Surreal
 
@@ -10,7 +10,7 @@ RecordType = TypeVar("RecordType")
 
 def build_client(
     url: str, creds: dict[str, str], ns: str, db: str
-) -> BlockingHttpSurrealConnection | BlockingWsSurrealConnection:
+) -> Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection]:
     client = Surreal(url=url)
     client.signin(creds)
     client.use(namespace=ns, database=db)
@@ -18,10 +18,10 @@ def build_client(
 
 
 def _query_aux(
-    client: BlockingWsSurrealConnection | BlockingHttpSurrealConnection,
+    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
     query: str,
     vars: dict[str, Any],
-) -> list | dict:
+) -> Union[list, dict]:
     try:
         response = client.query(query, vars)
         logger.debug(f"Query: {query} with {vars}, Response: {response}")
@@ -32,7 +32,7 @@ def _query_aux(
 
 
 def query(
-    client: BlockingWsSurrealConnection | BlockingHttpSurrealConnection,
+    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
     query: str,
     vars: dict[str, Any],
     record_type: type[RecordType],
@@ -48,11 +48,11 @@ def query(
 
 
 def query_one(
-    client: BlockingWsSurrealConnection | BlockingHttpSurrealConnection,
+    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
     query: str,
     vars: dict[str, Any],
     record_type: type[RecordType],
-) -> RecordType | None:
+) -> Optional[RecordType]:
     response = _query_aux(client, query, vars)
     if response is None:
         return None
