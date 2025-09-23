@@ -33,6 +33,7 @@ from agno.agent import Agent
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import ModelProviderError, RunCancelledException
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
@@ -515,6 +516,11 @@ class Team:
         self.num_history_runs = num_history_runs
         self.metadata = metadata
 
+        if add_history_to_context and not db:
+            log_warning(
+                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+            )
+
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
         self.reasoning_agent = reasoning_agent
@@ -727,9 +733,19 @@ class Team:
         if user_id is None:
             user_id = self.user_id
 
-        # Determine the session_state
+        # Determine the session_state with proper precedence
         if session_state is None:
             session_state = self.session_state or {}
+        else:
+            # If run session_state is provided, merge agent defaults under it
+            # This ensures run state takes precedence over agent defaults
+            if self.session_state:
+                from agno.utils.merge_dict import merge_dictionaries
+
+                base_state = self.session_state.copy()
+                merge_dictionaries(base_state, session_state)
+                session_state.clear()
+                session_state.update(base_state)
 
         if user_id is not None:
             session_state["current_user_id"] = user_id
@@ -1240,7 +1256,9 @@ class Team:
             workflow_context=workflow_context,
             debug_mode=debug_mode,
             add_history_to_context=add_history,
+            add_session_state_to_context=add_session_state,
             dependencies=run_dependencies,
+            add_dependencies_to_context=add_dependencies,
             metadata=metadata,
         )
 
@@ -1867,6 +1885,8 @@ class Team:
             workflow_context=workflow_context,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
             dependencies=dependencies,
             metadata=metadata,
         )
@@ -2258,7 +2278,7 @@ class Team:
                 content_type = "str"
 
                 should_yield = False
-                # Process content and thinking
+                # Process content
                 if model_response_event.content is not None:
                     if parse_structured_output:
                         full_model_response.content = model_response_event.content
@@ -2274,7 +2294,31 @@ class Team:
                         full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     should_yield = True
 
-                # Process thinking
+                # Process reasoning content
+                if model_response_event.reasoning_content is not None:
+                    full_model_response.reasoning_content = (
+                        full_model_response.reasoning_content or ""
+                    ) + model_response_event.reasoning_content
+                    run_response.reasoning_content = full_model_response.reasoning_content
+                    should_yield = True
+
+                if model_response_event.redacted_reasoning_content is not None:
+                    if not full_model_response.reasoning_content:
+                        full_model_response.reasoning_content = model_response_event.redacted_reasoning_content
+                    else:
+                        full_model_response.reasoning_content += model_response_event.redacted_reasoning_content
+                    run_response.reasoning_content = full_model_response.reasoning_content
+                    should_yield = True
+
+                # Handle provider data (one chunk)
+                if model_response_event.provider_data is not None:
+                    run_response.model_provider_data = model_response_event.provider_data
+
+                # Handle citations (one chunk)
+                if model_response_event.citations is not None:
+                    run_response.citations = model_response_event.citations
+
+                # Process audio
                 if model_response_event.audio is not None:
                     if full_model_response.audio is None:
                         full_model_response.audio = Audio(id=str(uuid4()), content=b"", transcript="")
@@ -2929,11 +2973,6 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        show_message: bool = True,
-        show_reasoning: bool = True,
-        show_full_reasoning: bool = False,
-        console: Optional[Any] = None,
-        tags_to_include_in_markdown: Optional[Set[str]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2941,9 +2980,16 @@ class Team:
         markdown: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        show_message: bool = True,
+        show_reasoning: bool = True,
+        show_full_reasoning: bool = False,
+        console: Optional[Any] = None,
+        tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
         if not tags_to_include_in_markdown:
@@ -2982,6 +3028,8 @@ class Team:
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -3006,6 +3054,8 @@ class Team:
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -3020,11 +3070,6 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        show_message: bool = True,
-        show_reasoning: bool = True,
-        show_full_reasoning: bool = False,
-        console: Optional[Any] = None,
-        tags_to_include_in_markdown: Optional[Set[str]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -3033,8 +3078,15 @@ class Team:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        show_message: bool = True,
+        show_reasoning: bool = True,
+        show_full_reasoning: bool = False,
+        console: Optional[Any] = None,
+        tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
         if not tags_to_include_in_markdown:
@@ -3073,6 +3125,8 @@ class Team:
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -3097,6 +3151,8 @@ class Team:
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -3496,6 +3552,7 @@ class Team:
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
+                    tool_call_limit=self.tool_call_limit,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
                     debug_level=self.debug_level,
@@ -4023,6 +4080,7 @@ class Team:
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         # Prepare tools
@@ -4070,46 +4128,51 @@ class Team:
         if self.knowledge is not None and self.update_knowledge:
             _tools.append(self.add_to_knowledge)
 
-        # Get the user message if we are using the input directly
-        user_message = None
-        if self.determine_input_for_members is False:
-            user_message = self._get_user_message(
+        if self.members:
+            # Get the user message if we are using the input directly
+            user_message = None
+            if self.determine_input_for_members is False:
+                user_message = self._get_user_message(
+                    run_response=run_response,
+                    session_state=session_state,
+                    input_message=input_message,
+                    user_id=user_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    metadata=metadata,
+                )
+
+            delegate_task_func = self._get_delegate_task_function(
                 run_response=run_response,
+                session=session,
                 session_state=session_state,
-                input_message=input_message,
+                team_run_context=team_run_context,
+                input=user_message,
                 user_id=user_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
+                stream=self.stream or False,
+                stream_intermediate_steps=self.stream_intermediate_steps,
+                async_mode=async_mode,
+                images=images,  # type: ignore
+                videos=videos,  # type: ignore
+                audio=audio,  # type: ignore
+                files=files,  # type: ignore
+                knowledge_filters=knowledge_filters,
+                add_history_to_context=add_history_to_context,
+                workflow_context=workflow_context,
                 dependencies=dependencies,
                 add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
+                debug_mode=debug_mode,
             )
 
-        delegate_task_func = self._get_delegate_task_function(
-            run_response=run_response,
-            session=session,
-            session_state=session_state,
-            team_run_context=team_run_context,
-            input=user_message,
-            user_id=user_id,
-            stream=self.stream or False,
-            stream_intermediate_steps=self.stream_intermediate_steps,
-            async_mode=async_mode,
-            images=images,  # type: ignore
-            videos=videos,  # type: ignore
-            audio=audio,  # type: ignore
-            files=files,  # type: ignore
-            knowledge_filters=knowledge_filters,
-            workflow_context=workflow_context,
-            debug_mode=debug_mode,
-            add_history_to_context=add_history_to_context,
-        )
-
-        _tools.append(delegate_task_func)
-        if self.get_member_information_tool:
-            _tools.append(self.get_member_information)
+            _tools.append(delegate_task_func)
+            if self.get_member_information_tool:
+                _tools.append(self.get_member_information)
 
         self._functions_for_model = {}
         self._tools_for_model = []
@@ -4138,6 +4201,7 @@ class Team:
                     if name not in self._functions_for_model:
                         func._team = self
                         func._session_state = session_state
+                        func._dependencies = dependencies
                         func.process_entrypoint(strict=strict)
                         if strict:
                             func.strict = True
@@ -4157,6 +4221,7 @@ class Team:
                 if tool.name not in self._functions_for_model:
                     tool._team = self
                     tool._session_state = session_state
+                    tool._dependencies = dependencies
                     tool.process_entrypoint(strict=strict)
                     if strict and tool.strict is None:
                         tool.strict = True
@@ -4178,6 +4243,7 @@ class Team:
                     func = Function.from_callable(tool, strict=strict)
                     func._team = self
                     func._session_state = session_state
+                    func._dependencies = dependencies
                     if strict:
                         func.strict = True
                     if self.tool_hooks:
@@ -4373,42 +4439,43 @@ class Team:
 
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
-        system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
-        system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
+        if self.members is not None and len(self.members) > 0:
+            system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
+            system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
 
-        system_message_content += "\nHere are the members in your team:\n"
-        system_message_content += "<team_members>\n"
-        system_message_content += self.get_members_system_message_content()
-        if self.get_member_information_tool:
-            system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
-        system_message_content += "</team_members>\n"
+            system_message_content += "\nHere are the members in your team:\n"
+            system_message_content += "<team_members>\n"
+            system_message_content += self.get_members_system_message_content()
+            if self.get_member_information_tool:
+                system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
+            system_message_content += "</team_members>\n"
 
-        system_message_content += "\n<how_to_respond>\n"
+            system_message_content += "\n<how_to_respond>\n"
 
-        if self.delegate_task_to_all_members:
-            system_message_content += (
-                "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
-                "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
-                "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
-                "- If you feel the task has been completed, you can stop and respond to the user.\n"
-            )
-        else:
-            system_message_content += (
-                "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
-                "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
-                "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
-                "- When you delegate a task to another member, make sure to include:\n"
-                "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
-                "  - task_description (str): A clear description of the task.\n"
-                "  - expected_output (str): The expected output.\n"
-                "- You can delegate tasks to multiple members at once.\n"
-                "- You must always analyze the responses from members before responding to the user.\n"
-                "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
-                "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
-                "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
-                "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
-            )
-        system_message_content += "</how_to_respond>\n\n"
+            if self.delegate_task_to_all_members:
+                system_message_content += (
+                    "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
+                    "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
+                    "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
+                    "- If you feel the task has been completed, you can stop and respond to the user.\n"
+                )
+            else:
+                system_message_content += (
+                    "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                    "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
+                    "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
+                    "- When you delegate a task to another member, make sure to include:\n"
+                    "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
+                    "  - task_description (str): A clear description of the task.\n"
+                    "  - expected_output (str): The expected output.\n"
+                    "- You can delegate tasks to multiple members at once.\n"
+                    "- You must always analyze the responses from members before responding to the user.\n"
+                    "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
+                    "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
+                    "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
+                    "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
+                )
+            system_message_content += "</how_to_respond>\n\n"
 
         # Attached media
         if audio is not None or images is not None or videos is not None or files is not None:
@@ -4524,7 +4591,7 @@ class Team:
                 f"<additional_context>\n{self.additional_context.strip()}\n</additional_context>\n\n"
             )
 
-        if self.add_session_state_to_context and session_state is not None:
+        if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
         # Add the JSON output prompt if output_schema is provided and structured_outputs is False
@@ -4625,9 +4692,16 @@ class Team:
         if add_history_to_context:
             from copy import deepcopy
 
+            # Only skip messages from history when system_message_role is NOT a standard conversation role.
+            # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+            # to preserve conversation continuity.
+            skip_role = (
+                self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
+            )
+
             history = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
-                skip_role=self.system_message_role,
+                skip_role=skip_role,
                 team_id=self.id,
             )
 
@@ -4711,6 +4785,9 @@ class Team:
                 if len(input_message) > 0 and isinstance(input_message[0], dict) and "type" in input_message[0]:
                     # This is multimodal content (text + images/audio/video), preserve the structure
                     input_content = input_message
+                elif len(input_message) > 0 and isinstance(input_message[0], Message):
+                    # This is a list of Message objects, extract text content from them
+                    input_content = get_text_from_message(input_message)
                 elif all(isinstance(item, str) for item in input_message):
                     input_content = "\n".join([str(item) for item in input_message])
                 else:
@@ -5148,9 +5225,14 @@ class Team:
         member_agent_id = member_agent.id if isinstance(member_agent, Agent) else None
         member_team_id = member_agent.id if isinstance(member_agent, Team) else None
 
+        # Only skip messages from history when system_message_role is NOT a standard conversation role.
+        # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+        # to preserve conversation continuity.
+        skip_role = self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
+
         history = session.get_messages_from_last_n_runs(
             last_n=member_agent.num_history_runs or self.num_history_runs,
-            skip_role=self.system_message_role,
+            skip_role=skip_role,
             agent_id=member_agent_id,
             team_id=member_team_id,
             member_runs=True,
@@ -5224,9 +5306,13 @@ class Team:
         audio: Optional[List[Audio]] = None,
         files: Optional[List[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        workflow_context: Optional[Dict] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
+        workflow_context: Optional[Dict] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
     ) -> Function:
         if not images:
             images = []
@@ -5262,9 +5348,9 @@ class Team:
                     task_description, expected_output, team_member_interactions_str
                 )
 
-            # 4. Add history for the member if enabled
+            # 4. Add history for the member if enabled (because we won't load the session for the member, so history won't be loaded automatically)
             history = None
-            if member_agent.add_history_to_context:
+            if member_agent.add_history_to_context or add_history_to_context:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     if isinstance(member_agent_task, str):
@@ -5376,8 +5462,11 @@ class Team:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     debug_mode=debug_mode,
-                    add_history_to_context=add_history_to_context,
                     workflow_context=workflow_context,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    metadata=metadata,
+                    add_session_state_to_context=add_session_state_to_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5411,7 +5500,10 @@ class Team:
                     stream=False,
                     debug_mode=debug_mode,
                     workflow_context=workflow_context,
-                    add_history_to_context=add_history_to_context,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    metadata=metadata,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5495,7 +5587,10 @@ class Team:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     debug_mode=debug_mode,
-                    add_history_to_context=add_history_to_context,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    metadata=metadata,
                     workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
@@ -5530,7 +5625,10 @@ class Team:
                     stream=False,
                     debug_mode=debug_mode,
                     workflow_context=workflow_context,
-                    add_history_to_context=add_history_to_context,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    metadata=metadata,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5608,7 +5706,10 @@ class Team:
                         if not member_agent.knowledge_filters and member_agent.knowledge
                         else None,
                         debug_mode=debug_mode,
-                        add_history_to_context=add_history_to_context,
+                        dependencies=dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=metadata,
                         yield_run_response=True,
                     )
                     member_agent_run_response = None
@@ -5643,7 +5744,10 @@ class Team:
                         if not member_agent.knowledge_filters and member_agent.knowledge
                         else None,
                         debug_mode=debug_mode,
-                        add_history_to_context=add_history_to_context,
+                        dependencies=dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=metadata,
                     )
 
                     check_if_run_cancelled(member_agent_run_response)  # type: ignore
@@ -5717,7 +5821,10 @@ class Team:
                         knowledge_filters=knowledge_filters
                         if not member_agent.knowledge_filters and member_agent.knowledge
                         else None,
-                        add_history_to_context=add_history_to_context,
+                        dependencies=dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=metadata,
                         yield_run_response=True,
                     )
                     member_agent_run_response = None
@@ -5734,6 +5841,7 @@ class Team:
                         _process_delegate_task_to_member(
                             member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
                         )
+                    await queue.put(done_marker)
 
                 # Initialize and launch all members
                 tasks: List[asyncio.Task[None]] = []
@@ -5761,7 +5869,6 @@ class Team:
                     for t in tasks:
                         with contextlib.suppress(Exception):
                             await t
-
             else:
                 # Non-streaming concurrent run of members; collect results when done
                 tasks = []
@@ -5791,7 +5898,10 @@ class Team:
                             knowledge_filters=knowledge_filters
                             if not member_agent.knowledge_filters and member_agent.knowledge
                             else None,
-                            add_history_to_context=add_history_to_context,
+                            dependencies=dependencies,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
+                            metadata=metadata,
                         )
                         check_if_run_cancelled(member_agent_run_response)
 
@@ -6024,7 +6134,8 @@ class Team:
 
         from agno.utils.merge_dict import merge_dictionaries
 
-        # Get the session_state from the database and update the current session_state
+        # Get the session_state from the database and merge with proper precedence
+        # At this point session_state contains: agent_defaults + run_params
         if session.session_data is not None and "session_state" in session.session_data:
             session_state_from_db = session.session_data.get("session_state")
 
@@ -6033,10 +6144,11 @@ class Team:
                 and isinstance(session_state_from_db, dict)
                 and len(session_state_from_db) > 0
             ):
-                # This updates session_state_from_db
-                # If there are conflicting keys, values from provided session_state will take precedence
-                merge_dictionaries(session_state_from_db, session_state)
-                session_state = session_state_from_db
+                # This preserves precedence: run_params > db_state > agent_defaults
+                merged_state = session_state_from_db.copy()
+                merge_dictionaries(merged_state, session_state)
+                session_state.clear()
+                session_state.update(merged_state)
 
         # Update the session_state in the session
         if session.session_data is not None:
@@ -6674,17 +6786,18 @@ class Team:
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
-        def search_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+        def search_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
             """Use this function to search the knowledge base for information about a query.
 
             Args:
                 query: The query to search for.
-                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
 
             Returns:
                 str: A string containing the response from the knowledge base.
             """
-            search_filters = get_agentic_or_user_search_filters(filters, knowledge_filters)
+            filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+            search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
 
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
@@ -6705,17 +6818,18 @@ class Team:
                 return "No documents found"
             return self._convert_documents_to_string(docs_from_knowledge)
 
-        async def asearch_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+        async def asearch_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
             """Use this function to search the knowledge base for information about a query asynchronously.
 
             Args:
                 query: The query to search for.
-                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
 
             Returns:
                 str: A string containing the response from the knowledge base.
             """
-            search_filters = get_agentic_or_user_search_filters(filters, knowledge_filters)
+            filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+            search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
 
             retrieval_timer = Timer()
             retrieval_timer.start()

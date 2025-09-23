@@ -114,7 +114,6 @@ class TestPostgresDb:
             "team_id",
             "workflow_id",
             "user_id",
-            "team_session_id",
             "session_data",
             "agent_data",
             "team_data",
@@ -310,7 +309,7 @@ class TestPostgresDb:
 
         mock_table = Mock(spec=Table)
         with patch.object(postgres_db, "_create_table", return_value=mock_table):
-            table = postgres_db._get_or_create_table("test_table", "sessions", "test_schema")
+            table = postgres_db._get_or_create_table(table_name="test_table", table_type="sessions", db_schema="test_schema", create_table_if_not_found=True)
             assert table == mock_table
             postgres_db._create_table.assert_called_once_with(
                 table_name="test_table", table_type="sessions", db_schema="test_schema"

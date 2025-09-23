@@ -84,7 +84,8 @@ class Ollama(Model):
         if self.async_client is not None:
             return self.async_client
 
-        return AsyncOllamaClient(**self._get_client_params())
+        self.async_client = AsyncOllamaClient(**self._get_client_params())
+        return self.async_client
 
     def get_request_params(
         self,
@@ -144,6 +145,28 @@ class Ollama(Model):
             "role": message.role,
             "content": message.content,
         }
+
+        if message.role == "assistant" and message.tool_calls is not None:
+            # Format tool calls for assistant messages
+            formatted_tool_calls = []
+            for tool_call in message.tool_calls:
+                if "function" in tool_call:
+                    function_data = tool_call["function"]
+                    formatted_tool_call = {
+                        "id": tool_call.get("id"),
+                        "type": "function",
+                        "function": {
+                            "name": function_data["name"],
+                            "arguments": json.loads(function_data["arguments"])
+                            if isinstance(function_data["arguments"], str)
+                            else function_data["arguments"],
+                        },
+                    }
+                    formatted_tool_calls.append(formatted_tool_call)
+
+            if formatted_tool_calls:
+                _message["tool_calls"] = formatted_tool_calls
+
         if message.role == "user":
             if message.images is not None:
                 message_images = []
