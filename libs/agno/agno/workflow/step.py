@@ -294,21 +294,17 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        # Update the history check to use workflow flag instead of agent flag:
                         history = None
-                        if workflow_session:  # Always try to get history if workflow has session
-                            # Get workflow conversation history
+                        if workflow_session:  
                             history_messages = workflow_session.get_messages_for_workflow_history(
-                                num_history_runs=3  # Default or from workflow setting
+                                num_history_runs=3 
                             )
 
                             if history_messages:
-                                # Create deep copy and tag as history
                                 history = [deepcopy(msg) for msg in history_messages]
                                 for msg in history:
                                     msg.from_history = True
-
-                                # Add current message to history
+                                    
                                 from agno.models.message import Message
 
                                 if isinstance(message, str):
