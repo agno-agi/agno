@@ -1,11 +1,11 @@
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces.slack import Slack
-from agno.db.postgres import PostgresDb
-from agno.workflow.workflow import Workflow
-from agno.workflow.step import Step
 from agno.tools.googlesearch import GoogleSearchTools
+from agno.workflow.step import Step
+from agno.workflow.workflow import Workflow
 
 # Define agents for the workflow
 researcher_agent = Agent(
@@ -16,8 +16,8 @@ researcher_agent = Agent(
     instructions=[
         "Search for the most recent and relevant information",
         "Focus on credible sources and key insights",
-        "Summarize findings clearly and concisely"
-    ]
+        "Summarize findings clearly and concisely",
+    ],
 )
 
 writer_agent = Agent(
@@ -28,8 +28,8 @@ writer_agent = Agent(
         "Write in a clear, engaging, and professional tone",
         "Structure content with proper headings and bullet points",
         "Include key insights from the research",
-        "Keep content informative yet accessible"
-    ]
+        "Keep content informative yet accessible",
+    ],
 )
 
 # Create workflow steps
@@ -39,7 +39,7 @@ research_step = Step(
 )
 
 writing_step = Step(
-    name="Writing Step", 
+    name="Writing Step",
     agent=writer_agent,
 )
 

@@ -1,14 +1,12 @@
 import asyncio
-from textwrap import dedent
-from typing import List
 from datetime import date
-
-from pydantic import BaseModel, Field
+from textwrap import dedent
+from typing import List, Literal
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp_toolbox import MCPToolbox
-from typing import Literal
+from pydantic import BaseModel, Field
 
 url = "http://127.0.0.1:5001"
 

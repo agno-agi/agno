@@ -2,14 +2,14 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Union
 from warnings import warn
 
 from agno.tools.function import Function
+from agno.tools.mcp import MCPTools
 from agno.utils.log import logger
 
-from agno.tools.mcp import MCPTools
-
 try:
-    from toolbox_core import ToolboxClient # type: ignore
+    from toolbox_core import ToolboxClient  # type: ignore
 except ImportError:
     raise ImportError("`toolbox_core` not installed. Please install using `pip install -U toolbox-core`.")
+
 
 class MCPToolsMeta(type):
     """Metaclass for MCPTools to ensure proper initialization with AgentOS"""
@@ -17,7 +17,6 @@ class MCPToolsMeta(type):
     @property
     def __name__(cls):
         return "MCPTools"
-    
 
 
 class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
@@ -52,7 +51,7 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
         # Ensure the URL ends in "/mcp" as expected
         if not url.endswith("/mcp"):
             url = url + "/mcp"
-            
+
         super().__init__(url=url, transport=transport, **kwargs)
 
         self.name = "toolbox_client"

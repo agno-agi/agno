@@ -39,9 +39,9 @@ agent = Agent(
     tools=[
         KnowledgeTools(
             knowledge=agno_docs,
-            think=True,
-            search=True,
-            analyze=True,
+            enable_think=True,
+            enable_search=True,
+            enable_analyze=True,
             add_instructions=True,
         )
     ],
@@ -82,9 +82,9 @@ streaming_agent = Agent(
     tools=[
         KnowledgeTools(
             knowledge=agno_docs,
-            think=True,
-            search=True,
-            analyze=True,
+            enable_think=True,
+            enable_search=True,
+            enable_analyze=True,
             add_instructions=True,
         )
     ],
