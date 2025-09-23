@@ -480,27 +480,36 @@ class SurrealDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        # TODO: implement filter_type
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         table_type = "evals"
         table = self._get_table(table_type)
+
         where = WhereClause()
-        if agent_id is not None:
-            where.and_("agent", RecordID("agent", agent_id))
-        where.and_("team", RecordID("team", team_id))
-        where.and_("workflow", RecordID("workflow", workflow_id))
-        where.and_("model", RecordID("model", model_id))
-        where.and_("eval_type", eval_type)
+        if filter_type is not None:
+            if filter_type == EvalFilterType.AGENT:
+                where.and_("agent", RecordID("agent", agent_id))
+            elif filter_type == EvalFilterType.TEAM:
+                where.and_("team", RecordID("team", team_id))
+            elif filter_type == EvalFilterType.WORKFLOW:
+                where.and_("workflow", RecordID("workflow", workflow_id))
+        if model_id is not None:
+            where.and_("model", RecordID("model", model_id))
+        if eval_type is not None:
+            where.and_("eval_type", eval_type)
         where_clause, where_vars = where.build()
+
         # Group
         group_clause = "GROUP BY user_id"
+
         # Order
         order_limit_start_clause = order_limit_start(sort_by, sort_order, limit, page)
+
         # Total count
         total_count = self._count(table, where_clause, where_vars)
+
         # Query
         query = dedent(f"""
             SELECT
@@ -513,6 +522,7 @@ class SurrealDb(BaseDb):
             {order_limit_start_clause}
         """)
         result = self._query(query, where_vars, dict)
+
         if not result or not deserialize:
             return list(result), total_count
         return [deserialize_eval_run_record(x) for x in result]
