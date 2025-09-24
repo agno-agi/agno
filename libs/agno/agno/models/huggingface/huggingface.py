@@ -14,7 +14,7 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
     from huggingface_hub import (
@@ -382,7 +382,8 @@ class HuggingFace(Model):
             List[Dict[str, Any]]: The built tool calls.
         """
         tool_calls: List[Dict[str, Any]] = []
-        for _tool_call in tool_calls_data:
+        for tool_call in tool_calls_data:
+            _tool_call = tool_call[0]
             _index = _tool_call.index
             _tool_call_id = _tool_call.id
             _tool_call_type = _tool_call.type
