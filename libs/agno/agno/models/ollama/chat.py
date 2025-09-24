@@ -400,32 +400,6 @@ class Ollama(Model):
             if content_delta is not None and content_delta != "":
                 model_response.content = content_delta
 
-                # Extract thinking content for streaming responses (handle partial <think> tags carefully)
-                if model_response.content.find("<think>") != -1:
-                    # For streaming, we might have partial content
-                    # Only extract if we have complete </think> tag to avoid breaking partial tags
-                    if "</think>" in model_response.content:
-                        reasoning_content, clean_content = extract_thinking_content(model_response.content)
-
-                        if reasoning_content:
-                            # Store extracted thinking content separately
-                            model_response.reasoning_content = reasoning_content
-                            # Update main content with clean version
-                            model_response.content = clean_content
-                    elif "<think>" in model_response.content and "</think>" not in model_response.content:
-                        # We have an opening tag but no closing tag - this is likely partial thinking content
-                        # Extract everything after <think> as reasoning content and set main content to empty
-                        think_start = model_response.content.find("<think>")
-                        if think_start != -1:
-                            # Content before <think> goes to main content
-                            clean_content = model_response.content[:think_start]
-                            # Content after <think> goes to reasoning content (without the tag)
-                            reasoning_content = model_response.content[think_start + len("<think>") :]
-
-                            model_response.content = clean_content
-                            if reasoning_content.strip():  # Only set if not empty
-                                model_response.reasoning_content = reasoning_content
-
             tool_calls = response_message.get("tool_calls")
             if tool_calls is not None:
                 for tool_call in tool_calls:
