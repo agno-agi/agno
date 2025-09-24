@@ -57,7 +57,7 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
     if is_workflow_run:
         step_executor_runs = run_dict.get("step_executor_runs", [])
         if step_executor_runs:
-            for message in step_executor_runs[0].get("messages", []):
+            for message in reversed(step_executor_runs[0].get("messages", [])):
                 if message.get("role") == "user":
                     return message.get("content", "")
 
@@ -70,7 +70,7 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
                 return str(input_value)
 
     if run_dict.get("messages") is not None:
-        for message in run_dict["messages"]:
+        for message in reversed(run_dict["messages"]):
             if message.get("role") == "user":
                 return message.get("content", "")
 
