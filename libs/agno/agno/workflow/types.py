@@ -7,8 +7,8 @@ from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.metrics import Metrics
-from agno.utils.log import log_warning
 from agno.session.workflow import WorkflowSession
+from agno.utils.log import log_warning
 
 
 @dataclass
@@ -172,13 +172,13 @@ class StepInput:
         return self._get_deepest_step_content(last_output)  # type: ignore[return-value]
 
     def get_workflow_history(
-        self, 
+        self,
         num_history_runs: Optional[int] = 3,
     ) -> Optional[str]:
         """Get workflow conversation history for custom function steps"""
         if not self.workflow_session:
             return None
-        
+
         return self.workflow_session.get_workflow_history(
             session=self.workflow_session,
             num_history_runs=num_history_runs,

@@ -955,8 +955,8 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session if self.add_workflow_history else None,
-                        add_workflow_history= self.add_workflow_history if self.add_workflow_history else None,
+                        workflow_session=session,
+                        add_workflow_history=self.add_workflow_history if self.add_workflow_history else None,
                         num_history_runs=self.num_history_runs,
                     )
 
@@ -1120,8 +1120,8 @@ class Workflow:
                         session_state=session_state,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session if self.add_workflow_history else None,
-                        add_workflow_history= self.add_workflow_history if self.add_workflow_history else None,
+                        workflow_session=session,
+                        add_workflow_history=self.add_workflow_history if self.add_workflow_history else None,
                         num_history_runs=self.num_history_runs,
                     ):
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -1397,8 +1397,8 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session if self.add_workflow_history else None,
-                        add_workflow_history= self.add_workflow_history if self.add_workflow_history else None,
+                        workflow_session=session,
+                        add_workflow_history=self.add_workflow_history if self.add_workflow_history else None,
                         num_history_runs=self.num_history_runs,
                     )
 
@@ -1561,8 +1561,8 @@ class Workflow:
                         session_state=session_state,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session if self.add_workflow_history else None,
-                        add_workflow_history= self.add_workflow_history if self.add_workflow_history else None,
+                        workflow_session=session,
+                        add_workflow_history=self.add_workflow_history if self.add_workflow_history else None,
                         num_history_runs=self.num_history_runs,
                     ):
                         if workflow_run_response.run_id:
@@ -2619,7 +2619,7 @@ class Workflow:
                 show_step_details=show_step_details,
                 user_id=user_id,
                 session_id=session_id,
-                **kwargs
+                **kwargs,
             )
 
         _exit_on = exit_on or ["exit", "quit", "bye", "stop"]
@@ -2637,7 +2637,7 @@ class Workflow:
                 show_step_details=show_step_details,
                 user_id=user_id,
                 session_id=session_id,
-                **kwargs
+                **kwargs,
             )
 
     async def acli_app(
@@ -2669,7 +2669,7 @@ class Workflow:
                 show_step_details=show_step_details,
                 user_id=user_id,
                 session_id=session_id,
-                **kwargs
+                **kwargs,
             )
 
         _exit_on = exit_on or ["exit", "quit", "bye", "stop"]
@@ -2687,5 +2687,5 @@ class Workflow:
                 show_step_details=show_step_details,
                 user_id=user_id,
                 session_id=session_id,
-                **kwargs
+                **kwargs,
             )

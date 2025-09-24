@@ -80,41 +80,41 @@ class WorkflowSession:
         """Get formatted workflow history context for steps"""
         if not session or not session.runs:
             return None
-        
+
         from agno.run.base import RunStatus
-        
+
         # Get completed runs only (exclude current/pending run)
         completed_runs = [run for run in session.runs if run.status == RunStatus.completed]
         recent_runs = completed_runs[-num_history_runs:] if len(completed_runs) > num_history_runs else completed_runs
-        
+
         if not recent_runs:
             return None
-        
+
         # Format as workflow context
         context_parts = ["<workflow_history_context>"]
-        
+
         for i, run in enumerate(recent_runs, 1):
             context_parts.append(f"[run-{i}]")
-            
+
             # Add input
             if run.input:
                 if isinstance(run.input, str):
                     context_parts.append(f"input: {run.input}")
                 else:
                     context_parts.append(f"input: {str(run.input)}")
-            
-            # Add response  
+
+            # Add response
             if run.content:
                 if isinstance(run.content, str):
                     context_parts.append(f"response: {run.content}")
                 else:
                     context_parts.append(f"response: {str(run.content)}")
-            
+
             context_parts.append("")  # Empty line between runs
-        
+
         context_parts.append("</workflow_history_context>")
         context_parts.append("")  # Empty line before current input
-        
+
         return "\n".join(context_parts)
 
     def to_dict(self) -> Dict[str, Any]:

@@ -13,10 +13,10 @@ from agno.run.workflow import (
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
 )
+from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
-from agno.session.workflow import WorkflowSession
 
 WorkflowSteps = List[
     Union[

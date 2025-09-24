@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.media import Audio, Image, Video
+from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
@@ -19,7 +20,6 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.team import Team
-from agno.models.message import Message
 from agno.utils.log import log_debug, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.utils.merge_dict import merge_dictionaries
 from agno.workflow.types import StepInput, StepOutput, StepType
@@ -305,10 +305,9 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history):
+                        if self.add_workflow_history or add_workflow_history:
                             history_messages = workflow_session.get_workflow_history(
-                                session=workflow_session,
-                                num_history_runs=num_history_runs 
+                                session=workflow_session, num_history_runs=num_history_runs
                             )
                             final_message = f"{history_messages}{message}"
 
@@ -489,10 +488,9 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history):
+                        if self.add_workflow_history or add_workflow_history:
                             history_messages = workflow_session.get_workflow_history(
-                                session=workflow_session,
-                                num_history_runs=num_history_runs 
+                                session=workflow_session, num_history_runs=num_history_runs
                             )
                             final_message = f"{history_messages}{message}"
 
@@ -709,10 +707,9 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history):
+                        if self.add_workflow_history or add_workflow_history:
                             history_messages = workflow_session.get_workflow_history(
-                                session=workflow_session,
-                                num_history_runs=num_history_runs 
+                                session=workflow_session, num_history_runs=num_history_runs
                             )
                             final_message = f"{history_messages}{message}"
 
@@ -895,10 +892,9 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history):
+                        if self.add_workflow_history or add_workflow_history:
                             history_messages = workflow_session.get_workflow_history(
-                                session=workflow_session,
-                                num_history_runs=num_history_runs 
+                                session=workflow_session, num_history_runs=num_history_runs
                             )
                             final_message = f"{history_messages}{message}"
 
