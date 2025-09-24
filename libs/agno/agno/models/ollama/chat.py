@@ -1,5 +1,6 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
 
 from pydantic import BaseModel
@@ -44,6 +45,7 @@ class Ollama(Model):
     # Client parameters
     host: Optional[str] = None
     timeout: Optional[Any] = None
+    api_key: Optional[str] = field(default_factory=lambda: getenv("OLLAMA_API_KEY"))
     client_params: Optional[Dict[str, Any]] = None
 
     # Ollama clients
@@ -51,10 +53,23 @@ class Ollama(Model):
     async_client: Optional[AsyncOllamaClient] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
+        host = self.host
+        headers = {}
+
+        if self.api_key:
+            if not host:
+                host = "https://ollama.com"
+            headers["authorization"] = f"Bearer {self.api_key}"
+            log_debug(f"Using Ollama cloud endpoint: {host}")
+
         base_params = {
-            "host": self.host,
+            "host": host,
             "timeout": self.timeout,
         }
+
+        if headers:
+            base_params["headers"] = headers
+
         # Create client_params dict with non-None values
         client_params = {k: v for k, v in base_params.items() if v is not None}
         # Add additional client params if provided

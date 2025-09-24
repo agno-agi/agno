@@ -3,6 +3,7 @@ from os import getenv
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
+from agno.utils.log import log_debug, log_error
 
 try:
     from scrapegraph_py import Client
@@ -23,11 +24,14 @@ class ScrapeGraphTools(Toolkit):
         enable_crawl: bool = False,
         enable_searchscraper: bool = False,
         enable_agentic_crawler: bool = False,
+        enable_scrape: bool = False,
+        render_heavy_js: bool = False,
         all: bool = False,
         **kwargs,
     ):
         self.api_key: Optional[str] = api_key or getenv("SGAI_API_KEY")
         self.client = Client(api_key=self.api_key)
+        self.render_heavy_js = render_heavy_js
 
         # Start with smartscraper by default
         # Only enable markdownify if smartscraper is False
@@ -45,6 +49,8 @@ class ScrapeGraphTools(Toolkit):
             tools.append(self.searchscraper)
         if enable_agentic_crawler or all:
             tools.append(self.agentic_crawler)
+        if enable_scrape or all:
+            tools.append(self.scrape)
 
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
 
@@ -57,10 +63,13 @@ class ScrapeGraphTools(Toolkit):
             The structured data extracted from the webpage
         """
         try:
+            log_debug(f"ScrapeGraph smartscraper request for URL: {url}")
             response = self.client.smartscraper(website_url=url, user_prompt=prompt)
             return json.dumps(response["result"])
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            error_msg = f"Smartscraper failed: {str(e)}"
+            log_error(error_msg)
+            return f"Error: {error_msg}"
 
     def markdownify(self, url: str) -> str:
         """Convert a webpage to markdown format.
@@ -70,10 +79,13 @@ class ScrapeGraphTools(Toolkit):
             The markdown version of the webpage
         """
         try:
+            log_debug(f"ScrapeGraph markdownify request for URL: {url}")
             response = self.client.markdownify(website_url=url)
             return response["result"]
         except Exception as e:
-            return f"Error converting to markdown: {str(e)}"
+            error_msg = f"Markdownify failed: {str(e)}"
+            log_error(error_msg)
+            return f"Error: {error_msg}"
 
     def crawl(
         self,
@@ -100,10 +112,11 @@ class ScrapeGraphTools(Toolkit):
             The structured data extracted from the website
         """
         try:
+            log_debug(f"ScrapeGraph crawl request for URL: {url}")
             response = self.client.crawl(
                 url=url,
                 prompt=prompt,
-                schema=schema,
+                data_schema=schema,
                 cache_website=cache_website,
                 depth=depth,
                 max_pages=max_pages,
@@ -112,7 +125,9 @@ class ScrapeGraphTools(Toolkit):
             )
             return json.dumps(response, indent=2)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            error_msg = f"Crawl failed: {str(e)}"
+            log_error(error_msg)
+            return f"Error: {error_msg}"
 
     def agentic_crawler(
         self,
@@ -143,21 +158,7 @@ class ScrapeGraphTools(Toolkit):
             JSON string containing the scraping results, including request_id, status, and extracted data
         """
         try:
-            # Validate required parameters for AI extraction
-            if ai_extraction and not user_prompt:
-                return json.dumps({"error": "user_prompt is required when ai_extraction=True"})
-
-            # Validate URL format
-            if not url.strip():
-                return json.dumps({"error": "URL cannot be empty"})
-            if not (url.startswith("http://") or url.startswith("https://")):
-                return json.dumps({"error": "Invalid URL - must start with http:// or https://"})
-
-            # Validate steps
-            if not steps:
-                return json.dumps({"error": "Steps cannot be empty"})
-            if any(not step.strip() for step in steps):
-                return json.dumps({"error": "All steps must contain valid instructions"})
+            log_debug(f"ScrapeGraph agentic_crawler request for URL: {url}")
 
             # Prepare parameters for the API call
             params = {"url": url, "steps": steps, "use_session": use_session, "ai_extraction": ai_extraction}
@@ -170,26 +171,52 @@ class ScrapeGraphTools(Toolkit):
 
             # Call the agentic scraper API
             response = self.client.agenticscraper(**params)
-
             return json.dumps(response, indent=2)
 
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            error_msg = f"Agentic crawler failed: {str(e)}"
+            log_error(error_msg)
+            return f"Error: {error_msg}"
 
-    def searchscraper(self, prompt: str) -> str:
+    def searchscraper(self, user_prompt: str) -> str:
         """Search the web and extract information from the web.
         Args:
-            prompt (str): Search query
+            user_prompt (str): Search query
         Returns:
             JSON of the search results
         """
         try:
-            response = self.client.searchscraper(user_prompt=prompt)
-            if hasattr(response, "result"):
-                return json.dumps(response.result)
-            elif isinstance(response, dict) and "result" in response:
-                return json.dumps(response["result"])
-            else:
-                return json.dumps(response)
+            log_debug(f"ScrapeGraph searchscraper request with prompt: {user_prompt}")
+            response = self.client.searchscraper(user_prompt=user_prompt, render_heavy_js=self.render_heavy_js)
+            return json.dumps(response["result"])
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            error_msg = f"Searchscraper failed: {str(e)}"
+            log_error(error_msg)
+            return f"Error: {error_msg}"
+
+    def scrape(
+        self,
+        website_url: str,
+        headers: Optional[dict] = None,
+    ) -> str:
+        """Get raw HTML content from a website using the ScrapeGraphAI scrape API.
+
+        Args:
+            website_url (str): The URL of the website to scrape
+            headers (Optional[dict]): Optional headers to send with the request
+
+        Returns:
+            JSON string containing the HTML content and metadata
+        """
+        try:
+            log_debug(f"ScrapeGraph scrape request for URL: {website_url}")
+            response = self.client.scrape(
+                website_url=website_url,
+                headers=headers,
+                render_heavy_js=self.render_heavy_js,
+            )
+            return json.dumps(response, indent=2)
+        except Exception as e:
+            error_msg = f"Scrape failed: {str(e)}"
+            log_error(error_msg)
+            return f"Error: {error_msg}"
