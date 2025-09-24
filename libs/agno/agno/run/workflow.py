@@ -13,6 +13,7 @@ from agno.utils.log import log_error
 
 if TYPE_CHECKING:
     from agno.workflow.types import StepOutput, WorkflowMetrics
+    from agno.workflow.utils import WorkflowResponse
 else:
     StepOutput = Any
     WorkflowMetrics = Any
@@ -479,6 +480,8 @@ class WorkflowRunOutput:
     audio: Optional[List[Audio]] = None
     response_audio: Optional[Audio] = None
 
+    agent_response: Optional["WorkflowResponse"] = None
+
     # Store actual step execution results as StepOutput objects
     step_results: List[Union[StepOutput, List[StepOutput]]] = field(default_factory=list)
 
@@ -551,6 +554,9 @@ class WorkflowRunOutput:
         if self.step_executor_runs:
             _dict["step_executor_runs"] = [run.to_dict() for run in self.step_executor_runs]
 
+        if self.agent_response is not None:
+            _dict["agent_response"] = self.agent_response.model_dump(exclude_none=True)
+
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
 
@@ -597,6 +603,12 @@ class WorkflowRunOutput:
                     step_executor_runs.append(TeamRunOutput.from_dict(run_data))
                 else:
                     step_executor_runs.append(RunOutput.from_dict(run_data))
+        
+        agent_response = data.pop("agent_response", None)
+        if agent_response:
+            from agno.workflow.utils import WorkflowResponse
+
+            agent_response = WorkflowResponse.model_validate(agent_response)
 
         metadata = data.pop("metadata", None)
 
@@ -640,6 +652,7 @@ class WorkflowRunOutput:
             videos=videos,
             audio=audio,
             response_audio=response_audio,
+            agent_response=agent_response,
             events=events,
             metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
