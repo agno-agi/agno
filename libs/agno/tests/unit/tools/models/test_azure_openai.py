@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agno.agent import Agent
+from agno.media import Image
+from agno.tools.function import ToolResult
 from agno.tools.models.azure_openai import AzureOpenAITools
 
 
@@ -111,11 +113,15 @@ def test_generate_image_success(mock_post, azure_openai_tools, mock_agent):
     assert kwargs["json"]["quality"] == "standard"  # Default value
     assert kwargs["json"]["n"] == 1  # Default value
 
-    # Verify the agent interaction
-    mock_agent.add_image.assert_called_once()
-
-    # Check the return string
-    assert "https://test-image-url.com/image.png" in result
+    # Verify that it returns a ToolResult with images
+    assert isinstance(result, ToolResult)
+    assert "https://test-image-url.com/image.png" in result.content
+    assert result.images is not None
+    assert len(result.images) == 1
+    assert isinstance(result.images[0], Image)
+    assert result.images[0].url == "https://test-image-url.com/image.png"
+    assert result.images[0].original_prompt == "A test prompt"
+    assert result.images[0].revised_prompt == "A revised prompt for the image"
 
 
 @patch("agno.tools.models.azure_openai.post")
@@ -130,7 +136,9 @@ def test_generate_image_with_custom_parameters(mock_post, azure_openai_tools, mo
     mock_post.return_value = mock_response
 
     # Call the generate_image function with custom parameters
-    azure_openai_tools.generate_image(agent=mock_agent, prompt="A test prompt", size="1792x1024", style="vivid")
+    result = azure_openai_tools.generate_image(
+        agent=mock_agent, prompt="A test prompt", size="1792x1024", style="vivid"
+    )
 
     # Verify the API call uses the correct deployment
     mock_post.assert_called_once()
@@ -148,6 +156,11 @@ def test_generate_image_with_custom_parameters(mock_post, azure_openai_tools, mo
     assert kwargs["json"]["size"] == "1792x1024"
     assert kwargs["json"]["n"] == 1  # Default for dall-e-3
 
+    # Verify that it returns a ToolResult
+    assert isinstance(result, ToolResult)
+    assert result.images is not None
+    assert len(result.images) == 1
+
 
 @patch("agno.tools.models.azure_openai.post")
 def test_generate_image_failure(mock_post, azure_openai_tools, mock_agent):
@@ -161,13 +174,12 @@ def test_generate_image_failure(mock_post, azure_openai_tools, mock_agent):
     # Call the generate_image function
     result = azure_openai_tools.generate_image(agent=mock_agent, prompt="A test prompt")
 
-    # Verify the error is properly handled
-    assert "Error" in result
-    assert "400" in result
-    assert "Bad Request: Invalid prompt" in result
-
-    # Make sure no image was added to the agent
-    mock_agent.add_image.assert_not_called()
+    # Verify that it returns a ToolResult with error
+    assert isinstance(result, ToolResult)
+    assert "Error" in result.content
+    assert "400" in result.content
+    assert "Bad Request: Invalid prompt" in result.content
+    assert result.images is None
 
 
 def test_invalid_parameters(azure_openai_tools, mock_agent):
@@ -184,10 +196,17 @@ def test_invalid_parameters(azure_openai_tools, mock_agent):
         mock_post.return_value = mock_response
 
         # Test with invalid size - should be corrected to 1024x1024
-        azure_openai_tools.generate_image(agent=mock_agent, prompt="A test prompt for size", size="invalid-size")
+        result = azure_openai_tools.generate_image(
+            agent=mock_agent, prompt="A test prompt for size", size="invalid-size"
+        )
 
         # Verify the API call used the corrected size
         args, kwargs = mock_post.call_args
         assert kwargs["json"]["prompt"] == "A test prompt for size"
         assert kwargs["json"]["size"] == "1024x1024"
         assert kwargs["json"]["model"] == "dall-e-3"  # Default model
+
+        # Verify that it returns a ToolResult
+        assert isinstance(result, ToolResult)
+        assert result.images is not None
+        assert len(result.images) == 1

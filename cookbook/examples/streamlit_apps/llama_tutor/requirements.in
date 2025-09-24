@@ -1,0 +1,11 @@
+agno==2.0.0
+anthropic
+ddgs
+exa_py
+google-genai
+groq
+nest_asyncio
+openai
+psycopg[binary]
+sqlalchemy
+streamlit

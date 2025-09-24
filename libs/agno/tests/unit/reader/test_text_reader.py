@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from agno.document.base import Document
-from agno.document.reader.text_reader import TextReader
+from agno.knowledge.document.base import Document
+from agno.knowledge.reader.text_reader import TextReader
 
 
 @pytest.fixture
@@ -278,7 +278,7 @@ async def test_async_without_aiofiles(tmp_path):
     text_path = tmp_path / "test.txt"
     text_path.write_text(test_data)
 
-    with patch("agno.document.reader.text_reader.aiofiles", create=True) as mock_aiofiles:
+    with patch("agno.knowledge.reader.text_reader.aiofiles", create=True) as mock_aiofiles:
         mock_aiofiles.open.side_effect = ImportError
 
         reader = TextReader()

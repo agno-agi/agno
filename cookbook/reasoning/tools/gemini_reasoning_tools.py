@@ -4,23 +4,16 @@ from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
 reasoning_agent = Agent(
-    model=Gemini(id="gemini-2.5-pro-preview-03-25"),
+    model=Gemini(id="gemini-2.5-pro"),
     tools=[
         ReasoningTools(
-            think=True,
-            analyze=True,
-            add_instructions=True,
+            enable_think=True,
+            enable_analyze=True,
         ),
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
+        YFinanceTools(),
     ],
     instructions="Use tables where possible",
     stream_intermediate_steps=True,
-    show_tool_calls=True,
     markdown=True,
 )
 reasoning_agent.print_response(

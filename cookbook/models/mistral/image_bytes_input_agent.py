@@ -5,7 +5,6 @@ from agno.models.mistral.mistral import MistralChat
 
 agent = Agent(
     model=MistralChat(id="pixtral-12b-2409"),
-    show_tool_calls=True,
     markdown=True,
 )
 

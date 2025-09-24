@@ -1,242 +1,446 @@
 import json
-from typing import Optional
 
+import nest_asyncio
 import pandas as pd
 import streamlit as st
-from technical_writer import (
+from agents import (
     ArxivSearchResults,
     SearchTerms,
     WebSearchResults,
-    arxiv_search_agent,
-    arxiv_toolkit,
-    exa_search_agent,
-    research_editor,
-    search_term_generator,
+    get_paperpal_agents,
+)
+from agno.utils.streamlit import (
+    COMMON_CSS,
+    MODELS,
+    about_section,
+    add_message,
+    display_chat_messages,
+    display_response,
+    export_chat_history,
+    reset_session_state,
+    session_selector_widget,
 )
 
-# Streamlit App Configuration
+nest_asyncio.apply()
 st.set_page_config(
-    page_title="AI Researcher Workflow",
-    page_icon=":orange_heart:",
+    page_title="Paperpal Research Assistant",
+    page_icon="📝",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
-st.title("Paperpal")
-st.markdown("##### :orange_heart: built by [agno](https://github.com/agno-agi/agno)")
+
+# Add custom CSS
+st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
 
-def main() -> None:
-    # Get topic for report
-    input_topic = st.sidebar.text_input(
-        ":female-scientist: Enter a topic",
-        value="LLM evals in multi-agentic space",
+def get_main_agent(model_id: str = None, session_id: str = None):
+    """Get the main research editor agent for session management"""
+    agents = get_paperpal_agents(model_id=model_id, session_id=session_id)
+    return agents["research_editor"]
+
+
+def restart_session(model_id: str = None):
+    target_model = model_id or st.session_state.get("current_model", MODELS[0])
+
+    # Clear all research-related session state
+    keys_to_clear = [
+        "research_topic",
+        "search_terms",
+        "arxiv_results",
+        "exa_results",
+        "final_blog",
+        "research_agents",
+        "messages",
+        "session_id",
+    ]
+    for key in keys_to_clear:
+        st.session_state.pop(key, None)
+
+    # Initialize new agents
+    st.session_state["research_agents"] = get_paperpal_agents(model_id=target_model)
+    st.session_state["current_model"] = target_model
+    st.session_state["is_new_session"] = True
+
+
+def on_model_change():
+    selected_model = st.session_state.get("model_selector")
+    if selected_model:
+        if selected_model in MODELS:
+            new_model_id = selected_model
+            current_model = st.session_state.get("current_model")
+
+            if current_model and current_model != new_model_id:
+                try:
+                    st.session_state["is_loading_session"] = False
+                    restart_session(model_id=new_model_id)
+                except Exception as e:
+                    st.sidebar.error(f"Error switching to {selected_model}: {str(e)}")
+        else:
+            st.sidebar.error(f"Unknown model: {selected_model}")
+
+
+def main():
+    ####################################################################
+    # App header
+    ####################################################################
+    st.markdown(
+        "<h1 class='main-title'>Paperpal Research Assistant</h1>",
+        unsafe_allow_html=True,
     )
-    # Button to generate blog
-    generate_report = st.sidebar.button("Generate Blog")
-    if generate_report:
-        st.session_state["topic"] = input_topic
+    st.markdown(
+        "<p class='subtitle'>AI-powered research workflow for technical blog generation</p>",
+        unsafe_allow_html=True,
+    )
 
-    # Checkboxes for search
-    st.sidebar.markdown("## Agents")
-    search_exa = st.sidebar.checkbox("Exa Search", value=True)
-    search_arxiv = st.sidebar.checkbox("ArXiv Search", value=False)
-    # search_pubmed = st.sidebar.checkbox("PubMed Search", disabled=True)  # noqa
-    # search_google_scholar = st.sidebar.checkbox("Google Scholar Search", disabled=True)  # noqa
-    # use_cache = st.sidebar.toggle("Use Cache", value=False, disabled=True)  # noqa
+    ####################################################################
+    # Model selector
+    ####################################################################
+    selected_model = st.sidebar.selectbox(
+        "Select Model",
+        options=MODELS,
+        index=0,
+        key="model_selector",
+        on_change=on_model_change,
+    )
+
+    ####################################################################
+    # Initialize Research Agents
+    ####################################################################
+    if (
+        "research_agents" not in st.session_state
+        or not st.session_state["research_agents"]
+    ):
+        st.session_state["research_agents"] = get_paperpal_agents(
+            model_id=selected_model
+        )
+        st.session_state["current_model"] = selected_model
+
+    # Get main agent for session management
+    main_agent = get_main_agent(selected_model)
+    reset_session_state(main_agent)
+
+    if prompt := st.chat_input(
+        "💭 Ask me anything about research or start a new research project!"
+    ):
+        add_message("user", prompt)
+
+    ####################################################################
+    # Research Configuration
+    ####################################################################
+    st.sidebar.markdown("#### 🔍 Research Configuration")
+
+    # Topic input
+    research_topic = st.sidebar.text_input(
+        "Research Topic",
+        value=st.session_state.get("research_topic", ""),
+        placeholder="Enter your research topic...",
+        help="Provide a specific research topic you want to explore",
+    )
+
+    # Research options
+    col1, col2 = st.sidebar.columns([1, 1])
+    with col1:
+        enable_arxiv = st.sidebar.checkbox(
+            "📚 ArXiv Search", value=True, help="Search academic papers"
+        )
+    with col2:
+        enable_exa = st.sidebar.checkbox(
+            "🌐 Web Search", value=True, help="Search web content"
+        )
+
     num_search_terms = st.sidebar.number_input(
-        "Number of Search Terms",
+        "Search Terms",
         value=2,
         min_value=2,
         max_value=3,
-        help="This will increase latency.",
+        help="Number of strategic search terms to generate",
     )
 
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("## Trending Topics")
-    topic = "Humanoid and Autonomous Agents"
-    if st.sidebar.button(topic):
-        st.session_state["topic"] = topic
+    # Generate research button
+    if st.sidebar.button("🚀 Start Research", type="primary", use_container_width=True):
+        if research_topic.strip():
+            st.session_state["research_topic"] = research_topic.strip()
+            st.session_state["enable_arxiv"] = enable_arxiv
+            st.session_state["enable_exa"] = enable_exa
+            st.session_state["num_search_terms"] = num_search_terms
+            add_message("user", f"🔬 Research Request: {research_topic}")
+        else:
+            st.sidebar.error("Please enter a research topic")
 
-    topic = "Gene Editing for Disease Treatment"
-    if st.sidebar.button(topic):
-        st.session_state["topic"] = topic
+    ####################################################################
+    # Trending Topics
+    ####################################################################
+    st.sidebar.markdown("#### 🔥 Trending Topics")
+    trending_topics = [
+        "Multimodal AI in autonomous systems",
+        "Quantum machine learning algorithms",
+        "LLM safety and alignment research",
+        "Neural symbolic reasoning frameworks",
+        "Federated learning in edge computing",
+    ]
 
-    topic = "Multimodal AI in healthcare"
-    if st.sidebar.button(topic):
-        st.session_state["topic"] = topic
+    for topic in trending_topics:
+        if st.sidebar.button(f"📖 {topic}", use_container_width=True):
+            st.session_state["research_topic"] = topic
+            add_message("user", f"🔬 Research Request: {topic}")
 
-    topic = "Brain Aging and Neurodegenerative Diseases"
-    if st.sidebar.button(topic):
-        st.session_state["topic"] = topic
+    ###############################################################
+    # Utility buttons
+    ###############################################################
+    st.sidebar.markdown("#### 🛠️ Utilities")
+    col1, col2 = st.sidebar.columns([1, 1])
+    with col1:
+        if st.sidebar.button("🔄 New Research", use_container_width=True):
+            restart_session()
+            st.rerun()
 
-    if "topic" in st.session_state:
-        report_topic = st.session_state["topic"]
+    with col2:
+        has_messages = (
+            st.session_state.get("messages") and len(st.session_state["messages"]) > 0
+        )
 
-        search_terms: Optional[SearchTerms] = None
-        with st.status("Generating Search Terms", expanded=True) as status:
-            with st.container():
-                search_terms_container = st.empty()
-                search_generator_input = {
-                    "topic": report_topic,
-                    "num_terms": num_search_terms,
-                }
-                search_terms = search_term_generator.run(
-                    json.dumps(search_generator_input)
-                ).content
-                if search_terms:
-                    search_terms_container.json(search_terms.model_dump())
-            status.update(
-                label="Search Terms Generated", state="complete", expanded=False
+        if has_messages:
+            session_id = st.session_state.get("session_id")
+            if session_id:
+                try:
+                    session_name = main_agent.get_session_name()
+                    if session_name:
+                        filename = f"paperpal_research_{session_name}.md"
+                    else:
+                        filename = f"paperpal_research_{session_id}.md"
+                except Exception:
+                    filename = f"paperpal_research_{session_id}.md"
+            else:
+                filename = "paperpal_research_new.md"
+
+            if st.sidebar.download_button(
+                "💾 Export Research",
+                export_chat_history("Paperpal Research"),
+                file_name=filename,
+                mime="text/markdown",
+                use_container_width=True,
+                help=f"Export {len(st.session_state['messages'])} messages",
+            ):
+                st.sidebar.success("Research exported!")
+        else:
+            st.sidebar.button(
+                "💾 Export Research",
+                disabled=True,
+                use_container_width=True,
+                help="No research to export",
             )
 
-        if not search_terms:
-            st.write("Sorry report generation failed. Please try again.")
-            return
+    ####################################################################
+    # Display Chat Messages
+    ####################################################################
+    display_chat_messages()
 
-        exa_content: Optional[str] = None
-        arxiv_content: Optional[str] = None
+    ####################################################################
+    # Process Research Request
+    ####################################################################
+    last_message = (
+        st.session_state["messages"][-1] if st.session_state["messages"] else None
+    )
+    if last_message and last_message.get("role") == "user":
+        question = last_message["content"]
 
-        if search_exa:
-            with st.status("Searching Exa", expanded=True) as status:
-                with st.container():
-                    exa_container = st.empty()
-                    try:
-                        exa_search_results = exa_search_agent.run(
-                            search_terms.model_dump_json(indent=4)
-                        )
-                        if isinstance(exa_search_results, str):
-                            raise ValueError(
-                                "Unexpected string response from exa_search_agent"
-                            )
+        # Check if this is a research request
+        if question.startswith("🔬 Research Request:") and st.session_state.get(
+            "research_topic"
+        ):
+            process_research_workflow()
+        else:
+            # Regular chat interaction
+            display_response(main_agent, question)
 
-                        if isinstance(exa_search_results.content, WebSearchResults):
-                            exa_container.json(exa_search_results.content.results)
-                            if (
-                                exa_search_results
-                                and exa_search_results.content
-                                and len(exa_search_results.content.results) > 0
-                            ):
-                                exa_content = (
-                                    exa_search_results.content.model_dump_json(indent=4)
-                                )
-                                exa_container.json(exa_search_results.content.results)
-                                status.update(
-                                    label="Exa Search Complete",
-                                    state="complete",
-                                    expanded=False,
-                                )
-                        else:
-                            raise TypeError("Unexpected response from exa_search_agent")
+    ####################################################################
+    # Session management widgets
+    ####################################################################
+    session_selector_widget(main_agent, selected_model, get_main_agent)
 
-                    except Exception as e:
-                        st.error(f"An error occurred during Exa search: {e}")
-                        status.update(
-                            label="Exa Search Failed", state="error", expanded=True
-                        )
-                        exa_content = None
+    ####################################################################
+    # About section
+    ####################################################################
+    about_section(
+        "Paperpal is an AI-powered research assistant that helps you create comprehensive technical blogs "
+        "by synthesizing information from academic papers and web sources."
+    )
 
-        if search_arxiv:
+
+def process_research_workflow():
+    """Process the complete research workflow"""
+    topic = st.session_state.get("research_topic")
+    if not topic:
+        return
+
+    agents = st.session_state.get("research_agents", {})
+    if not agents:
+        st.error("Research agents not initialized. Please refresh the page.")
+        return
+
+    with st.chat_message("assistant"):
+        # Step 1: Generate Search Terms
+        if not st.session_state.get("search_terms"):
             with st.status(
-                "Searching ArXiv (this takes a while)", expanded=True
+                "🔍 Generating strategic search terms...", expanded=True
             ) as status:
-                with st.container():
-                    arxiv_container = st.empty()
-                    arxiv_search_results = arxiv_search_agent.run(
-                        search_terms.model_dump_json(indent=4)
-                    )
-                    if isinstance(arxiv_search_results.content, ArxivSearchResults):
-                        if (
-                            arxiv_search_results
-                            and arxiv_search_results.content
-                            and arxiv_search_results.content.results
-                        ):
-                            arxiv_container.json(
-                                [
-                                    result.model_dump()
-                                    for result in arxiv_search_results.content.results
-                                ]
-                            )
-                    else:
-                        raise TypeError("Unexpected response from arxiv_search_agent")
-
-                status.update(
-                    label="ArXiv Search Complete", state="complete", expanded=False
-                )
-
-            if (
-                arxiv_search_results
-                and arxiv_search_results.content
-                and arxiv_search_results.content.results
-            ):
-                paper_summaries = []
-                for result in arxiv_search_results.content.results:
-                    summary = {
-                        "ID": result.id,
-                        "Title": result.title,
-                        "Authors": ", ".join(result.authors)
-                        if result.authors
-                        else "No authors available",
-                        "Summary": result.summary[:200] + "..."
-                        if len(result.summary) > 200
-                        else result.summary,
+                try:
+                    search_input = {
+                        "topic": topic,
+                        "num_terms": st.session_state.get("num_search_terms", 2),
                     }
-                    paper_summaries.append(summary)
 
-                if paper_summaries:
-                    with st.status(
-                        "Displaying ArXiv Paper Summaries", expanded=True
-                    ) as status:
-                        with st.container():
-                            st.subheader("ArXiv Paper Summaries")
-                            df = pd.DataFrame(paper_summaries)
-                            st.dataframe(df, use_container_width=True)
+                    response = agents["search_term_generator"].run(
+                        json.dumps(search_input)
+                    )
+                    if isinstance(response.content, SearchTerms):
+                        st.session_state["search_terms"] = response.content
+                        st.json(response.content.model_dump())
                         status.update(
-                            label="ArXiv Paper Summaries Displayed",
+                            label="✅ Search terms generated",
                             state="complete",
                             expanded=False,
                         )
+                    else:
+                        raise ValueError(
+                            "Invalid response format from search term generator"
+                        )
 
-                    arxiv_paper_ids = [summary["ID"] for summary in paper_summaries]
-                    if arxiv_paper_ids:
-                        with st.status("Reading ArXiv Papers", expanded=True) as status:
-                            with st.container():
-                                arxiv_content = arxiv_toolkit.read_arxiv_papers(
-                                    arxiv_paper_ids, pages_to_read=2
+                except Exception as e:
+                    st.error(f"Error generating search terms: {str(e)}")
+                    status.update(
+                        label="❌ Search term generation failed", state="error"
+                    )
+                    return
+
+        search_terms = st.session_state.get("search_terms")
+        if not search_terms:
+            return
+
+        # Step 2: ArXiv Search
+        if st.session_state.get("enable_arxiv", True) and not st.session_state.get(
+            "arxiv_results"
+        ):
+            with st.status(
+                "📚 Searching ArXiv for research papers...", expanded=True
+            ) as status:
+                try:
+                    arxiv_response = agents["arxiv_search_agent"].run(
+                        search_terms.model_dump_json(indent=2)
+                    )
+                    if isinstance(arxiv_response.content, ArxivSearchResults):
+                        st.session_state["arxiv_results"] = arxiv_response.content
+
+                        # Display results as table
+                        if arxiv_response.content.results:
+                            df_data = []
+                            for result in arxiv_response.content.results:
+                                df_data.append(
+                                    {
+                                        "Title": result.title[:80] + "..."
+                                        if len(result.title) > 80
+                                        else result.title,
+                                        "Authors": ", ".join(result.authors[:3])
+                                        + ("..." if len(result.authors) > 3 else ""),
+                                        "ID": result.id,
+                                        "Reasoning": result.reasoning[:100] + "..."
+                                        if len(result.reasoning) > 100
+                                        else result.reasoning,
+                                    }
                                 )
-                                st.write(f"Read {len(arxiv_paper_ids)} ArXiv papers")
+
+                            df = pd.DataFrame(df_data)
+                            st.dataframe(df, use_container_width=True)
                             status.update(
-                                label="Reading ArXiv Papers Complete",
+                                label="✅ ArXiv search completed",
                                 state="complete",
                                 expanded=False,
                             )
 
-        report_input = ""
-        report_input += f"# Topic: {report_topic}\n\n"
-        report_input += "## Search Terms\n\n"
-        report_input += f"{search_terms}\n\n"
-        if arxiv_content:
-            report_input += "## ArXiv Papers\n\n"
-            report_input += "<arxiv_papers>\n\n"
-            report_input += f"{arxiv_content}\n\n"
-            report_input += "</arxiv_papers>\n\n"
-        if exa_content:
-            report_input += "## Web Search Content from Exa\n\n"
-            report_input += "<exa_content>\n\n"
-            report_input += f"{exa_content}\n\n"
-            report_input += "</exa_content>\n\n"
+                except Exception as e:
+                    st.error(f"ArXiv search error: {str(e)}")
+                    status.update(label="❌ ArXiv search failed", state="error")
 
-        # Only generate the report if we have content
-        if arxiv_content or exa_content:
-            with st.spinner("Generating Blog"):
-                final_report_container = st.empty()
-                research_report = research_editor.run(report_input)
-                final_report_container.markdown(research_report.content)
-        else:
-            st.error(
-                "Report generation cancelled due to search failure. Please try again or select another search option."
-            )
+        # Step 3: Web Search
+        if st.session_state.get("enable_exa", True) and not st.session_state.get(
+            "exa_results"
+        ):
+            with st.status(
+                "🌐 Searching web for current insights...", expanded=True
+            ) as status:
+                try:
+                    exa_response = agents["exa_search_agent"].run(
+                        search_terms.model_dump_json(indent=2)
+                    )
+                    if isinstance(exa_response.content, WebSearchResults):
+                        st.session_state["exa_results"] = exa_response.content
 
-    st.sidebar.markdown("---")
-    if st.sidebar.button("Restart"):
-        st.rerun()
+                        # Display results
+                        if exa_response.content.results:
+                            for i, result in enumerate(exa_response.content.results, 1):
+                                st.write(f"**{i}. {result.title}**")
+                                st.write(
+                                    result.summary[:200] + "..."
+                                    if len(result.summary) > 200
+                                    else result.summary
+                                )
+                                st.write(f"*Reasoning:* {result.reasoning}")
+                                if result.links:
+                                    st.write(f"🔗 [Read more]({result.links[0]})")
+                                st.write("---")
+
+                            status.update(
+                                label="✅ Web search completed",
+                                state="complete",
+                                expanded=False,
+                            )
+
+                except Exception as e:
+                    st.error(f"Web search error: {str(e)}")
+                    status.update(label="❌ Web search failed", state="error")
+
+        # Display completed web search results
+        exa_results = st.session_state.get("exa_results")
+        arxiv_results = st.session_state.get("arxiv_results")
+
+        # Step 4: Generate Final Blog
+        if (arxiv_results or exa_results) and not st.session_state.get("final_blog"):
+            with st.status(
+                "📝 Generating comprehensive research blog...", expanded=True
+            ) as status:
+                try:
+                    # Prepare research content
+                    research_content = f"# Research Topic: {topic}\n\n"
+                    research_content += (
+                        f"## Search Terms\n{search_terms.model_dump_json(indent=2)}\n\n"
+                    )
+
+                    if arxiv_results:
+                        research_content += "## ArXiv Research Papers\n\n"
+                        research_content += (
+                            f"{arxiv_results.model_dump_json(indent=2)}\n\n"
+                        )
+
+                    if exa_results:
+                        research_content += "## Web Research Content\n\n"
+                        research_content += (
+                            f"{exa_results.model_dump_json(indent=2)}\n\n"
+                        )
+
+                    # Generate blog
+                    blog_response = agents["research_editor"].run(research_content)
+                    st.session_state["final_blog"] = blog_response.content
+
+                    status.update(
+                        label="✅ Research blog generated",
+                        state="complete",
+                        expanded=False,
+                    )
+
+                except Exception as e:
+                    st.error(f"Blog generation error: {str(e)}")
+                    status.update(label="❌ Blog generation failed", state="error")
 
 
-main()
+if __name__ == "__main__":
+    main()

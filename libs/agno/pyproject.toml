@@ -1,10 +1,10 @@
 [project]
 name = "agno"
-version = "1.7.12"
+version = "2.0.8"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
-license = { file = "LICENSE" }
+license-files = ["LICENSE"]
 authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
 ]
@@ -41,7 +41,6 @@ dependencies = [
   "python-multipart",
   "pyyaml",
   "rich",
-  "tomli",
   "typer",
   "typing-extensions",
 ]
@@ -49,10 +48,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
 
+os = ["fastapi", "uvicorn"]
+
 # Models integration test dependencies
 integration-tests = [
     "exa_py",
-    "duckduckgo-search",
+    "ddgs",
     "yfinance",
     "sqlalchemy",
     "Pillow"
@@ -91,7 +92,7 @@ brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
 confluence = ["atlassian-python-api"]
-ddg = ["duckduckgo-search"]
+ddg = ["ddgs"]
 duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
@@ -110,6 +111,8 @@ memori = ["memorisdk"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
 psycopg = ["psycopg-binary", "psycopg"]
+reportlab = ["reportlab"]
+scrapegraph = ["scrapegraph-py"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -119,6 +122,7 @@ zep = ["zep-cloud"]
 daytona=["daytona"]
 oxylabs = ["oxylabs"]
 trafilatura = ["trafilatura"]
+neo4j = ["neo4j"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -131,7 +135,8 @@ redis = ["redis"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb==0.20.0", "tantivy"]
+lancedb = ["lancedb>=0.24.0", "tantivy"]
+pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 couchbase = ["couchbase"]
 cassandra = ["cassio"]
@@ -142,6 +147,7 @@ milvusdb = ["pymilvus>=2.5.10"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
 surrealdb = ["surrealdb>=1.0.4"]
+upstash = ["upstash-vector"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -149,6 +155,7 @@ docx = ["python-docx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
+chonkie = ["chonkie[st]", "chonkie"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
@@ -165,10 +172,12 @@ performance = ["memory_profiler"]
 cookbooks = ["inquirer", "email_validator"]
 
 # Dependencies for Docker
-docker = ["agno-docker"]
+docker = ["agno-infra[docker]"]
 
 # Dependencies for AWS
-aws = ["agno-aws", "agno-docker"]
+aws = ["agno-infra[aws]", "agno-infra[docker]"]
+
+infra = ["agno-infra"]
 
 # All models
 models = [
@@ -216,6 +225,7 @@ tools = [
   "agno[browserbase]",
   "agno[agentql]",
   "agno[opencv]",
+  "agno[scrapegraph]",
   "agno[valyu]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
@@ -225,7 +235,9 @@ tools = [
   "agno[memori]",
   "agno[google_bigquery]",
   "agno[psycopg]",
+  "agno[reportlab]",
   "agno[trafilatura]",
+  "agno[neo4j]",
 ]
 
 # All storage
@@ -252,7 +264,8 @@ vectordbs = [
   "agno[milvusdb]",
   "agno[clickhouse]",
   "agno[pinecone]",
-  "agno[surrealdb]"
+  "agno[surrealdb]",
+  "agno[upstash]",
 ]
 
 # All knowledge
@@ -261,7 +274,8 @@ knowledge = [
   "agno[docx]",
   "agno[text]",
   "agno[csv]",
-  "agno[markdown]"
+  "agno[markdown]",
+  "agno[chonkie]"
 ]
 
 # All embedders
@@ -284,10 +298,6 @@ tests = [
     "twine",
     "build",
 ]
-
-[project.scripts]
-ag = "agno.cli.entrypoint:agno_cli"
-agno = "agno.cli.entrypoint:agno_cli"
 
 [project.urls]
 homepage = "https://agno.com"
@@ -329,6 +339,7 @@ module = [
   "ag_ui.*",
   "agentql.*",
   "aioboto3.*",
+  "aiohttp.*",
   "aiofiles.*",
   "altair.*",
   "anthropic.*",
@@ -358,13 +369,14 @@ module = [
   "docker.*",
   "docx.*",
   "duckdb.*",
-  "duckduckgo_search.*",
+  "ddgs.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
   "eth_account.*",
   "exa_py.*",
   "fastapi.*",
   "fastembed.*",
+  "fastmcp.*",
   "filetype.*",
   "firecrawl.*",
   "github.*",
@@ -396,6 +408,7 @@ module = [
   "memory_profiler.*",
   "mistralai.*",
   "mlx_whisper.*",
+  "neo4j.*",
   "nest_asyncio.*",
   "newspaper.*",
   "numpy.*",
@@ -458,6 +471,7 @@ module = [
   "acouchbase.*",
   "zep_cloud.*",
   "oxylabs.*",
+  "reportlab.*",
   "surrealdb.*",
   "trafilatura.*"
 ]

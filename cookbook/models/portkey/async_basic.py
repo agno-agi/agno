@@ -4,7 +4,7 @@ from agno.agent import Agent
 from agno.models.portkey import Portkey
 
 agent = Agent(
-    model=Portkey(id="gpt-4o-mini"),
+    model=Portkey(id="@first-integrati-707071/gpt-5-nano"),
     markdown=True,
 )
 

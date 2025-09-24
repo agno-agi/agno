@@ -7,28 +7,20 @@ Steps:
 """
 
 from agno.agent import Agent
-from agno.memory.v2.db.postgres import PostgresMemoryDb
-from agno.memory.v2.memory import Memory
+from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
-from agno.storage.postgres import PostgresStorage
 
+# Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
+
 agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
-    # Store the memories and summary in a database
-    memory=Memory(
-        db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url),
-    ),
+    # Pass the database to the Agent
+    db=db,
+    # Store the memories and summary in the database
     enable_user_memories=True,
     enable_session_summaries=True,
-    # Store agent sessions in a database
-    storage=PostgresStorage(
-        table_name="personalized_agent_sessions",
-        db_url=db_url,
-        auto_upgrade_schema=True,
-    ),
-    # Show debug logs so, you can see the memory being created
-    # debug_mode=True,
 )
 
 # -*- Share personal information

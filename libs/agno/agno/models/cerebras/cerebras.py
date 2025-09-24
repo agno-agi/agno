@@ -9,20 +9,23 @@ from pydantic import BaseModel
 
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
+from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from cerebras.cloud.sdk import AsyncCerebras as AsyncCerebrasClient
     from cerebras.cloud.sdk import Cerebras as CerebrasClient
-    from cerebras.cloud.sdk.types.chat import ChatCompletion
     from cerebras.cloud.sdk.types.chat.chat_completion import (
         ChatChunkResponse,
         ChatChunkResponseChoice,
         ChatChunkResponseChoiceDelta,
+        ChatChunkResponseUsage,
         ChatCompletionResponse,
         ChatCompletionResponseChoice,
         ChatCompletionResponseChoiceMessage,
+        ChatCompletionResponseUsage,
     )
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`cerebras-cloud-sdk` not installed. Please install using `pip install cerebras-cloud-sdk`")
@@ -42,7 +45,7 @@ class Cerebras(Model):
     supports_json_schema_outputs: bool = True
 
     # Request parameters
-    parallel_tool_calls: bool = False
+    parallel_tool_calls: Optional[bool] = None
     max_completion_tokens: Optional[int] = None
     repetition_penalty: Optional[float] = None
     temperature: Optional[float] = None
@@ -163,7 +166,6 @@ class Cerebras(Model):
                     "type": "function",
                     "function": {
                         "name": tool["function"]["name"],
-                        "strict": True,  # Ensure strict adherence to expected outputs
                         "description": tool["function"]["description"],
                         "parameters": tool["function"]["parameters"],
                     },
@@ -171,7 +173,10 @@ class Cerebras(Model):
                 for tool in tools
             ]
             # Cerebras requires parallel_tool_calls=False for llama-4-scout-17b-16e-instruct
-            request_params["parallel_tool_calls"] = self.parallel_tool_calls
+            if self.id == "llama-4-scout-17b-16e-instruct":
+                request_params["parallel_tool_calls"] = False
+            elif self.parallel_tool_calls is not None:
+                request_params["parallel_tool_calls"] = self.parallel_tool_calls
 
         # Handle response format for structured outputs
         if response_format is not None:
@@ -198,10 +203,12 @@ class Cerebras(Model):
     def invoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> ChatCompletion:
+        run_response: Optional[RunOutput] = None,
+    ) -> ModelResponse:
         """
         Send a chat completion request to the Cerebras API.
 
@@ -211,19 +218,30 @@ class Cerebras(Model):
         Returns:
             CompletionResponse: The chat completion response from the API.
         """
-        return self.get_client().chat.completions.create(
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
+        assistant_message.metrics.start_timer()
+        provider_response = self.get_client().chat.completions.create(
             model=self.id,
             messages=[self._format_message(m) for m in messages],  # type: ignore
             **self.get_request_params(response_format=response_format, tools=tools),
         )
+        assistant_message.metrics.stop_timer()
+
+        model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
+
+        return model_response
 
     async def ainvoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> ChatCompletion:
+        run_response: Optional[RunOutput] = None,
+    ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the Cerebras API.
 
@@ -233,19 +251,30 @@ class Cerebras(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-        return await self.get_async_client().chat.completions.create(
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
+        assistant_message.metrics.start_timer()
+        provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
             messages=[self._format_message(m) for m in messages],  # type: ignore
             **self.get_request_params(response_format=response_format, tools=tools),
         )
+        assistant_message.metrics.stop_timer()
+
+        model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
+
+        return model_response
 
     def invoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Iterator[ChatChunkResponse]:
+        run_response: Optional[RunOutput] = None,
+    ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the Cerebras API.
 
@@ -255,20 +284,30 @@ class Cerebras(Model):
         Returns:
             Iterator[ChatChunkResponse]: An iterator of chat completion chunks.
         """
-        yield from self.get_client().chat.completions.create(
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
+        assistant_message.metrics.start_timer()
+
+        for chunk in self.get_client().chat.completions.create(
             model=self.id,
             messages=[self._format_message(m) for m in messages],  # type: ignore
             stream=True,
             **self.get_request_params(response_format=response_format, tools=tools),
-        )  # type: ignore
+        ):
+            yield self._parse_provider_response_delta(chunk)  # type: ignore
+
+        assistant_message.metrics.stop_timer()
 
     async def ainvoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AsyncIterator[ChatChunkResponse]:
+        run_response: Optional[RunOutput] = None,
+    ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Cerebras API.
 
@@ -278,14 +317,22 @@ class Cerebras(Model):
         Returns:
             AsyncIterator[ChatChunkResponse]: An asynchronous iterator of chat completion chunks.
         """
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
+        assistant_message.metrics.start_timer()
+
         async_stream = await self.get_async_client().chat.completions.create(
             model=self.id,
             messages=[self._format_message(m) for m in messages],  # type: ignore
             stream=True,
             **self.get_request_params(response_format=response_format, tools=tools),
         )
+
         async for chunk in async_stream:  # type: ignore
-            yield chunk  # type: ignore
+            yield self._parse_provider_response_delta(chunk)  # type: ignore
+
+        assistant_message.metrics.stop_timer()
 
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """
@@ -337,7 +384,7 @@ class Cerebras(Model):
 
         return message_dict
 
-    def parse_provider_response(self, response: ChatCompletionResponse, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: ChatCompletionResponse, **kwargs) -> ModelResponse:
         """
         Parse the Cerebras response into a ModelResponse.
 
@@ -380,20 +427,18 @@ class Cerebras(Model):
 
         # Add usage metrics
         if response.usage:
-            model_response.response_usage = {
-                "input_tokens": response.usage.prompt_tokens,
-                "output_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            }
+            model_response.response_usage = self._get_metrics(response.usage)
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: ChatChunkResponse) -> ModelResponse:
+    def _parse_provider_response_delta(
+        self, response: Union[ChatChunkResponse, ChatCompletionResponse]
+    ) -> ModelResponse:
         """
         Parse the streaming response from the Cerebras API into a ModelResponse.
 
         Args:
-            response_delta (ChatChunkResponse): The streaming response chunk.
+            response (ChatChunkResponse): The streaming response chunk.
 
         Returns:
             ModelResponse: The parsed response.
@@ -401,9 +446,9 @@ class Cerebras(Model):
         model_response = ModelResponse()
 
         # Get the first choice (assuming single response)
-        if response_delta.choices is not None:
-            choice: ChatChunkResponseChoice = response_delta.choices[0]
-            choice_delta: ChatChunkResponseChoiceDelta = choice.delta
+        if response.choices is not None:
+            choice: Union[ChatChunkResponseChoice, ChatCompletionResponseChoice] = response.choices[0]
+            choice_delta: ChatChunkResponseChoiceDelta = choice.delta  # type: ignore
 
             if choice_delta:
                 # Add content
@@ -425,11 +470,25 @@ class Cerebras(Model):
                     ]
 
         # Add usage metrics
-        if response_delta.usage:
-            model_response.response_usage = {
-                "input_tokens": response_delta.usage.prompt_tokens,
-                "output_tokens": response_delta.usage.completion_tokens,
-                "total_tokens": response_delta.usage.total_tokens,
-            }
+        if response.usage:
+            model_response.response_usage = self._get_metrics(response.usage)
 
         return model_response
+
+    def _get_metrics(self, response_usage: Union[ChatCompletionResponseUsage, ChatChunkResponseUsage]) -> Metrics:
+        """
+        Parse the given Cerebras usage into an Agno Metrics object.
+
+        Args:
+            response_usage: Usage data from Cerebras
+
+        Returns:
+            Metrics: Parsed metrics data
+        """
+        metrics = Metrics()
+
+        metrics.input_tokens = response_usage.prompt_tokens or 0
+        metrics.output_tokens = response_usage.completion_tokens or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        return metrics
