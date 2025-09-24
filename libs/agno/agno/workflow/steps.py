@@ -121,6 +121,7 @@ class Steps:
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute all steps in sequence and return the final result"""
@@ -152,6 +153,7 @@ class Steps:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 )
 
@@ -210,6 +212,7 @@ class Steps:
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in sequence with streaming support"""
@@ -268,6 +271,7 @@ class Steps:
                     store_executor_outputs=store_executor_outputs,
                     parent_step_id=steps_id,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 ):
                     if isinstance(event, StepOutput):
@@ -347,6 +351,7 @@ class Steps:
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute all steps in sequence asynchronously and return the final result"""
@@ -378,6 +383,7 @@ class Steps:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 )
 
@@ -435,6 +441,7 @@ class Steps:
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in sequence with async streaming support"""
@@ -493,6 +500,7 @@ class Steps:
                     store_executor_outputs=store_executor_outputs,
                     parent_step_id=steps_id,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 ):
                     if isinstance(event, StepOutput):

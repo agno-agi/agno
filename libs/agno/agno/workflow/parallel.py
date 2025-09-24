@@ -200,6 +200,7 @@ class Parallel:
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
@@ -220,6 +221,7 @@ class Parallel:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 )  # type: ignore[union-attr]
                 return idx, step_result
@@ -302,6 +304,7 @@ class Parallel:
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
@@ -352,6 +355,7 @@ class Parallel:
                     session_state=session_state,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 ):
                     step_events.append(event)
@@ -459,6 +463,7 @@ class Parallel:
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
@@ -479,6 +484,7 @@ class Parallel:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 )  # type: ignore[union-attr]
                 return idx, inner_step_result
@@ -559,6 +565,7 @@ class Parallel:
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
@@ -609,6 +616,7 @@ class Parallel:
                     session_state=session_state,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 ):  # type: ignore[union-attr]
                     step_events.append(event)

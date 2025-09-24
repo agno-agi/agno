@@ -155,6 +155,7 @@ class Condition:
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute the condition and its steps with sequential chaining if condition is true"""
@@ -193,6 +194,7 @@ class Condition:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 )
 
@@ -261,6 +263,7 @@ class Condition:
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the condition with streaming support - mirrors Loop logic"""
@@ -335,6 +338,7 @@ class Condition:
                     session_state=session_state,
                     parent_step_id=conditional_step_id,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 ):
                     if isinstance(event, StepOutput):
@@ -417,6 +421,7 @@ class Condition:
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Async execute the condition and its steps with sequential chaining"""
@@ -457,6 +462,7 @@ class Condition:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 )
 
@@ -523,6 +529,7 @@ class Condition:
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Async execute the condition with streaming support - mirrors Loop logic"""
@@ -599,6 +606,7 @@ class Condition:
                     session_state=session_state,
                     parent_step_id=conditional_step_id,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 ):
                     if isinstance(event, StepOutput):

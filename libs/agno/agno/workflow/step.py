@@ -19,6 +19,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.team import Team
+from agno.models.message import Message
 from agno.utils.log import log_debug, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.utils.merge_dict import merge_dictionaries
 from agno.workflow.types import StepInput, StepOutput, StepType
@@ -61,6 +62,8 @@ class Step:
     # If False, only warn about missing inputs
     strict_input_validation: bool = False
 
+    add_workflow_history: bool = False
+
     _retry_count: int = 0
 
     def __init__(
@@ -75,6 +78,7 @@ class Step:
         timeout_seconds: Optional[int] = None,
         skip_on_failure: bool = False,
         strict_input_validation: bool = False,
+        add_workflow_history: bool = False,
     ):
         # Auto-detect name for function executors if not provided
         if name is None and executor is not None:
@@ -94,6 +98,7 @@ class Step:
         self.timeout_seconds = timeout_seconds
         self.skip_on_failure = skip_on_failure
         self.strict_input_validation = strict_input_validation
+        self.add_workflow_history = add_workflow_history
         self.step_id = step_id
 
         if step_id is None:
@@ -205,7 +210,8 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
-        workflow_session: Optional["WorkflowSession"] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
@@ -298,27 +304,17 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        history = None
-                        if workflow_session:  
-                            history_messages = workflow_session.get_messages_for_workflow_history(
+                        final_message = message
+                        if add_workflow_history:  
+                            history_messages = workflow_session.get_workflow_history(
+                                session=workflow_session,
                                 num_history_runs=num_history_runs 
                             )
-
-                            if history_messages:
-                                history = [deepcopy(msg) for msg in history_messages]
-                                for msg in history:
-                                    msg.from_history = True
-
-                                from agno.models.message import Message
-
-                                if isinstance(message, str):
-                                    history.append(Message(role="user", content=message))
-                                elif isinstance(message, Message):
-                                    history.append(message)
+                            final_message = f"{history_messages}{message}"
 
                         session_state_copy = copy(session_state)
                         response = self.active_executor.run(  # type: ignore
-                            input=message if not history else history,  # type: ignore
+                            input=final_message,  # type: ignore
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -384,6 +380,7 @@ class Step:
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional["WorkflowSession"] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
@@ -491,27 +488,17 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        history = None
-                        if workflow_session:  
-                            history_messages = workflow_session.get_messages_for_workflow_history(
+                        final_message = message
+                        if add_workflow_history:  
+                            history_messages = workflow_session.get_workflow_history(
+                                session=workflow_session,
                                 num_history_runs=num_history_runs 
                             )
-
-                            if history_messages:
-                                history = [deepcopy(msg) for msg in history_messages]
-                                for msg in history:
-                                    msg.from_history = True
-
-                                from agno.models.message import Message
-
-                                if isinstance(message, str):
-                                    history.append(Message(role="user", content=message))
-                                elif isinstance(message, Message):
-                                    history.append(message)
+                            final_message = f"{history_messages}{message}"
 
                         session_state_copy = copy(session_state)
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
-                            input=message if not history else history,
+                            input=final_message,
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -605,6 +592,7 @@ class Step:
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional["WorkflowSession"] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
@@ -720,27 +708,17 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        history = None
-                        if workflow_session:  
-                            history_messages = workflow_session.get_messages_for_workflow_history(
+                        final_message = message
+                        if add_workflow_history:  
+                            history_messages = workflow_session.get_workflow_history(
+                                session=workflow_session,
                                 num_history_runs=num_history_runs 
                             )
-
-                            if history_messages:
-                                history = [deepcopy(msg) for msg in history_messages]
-                                for msg in history:
-                                    msg.from_history = True
-
-                                from agno.models.message import Message
-
-                                if isinstance(message, str):
-                                    history.append(Message(role="user", content=message))
-                                elif isinstance(message, Message):
-                                    history.append(message)
+                            final_message = f"{history_messages}{message}"
 
                         session_state_copy = copy(session_state)
                         response = await self.active_executor.arun(  # type: ignore
-                            input=message if not history else history,  # type: ignore
+                            input=final_message,  # type: ignore
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -793,6 +771,7 @@ class Step:
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional["WorkflowSession"] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
@@ -915,27 +894,17 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        history = None
-                        if workflow_session:  
-                            history_messages = workflow_session.get_messages_for_workflow_history(
+                        final_message = message
+                        if add_workflow_history:  
+                            history_messages = workflow_session.get_workflow_history(
+                                session=workflow_session,
                                 num_history_runs=num_history_runs 
                             )
-
-                            if history_messages:
-                                history = [deepcopy(msg) for msg in history_messages]
-                                for msg in history:
-                                    msg.from_history = True
-
-                                from agno.models.message import Message
-
-                                if isinstance(message, str):
-                                    history.append(Message(role="user", content=message))
-                                elif isinstance(message, Message):
-                                    history.append(message)
+                            final_message = f"{history_messages}{message}"
 
                         session_state_copy = copy(session_state)
                         response_stream = self.active_executor.arun(  # type: ignore
-                            input=message if not history else history,
+                            input=final_message,
                             images=images,
                             videos=videos,
                             audio=audios,

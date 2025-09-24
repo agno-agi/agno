@@ -168,7 +168,7 @@ class Workflow:
     telemetry: bool = True
 
     # Add this flag to control if the workflow should add history to the steps
-    add_history_to_steps: bool = False
+    add_workflow_history: bool = False
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
 
@@ -192,7 +192,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         cache_session: bool = False,
         telemetry: bool = True,
-        add_history_to_steps: bool = False,
+        add_workflow_history: bool = False,
         num_history_runs: int = 3,
     ):
         self.id = id
@@ -213,7 +213,7 @@ class Workflow:
         self.cache_session = cache_session
         self.db = db
         self.telemetry = telemetry
-        self.add_history_to_steps = add_history_to_steps
+        self.add_workflow_history = add_workflow_history
         self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
 
@@ -955,7 +955,8 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session if self.add_history_to_steps else None,
+                        workflow_session=session if self.add_workflow_history else None,
+                        add_workflow_history= self.add_workflow_history if self.add_workflow_history else None,
                         num_history_runs=self.num_history_runs,
                     )
 
@@ -1119,7 +1120,8 @@ class Workflow:
                         session_state=session_state,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session if self.add_history_to_steps else None,
+                        workflow_session=session if self.add_workflow_history else None,
+                        add_workflow_history= self.add_workflow_history if self.add_workflow_history else None,
                         num_history_runs=self.num_history_runs,
                     ):
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -1395,7 +1397,8 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session if self.add_history_to_steps else None,
+                        workflow_session=session if self.add_workflow_history else None,
+                        add_workflow_history= self.add_workflow_history if self.add_workflow_history else None,
                         num_history_runs=self.num_history_runs,
                     )
 
@@ -1558,7 +1561,8 @@ class Workflow:
                         session_state=session_state,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session if self.add_history_to_steps else None,
+                        workflow_session=session if self.add_workflow_history else None,
+                        add_workflow_history= self.add_workflow_history if self.add_workflow_history else None,
                         num_history_runs=self.num_history_runs,
                     ):
                         if workflow_run_response.run_id:

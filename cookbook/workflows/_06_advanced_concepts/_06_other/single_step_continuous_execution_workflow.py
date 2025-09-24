@@ -40,7 +40,7 @@ def create_simple_tutoring_workflow():
         steps=[
             Step(name="AI Tutoring", agent=tutor_agent),
         ],
-        add_history_to_steps=True,  
+        add_workflow_history=True,  
     )
 
 

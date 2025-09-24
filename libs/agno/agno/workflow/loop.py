@@ -134,6 +134,7 @@ class Loop:
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute loop steps with iteration control - mirrors workflow execution logic"""
@@ -161,6 +162,7 @@ class Loop:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 )
 
@@ -231,6 +233,7 @@ class Loop:
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute loop steps with streaming support - mirrors workflow execution logic"""
@@ -304,6 +307,7 @@ class Loop:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     parent_step_id=loop_step_id,
+                    add_workflow_history=add_workflow_history,
                     workflow_session=workflow_session,
                     num_history_runs=num_history_runs,
                 ):
@@ -420,6 +424,7 @@ class Loop:
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
@@ -449,6 +454,7 @@ class Loop:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 )
 
@@ -522,6 +528,7 @@ class Loop:
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute loop steps with async streaming support - mirrors workflow execution logic"""
@@ -596,6 +603,7 @@ class Loop:
                     session_state=session_state,
                     parent_step_id=loop_step_id,
                     workflow_session=workflow_session,
+                    add_workflow_history=add_workflow_history,
                     num_history_runs=num_history_runs,
                 ):
                     if isinstance(event, StepOutput):
