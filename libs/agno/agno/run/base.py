@@ -117,11 +117,11 @@ class BaseRunOutputEvent:
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
         import json
-        from datetime import datetime, date, time
+        from datetime import date, datetime, time
         from enum import Enum
 
         def json_serializer(obj):
-            # Datetime like 
+            # Datetime like
             if isinstance(obj, (datetime, date, time)):
                 return obj.isoformat()
             # Enums
