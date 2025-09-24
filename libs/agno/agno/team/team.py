@@ -5794,22 +5794,54 @@ class Team:
         ]
 
     def get_messages_for_output_model(self, messages: List[Message]) -> List[Message]:
-        """Get the messages for the output model."""
+        """Get the messages for the output model, converting formats between different providers."""
+        output_messages = []
+
+        for message in messages:
+            new_message = deepcopy(message)
+
+            if isinstance(message.content, list):
+                filtered_content = []
+                tool_results = []
+
+                for content_item in message.content:
+                    if isinstance(content_item, dict) and content_item.get("type") == "tool_result":
+                        # Collect tool results to convert to separate messages from Claude
+                        tool_message = Message(
+                            role="tool",
+                            content=str(content_item.get("content", "")),
+                            tool_call_id=content_item.get("tool_use_id")
+                        )
+                        tool_results.append(tool_message)
+                    else:
+                        if not (isinstance(content_item, dict) and content_item.get("type") == "tool_use"):
+                            filtered_content.append(content_item)
+
+                new_message.content = filtered_content if filtered_content else ""
+
+                if new_message.content or message.role != "user":
+                    output_messages.append(new_message)
+
+                output_messages.extend(tool_results)
+
+            else:
+                output_messages.append(new_message)
 
         if self.output_model_prompt is not None:
             system_message_exists = False
-            for message in messages:
+            for message in output_messages:
                 if message.role == "system":
                     system_message_exists = True
                     message.content = self.output_model_prompt
                     break
             if not system_message_exists:
-                messages.insert(0, Message(role="system", content=self.output_model_prompt))
+                output_messages.insert(0, Message(role="system", content=self.output_model_prompt))
 
-        # Remove the last assistant message from the messages list
-        messages.pop(-1)
+        # Remove the last assistant message
+        if output_messages and output_messages[-1].role == "assistant":
+            output_messages.pop(-1)
 
-        return messages
+        return output_messages
 
     def _format_message_with_state_variables(self, message: Any, user_id: Optional[str] = None) -> Any:
         """Format a message with the session state variables."""
