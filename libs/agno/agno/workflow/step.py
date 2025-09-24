@@ -1,5 +1,5 @@
 import inspect
-from copy import copy, deepcopy
+from copy import copy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
@@ -8,7 +8,6 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.media import Audio, Image, Video
-from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
