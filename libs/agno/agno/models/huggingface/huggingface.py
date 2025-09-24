@@ -382,7 +382,8 @@ class HuggingFace(Model):
             List[Dict[str, Any]]: The built tool calls.
         """
         tool_calls: List[Dict[str, Any]] = []
-        for _tool_call in tool_calls_data:
+        for tool_call in tool_calls_data:
+            _tool_call = tool_call[0]
             _index = _tool_call.index
             _tool_call_id = _tool_call.id
             _tool_call_type = _tool_call.type

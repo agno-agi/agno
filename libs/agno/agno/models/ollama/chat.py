@@ -1,5 +1,6 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
 
 from pydantic import BaseModel
@@ -43,6 +44,7 @@ class Ollama(Model):
     # Client parameters
     host: Optional[str] = None
     timeout: Optional[Any] = None
+    api_key: Optional[str] = field(default_factory=lambda: getenv("OLLAMA_API_KEY"))
     client_params: Optional[Dict[str, Any]] = None
 
     # Ollama clients
@@ -50,10 +52,23 @@ class Ollama(Model):
     async_client: Optional[AsyncOllamaClient] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
+        host = self.host
+        headers = {}
+
+        if self.api_key:
+            if not host:
+                host = "https://ollama.com"
+            headers["authorization"] = f"Bearer {self.api_key}"
+            log_debug(f"Using Ollama cloud endpoint: {host}")
+
         base_params = {
-            "host": self.host,
+            "host": host,
             "timeout": self.timeout,
         }
+
+        if headers:
+            base_params["headers"] = headers
+
         # Create client_params dict with non-None values
         client_params = {k: v for k, v in base_params.items() if v is not None}
         # Add additional client params if provided
@@ -145,6 +160,28 @@ class Ollama(Model):
             "role": message.role,
             "content": message.content,
         }
+
+        if message.role == "assistant" and message.tool_calls is not None:
+            # Format tool calls for assistant messages
+            formatted_tool_calls = []
+            for tool_call in message.tool_calls:
+                if "function" in tool_call:
+                    function_data = tool_call["function"]
+                    formatted_tool_call = {
+                        "id": tool_call.get("id"),
+                        "type": "function",
+                        "function": {
+                            "name": function_data["name"],
+                            "arguments": json.loads(function_data["arguments"])
+                            if isinstance(function_data["arguments"], str)
+                            else function_data["arguments"],
+                        },
+                    }
+                    formatted_tool_calls.append(formatted_tool_call)
+
+            if formatted_tool_calls:
+                _message["tool_calls"] = formatted_tool_calls
+
         if message.role == "user":
             if message.images is not None:
                 message_images = []
