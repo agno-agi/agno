@@ -304,11 +304,12 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         final_message = message
-                        if self.add_workflow_history or add_workflow_history:
+                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
                             history_messages = workflow_session.get_workflow_history(
                                 session=workflow_session, num_history_runs=num_history_runs
                             )
-                            final_message = f"{history_messages}{message}"
+                            if history_messages:
+                                final_message = f"{history_messages}{message}"
 
                         session_state_copy = copy(session_state)
                         response = self.active_executor.run(  # type: ignore
@@ -487,11 +488,12 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         final_message = message
-                        if self.add_workflow_history or add_workflow_history:
+                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
                             history_messages = workflow_session.get_workflow_history(
                                 session=workflow_session, num_history_runs=num_history_runs
                             )
-                            final_message = f"{history_messages}{message}"
+                            if history_messages:
+                                final_message = f"{history_messages}{message}"
 
                         session_state_copy = copy(session_state)
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
@@ -706,11 +708,12 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         final_message = message
-                        if self.add_workflow_history or add_workflow_history:
+                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
                             history_messages = workflow_session.get_workflow_history(
                                 session=workflow_session, num_history_runs=num_history_runs
                             )
-                            final_message = f"{history_messages}{message}"
+                            if history_messages:
+                                final_message = f"{history_messages}{message}"
 
                         session_state_copy = copy(session_state)
                         response = await self.active_executor.arun(  # type: ignore
@@ -891,11 +894,12 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         final_message = message
-                        if self.add_workflow_history or add_workflow_history:
+                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
                             history_messages = workflow_session.get_workflow_history(
                                 session=workflow_session, num_history_runs=num_history_runs
                             )
-                            final_message = f"{history_messages}{message}"
+                            if history_messages:
+                                final_message = f"{history_messages}{message}"
 
                         session_state_copy = copy(session_state)
                         response_stream = self.active_executor.arun(  # type: ignore

@@ -19,7 +19,7 @@ def analyze_conversation_context(step_input: StepInput) -> StepOutput:
     current_request = step_input.input or ""
 
     # Get the conversation history that was created by previous steps
-    history = step_input.get_workflow_history()
+    history = step_input.get_workflow_history(num_history_runs=3)
 
     print("---------------- history ----------------")
     print(history)

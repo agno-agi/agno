@@ -173,7 +173,7 @@ class StepInput:
 
     def get_workflow_history(
         self,
-        num_history_runs: Optional[int] = 3,
+        num_history_runs: int = 3,
     ) -> Optional[str]:
         """Get workflow conversation history for custom function steps"""
         if not self.workflow_session:
