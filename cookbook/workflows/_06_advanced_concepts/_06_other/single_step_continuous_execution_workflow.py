@@ -31,7 +31,6 @@ def create_simple_tutoring_workflow():
             "When asked about conversation history, provide a helpful summary.",
             "Focus on helping the student understand concepts and improve their skills."
         ],
-        db=SqliteDb(db_file="tmp/tutor_agent_session.db"),
     )
 
     return Workflow(
