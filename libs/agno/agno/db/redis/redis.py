@@ -264,7 +264,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
-            return False
+            raise e
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from Redis.
@@ -288,6 +288,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
+            raise e
 
     def get_session(
         self,
@@ -334,7 +335,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading session: {e}")
-            return None
+            raise e
 
     # TODO: optimizable
     def get_sessions(
@@ -415,7 +416,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading sessions: {e}")
-            return [], 0
+            raise e
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -465,7 +466,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error renaming session: {e}")
-            return None
+            raise e
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -585,7 +586,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting session: {e}")
-            return None
+            raise e
 
     def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True
@@ -648,6 +649,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
+            raise e
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from Redis.
@@ -666,6 +668,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
+            raise e
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from Redis.
@@ -686,7 +689,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading memory topics: {e}")
-            return []
+            raise e
 
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True
@@ -711,7 +714,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading memory: {e}")
-            return None
+            raise e
 
     def get_user_memories(
         self,
@@ -784,7 +787,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading memories: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def get_user_memory_stats(
         self,
@@ -838,7 +841,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting user memory stats: {e}")
-            return [], 0
+            raise e
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -879,7 +882,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting user memory: {e}")
-            return None
+            raise e
 
     def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True
@@ -933,9 +936,8 @@ class RedisDb(BaseDb):
                 self.redis_client.delete(*keys)
 
         except Exception as e:
-            from agno.utils.log import log_warning
-
-            log_warning(f"Exception deleting all memories: {e}")
+            log_error(f"Exception deleting all memories: {e}")
+            raise e
 
     # -- Metrics methods --
 
@@ -973,7 +975,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error reading sessions for metrics: {e}")
-            return []
+            raise e
 
     def _get_metrics_calculation_starting_date(self) -> Optional[date]:
         """Get the first date for which metrics calculation is needed.
@@ -1010,7 +1012,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting metrics starting date: {e}")
-            return None
+            raise e
 
     def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics.
@@ -1117,7 +1119,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting metrics: {e}")
-            return [], None
+            raise e
 
     # -- Knowledge methods --
 
@@ -1135,6 +1137,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {e}")
+            raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -1157,7 +1160,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge content: {e}")
-            return None
+            raise e
 
     def get_knowledge_contents(
         self,
@@ -1200,7 +1203,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge contents: {e}")
-            return [], 0
+            raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
@@ -1222,7 +1225,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge content: {e}")
-            return None
+            raise e
 
     # -- Eval methods --
 
@@ -1255,7 +1258,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error creating eval run: {e}")
-            return None
+            raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
         """Delete an eval run from Redis.
@@ -1330,7 +1333,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_runs(
         self,
@@ -1406,7 +1409,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            return []
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
