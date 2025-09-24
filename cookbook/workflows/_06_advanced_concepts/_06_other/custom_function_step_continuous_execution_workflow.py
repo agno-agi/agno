@@ -19,7 +19,11 @@ def analyze_conversation_context(step_input: StepInput) -> StepOutput:
     current_request = step_input.input or ""
     
     # Get the conversation history that was created by previous steps
-    history = step_input.get_workflow_history_as_string(num_history_runs=3)
+    history = step_input.get_workflow_history()
+
+    print('---------------- history ----------------')
+    print(history)
+    print('---------------- history ----------------')
     
     # Get the previous step output (what the agent just said)
     previous_step_content = step_input.get_last_step_content() or ""
@@ -38,7 +42,7 @@ def analyze_conversation_context(step_input: StepInput) -> StepOutput:
 
         INSIGHTS:
         - Has Conversation History: {"Yes" if history else "No"}
-        - Total History Length: {len(history)} characters
+        - Total History Length: {len(history) if history else 0} characters
         - Agent Mentioned Keywords: {', '.join([word for word in ['python', 'learning', 'help', 'example'] if word in previous_step_content.lower()])}
         - Conversation Continuity: {"Good - building on previous topics" if history and len(history) > 100 else "New conversation"}
 
@@ -98,7 +102,7 @@ def create_simple_workflow():
         description="AI agent response → custom function analysis → agent follow-up for natural flow",
         db=SqliteDb(db_file="tmp/simple_workflow.db"),
         steps=[response_step, analysis_step, followup_step],
-        add_history_to_steps=True,
+        add_workflow_history=True,
     )
 
 
