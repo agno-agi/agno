@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_error, log_warning
 
 try:
     from anthropic.types import (
