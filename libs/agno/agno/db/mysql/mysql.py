@@ -499,8 +499,8 @@ class MySQLDb(BaseDb):
                     raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            log_error(f"Exception getting sessions: {e}")
+            raise e
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -1000,7 +1000,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            return []
+            raise e
 
     def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
         """Get a memory from the database.
@@ -1122,7 +1122,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def clear_memories(self) -> None:
         """Clear all user memories from the database."""
@@ -1397,7 +1397,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from sessions table: {e}")
-            return []
+            raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
         """Get the first date for which metrics calculation is needed:
@@ -1934,7 +1934,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
