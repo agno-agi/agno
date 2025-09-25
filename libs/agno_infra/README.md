@@ -117,7 +117,7 @@ agno/
 
 ## 📚 Documentation
 
-- **Main Documentation**: [docs.agno.com](https://docs-v2.agno.com)
+- **Main Documentation**: [docs.agno.com](https://docs.agno.com)
 
 ## 🏘 Community
 
@@ -131,7 +131,7 @@ This project is licensed under the Mozilla Public License 2.0 - see the [LICENSE
 
 ## 🙋‍♀️ Support
 
-- **Documentation**: Check our comprehensive docs at [docs.agno.com](https://docs-v2.agno.com)
+- **Documentation**: Check our comprehensive docs at [docs.agno.com](https://docs.agno.com)
 - **Community**: Join our Discord or post on Discourse
 - **Issues**: Open an issue on GitHub for bugs or feature requests
 - **Commercial Support**: Contact us at [agno.com](https://agno.com)

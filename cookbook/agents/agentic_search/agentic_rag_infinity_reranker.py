@@ -80,16 +80,6 @@ asyncio.run(
     )
 )
 
-asyncio.run(
-    knowledge.add_contents_async(
-        urls=[
-            "https://docs.agno.com/introduction/agents.md",
-            "https://docs.agno.com/agents/tools.md",
-            "https://docs.agno.com/agents/knowledge.md",
-        ]
-    )
-)
-
 agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),
     # Agentic RAG is enabled by default when `knowledge` is provided to the Agent.

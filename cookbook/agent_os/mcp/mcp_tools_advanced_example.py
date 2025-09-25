@@ -15,9 +15,7 @@ from agno.tools.mcp import MCPTools  # noqa: F401
 # Setup the database
 db = SqliteDb(db_file="tmp/agentos.db")
 
-agno_mcp_tools = MCPTools(
-    transport="streamable-http", url="https://docs-v2.agno.com/mcp"
-)
+agno_mcp_tools = MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")
 
 # Example: Brave Search MCP server
 brave_mcp_tools = MCPTools(

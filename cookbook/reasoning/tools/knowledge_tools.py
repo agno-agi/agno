@@ -43,5 +43,4 @@ if __name__ == "__main__":
         "How do I build a team of agents in agno?",
         markdown=True,
         stream=True,
-        stream_tools=True,
     )
