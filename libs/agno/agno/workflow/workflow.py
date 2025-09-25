@@ -137,7 +137,7 @@ class Workflow:
     # Default session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
     # Set to True to overwrite the stored session_state with the session_state provided in the run
-    overwrite_stored_session_state: bool = False
+    overwrite_db_session_state: bool = False
 
     # If True, the workflow runs in debug mode
     debug_mode: Optional[bool] = False
@@ -178,7 +178,7 @@ class Workflow:
         steps: Optional[WorkflowSteps] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        overwrite_stored_session_state: bool = False,
+        overwrite_db_session_state: bool = False,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = False,
         stream: Optional[bool] = None,
@@ -197,7 +197,7 @@ class Workflow:
         self.steps = steps
         self.session_id = session_id
         self.session_state = session_state
-        self.overwrite_stored_session_state = overwrite_stored_session_state
+        self.overwrite_db_session_state = overwrite_db_session_state
         self.user_id = user_id
         self.debug_mode = debug_mode
         self.store_events = store_events
@@ -617,7 +617,7 @@ class Workflow:
                 session_state_from_db is not None
                 and isinstance(session_state_from_db, dict)
                 and len(session_state_from_db) > 0
-                and not self.overwrite_stored_session_state
+                and not self.overwrite_db_session_state
             ):
                 # This preserves precedence: run_params > db_state > agent_defaults
                 merged_state = session_state_from_db.copy()

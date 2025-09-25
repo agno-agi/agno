@@ -15,7 +15,7 @@ team = Team(
     # Adding the session_state to context for the agent to easily access it
     add_session_state_to_context=True,
     # Allow overwriting the stored session state with the session state provided in the run
-    overwrite_stored_session_state=True,
+    overwrite_db_session_state=True,
 )
 
 # Let's run the agent providing a session_state. This session_state will be stored in the database.
