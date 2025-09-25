@@ -1,7 +1,11 @@
 """
 This example demonstrates how to use our JWT middleware with AgentOS.
-The middleware will automatically inject user_id and session_id into endpoint parameters
-when they are present in the JWT token and the endpoint accepts them.
+
+The middleware extracts JWT claims and stores them in request.state for easy access.
+This example uses the default Authorization header approach.
+
+For cookie-based authentication, see agent_os_with_jwt_cookies.py
+For both header and cookie support, use token_source=TokenSource.BOTH
 """
 
 from datetime import UTC, datetime, timedelta
