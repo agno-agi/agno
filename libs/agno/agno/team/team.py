@@ -5548,6 +5548,10 @@ class Team:
             use_agent_logger()
 
             member_session_state_copy = copy(session_state)
+
+            import time
+
+            print(f"[{time.time():.2f}] member_agent.arun started")
             if stream:
                 member_agent_run_response_stream = member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
@@ -5586,6 +5590,7 @@ class Team:
 
                     # Yield the member event directly
                     yield member_agent_run_response_event
+                print(f"[{time.time():.2f}] member_agent.arun completed")
             else:
                 member_agent_run_response = await member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
