@@ -1404,28 +1404,6 @@ class Team:
         10. Add RunOutput to Team Session
         11. Save session to storage
         """
-
-        # 2. Prepare run messages
-        run_messages = self._get_run_messages(
-            input=input,
-            run_response=run_response,
-            session_id=session_id,
-            session_state=session_state,
-            user_id=user_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            knowledge_filters=knowledge_filters,
-            add_history_to_context=add_history_to_context,
-            dependencies=dependencies,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            metadata=metadata,
-            **kwargs,
-        )
-
-        self.model = cast(Model, self.model)
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 1. Resolve dependencies
