@@ -20,15 +20,8 @@ def get_authentication_dependency(settings: AgnoAPISettings):
 
     def auth_dependency(credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
         # If no security key is set, skip authentication entirely
-
-        return True
-
-        settings.os_security_key = "OSK_5HrlA78EDn8AuLkxh5Kg"
-
         if not settings or not settings.os_security_key:
             return True
-
-        breakpoint()
 
         # If security is enabled but no authorization header provided, fail
         if not credentials:
