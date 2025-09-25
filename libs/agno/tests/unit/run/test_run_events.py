@@ -1,6 +1,6 @@
+import json
 from dataclasses import dataclass
 from datetime import datetime
-import json
 from enum import Enum
 
 from agno.run.base import BaseRunOutputEvent
@@ -12,12 +12,14 @@ class RunEnum(Enum):
     SF = "San Francisco"
     CHI = "Chicago"
 
+
 @dataclass
 class SampleRunEvent(BaseRunOutputEvent):
     date: datetime
     location: RunEnum
     name: str
     age: int
+
 
 def test_run_events():
     now = datetime(2025, 1, 1, 12, 0, 0)
