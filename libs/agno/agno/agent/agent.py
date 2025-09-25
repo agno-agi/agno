@@ -135,6 +135,8 @@ class Agent:
     add_session_state_to_context: bool = False
     # Set to True to give the agent tools to update the session_state dynamically
     enable_agentic_state: bool = False
+    # Set to True to overwrite the stored session_state with the session_state provided in the run
+    overwrite_stored_session_state: bool = False
     # If True, cache the current Agent session in memory for faster access
     cache_session: bool = False
 
@@ -348,6 +350,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         add_session_state_to_context: bool = False,
+        overwrite_stored_session_state: bool = False,
         enable_agentic_state: bool = False,
         cache_session: bool = False,
         search_session_history: Optional[bool] = False,
@@ -432,6 +435,7 @@ class Agent:
 
         self.session_id = session_id
         self.session_state = session_state
+        self.overwrite_stored_session_state = overwrite_stored_session_state
         self.enable_agentic_state = enable_agentic_state
         self.cache_session = cache_session
 
@@ -4264,6 +4268,7 @@ class Agent:
                 session_state_from_db is not None
                 and isinstance(session_state_from_db, dict)
                 and len(session_state_from_db) > 0
+                and not self.overwrite_stored_session_state
             ):
                 # This preserves precedence: run_params > db_state > agent_defaults
                 merged_state = session_state_from_db.copy()
