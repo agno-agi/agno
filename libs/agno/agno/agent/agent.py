@@ -1530,30 +1530,6 @@ class Agent:
         10. Add RunOutput to Agent Session
         11. Save session to storage
         """
-        # 1. Resolving here for async requirement
-        if dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=dependencies)
-
-        # 2. Prepare run messages
-        run_messages: RunMessages = self._get_run_messages(
-            run_response=run_response,
-            input=input,
-            session=session,
-            session_state=session_state,
-            user_id=user_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            knowledge_filters=knowledge_filters,
-            add_history_to_context=add_history_to_context,
-            dependencies=dependencies,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            metadata=metadata,
-            **kwargs,
-        )
-
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # 1. Resolve dependencies
@@ -5782,7 +5758,7 @@ class Agent:
             system_message_content += f"{get_response_model_format_prompt(self.output_schema)}"
 
         # 3.3.15 Add the session state to the system message
-        if add_session_state_to_context and session_state is not None:
+        if self.add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
         # Return the system message
