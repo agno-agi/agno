@@ -1408,7 +1408,7 @@ class DynamoDb(BaseDb):
                 elif isinstance(value, str):
                     item[key] = {"S": str(value)}
                 elif isinstance(value, (dict, list)):
-                    item[key] = {"S": json.dumps(str(value))}
+                    item[key] = {"S": json.dumps(value)}
                 else:
                     item[key] = {"S": str(value)}
         return item
