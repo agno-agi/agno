@@ -44,6 +44,8 @@ def print_response_stream(
     console: Optional[Any] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
@@ -90,6 +92,8 @@ def print_response_stream(
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
             dependencies=dependencies,
             metadata=metadata,
             **kwargs,
@@ -223,6 +227,8 @@ async def aprint_response_stream(
     console: Optional[Any] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
@@ -269,6 +275,8 @@ async def aprint_response_stream(
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
             dependencies=dependencies,
             metadata=metadata,
             **kwargs,
@@ -415,7 +423,7 @@ def build_panels_stream(
             reasoning_panel = create_panel(content=step_content, title=f"Reasoning step {i}", border_style="green")
             panels.append(reasoning_panel)
 
-    if len(response_reasoning_content_buffer) > 0:
+    if len(response_reasoning_content_buffer) > 0 and show_reasoning:
         # Create panel for thinking
         thinking_panel = create_panel(
             content=Text(response_reasoning_content_buffer),
@@ -490,6 +498,8 @@ def print_response(
     console: Optional[Any] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
@@ -527,6 +537,8 @@ def print_response(
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
             dependencies=dependencies,
             metadata=metadata,
             **kwargs,
@@ -590,6 +602,8 @@ async def aprint_response(
     console: Optional[Any] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
@@ -627,6 +641,8 @@ async def aprint_response(
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
             dependencies=dependencies,
             metadata=metadata,
             **kwargs,
@@ -711,7 +727,7 @@ def build_panels(
             reasoning_panel = create_panel(content=step_content, title=f"Reasoning step {i}", border_style="green")
             panels.append(reasoning_panel)
 
-    if isinstance(run_response, RunOutput) and run_response.reasoning_content is not None:
+    if isinstance(run_response, RunOutput) and run_response.reasoning_content is not None and show_reasoning:
         # Create panel for thinking
         thinking_panel = create_panel(
             content=Text(run_response.reasoning_content),

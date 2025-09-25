@@ -15,11 +15,12 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Request, Response
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 
-# Rate Limiting Middleware
+# === Rate Limiting Middleware ===
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
     Rate limiting middleware that limits requests per IP address.
@@ -44,9 +45,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Check if rate limit exceeded
         if len(history) >= self.requests_per_minute:
-            raise HTTPException(
+            return JSONResponse(
                 status_code=429,
-                detail=f"Rate limit exceeded. Max {self.requests_per_minute} requests per minute.",
+                content={
+                    "detail": f"Rate limit exceeded. Max {self.requests_per_minute} requests per minute."
+                },
             )
 
         # Add current request to history
@@ -65,7 +68,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# Request/Response Logging Middleware
+# === Request/Response Logging Middleware ===
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """
     Request/response logging middleware with timing and basic info.
@@ -113,86 +116,41 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# ✨ Clean Middleware Configuration ✨
-RATE_LIMIT_MIDDLEWARE = (
+# === Setup database and agent ===
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+
+agent = Agent(
+    id="demo-agent",
+    name="Demo Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    db=db,
+    tools=[DuckDuckGoTools()],
+    markdown=True,
+)
+
+agent_os = AgentOS(
+    description="Essential middleware demo with rate limiting and logging",
+    agents=[agent],
+)
+
+app = agent_os.get_app()
+
+# Add custom middleware
+app.add_middleware(
     RateLimitMiddleware,
-    {
-        "requests_per_minute": 10,
-        "window_size": 60,
-    },
+    requests_per_minute=10,
+    window_size=60,
 )
 
-REQUEST_LOGGING_MIDDLEWARE = (
+app.add_middleware(
     RequestLoggingMiddleware,
-    {
-        "log_body": False,
-        "log_headers": False,
-    },
+    log_body=False,
+    log_headers=False,
 )
-
-# Predefined collections
-ESSENTIAL_MIDDLEWARE = [
-    RATE_LIMIT_MIDDLEWARE,
-    REQUEST_LOGGING_MIDDLEWARE,
-]
-
-
-def create_middleware_demo_app():
-    """Create a demo app with rate limiting and logging middleware."""
-
-    db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
-
-    agent = Agent(
-        id="demo-agent",
-        name="Demo Agent",
-        model=OpenAIChat(id="gpt-4o"),
-        db=db,
-        tools=[DuckDuckGoTools()],
-        markdown=True,
-    )
-
-    app = FastAPI(title="Essential Middleware Demo", version="1.0.0")
-
-    @app.get("/")
-    async def home():
-        """Home endpoint"""
-        return {
-            "message": "Essential AgentOS Middleware Demo",
-            "endpoints": [
-                "/ - This endpoint",
-                "/test - Test endpoint",
-                "/rate-limit-test - Test rate limiting",
-            ],
-        }
-
-    @app.get("/test")
-    async def test_endpoint():
-        """Simple test endpoint"""
-        return {"message": "Test successful!", "timestamp": time.time()}
-
-    @app.get("/rate-limit-test")
-    async def rate_limit_test():
-        """Test rate limiting - hit this multiple times quickly"""
-        return {
-            "message": "Rate limit test - hit me quickly to see rate limiting in action!"
-        }
-
-    agent_os = AgentOS(
-        description="Essential middleware demo with rate limiting and logging",
-        agents=[agent],
-        fastapi_app=app,
-        middleware=ESSENTIAL_MIDDLEWARE,
-    )
-
-    return agent_os.get_app()
-
-
-# Create the app
-app = create_middleware_demo_app()
 
 if __name__ == "__main__":
     """
-    Run the essential middleware demo.
+    Run the essential middleware demo using AgentOS serve method.
     
     Features:
     1. Rate Limiting (10 requests/minute)
@@ -204,10 +162,10 @@ if __name__ == "__main__":
        curl http://localhost:7777/test
     
     2. Test rate limiting:
-       for i in {1..15}; do curl http://localhost:7777/rate-limit-test; done
+       for i in {1..15}; do curl http://localhost:7777/config; done
     
-    4. Check rate limit headers:
-       curl -v http://localhost:7777/test
+    3. Check rate limit headers:
+       curl -v http://localhost:7777/config
     
     Look for:
     - Console logs showing request/response info
@@ -215,10 +173,9 @@ if __name__ == "__main__":
     - Request count header: X-Request-Count
     - 429 errors when rate limit exceeded
     """
-    import uvicorn
 
-    uvicorn.run(
-        "fastapi_app_with_custom_middleware:app",
+    agent_os.serve(
+        app="agent_os_with_custom_middleware:app",
         host="localhost",
         port=7777,
         reload=True,

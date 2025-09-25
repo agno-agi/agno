@@ -57,12 +57,20 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
     if is_workflow_run:
         step_executor_runs = run_dict.get("step_executor_runs", [])
         if step_executor_runs:
-            for message in step_executor_runs[0].get("messages", []):
+            for message in reversed(step_executor_runs[0].get("messages", [])):
                 if message.get("role") == "user":
                     return message.get("content", "")
 
+        # Check the input field directly as final fallback
+        if run_dict.get("input") is not None:
+            input_value = run_dict.get("input")
+            if isinstance(input_value, str):
+                return input_value
+            else:
+                return str(input_value)
+
     if run_dict.get("messages") is not None:
-        for message in run_dict["messages"]:
+        for message in reversed(run_dict["messages"]):
             if message.get("role") == "user":
                 return message.get("content", "")
 
@@ -110,27 +118,21 @@ def process_image(file: UploadFile) -> Image:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Image(content=content)
+    return Image(content=content, format=extract_format(file), mime_type=file.content_type)
 
 
 def process_audio(file: UploadFile) -> Audio:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    format = None
-    if file.filename and "." in file.filename:
-        format = file.filename.split(".")[-1].lower()
-    elif file.content_type:
-        format = file.content_type.split("/")[-1]
-
-    return Audio(content=content, format=format)
+    return Audio(content=content, format=extract_format(file), mime_type=file.content_type)
 
 
 def process_video(file: UploadFile) -> Video:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Video(content=content, format=file.content_type)
+    return Video(content=content, format=extract_format(file), mime_type=file.content_type)
 
 
 def process_document(file: UploadFile) -> Optional[FileMedia]:
@@ -138,11 +140,21 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         content = file.file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
-
-        return FileMedia(content=content, filename=file.filename, mime_type=file.content_type)
+        return FileMedia(
+            content=content, filename=file.filename, format=extract_format(file), mime_type=file.content_type
+        )
     except Exception as e:
         logger.error(f"Error processing document {file.filename}: {e}")
         return None
+
+
+def extract_format(file: UploadFile):
+    format = None
+    if file.filename and "." in file.filename:
+        format = file.filename.split(".")[-1].lower()
+    elif file.content_type:
+        format = file.content_type.split("/")[-1]
+    return format
 
 
 def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
