@@ -137,3 +137,95 @@ class MistralEmbedder(Embedder):
         except Exception as e:
             logger.warning(f"Error getting embedding and usage: {e}")
             return [], {}
+
+    def get_embeddings_batch(self, texts: List[str], batch_size: int = 100) -> List[List[float]]:
+        """
+        Get embeddings for multiple texts in batches.
+
+        Args:
+            texts: List of text strings to embed
+            batch_size: Number of texts to process in each API call (max ~2048)
+
+        Returns:
+            List of embedding vectors
+        """
+        all_embeddings = []
+
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i : i + batch_size]
+
+            _request_params: Dict[str, Any] = {
+                "inputs": batch_texts,
+                "model": self.id,
+            }
+            if self.request_params:
+                _request_params.update(self.request_params)
+
+            try:
+                response: EmbeddingResponse = self.client.embeddings.create(**_request_params)
+                batch_embeddings = [data.embedding for data in response.data if data.embedding]
+                all_embeddings.extend(batch_embeddings)
+            except Exception as e:
+                logger.warning(f"Error in batch embedding: {e}")
+                # Fallback to individual calls for this batch
+                for text in batch_texts:
+                    try:
+                        embedding = self.get_embedding(text)
+                        all_embeddings.append(embedding)
+                    except Exception as e2:
+                        logger.warning(f"Error in individual embedding fallback: {e2}")
+                        all_embeddings.append([])
+
+        return all_embeddings
+
+    async def async_get_embeddings_batch(self, texts: List[str], batch_size: int = 100) -> List[List[float]]:
+        """
+        Get embeddings for multiple texts in batches (async version).
+
+        Args:
+            texts: List of text strings to embed
+            batch_size: Number of texts to process in each API call (max ~2048)
+
+        Returns:
+            List of embedding vectors
+        """
+        all_embeddings = []
+
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i : i + batch_size]
+
+            _request_params: Dict[str, Any] = {
+                "inputs": batch_texts,
+                "model": self.id,
+            }
+            if self.request_params:
+                _request_params.update(self.request_params)
+
+            try:
+                # Check if the client has an async version of embeddings.create
+                if hasattr(self.client.embeddings, "create_async"):
+                    response: EmbeddingResponse = await self.client.embeddings.create_async(**_request_params)
+                else:
+                    # Fallback to running sync method in thread executor
+                    import asyncio
+
+                    loop = asyncio.get_running_loop()
+                    response: EmbeddingResponse = await loop.run_in_executor(  # type: ignore
+                        None,
+                        lambda: self.client.embeddings.create(**_request_params),
+                    )
+
+                batch_embeddings = [data.embedding for data in response.data if data.embedding]
+                all_embeddings.extend(batch_embeddings)
+            except Exception as e:
+                logger.warning(f"Error in async batch embedding: {e}")
+                # Fallback to individual calls for this batch
+                for text in batch_texts:
+                    try:
+                        embedding = await self.async_get_embedding(text)
+                        all_embeddings.append(embedding)
+                    except Exception as e2:
+                        logger.warning(f"Error in individual async embedding fallback: {e2}")
+                        all_embeddings.append([])
+
+        return all_embeddings
