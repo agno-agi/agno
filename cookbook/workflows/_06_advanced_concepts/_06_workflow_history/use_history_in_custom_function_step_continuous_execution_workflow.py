@@ -17,7 +17,8 @@ def analyze_content_strategy(step_input: StepInput) -> StepOutput:
     research_data = step_input.get_last_step_content() or ""
     history_data = step_input.get_workflow_history(num_runs=5) # history as a list of tuples
 
-    history_str = step_input.get_workflow_history_context(num_runs=5) # use this if you need history as a string for direct use.
+    # use this if you need history as a string for direct use.
+    history_str = step_input.get_workflow_history_context(num_runs=5) # type: ignore
     
     def extract_keywords(text: str) -> set:
         stop_words = {"create", "content", "about", "write", "the", "a", "an", "how", "is", "of", "this", "that", "in", "on", "for", "to"}
