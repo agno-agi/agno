@@ -62,6 +62,7 @@ class Step:
     strict_input_validation: bool = False
 
     add_workflow_history: bool = False
+    num_history_runs: int = 3
 
     _retry_count: int = 0
 
@@ -78,6 +79,7 @@ class Step:
         skip_on_failure: bool = False,
         strict_input_validation: bool = False,
         add_workflow_history: bool = False,
+        num_history_runs: int = 3,
     ):
         # Auto-detect name for function executors if not provided
         if name is None and executor is not None:
@@ -98,6 +100,7 @@ class Step:
         self.skip_on_failure = skip_on_failure
         self.strict_input_validation = strict_input_validation
         self.add_workflow_history = add_workflow_history
+        self.num_history_runs = num_history_runs
         self.step_id = step_id
 
         if step_id is None:
@@ -303,8 +306,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
+
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history):
+                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
                             history_messages = workflow_session.get_workflow_history(
                                 num_runs=num_history_runs
                             )
@@ -487,8 +492,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
+
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history):
+                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
                             history_messages = workflow_session.get_workflow_history(
                                 num_runs=num_history_runs
                             )
@@ -707,8 +714,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
+
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history):
+                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
                             history_messages = workflow_session.get_workflow_history(
                                 num_runs=num_history_runs
                             )
@@ -893,8 +902,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
+
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history):
+                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
                             history_messages = workflow_session.get_workflow_history(
                                 num_runs=num_history_runs
                             )
