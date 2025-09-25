@@ -404,21 +404,28 @@ class OpenAIResponses(Model):
         """
         formatted_messages: List[Union[Dict[str, Any], ResponseReasoningItem]] = []
 
-        if self._using_reasoning_model():
+        messages_to_format = messages
+        previous_response_id: Optional[str] = None
+
+        if self._using_reasoning_model() and self.store is not False:
             # Detect whether we're chaining via previous_response_id. If so, we should NOT
             # re-send prior function_call items; the Responses API already has the state and
             # expects only the corresponding function_call_output items.
-            previous_response_id: Optional[str] = None
-            if self.store is not False:
-                for msg in reversed(messages):
-                    if (
-                        msg.role == "assistant"
-                        and hasattr(msg, "provider_data")
-                        and msg.provider_data
-                        and "response_id" in msg.provider_data
-                    ):
-                        previous_response_id = msg.provider_data["response_id"]
-                        break
+
+            for msg in reversed(messages):
+                if (
+                    msg.role == "assistant"
+                    and hasattr(msg, "provider_data")
+                    and msg.provider_data
+                    and "response_id" in msg.provider_data
+                ):
+                    previous_response_id = msg.provider_data["response_id"]
+                    msg_index = messages.index(msg)
+
+                    # Include messages after this assistant message
+                    messages_to_format = messages[msg_index + 1 :]
+
+                    break
 
         # Build a mapping from function_call id (fc_*) → call_id (call_*) from prior assistant tool_calls
         fc_id_to_call_id: Dict[str, str] = {}
@@ -431,7 +438,7 @@ class OpenAIResponses(Model):
                     if isinstance(fc_id, str) and isinstance(call_id, str):
                         fc_id_to_call_id[fc_id] = call_id
 
-        for message in messages:
+        for message in messages_to_format:
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],

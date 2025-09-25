@@ -713,7 +713,6 @@ async def test_async_pdf_url_knowledge_base_with_invalid_filter(setup_vector_db)
     for call in function_calls:
         call_args = call["function"].get("arguments", "{}")
         if "nonexistent_filter" in call_args:
-            breakpoint()
             found_invalid_filters = True
 
     # Assert that the invalid filter was not used in the actual calls
