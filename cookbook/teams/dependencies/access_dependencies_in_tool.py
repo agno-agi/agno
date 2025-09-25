@@ -1,19 +1,18 @@
-
 """
 Example showing how team tools can access dependencies passed to the team.
 
 This demonstrates:
-1. Passing dependencies to team.run() 
+1. Passing dependencies to team.run()
 2. A team tool that receives resolved dependencies
 3. Team members working together with shared data sources
 """
 
-from typing import Dict, Any, Optional
 from datetime import datetime
+from typing import Any, Dict, Optional
 
 from agno.agent import Agent
-from agno.team import Team
 from agno.models.openai import OpenAIChat
+from agno.team import Team
 
 
 def get_current_context() -> dict:
@@ -24,51 +23,63 @@ def get_current_context() -> dict:
         "day_of_week": datetime.now().strftime("%A"),
     }
 
-def analyze_team_performance(team_id: str, dependencies: Optional[Dict[str, Any]] = None) -> str:
+
+def analyze_team_performance(
+    team_id: str, dependencies: Optional[Dict[str, Any]] = None
+) -> str:
     """
     Analyze team performance using available data sources.
-    
+
     This tool analyzes team metrics and provides insights.
     Call this tool with the team_id you want to analyze.
-    
+
     Args:
         team_id: The team ID to analyze (e.g., 'engineering_team', 'sales_team')
         dependencies: Available data sources (automatically provided)
-    
+
     Returns:
         Detailed team performance analysis and insights
     """
     if not dependencies:
         return "No data sources available for analysis."
-    
+
     print(f"--> Team tool received data sources: {list(dependencies.keys())}")
-    
+
     results = [f"=== TEAM PERFORMANCE ANALYSIS FOR {team_id.upper()} ==="]
-    
+
     # Use team metrics data if available
     if "team_metrics" in dependencies:
         metrics_data = dependencies["team_metrics"]
         results.append(f"Team Metrics: {metrics_data}")
-        
+
         # Add analysis based on the metrics
         if metrics_data.get("productivity_score"):
             score = metrics_data["productivity_score"]
             if score >= 8:
-                results.append(f"Performance Analysis: Excellent performance with {score}/10 productivity score")
+                results.append(
+                    f"Performance Analysis: Excellent performance with {score}/10 productivity score"
+                )
             elif score >= 6:
-                results.append(f"Performance Analysis: Good performance with {score}/10 productivity score")
+                results.append(
+                    f"Performance Analysis: Good performance with {score}/10 productivity score"
+                )
             else:
-                results.append(f"Performance Analysis: Needs improvement with {score}/10 productivity score")
-    
+                results.append(
+                    f"Performance Analysis: Needs improvement with {score}/10 productivity score"
+                )
+
     # Use current context data if available
     if "current_context" in dependencies:
         context_data = dependencies["current_context"]
         results.append(f"Current Context: {context_data}")
-        results.append(f"Time-based Analysis: Team analysis performed on {context_data['day_of_week']} at {context_data['current_time']}")
+        results.append(
+            f"Time-based Analysis: Team analysis performed on {context_data['day_of_week']} at {context_data['current_time']}"
+        )
 
     print(f"--> Team tool returned results: {results}")
-    
+
     return "\n\n".join(results)
+
 
 # Create team members
 data_analyst = Agent(
@@ -84,7 +95,7 @@ data_analyst = Agent(
 
 team_lead = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    name="Team Lead", 
+    name="Team Lead",
     description="Experienced team leader who provides strategic insights",
     instructions=[
         "You are an experienced team leader and management expert.",

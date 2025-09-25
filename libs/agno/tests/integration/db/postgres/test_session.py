@@ -82,18 +82,19 @@ def sample_team_session() -> TeamSession:
 def test_session_table_constraint_exists(postgres_db_real: PostgresDb):
     """Ensure the session table has the expected unique constraint on session_id"""
     with postgres_db_real.Session() as session:
-        # Dummy call to ensure schema and table creation
-        postgres_db_real.get_sessions(session_type=SessionType.AGENT)
+        # Ensure table is created by calling _get_table with create_table_if_not_found=True
+        table = postgres_db_real._get_table(table_type="sessions", create_table_if_not_found=True)
+        assert table is not None, "Session table should be created"
 
         result = session.execute(
             text(
                 "SELECT constraint_name FROM information_schema.table_constraints "
                 "WHERE table_schema = :schema AND table_name = :table AND constraint_type = 'UNIQUE'"
             ),
-            {"schema": postgres_db_real.db_schema, "table": "test_sessions"},
+            {"schema": postgres_db_real.db_schema, "table": postgres_db_real.session_table_name},
         )
         constraint_names = [row[0] for row in result.fetchall()]
-        expected_constraint = "test_sessions_uq_session_id"
+        expected_constraint = f"{postgres_db_real.session_table_name}_uq_session_id"
         assert expected_constraint in constraint_names, (
             f"Session table missing unique constraint {expected_constraint}. Found: {constraint_names}"
         )
@@ -693,3 +694,185 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
     assert result.runs is not None
     assert len(result.runs) == 1
     assert result.runs[0].run_id == team_run.run_id
+
+
+def test_upsert_sessions(postgres_db_real: PostgresDb):
+    """Test upsert_sessions with mixed session types (Agent, Team, Workflow)"""
+    from agno.run.workflow import WorkflowRunOutput
+    from agno.session.workflow import WorkflowSession
+
+    # Create sessions
+    agent_run = RunOutput(
+        run_id="bulk_agent_run_1",
+        agent_id="bulk_agent_1",
+        user_id="bulk_user_1",
+        status=RunStatus.completed,
+        messages=[],
+    )
+    agent_session = AgentSession(
+        session_id="bulk_agent_session_1",
+        agent_id="bulk_agent_1",
+        user_id="bulk_user_1",
+        agent_data={"name": "Bulk Agent 1"},
+        session_data={"type": "bulk_test"},
+        runs=[agent_run],
+        created_at=int(time.time()),
+    )
+
+    team_run = TeamRunOutput(
+        run_id="bulk_team_run_1",
+        team_id="bulk_team_1",
+        status=RunStatus.completed,
+        messages=[],
+        created_at=int(time.time()),
+    )
+    team_session = TeamSession(
+        session_id="bulk_team_session_1",
+        team_id="bulk_team_1",
+        user_id="bulk_user_1",
+        team_data={"name": "Bulk Team 1"},
+        session_data={"type": "bulk_test"},
+        runs=[team_run],
+        created_at=int(time.time()),
+    )
+
+    workflow_run = WorkflowRunOutput(
+        run_id="bulk_workflow_run_1",
+        workflow_id="bulk_workflow_1",
+        status=RunStatus.completed,
+        created_at=int(time.time()),
+    )
+    workflow_session = WorkflowSession(
+        session_id="bulk_workflow_session_1",
+        workflow_id="bulk_workflow_1",
+        user_id="bulk_user_1",
+        workflow_data={"name": "Bulk Workflow 1"},
+        session_data={"type": "bulk_test"},
+        runs=[workflow_run],
+        created_at=int(time.time()),
+    )
+
+    # Bulk upsert all sessions
+    sessions = [agent_session, team_session, workflow_session]
+    results = postgres_db_real.upsert_sessions(sessions)
+
+    # Verify results
+    assert len(results) == 3
+
+    # Find and verify per session type
+    agent_result = next(r for r in results if isinstance(r, AgentSession))
+    team_result = next(r for r in results if isinstance(r, TeamSession))
+    workflow_result = next(r for r in results if isinstance(r, WorkflowSession))
+
+    # Verify agent session
+    assert agent_result.session_id == agent_session.session_id
+    assert agent_result.agent_id == agent_session.agent_id
+    assert agent_result.agent_data == agent_session.agent_data
+
+    # Verify team session
+    assert team_result.session_id == team_session.session_id
+    assert team_result.team_id == team_session.team_id
+    assert team_result.team_data == team_session.team_data
+
+    # Verify workflow session
+    assert workflow_result.session_id == workflow_session.session_id
+    assert workflow_result.workflow_id == workflow_session.workflow_id
+    assert workflow_result.workflow_data == workflow_session.workflow_data
+
+
+def test_upsert_sessions_update(postgres_db_real: PostgresDb):
+    """Test upsert_sessions correctly updates existing sessions"""
+
+    # Insert sessions
+    session1 = AgentSession(
+        session_id="bulk_update_1",
+        agent_id="agent_1",
+        user_id="user_1",
+        agent_data={"name": "Original Agent 1"},
+        session_data={"version": 1},
+        created_at=int(time.time()),
+    )
+    session2 = AgentSession(
+        session_id="bulk_update_2",
+        agent_id="agent_2",
+        user_id="user_1",
+        agent_data={"name": "Original Agent 2"},
+        session_data={"version": 1},
+        created_at=int(time.time()),
+    )
+    postgres_db_real.upsert_sessions([session1, session2])
+
+    # Update sessions
+    updated_session1 = AgentSession(
+        session_id="bulk_update_1",
+        agent_id="agent_1",
+        user_id="user_1",
+        agent_data={"name": "Updated Agent 1", "updated": True},
+        session_data={"version": 2, "updated": True},
+        created_at=session1.created_at,  # Keep original created_at
+    )
+    updated_session2 = AgentSession(
+        session_id="bulk_update_2",
+        agent_id="agent_2",
+        user_id="user_1",
+        agent_data={"name": "Updated Agent 2", "updated": True},
+        session_data={"version": 2, "updated": True},
+        created_at=session2.created_at,  # Keep original created_at
+    )
+    results = postgres_db_real.upsert_sessions([updated_session1, updated_session2])
+    assert len(results) == 2
+
+    # Verify sessions were updated
+    for result in results:
+        assert isinstance(result, AgentSession)
+        assert result.agent_data is not None and result.agent_data["updated"] is True
+        assert result.session_data is not None and result.session_data["version"] == 2
+        assert result.session_data is not None and result.session_data["updated"] is True
+
+        # created_at should be preserved
+        if result.session_id == "bulk_update_1":
+            assert result.created_at == session1.created_at
+        else:
+            assert result.created_at == session2.created_at
+
+
+def test_upsert_sessions_performance(postgres_db_real: PostgresDb):
+    """Ensure the bulk upsert method is considerably faster than individual upserts"""
+    import time as time_module
+
+    # Create sessions
+    sessions = []
+    for i in range(50):
+        session = AgentSession(
+            session_id=f"perf_test_{i}",
+            agent_id=f"agent_{i}",
+            user_id="perf_user",
+            agent_data={"name": f"Performance Agent {i}"},
+            session_data={"index": i},
+            created_at=int(time.time()),
+        )
+        sessions.append(session)
+
+    # Test individual upsert
+    start_time = time_module.time()
+    for session in sessions:
+        postgres_db_real.upsert_session(session)
+    individual_time = time_module.time() - start_time
+
+    # Clean up for bulk test
+    session_ids = [s.session_id for s in sessions]
+    postgres_db_real.delete_sessions(session_ids)
+
+    # Test bulk upsert
+    start_time = time_module.time()
+    postgres_db_real.upsert_sessions(sessions)
+    bulk_time = time_module.time() - start_time
+
+    # Verify all sessions were created
+    all_sessions = postgres_db_real.get_sessions(session_type=SessionType.AGENT, user_id="perf_user")
+    assert len(all_sessions) == 50
+
+    # Asserting bulk upsert is at least 2x faster
+    assert bulk_time < individual_time / 2, (
+        f"Bulk upsert is not fast enough: {bulk_time:.3f}s vs {individual_time:.3f}s"
+    )

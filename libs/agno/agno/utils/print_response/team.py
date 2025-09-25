@@ -125,7 +125,7 @@ def print_response(
                 panels.append(reasoning_panel)
             live_console.update(Group(*panels))
 
-        if isinstance(run_response, TeamRunOutput) and run_response.reasoning_content is not None:
+        if isinstance(run_response, TeamRunOutput) and run_response.reasoning_content is not None and show_reasoning:
             # Create panel for thinking
             thinking_panel = create_panel(
                 content=Text(run_response.reasoning_content),
@@ -497,7 +497,7 @@ def print_response_stream(
                     reasoning_panel = build_reasoning_step_panel(i, step, show_full_reasoning)
                     panels.append(reasoning_panel)
 
-            if len(_response_reasoning_content) > 0:
+            if len(_response_reasoning_content) > 0 and show_reasoning:
                 render = True
                 # Create panel for thinking
                 thinking_panel = create_panel(
@@ -679,7 +679,7 @@ def print_response_stream(
                 final_panels.append(reasoning_panel)
 
         # Add thinking panel if available
-        if _response_reasoning_content:
+        if _response_reasoning_content and show_reasoning:
             thinking_panel = create_panel(
                 content=Text(_response_reasoning_content),
                 title=f"Thinking ({response_timer.elapsed:.1f}s)",
@@ -938,7 +938,7 @@ async def aprint_response(
                 panels.append(reasoning_panel)
             live_console.update(Group(*panels))
 
-        if isinstance(run_response, TeamRunOutput) and run_response.reasoning_content is not None:
+        if isinstance(run_response, TeamRunOutput) and run_response.reasoning_content is not None and show_reasoning:
             # Create panel for thinking
             thinking_panel = create_panel(
                 content=Text(run_response.reasoning_content),
@@ -1306,7 +1306,7 @@ async def aprint_response_stream(
                     reasoning_panel = build_reasoning_step_panel(i, step, show_full_reasoning)
                     panels.append(reasoning_panel)
 
-            if len(_response_reasoning_content) > 0:
+            if len(_response_reasoning_content) > 0 and show_reasoning:
                 render = True
                 # Create panel for thinking
                 thinking_panel = create_panel(
@@ -1489,7 +1489,7 @@ async def aprint_response_stream(
                 final_panels.append(reasoning_panel)
 
         # Add thinking panel if available
-        if _response_reasoning_content:
+        if _response_reasoning_content and show_reasoning:
             thinking_panel = create_panel(
                 content=Text(_response_reasoning_content),
                 title=f"Thinking ({response_timer.elapsed:.1f}s)",

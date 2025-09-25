@@ -6,6 +6,7 @@
 
 from agno.db.migrations.v1_to_v2 import migrate
 from agno.db.postgres.postgres import PostgresDb
+from agno.utils.log import log_info
 
 # --- Set these variables before running the script ---
 
@@ -18,15 +19,10 @@ db_url = ""
 ## MySQL Sample ##
 # db_url = "mysql+pymysql://ai:ai@localhost:3306/ai"
 
-
 ## SQLite Sample ##
-# sqlite_db_file = "tmp/data.db"  # Your SQLite database file
+# sqlite_db_file = "tmp/data.db"
 
 ## MongoDB Sample ##
-# mongo_host = "localhost"
-# mongo_port = 27017
-# mongo_db_name = "ai"
-# or
 # db_url = "mongodb://mongoadmin:secret@127.0.0.1:27017/admin"
 
 
@@ -40,6 +36,9 @@ v1_memories_table_name = ""
 # Names for the v2 tables/collections
 v2_sessions_table_name = ""
 v2_memories_table_name = ""
+
+# Migration batch size (adjust based on available memory and table size)
+migration_batch_size = 5000
 
 # --- Set your database connection ---
 
@@ -86,6 +85,19 @@ db = PostgresDb(
 # )
 
 
+#  --- Exit if no tables are provided ---
+
+if (
+    not v1_agent_sessions_table_name
+    and not v1_team_sessions_table_name
+    and not v1_workflow_sessions_table_name
+    and not v1_memories_table_name
+):
+    log_info(
+        "No tables provided, nothing can be migrated. Update the variables in the migration script to point to the tables you want to migrate."
+    )
+    exit()
+
 # --- Run the migration ---
 
 migrate(
@@ -95,4 +107,5 @@ migrate(
     team_sessions_table_name=v1_team_sessions_table_name,
     workflow_sessions_table_name=v1_workflow_sessions_table_name,
     memories_table_name=v1_memories_table_name,
+    batch_size=migration_batch_size,
 )

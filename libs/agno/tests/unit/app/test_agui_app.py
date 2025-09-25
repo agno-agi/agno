@@ -936,3 +936,333 @@ async def test_completion_event_race_condition():
     assert "Chunk 0 Chunk 1 Chunk 2 Chunk 3 Chunk 4 " == total_content, (
         "Content should be properly sequenced without duplication"
     )
+
+
+@pytest.mark.asyncio
+async def test_message_id_separation_after_tool_calls():
+    """Test for text messages after tool calls should have different message_ids."""
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_separated_messages():
+        # First text message
+        text_response_1 = RunContentEvent()
+        text_response_1.event = RunEvent.run_content
+        text_response_1.content = "Let me search for that information."
+        yield text_response_1
+
+        # Tool call starts (this should end first message and create new message_id)
+        tool_call = ToolExecution(tool_call_id="search_123", tool_name="search_tool", tool_args={"query": "test"})
+        tool_start = ToolCallStartedEvent()
+        tool_start.tool = tool_call
+        yield tool_start
+
+        # Tool completes
+        tool_call.result = {"results": "Found information"}
+        tool_end = ToolCallCompletedEvent()
+        tool_end.tool = tool_call
+        yield tool_end
+
+        # Second text message (should have DIFFERENT message_id)
+        text_response_2 = RunContentEvent()
+        text_response_2.event = RunEvent.run_content
+        text_response_2.content = "Based on the search results, here's what I found."
+        yield text_response_2
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_separated_messages(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    # Extract relevant events
+    text_start_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+    text_content_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
+    text_end_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_END]
+    tool_call_start_events = [e for e in events if e.type == EventType.TOOL_CALL_START]
+
+    # Verify we have expected number of events
+    assert len(text_start_events) == 2, f"Expected 2 TEXT_MESSAGE_START events, got {len(text_start_events)}"
+    assert len(text_content_events) == 2, f"Expected 2 TEXT_MESSAGE_CONTENT events, got {len(text_content_events)}"
+    assert len(text_end_events) == 2, f"Expected 2 TEXT_MESSAGE_END events, got {len(text_end_events)}"
+    assert len(tool_call_start_events) == 1, f"Expected 1 TOOL_CALL_START event, got {len(tool_call_start_events)}"
+
+    # CORE ASSERTION: Different text messages should have different message_ids
+    first_message_id = text_start_events[0].message_id
+    second_message_id = text_start_events[1].message_id
+
+    assert first_message_id != second_message_id, "Different text message segments should have different message_ids"
+
+    # Verify content events match their respective start events
+    assert text_content_events[0].message_id == first_message_id, "First content event should match first message_id"
+    assert text_content_events[1].message_id == second_message_id, "Second content event should match second message_id"
+
+    # Verify end events match their respective start events
+    assert text_end_events[0].message_id == first_message_id, "First end event should match first message_id"
+    assert text_end_events[1].message_id == second_message_id, "Second end event should match second message_id"
+
+    # Verify tool call references correct parent message (the first message that was ended)
+    tool_call_event = tool_call_start_events[0]
+    assert tool_call_event.parent_message_id == first_message_id, (
+        "Tool call should reference the first message as parent_message_id"
+    )
+
+    # Verify content matches expected text
+    assert text_content_events[0].delta == "Let me search for that information."
+    assert text_content_events[1].delta == "Based on the search results, here's what I found."
+
+
+@pytest.mark.asyncio
+async def test_multiple_tool_calls_message_id_separation():
+    """
+    Test that multiple tool calls properly separate messages with unique message_ids.
+    """
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_multiple_tools():
+        # Initial text
+        initial_text = RunContentEvent()
+        initial_text.event = RunEvent.run_content
+        initial_text.content = "I'll need to use multiple tools for this."
+        yield initial_text
+
+        # First tool call
+        tool_1 = ToolExecution(tool_call_id="tool_1", tool_name="search", tool_args={"query": "A"})
+        tool_start_1 = ToolCallStartedEvent()
+        tool_start_1.tool = tool_1
+        yield tool_start_1
+
+        tool_1.result = "Result A"
+        tool_end_1 = ToolCallCompletedEvent()
+        tool_end_1.tool = tool_1
+        yield tool_end_1
+
+        # Text between tools
+        middle_text = RunContentEvent()
+        middle_text.event = RunEvent.run_content
+        middle_text.content = "Now let me try another approach."
+        yield middle_text
+
+        # Second tool call
+        tool_2 = ToolExecution(tool_call_id="tool_2", tool_name="calculate", tool_args={"expr": "2+2"})
+        tool_start_2 = ToolCallStartedEvent()
+        tool_start_2.tool = tool_2
+        yield tool_start_2
+
+        tool_2.result = "4"
+        tool_end_2 = ToolCallCompletedEvent()
+        tool_end_2.tool = tool_2
+        yield tool_end_2
+
+        # Final text
+        final_text = RunContentEvent()
+        final_text.event = RunEvent.run_content
+        final_text.content = "Based on both results, here's my conclusion."
+        yield final_text
+
+        # Complete
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_multiple_tools(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    # Extract events
+    text_start_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+    text_content_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
+    tool_call_start_events = [e for e in events if e.type == EventType.TOOL_CALL_START]
+
+    # Should have 3 text messages: initial, middle, final
+    assert len(text_start_events) == 3, f"Expected 3 text messages, got {len(text_start_events)}"
+    assert len(text_content_events) == 3, f"Expected 3 text content events, got {len(text_content_events)}"
+    assert len(tool_call_start_events) == 2, f"Expected 2 tool calls, got {len(tool_call_start_events)}"
+
+    # All message_ids should be different
+    message_ids = [event.message_id for event in text_start_events]
+    assert len(set(message_ids)) == 3, f"All message_ids should be unique, got: {message_ids}"
+
+    # Tool calls should reference correct parent messages
+    first_tool_parent = tool_call_start_events[0].parent_message_id
+    second_tool_parent = tool_call_start_events[1].parent_message_id
+
+    assert first_tool_parent == message_ids[0], "First tool should reference first message"
+    assert second_tool_parent == message_ids[1], "Second tool should reference second message"
+
+    # Content should match expected messages
+    expected_content = [
+        "I'll need to use multiple tools for this.",
+        "Now let me try another approach.",
+        "Based on both results, here's my conclusion.",
+    ]
+    actual_content = [event.delta for event in text_content_events]
+    assert actual_content == expected_content, f"Content mismatch: {actual_content}"
+
+
+@pytest.mark.asyncio
+async def test_message_id_consistency_within_message():
+    """
+    Test that all events within a single message (start, content chunks, end) use the same message_id.
+    """
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_chunked_content():
+        # Multiple content chunks for first message
+        chunk1 = RunContentEvent()
+        chunk1.event = RunEvent.run_content
+        chunk1.content = "This is "
+        yield chunk1
+
+        chunk2 = RunContentEvent()
+        chunk2.event = RunEvent.run_content
+        chunk2.content = "a long message "
+        yield chunk2
+
+        chunk3 = RunContentEvent()
+        chunk3.event = RunEvent.run_content
+        chunk3.content = "with multiple chunks."
+        yield chunk3
+
+        # Complete
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_chunked_content(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    # Extract message-related events
+    text_start_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+    text_content_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
+    text_end_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_END]
+
+    assert len(text_start_events) == 1, "Should have exactly one message"
+    assert len(text_content_events) == 3, "Should have 3 content chunks"
+    assert len(text_end_events) == 1, "Should have exactly one end event"
+
+    # All events should use the same message_id
+    message_id = text_start_events[0].message_id
+
+    for event in text_content_events:
+        assert event.message_id == message_id, (
+            f"Content event message_id {event.message_id} should match start event {message_id}"
+        )
+
+    assert text_end_events[0].message_id == message_id, f"End event message_id should match start event {message_id}"
+
+    # Content should be properly concatenated
+    total_content = "".join([e.delta for e in text_content_events])
+    assert total_content == "This is a long message with multiple chunks."
+
+
+@pytest.mark.asyncio
+async def test_message_id_regression_prevention():
+    """
+    Regression test for message_id separation across tool call boundaries.
+
+    Ensures that text messages separated by tool calls maintain unique message_ids,
+    preventing improper message grouping in AG-UI frontends.
+    """
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunEvent
+
+    async def mock_complex_message_tool_sequence():
+        # Text before tool call
+        text1 = RunContentEvent()
+        text1.event = RunEvent.run_content
+        text1.content = "Let me help you with that."
+        yield text1
+
+        # Tool call
+        tool = ToolExecution(tool_call_id="bug_test", tool_name="helper", tool_args={})
+        tool_start = ToolCallStartedEvent()
+        tool_start.tool = tool
+        yield tool_start
+
+        tool.result = "success"
+        tool_end = ToolCallCompletedEvent()
+        tool_end.tool = tool
+        yield tool_end
+
+        # Text after tool call - should have different message_id
+        text2 = RunContentEvent()
+        text2.event = RunEvent.run_content
+        text2.content = "Based on the results, here's your answer."
+        yield text2
+
+        # Another tool call
+        tool2 = ToolExecution(tool_call_id="bug_test_2", tool_name="finalizer", tool_args={})
+        tool_start_2 = ToolCallStartedEvent()
+        tool_start_2.tool = tool2
+        yield tool_start_2
+
+        tool2.result = "done"
+        tool_end_2 = ToolCallCompletedEvent()
+        tool_end_2.tool = tool2
+        yield tool_end_2
+
+        # Final text - should also have different message_id
+        text3 = RunContentEvent()
+        text3.event = RunEvent.run_content
+        text3.content = "All done!"
+        yield text3
+
+        # Complete
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_complex_message_tool_sequence(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    # Extract events
+    text_start_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+    tool_call_events = [e for e in events if e.type == EventType.TOOL_CALL_START]
+
+    # Should have 3 distinct text messages
+    assert len(text_start_events) == 3, f"Expected 3 text messages, got {len(text_start_events)}"
+    assert len(tool_call_events) == 2, f"Expected 2 tool calls, got {len(tool_call_events)}"
+
+    # Extract all message_ids
+    message_ids = [event.message_id for event in text_start_events]
+
+    # CRITICAL: All message_ids must be different
+    assert len(set(message_ids)) == 3, (
+        f"All text message_ids should be unique across tool call boundaries. Got message_ids: {message_ids}"
+    )
+
+    # Tool calls should reference correct parent messages
+    tool_1_parent = tool_call_events[0].parent_message_id
+    tool_2_parent = tool_call_events[1].parent_message_id
+
+    assert tool_1_parent == message_ids[0], (
+        f"First tool call should reference first message. Expected {message_ids[0]}, got {tool_1_parent}"
+    )
+    assert tool_2_parent == message_ids[1], (
+        f"Second tool call should reference second message. Expected {message_ids[1]}, got {tool_2_parent}"
+    )
+
+    # Verify no message_id is reused
+    all_referenced_ids = set(message_ids + [tool_1_parent, tool_2_parent])
+    assert len(all_referenced_ids) == 3, (
+        f"Should have exactly 3 unique message IDs in the conversation. Found: {sorted(all_referenced_ids)}"
+    )

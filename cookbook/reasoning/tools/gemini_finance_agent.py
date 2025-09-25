@@ -18,12 +18,7 @@ thinking_agent = Agent(
     model=Gemini(id="gemini-2.0-flash"),
     tools=[
         ReasoningTools(add_instructions=True),
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
+        YFinanceTools(),
     ],
     instructions="Use tables where possible",
     markdown=True,

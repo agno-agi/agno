@@ -11,7 +11,7 @@ from agno.db.postgres.postgres import PostgresDb
 from agno.db.schemas.memory import UserMemory
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.session import AgentSession, TeamSession, WorkflowSession
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_info, log_warning
 
 
 def convert_v1_metrics_to_v2(metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -127,22 +127,45 @@ def safe_get_runs_from_memory(memory_data: Any) -> Any:
     if memory_data is None:
         return None
 
+    runs: Any = []
+
     # If memory_data is a string, try to parse it as JSON
     if isinstance(memory_data, str):
         try:
             memory_dict = json.loads(memory_data)
             if isinstance(memory_dict, dict):
-                return memory_dict.get("runs")
+                runs = memory_dict.get("runs")
         except (json.JSONDecodeError, AttributeError):
             # If JSON parsing fails, memory_data might just be a string value
             return None
 
     # If memory_data is already a dict, access runs directly
     elif isinstance(memory_data, dict):
-        return memory_data.get("runs")
+        runs = memory_data.get("runs")
 
-    # For any other type, return None
-    return None
+    for run in runs or []:
+        # Adjust fields mapping for Agent sessions
+        if run.get("agent_id") is not None:
+            if run.get("team_id") is not None:
+                run.pop("team_id")
+            if run.get("team_session_id") is not None:
+                run["session_id"] = run.pop("team_session_id")
+                if run.get("event"):
+                    run["events"] = [run.pop("event")]
+
+        # Adjust fields mapping for Team sessions
+        if run.get("team_id") is not None:
+            if run.get("agent_id") is not None:
+                run.pop("agent_id")
+            if member_responses := run.get("member_responses"):
+                for response in member_responses:
+                    if response.get("agent_id") is not None and response.get("team_id") is not None:
+                        response.pop("team_id")
+                    if response.get("agent_id") is not None and response.get("team_session_id") is not None:
+                        response["session_id"] = response.pop("team_session_id")
+                run["member_responses"] = member_responses
+
+    return runs
 
 
 def convert_v1_media_to_v2(media_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -298,6 +321,7 @@ def migrate(
     team_sessions_table_name: Optional[str] = None,
     workflow_sessions_table_name: Optional[str] = None,
     memories_table_name: Optional[str] = None,
+    batch_size: int = 5000,
 ):
     """Given a database connection and table/collection names, parse and migrate the content to corresponding v2 tables/collections.
 
@@ -308,65 +332,171 @@ def migrate(
         team_sessions_table_name: The name of the team sessions table/collection. If not provided, team sessions will not be migrated.
         workflow_sessions_table_name: The name of the workflow sessions table/collection. If not provided, workflow sessions will not be migrated.
         memories_table_name: The name of the memories table/collection. If not provided, memories will not be migrated.
+        batch_size: Number of records to process in each batch (default: 5000)
     """
     if agent_sessions_table_name:
-        db.migrate_table_from_v1_to_v2(
+        migrate_table_in_batches(
+            db=db,
             v1_db_schema=v1_db_schema,
             v1_table_name=agent_sessions_table_name,
             v1_table_type="agent_sessions",
+            batch_size=batch_size,
         )
 
     if team_sessions_table_name:
-        db.migrate_table_from_v1_to_v2(
+        migrate_table_in_batches(
+            db=db,
             v1_db_schema=v1_db_schema,
             v1_table_name=team_sessions_table_name,
             v1_table_type="team_sessions",
+            batch_size=batch_size,
         )
 
     if workflow_sessions_table_name:
-        db.migrate_table_from_v1_to_v2(
+        migrate_table_in_batches(
+            db=db,
             v1_db_schema=v1_db_schema,
             v1_table_name=workflow_sessions_table_name,
             v1_table_type="workflow_sessions",
+            batch_size=batch_size,
         )
 
     if memories_table_name:
-        db.migrate_table_from_v1_to_v2(
+        migrate_table_in_batches(
+            db=db,
             v1_db_schema=v1_db_schema,
             v1_table_name=memories_table_name,
             v1_table_type="memories",
+            batch_size=batch_size,
         )
 
 
-def get_all_table_content(db, db_schema: str, table_name: str) -> list[dict[str, Any]]:
-    """Get all content from the given table/collection"""
+def migrate_table_in_batches(
+    db: Union[PostgresDb, MySQLDb, SqliteDb, MongoDb],
+    v1_db_schema: str,
+    v1_table_name: str,
+    v1_table_type: str,
+    batch_size: int = 5000,
+):
+    log_info(f"Starting migration of table {v1_table_name} (type: {v1_table_type}) with batch size {batch_size}")
+
+    total_migrated = 0
+    batch_count = 0
+
+    for batch_content in get_table_content_in_batches(db, v1_db_schema, v1_table_name, batch_size):
+        batch_count += 1
+        batch_size_actual = len(batch_content)
+        log_info(f"Processing batch {batch_count} with {batch_size_actual} records from table {v1_table_name}")
+
+        # Parse the content into the new format
+        memories: List[UserMemory] = []
+        sessions: Union[List[AgentSession], List[TeamSession], List[WorkflowSession]] = []
+
+        if v1_table_type == "agent_sessions":
+            sessions = parse_agent_sessions(batch_content)
+        elif v1_table_type == "team_sessions":
+            sessions = parse_team_sessions(batch_content)
+        elif v1_table_type == "workflow_sessions":
+            sessions = parse_workflow_sessions(batch_content)
+        elif v1_table_type == "memories":
+            memories = parse_memories(batch_content)
+        else:
+            raise ValueError(f"Invalid table type: {v1_table_type}")
+
+        # Insert the batch into the new table
+        if v1_table_type in ["agent_sessions", "team_sessions", "workflow_sessions"]:
+            if sessions:
+                # Clear any existing scoped session state for SQL databases to prevent transaction conflicts
+                if hasattr(db, "Session"):
+                    db.Session.remove()  # type: ignore
+
+                db.upsert_sessions(sessions)  # type: ignore
+                total_migrated += len(sessions)
+                log_info(f"Bulk upserted {len(sessions)} sessions in batch {batch_count}")
+
+        elif v1_table_type == "memories":
+            if memories:
+                # Clear any existing scoped session state for SQL databases to prevent transaction conflicts
+                if hasattr(db, "Session"):
+                    db.Session.remove()  # type: ignore
+
+                db.upsert_memories(memories)
+                total_migrated += len(memories)
+                log_info(f"Bulk upserted {len(memories)} memories in batch {batch_count}")
+
+        log_info(f"Completed batch {batch_count}: migrated {batch_size_actual} records")
+
+    log_info(f"✅ Migration completed for table {v1_table_name}: {total_migrated} total records migrated")
+
+
+def get_table_content_in_batches(
+    db: Union[PostgresDb, MySQLDb, SqliteDb, MongoDb], db_schema: str, table_name: str, batch_size: int = 5000
+):
+    """Get table content in batches to avoid memory issues with large tables"""
     try:
-        # Check if this is a MongoDB instance
-        if hasattr(db, "database") and hasattr(db, "db_client"):
-            # MongoDB implementation
+        if isinstance(db, MongoDb):
+            # MongoDB implementation with cursor and batching
             collection = db.database[table_name]
-            # Convert MongoDB documents to dictionaries and handle ObjectId
-            documents = list(collection.find({}))
-            # Convert ObjectId to string for compatibility
-            for doc in documents:
+            cursor = collection.find({}).batch_size(batch_size)
+
+            batch = []
+            for doc in cursor:
+                # Convert ObjectId to string for compatibility
                 if "_id" in doc:
                     doc["_id"] = str(doc["_id"])
-            return documents
-        else:
-            # SQL database implementation (PostgreSQL, MySQL, SQLite)
-            with db.Session() as sess:
-                # Handle empty schema by omitting the schema prefix (needed for SQLite)
-                if db_schema and db_schema.strip():
-                    sql_query = f"SELECT * FROM {db_schema}.{table_name}"
-                else:
-                    sql_query = f"SELECT * FROM {table_name}"
+                batch.append(doc)
 
-                result = sess.execute(text(sql_query))
-                return [row._asdict() for row in result]
+                if len(batch) >= batch_size:
+                    yield batch
+                    batch = []
+
+            # Yield remaining items
+            if batch:
+                yield batch
+        else:
+            # SQL database implementations (PostgresDb, MySQLDb, SqliteDb)
+            offset = 0
+            while True:
+                # Create a new session for each batch to avoid transaction conflicts
+                with db.Session() as sess:
+                    # Handle empty schema by omitting the schema prefix (needed for SQLite)
+                    if db_schema and db_schema.strip():
+                        sql_query = f"SELECT * FROM {db_schema}.{table_name} LIMIT {batch_size} OFFSET {offset}"
+                    else:
+                        sql_query = f"SELECT * FROM {table_name} LIMIT {batch_size} OFFSET {offset}"
+
+                    result = sess.execute(text(sql_query))
+                    batch = [row._asdict() for row in result]
+
+                    if not batch:
+                        break
+
+                    yield batch
+                    offset += batch_size
+
+                    # If batch is smaller than batch_size, we've reached the end
+                    if len(batch) < batch_size:
+                        break
 
     except Exception as e:
-        log_error(f"Error getting all content from table/collection {table_name}: {e}")
-        return []
+        log_error(f"Error getting batched content from table/collection {table_name}: {e}")
+        return
+
+
+def get_all_table_content(db, db_schema: str, table_name: str) -> list[dict[str, Any]]:
+    """Get all content from the given table/collection (legacy method kept for backward compatibility)
+
+    WARNING: This method loads all data into memory and should not be used for large tables.
+    Use get_table_content_in_batches() for large datasets.
+    """
+    log_warning(
+        f"Loading entire table {table_name} into memory. Consider using get_table_content_in_batches() for large tables, or if you experience any complication."
+    )
+
+    all_content = []
+    for batch in get_table_content_in_batches(db, db_schema, table_name):
+        all_content.extend(batch)
+    return all_content
 
 
 def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]:
@@ -385,7 +515,13 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
-        agent_session = AgentSession.from_dict(session)
+
+        try:
+            agent_session = AgentSession.from_dict(session)
+        except Exception as e:
+            log_error(f"Error parsing agent session: {e}. This is the complete session that failed: {session}")
+            continue
+
         if agent_session is not None:
             sessions_v2.append(agent_session)
 
@@ -408,7 +544,12 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
-        team_session = TeamSession.from_dict(session)
+        try:
+            team_session = TeamSession.from_dict(session)
+        except Exception as e:
+            log_error(f"Error parsing team session: {e}. This is the complete session that failed: {session}")
+            continue
+
         if team_session is not None:
             sessions_v2.append(team_session)
 
@@ -433,7 +574,12 @@ def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSe
             "workflow_name": item.get("workflow_name"),
             "runs": convert_any_metrics_in_data(item.get("runs")),
         }
-        workflow_session = WorkflowSession.from_dict(session)
+        try:
+            workflow_session = WorkflowSession.from_dict(session)
+        except Exception as e:
+            log_error(f"Error parsing workflow session: {e}. This is the complete session that failed: {session}")
+            continue
+
         if workflow_session is not None:
             sessions_v2.append(workflow_session)
 

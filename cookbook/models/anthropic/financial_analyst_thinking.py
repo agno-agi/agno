@@ -20,7 +20,7 @@ agent = Agent(
     ),
     tools=[
         CalculatorTools(enable_all=True),
-        YFinanceTools(stock_price=True, cache_results=True),
+        YFinanceTools(),
     ],
     instructions=[
         "You are a financial analysis assistant with access to calculator and stock price tools.",

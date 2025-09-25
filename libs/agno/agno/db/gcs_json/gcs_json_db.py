@@ -162,7 +162,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Error deleting session: {e}")
-            return False
+            raise e
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from the GCS JSON file.
@@ -181,6 +181,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Error deleting sessions: {e}")
+            raise e
 
     def get_session(
         self,
@@ -233,7 +234,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception reading from session file: {e}")
-            return None
+            raise e
 
     def get_sessions(
         self,
@@ -328,7 +329,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception reading from session file: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -363,7 +364,7 @@ class GcsJsonDb(BaseDb):
             return None
         except Exception as e:
             log_warning(f"Exception renaming session: {e}")
-            return None
+            raise e
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -408,7 +409,44 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception upserting session: {e}")
-            return None
+            raise e
+
+    def upsert_sessions(
+        self, sessions: List[Session], deserialize: Optional[bool] = True
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple sessions for improved performance on large datasets.
+
+        Args:
+            sessions (List[Session]): List of sessions to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+
+        Returns:
+            List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not sessions:
+            return []
+
+        try:
+            log_info(
+                f"GcsJsonDb doesn't support efficient bulk operations, falling back to individual upserts for {len(sessions)} sessions"
+            )
+
+            # Fall back to individual upserts
+            results = []
+            for session in sessions:
+                if session is not None:
+                    result = self.upsert_session(session, deserialize=deserialize)
+                    if result is not None:
+                        results.append(result)
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk session upsert: {e}")
+            return []
 
     def _matches_session_key(self, existing_session: Dict[str, Any], session: Session) -> bool:
         """Check if existing session matches the key for the session type."""
@@ -437,6 +475,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Error deleting user memory: {e}")
+            raise e
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete multiple user memories from the GCS JSON file."""
@@ -447,6 +486,7 @@ class GcsJsonDb(BaseDb):
             log_debug(f"Successfully deleted user memories with ids: {memory_ids}")
         except Exception as e:
             log_warning(f"Error deleting user memories: {e}")
+            raise e
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the GCS JSON file."""
@@ -461,7 +501,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception reading from memory file: {e}")
-            return []
+            raise e
 
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True
@@ -480,7 +520,7 @@ class GcsJsonDb(BaseDb):
             return None
         except Exception as e:
             log_warning(f"Exception reading from memory file: {e}")
-            return None
+            raise e
 
     def get_user_memories(
         self,
@@ -538,7 +578,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception reading from memory file: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None
@@ -574,7 +614,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception getting user memory stats: {e}")
-            return [], 0
+            raise e
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -608,7 +648,43 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception upserting user memory: {e}")
-            return None
+            raise e
+
+    def upsert_memories(
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple user memories for improved performance on large datasets.
+
+        Args:
+            memories (List[UserMemory]): List of memories to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+
+        Returns:
+            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not memories:
+            return []
+
+        try:
+            log_info(
+                f"GcsJsonDb doesn't support efficient bulk operations, falling back to individual upserts for {len(memories)} memories"
+            )
+            # Fall back to individual upserts
+            results = []
+            for memory in memories:
+                if memory is not None:
+                    result = self.upsert_user_memory(memory, deserialize=deserialize)
+                    if result is not None:
+                        results.append(result)
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk memory upsert: {e}")
+            return []
 
     def clear_memories(self) -> None:
         """Delete all memories from the database.
@@ -622,6 +698,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception deleting all memories: {e}")
+            raise e
 
     # -- Metrics methods --
     def calculate_metrics(self) -> Optional[list[dict]]:
@@ -688,7 +765,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception refreshing metrics: {e}")
-            return None
+            raise e
 
     def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
@@ -743,7 +820,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception reading sessions for metrics: {e}")
-            return []
+            raise e
 
     def get_metrics(
         self,
@@ -775,7 +852,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception getting metrics: {e}")
-            return [], None
+            raise e
 
     # -- Knowledge methods --
     def delete_knowledge_content(self, id: str):
@@ -786,6 +863,7 @@ class GcsJsonDb(BaseDb):
             self._write_json_file(self.knowledge_table_name, knowledge_items)
         except Exception as e:
             log_warning(f"Error deleting knowledge content: {e}")
+            raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get knowledge content by ID."""
@@ -799,7 +877,7 @@ class GcsJsonDb(BaseDb):
             return None
         except Exception as e:
             log_warning(f"Error getting knowledge content: {e}")
-            return None
+            raise e
 
     def get_knowledge_contents(
         self,
@@ -828,7 +906,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Error getting knowledge contents: {e}")
-            return [], 0
+            raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the GCS JSON file."""
@@ -852,7 +930,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Error upserting knowledge row: {e}")
-            return None
+            raise e
 
     # -- Eval methods --
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
@@ -871,7 +949,7 @@ class GcsJsonDb(BaseDb):
             return eval_run
         except Exception as e:
             log_warning(f"Error creating eval run: {e}")
-            return None
+            raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
         """Delete an eval run from the GCS JSON file."""
@@ -887,6 +965,7 @@ class GcsJsonDb(BaseDb):
                 log_warning(f"No eval run found with ID: {eval_run_id}")
         except Exception as e:
             log_warning(f"Error deleting eval run {eval_run_id}: {e}")
+            raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the GCS JSON file."""
@@ -903,6 +982,7 @@ class GcsJsonDb(BaseDb):
                 log_warning(f"No eval runs found with IDs: {eval_run_ids}")
         except Exception as e:
             log_warning(f"Error deleting eval runs {eval_run_ids}: {e}")
+            raise e
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -920,7 +1000,7 @@ class GcsJsonDb(BaseDb):
             return None
         except Exception as e:
             log_warning(f"Exception getting eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_runs(
         self,
@@ -986,7 +1066,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception getting eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -1009,4 +1089,4 @@ class GcsJsonDb(BaseDb):
             return None
         except Exception as e:
             log_warning(f"Error renaming eval run {eval_run_id}: {e}")
-            return None
+            raise e

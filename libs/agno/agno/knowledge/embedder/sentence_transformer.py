@@ -27,9 +27,9 @@ class SentenceTransformerEmbedder(Embedder):
 
     def get_embedding(self, text: Union[str, List[str]]) -> List[float]:
         if not self.sentence_transformer_client:
-            model = SentenceTransformer(model_name_or_path=self.id)
-        else:
-            model = self.sentence_transformer_client
+            self.sentence_transformer_client = SentenceTransformer(model_name_or_path=self.id)
+
+        model = self.sentence_transformer_client
         embedding = model.encode(text, prompt=self.prompt, normalize_embeddings=self.normalize_embeddings)
         try:
             if isinstance(embedding, np.ndarray):

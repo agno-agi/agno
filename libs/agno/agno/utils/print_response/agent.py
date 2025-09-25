@@ -423,7 +423,7 @@ def build_panels_stream(
             reasoning_panel = create_panel(content=step_content, title=f"Reasoning step {i}", border_style="green")
             panels.append(reasoning_panel)
 
-    if len(response_reasoning_content_buffer) > 0:
+    if len(response_reasoning_content_buffer) > 0 and show_reasoning:
         # Create panel for thinking
         thinking_panel = create_panel(
             content=Text(response_reasoning_content_buffer),
@@ -727,7 +727,7 @@ def build_panels(
             reasoning_panel = create_panel(content=step_content, title=f"Reasoning step {i}", border_style="green")
             panels.append(reasoning_panel)
 
-    if isinstance(run_response, RunOutput) and run_response.reasoning_content is not None:
+    if isinstance(run_response, RunOutput) and run_response.reasoning_content is not None and show_reasoning:
         # Create panel for thinking
         thinking_panel = create_panel(
             content=Text(run_response.reasoning_content),
