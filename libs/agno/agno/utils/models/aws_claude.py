@@ -147,6 +147,16 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
             if message.videos is not None and len(message.videos) > 0:
                 log_warning("Video is not supported for AWS Bedrock Claude")
 
+        elif message.role == "tool":
+            content = []
+            content.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": message.tool_call_id,
+                    "content": str(message.content),
+                }
+            )
+
         # Handle tool calls from history
         elif message.role == "assistant":
             content = []
