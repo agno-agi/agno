@@ -104,10 +104,3 @@ class AgentOSConfig(BaseModel):
     session: Optional[SessionConfig] = None
     metrics: Optional[MetricsConfig] = None
 
-
-@dataclass
-class AppConfig:
-    """Configuration for the App of the AgentOS"""
-
-    app: FastAPI
-    preserve_conflicting_routes: bool = False

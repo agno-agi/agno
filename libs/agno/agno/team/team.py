@@ -1165,15 +1165,6 @@ class Team:
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
-        if isinstance(run_dependencies, str):
-            try:
-                import json
-
-                run_dependencies = json.loads(run_dependencies)
-            except Exception as e:
-                log_error(f"Error parsing dependencies: {str(e)}")
-                run_dependencies = None or self.dependencies
-
         # Resolve callable dependencies if present
         if run_dependencies is not None:
             self._resolve_run_dependencies(run_dependencies)
@@ -1797,15 +1788,6 @@ class Team:
 
         # Determine run dependencies (runtime override takes priority)
         run_dependencies = dependencies if dependencies is not None else self.dependencies
-
-        if isinstance(run_dependencies, str):
-            try:
-                import json
-
-                run_dependencies = json.loads(run_dependencies)
-            except Exception as e:
-                log_error(f"Error parsing dependencies: {str(e)}")
-                run_dependencies = None or self.dependencies
 
         # Determine runtime context parameters
         add_dependencies = (

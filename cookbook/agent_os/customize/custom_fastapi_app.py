@@ -11,7 +11,6 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
-from agno.os.config import AppConfig
 from agno.tools.duckduckgo import DuckDuckGoTools
 from fastapi import FastAPI
 
@@ -58,7 +57,7 @@ async def get_customers():
 agent_os = AgentOS(
     description="Example app with custom routers",
     agents=[web_research_agent],
-    app_config=AppConfig(app=app),
+    base_app=app,
 )
 
 app = agent_os.get_app()

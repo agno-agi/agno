@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Literal, Optional, Set, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -14,7 +14,6 @@ from starlette.requests import Request
 from agno.agent.agent import Agent
 from agno.os.config import (
     AgentOSConfig,
-    AppConfig,
     DatabaseConfig,
     EvalsConfig,
     EvalsDomainConfig,
@@ -75,8 +74,9 @@ class AgentOS:
         lifespan: Optional[Any] = None,
         enable_mcp: bool = False,
         fastapi_app: Optional[FastAPI] = None,  # Deprecated
-        replace_routes: bool = True,  # Deprecated
-        app_config: Optional[AppConfig] = None,
+        base_app: Optional[FastAPI] = None,
+        replace_routes: Optional[bool] = None,  # Deprecated
+        on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         telemetry: bool = True,
     ):
         """Initialize AgentOS.
@@ -94,7 +94,8 @@ class AgentOS:
             settings: API settings for the OS
             lifespan: Optional lifespan context manager for the FastAPI app
             enable_mcp: Whether to enable MCP (Model Context Protocol)
-            app_config: Configuration for the App of the AgentOS. Allows you to configure a custom FastAPI app and how it behaves.
+            base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
+            on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             telemetry: Whether to enable telemetry
         """
         if not agents and not workflows and not teams:
@@ -111,18 +112,21 @@ class AgentOS:
 
         self._app_set = False
 
-        if app_config:
-            self.custom_app: Optional[FastAPI] = app_config.app
+        if base_app:
+            self.base_app = base_app
             self._app_set = True
-            self.preserve_conflicting_routes = app_config.preserve_conflicting_routes
+            self.on_route_conflict = on_route_conflict
         elif fastapi_app:
-            self.custom_app = fastapi_app
+            self.base_app = fastapi_app
             self._app_set = True
-            self.preserve_conflicting_routes = not replace_routes
+            if replace_routes is not None:
+                self.on_route_conflict = "preserve_agentos" if replace_routes else "preserve_base_app"
+            else:
+                self.on_route_conflict = on_route_conflict
         else:
-            self.custom_app = None
+            self.base_app = None
             self._app_set = False
-            self.preserve_conflicting_routes = True
+            self.on_route_conflict = on_route_conflict
 
         self.interfaces = interfaces or []
 
@@ -221,8 +225,8 @@ class AgentOS:
         )
 
     def get_app(self) -> FastAPI:
-        if self.custom_app:
-            fastapi_app = self.custom_app
+        if self.base_app:
+            fastapi_app = self.base_app
         else:
             if self.enable_mcp:
                 from contextlib import asynccontextmanager
@@ -355,7 +359,7 @@ class AgentOS:
                         conflicting_routes.append(route)
 
         if conflicts and self._app_set:
-            if self.preserve_conflicting_routes:
+            if self.on_route_conflict == "preserve_base_app":
                 # Skip conflicting AgentOS routes, prefer user's existing routes
                 for conflict in conflicts:
                     methods_str = ", ".join(conflict["methods"])  # type: ignore
@@ -374,7 +378,7 @@ class AgentOS:
                 if filtered_router.routes:
                     fastapi_app.include_router(filtered_router)
 
-            else:
+            elif self.on_route_conflict == "preserve_agentos":
                 # Log warnings but still add all routes (AgentOS routes will override)
                 for conflict in conflicts:
                     methods_str = ", ".join(conflict["methods"])  # type: ignore
@@ -391,6 +395,10 @@ class AgentOS:
                                 fastapi_app.routes.pop(fastapi_app.routes.index(route))
 
                 fastapi_app.include_router(router)
+
+            elif self.on_route_conflict == "error":
+                conflicting_paths = [conflict["path"] for conflict in conflicts]
+                raise ValueError(f"Route conflict detected: {conflicting_paths}")
 
         else:
             # No conflicts, add router normally

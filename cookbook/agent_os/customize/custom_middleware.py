@@ -173,7 +173,7 @@ if __name__ == "__main__":
     """
 
     agent_os.serve(
-        app="fastapi_app_with_custom_middleware:app",
+        app="custom_middleware:app",
         host="localhost",
         port=7777,
         reload=True,
