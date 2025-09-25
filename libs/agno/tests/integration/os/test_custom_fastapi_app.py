@@ -217,7 +217,6 @@ def test_custom_app_endpoints_preserved(test_agent: Agent):
     assert "AgentOS API" in data["name"]
 
 
-
 def test_custom_lifespan_integration(test_agent: Agent):
     """Test custom lifespan context manager integration."""
     startup_called = False
@@ -712,4 +711,3 @@ def test_complex_route_conflict_scenario(test_agent: Agent, test_team: Team, tes
     response = client.post("/agents")
     # Should either work (custom) or have specific AgentOS behavior
     assert response.status_code != 404
-

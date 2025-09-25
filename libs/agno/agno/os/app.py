@@ -113,7 +113,7 @@ class AgentOS:
         self._app_set = False
 
         if base_app:
-            self.base_app = base_app
+            self.base_app: Optional[FastAPI] = base_app
             self._app_set = True
             self.on_route_conflict = on_route_conflict
         elif fastapi_app:
