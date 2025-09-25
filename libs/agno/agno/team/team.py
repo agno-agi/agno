@@ -4860,7 +4860,12 @@ class Team:
             if self.memory_manager is None:
                 self._set_memory_manager()
                 _memory_manager_not_set = True
-            user_memories = await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
+
+            if self._has_async_db():
+                user_memories = await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
+            else:
+                user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
+
             if user_memories and len(user_memories) > 0:
                 system_message_content += (
                     "You have access to memories from previous interactions with the user that you can use:\n\n"
