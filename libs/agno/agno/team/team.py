@@ -1423,7 +1423,7 @@ class Team:
 
         # 3. Update metadata and session state
         self._update_metadata(session=team_session)
-        session_state = self._update_session_state(session=team_session, session_state=session_state)  # type: ignore
+        session_state = self._load_session_state(session=team_session, session_state=session_state)  # type: ignore
 
         if store_member_responses is None:
             store_member_responses = False if self.store_member_responses is None else self.store_member_responses
@@ -1627,7 +1627,7 @@ class Team:
 
         # 5. Update metadata and session state
         self._update_metadata(session=team_session)
-        session_state = self._update_session_state(session=team_session, session_state=session_state)  # type: ignore
+        session_state = self._load_session_state(session=team_session, session_state=session_state)  # type: ignore
 
         if store_member_responses is None:
             store_member_responses = False if self.store_member_responses is None else self.store_member_responses
