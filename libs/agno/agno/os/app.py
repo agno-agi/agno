@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -9,7 +9,6 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from rich import box
 from rich.panel import Panel
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
@@ -183,7 +182,6 @@ class AgentOS:
             from agno.api.os import OSLaunch, log_os_telemetry
 
             log_os_telemetry(launch=OSLaunch(os_id=self.os_id, data=self._get_telemetry_data()))
-
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant

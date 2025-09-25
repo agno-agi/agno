@@ -42,7 +42,9 @@ app = FastAPI(
 app.add_middleware(
     JWTMiddleware,
     secret_key=JWT_SECRET,
-    excluded_route_paths=["/auth/login"],  # We don't want to validate the token for the login endpoint
+    excluded_route_paths=[
+        "/auth/login"
+    ],  # We don't want to validate the token for the login endpoint
     validate_token=True,  # Set validate to False to skip token validation
 )
 

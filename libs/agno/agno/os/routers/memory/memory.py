@@ -84,14 +84,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         payload: UserMemoryCreateSchema,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for memory storage"),
     ) -> UserMemorySchema:
-        if request.state.user_id:
+        if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
             payload.user_id = user_id
-            
-        
+
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
-        
+
         db = get_db(dbs, db_id)
         user_memory = db.upsert_user_memory(
             memory=UserMemory(
@@ -195,11 +194,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="Database ID to query memories from"),
     ) -> PaginatedResponse[UserMemorySchema]:
         db = get_db(dbs, db_id)
-        
-        if request.state.user_id:
+
+        if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
-            
-        
+
         user_memories, total_count = db.get_user_memories(
             limit=limit,
             page=page,
@@ -337,15 +335,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="Database ID to use for update"),
     ) -> UserMemorySchema:
         db = get_db(dbs, db_id)
-        
-        if request.state.user_id:
+
+        if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
             payload.user_id = user_id
-            
-        
+
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
-        
+
         user_memory = db.upsert_user_memory(
             memory=UserMemory(
                 memory_id=memory_id,

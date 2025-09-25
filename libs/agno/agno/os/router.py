@@ -81,7 +81,7 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
         except json.JSONDecodeError:
             kwargs.pop("session_state")
             log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
-            
+
     if dependencies := kwargs.get("dependencies"):
         try:
             dependencies_dict = json.loads(dependencies)  # type: ignore
@@ -691,15 +691,15 @@ def get_base_router(
         files: Optional[List[UploadFile]] = File(None),
     ):
         kwargs = await _get_request_kwargs(request, create_agent_run)
-        
-        if request.state.user_id:
+
+        if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
-        if request.state.session_id:
+        if hasattr(request.state, "session_id"):
             session_id = request.state.session_id
-        if request.state.dependencies:
+        if hasattr(request.state, "dependencies"):
             dependencies = request.state.dependencies
             kwargs["dependencies"] = dependencies
-        
+
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -863,12 +863,11 @@ def get_base_router(
         user_id: Optional[str] = Form(None),
         stream: bool = Form(True),
     ):
-        
-        if request.state.user_id:
+        if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
-        if request.state.session_id:
+        if hasattr(request.state, "session_id"):
             session_id = request.state.session_id
-            
+
         # Parse the JSON string manually
         try:
             tools_data = json.loads(tools) if tools else None
@@ -1056,14 +1055,14 @@ def get_base_router(
     ):
         kwargs = await _get_request_kwargs(request, create_team_run)
 
-        if request.state.user_id:
+        if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
-        if request.state.session_id:
+        if hasattr(request.state, "session_id"):
             session_id = request.state.session_id
-        if request.state.dependencies:
+        if hasattr(request.state, "dependencies"):
             dependencies = request.state.dependencies
             kwargs["dependencies"] = dependencies
-            
+
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
         team = get_team_by_id(team_id, os.teams)
@@ -1486,12 +1485,12 @@ def get_base_router(
         user_id: Optional[str] = Form(None),
     ):
         kwargs = await _get_request_kwargs(request, create_workflow_run)
-        
-        if request.state.user_id:
+
+        if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
-        if request.state.session_id:
+        if hasattr(request.state, "session_id"):
             session_id = request.state.session_id
-        if request.state.dependencies:
+        if hasattr(request.state, "dependencies"):
             dependencies = request.state.dependencies
             kwargs["dependencies"] = dependencies
 

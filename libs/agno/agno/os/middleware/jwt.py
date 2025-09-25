@@ -19,7 +19,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     Claims are stored as:
     - request.state.jwt_user_id: User ID from configured claim
-    - request.state.jwt_session_id: Session ID from configured claim  
+    - request.state.jwt_session_id: Session ID from configured claim
     - request.state.jwt_dependencies: Dictionary of dependency claims
     - request.state.authenticated: Boolean authentication status
 

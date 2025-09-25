@@ -20,6 +20,7 @@ JWT_SECRET = "a-string-secret-at-least-256-bits-long"
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
+
 # Define a tool that uses dependencies claims
 def get_user_details(dependencies: dict):
     """
@@ -30,6 +31,7 @@ def get_user_details(dependencies: dict):
         "email": dependencies.get("email"),
         "roles": dependencies.get("roles"),
     }
+
 
 # Create agent
 research_agent = Agent(
@@ -57,7 +59,7 @@ app.add_middleware(
     algorithm="HS256",
     token_prefix="Bearer",
     user_id_claim="sub",  # Extract user_id from 'sub' claim
-    session_id_claim="session_id",  # Extract session_id from 'session_id' claim  
+    session_id_claim="session_id",  # Extract session_id from 'session_id' claim
     dependencies_claims=["name", "email", "roles"],
     validate=False,  # We only want parameter injection, not token validation
 )

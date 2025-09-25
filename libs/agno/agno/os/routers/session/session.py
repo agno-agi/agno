@@ -104,10 +104,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="Database ID to query sessions from"),
     ) -> PaginatedResponse[SessionSchema]:
         db = get_db(dbs, db_id)
-        
-        if request.state.user_id:
+
+        if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
-        
+
         sessions, total_count = db.get_sessions(
             session_type=session_type,
             component_id=component_id,
@@ -227,10 +227,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="Database ID to query session from"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db = get_db(dbs, db_id)
-        
-        if request.state.user_id:
+
+        if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
-                        
+
         session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
         if not session:
             raise HTTPException(
@@ -369,10 +369,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
     ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
         db = get_db(dbs, db_id)
-        
-        if request.state.user_id:
+
+        if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
-            
+
         session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
