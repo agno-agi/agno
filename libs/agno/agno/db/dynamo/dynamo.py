@@ -1745,14 +1745,16 @@ class DynamoDb(BaseDb):
 
             if filter_type is not None:
                 if filter_type == EvalFilterType.AGENT:
-                    filter_expressions.append("agent_id IS NOT NULL")
+                    filter_expressions.append("attribute_exists(agent_id)")
                 elif filter_type == EvalFilterType.TEAM:
-                    filter_expressions.append("team_id IS NOT NULL")
+                    filter_expressions.append("attribute_exists(team_id)")
                 elif filter_type == EvalFilterType.WORKFLOW:
-                    filter_expressions.append("workflow_id IS NOT NULL")
+                    filter_expressions.append("attribute_exists(workflow_id)")
 
             if filter_expressions:
                 scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
+            
+            if expression_values:
                 scan_kwargs["ExpressionAttributeValues"] = expression_values  # type: ignore
 
             # Execute scan
