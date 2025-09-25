@@ -1402,7 +1402,7 @@ class DynamoDb(BaseDb):
         for key, value in data.items():
             if value is not None:
                 if isinstance(value, bool):
-                    item[key] = {"BOOL": str(value)}
+                    item[key] = {"BOOL": value}
                 elif isinstance(value, (int, float)):
                     item[key] = {"N": str(value)}
                 elif isinstance(value, str):
