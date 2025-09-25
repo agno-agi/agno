@@ -75,16 +75,16 @@ class WorkflowSession:
         else:
             self.runs.append(run)
 
-    def get_workflow_history(self, session: WorkflowSession, num_history_runs: int = 3) -> Optional[str]:
+    def get_workflow_history(self, num_runs: int = 3) -> Optional[str]:
         """Get formatted workflow history context for steps"""
-        if not session or not session.runs:
+        if not self or not self.runs:
             return None
 
         from agno.run.base import RunStatus
 
         # Get completed runs only (exclude current/pending run)
-        completed_runs = [run for run in session.runs if run.status == RunStatus.completed]
-        recent_runs = completed_runs[-num_history_runs:] if len(completed_runs) > num_history_runs else completed_runs
+        completed_runs = [run for run in self.runs if run.status == RunStatus.completed]
+        recent_runs = completed_runs[-num_runs:] if len(completed_runs) > num_runs else completed_runs
 
         if not recent_runs:
             return None

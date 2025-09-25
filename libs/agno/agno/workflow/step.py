@@ -304,9 +304,9 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
+                        if (self.add_workflow_history or add_workflow_history):
                             history_messages = workflow_session.get_workflow_history(
-                                session=workflow_session, num_history_runs=num_history_runs
+                                num_history_runs=num_history_runs
                             )
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
@@ -488,9 +488,9 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
+                        if (self.add_workflow_history or add_workflow_history):
                             history_messages = workflow_session.get_workflow_history(
-                                session=workflow_session, num_history_runs=num_history_runs
+                                num_history_runs=num_history_runs
                             )
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
@@ -708,9 +708,9 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
+                        if (self.add_workflow_history or add_workflow_history):
                             history_messages = workflow_session.get_workflow_history(
-                                session=workflow_session, num_history_runs=num_history_runs
+                                num_history_runs=num_history_runs
                             )
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
@@ -894,9 +894,9 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
+                        if (self.add_workflow_history or add_workflow_history):
                             history_messages = workflow_session.get_workflow_history(
-                                session=workflow_session, num_history_runs=num_history_runs
+                                num_history_runs=num_history_runs
                             )
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
