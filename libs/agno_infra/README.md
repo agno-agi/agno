@@ -4,7 +4,6 @@
 
 [![PyPI version](https://badge.fury.io/py/agno-infra.svg)](https://badge.fury.io/py/agno-infra)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
-[![License: MPL 2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
 
 ## Overview
 

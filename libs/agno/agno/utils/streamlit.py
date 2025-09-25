@@ -3,7 +3,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 try:
     from agno.agent import Agent
-    from agno.db.base import AsyncBaseDb, SessionType
+    from agno.db.base import SessionType
     from agno.models.anthropic import Claude
     from agno.models.google import Gemini
     from agno.models.openai import OpenAIChat
@@ -61,8 +61,6 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
         return
 
     try:
-        if isinstance(agent.db, AsyncBaseDb):
-            raise ValueError("session_selector_widget() is not supported with an async DB.")
         sessions = agent.db.get_sessions(
             session_type=SessionType.AGENT,
             deserialize=True,

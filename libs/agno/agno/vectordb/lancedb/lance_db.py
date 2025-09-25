@@ -696,12 +696,6 @@ class LanceDb(VectorDb):
             return await self.async_table.count_rows()
         return 0
 
-    def _async_get_count_sync(self) -> int:
-        """Helper method to run async_get_count in a new thread with its own event loop"""
-        import asyncio
-
-        return asyncio.run(self.async_get_count())
-
     def get_count(self) -> int:
         # If we have data in the async table but sync table isn't available, try to get count from async table
         if self.async_table is not None:
@@ -716,7 +710,7 @@ class LanceDb(VectorDb):
                 except RuntimeError:
                     # No event loop running, safe to use asyncio.run
                     try:
-                        return self._async_get_count_sync()
+                        return asyncio.run(self.async_get_count())
                     except Exception as e:
                         log_debug(f"Failed to get async count: {e}")
             except Exception as e:
