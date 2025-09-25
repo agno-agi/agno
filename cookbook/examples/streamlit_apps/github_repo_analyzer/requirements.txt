@@ -66,7 +66,7 @@ jiter==0.10.0
     # via openai
 jsonschema==4.25.1
     # via altair
-jsonschema-specifications==2025.4.1
+jsonschema-specifications==2025.9.1
     # via jsonschema
 markdown-it-py==4.0.0
     # via rich
@@ -74,7 +74,7 @@ markupsafe==3.0.2
     # via jinja2
 mdurl==0.1.2
     # via markdown-it-py
-narwhals==2.3.0
+narwhals==2.4.0
     # via altair
 nest-asyncio==1.6.0
     # via -r cookbook/examples/streamlit_apps/github_repo_analyzer/requirements.in
@@ -83,7 +83,7 @@ numpy==2.3.2
     #   pandas
     #   pydeck
     #   streamlit
-openai==1.106.1
+openai==1.107.0
     # via -r cookbook/examples/streamlit_apps/github_repo_analyzer/requirements.in
 packaging==25.0
     # via
@@ -93,10 +93,6 @@ packaging==25.0
 pandas==2.3.2
     # via streamlit
 pillow==11.3.0
-    # via streamlit
-protobuf==6.32.0
-    # via streamlit
-pyarrow==21.0.0
     # via streamlit
 protobuf==6.32.0
     # via streamlit
@@ -172,7 +168,7 @@ tornado==6.5.2
     # via streamlit
 tqdm==4.67.1
     # via openai
-typer==0.17.3
+typer==0.17.4
     # via agno
 typing-extensions==4.15.0
     # via
