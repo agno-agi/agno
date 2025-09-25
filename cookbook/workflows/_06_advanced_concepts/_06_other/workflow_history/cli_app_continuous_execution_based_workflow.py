@@ -68,7 +68,7 @@ def create_customer_support_workflow():
             Step(name="Technical Resolution", agent=technical_specialist),
             Step(name="Final Resolution", agent=resolution_manager),
         ],
-        add_history_to_steps=True,
+        add_workflow_history=True,
     )
 
 
