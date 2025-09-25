@@ -35,7 +35,15 @@ asyncio.run(
 asyncio.run(
     knowledge.add_content_async(
         metadata={"user_tag": "Arxiv content"},
-        topics=["Carbon Dioxide"],
+        topics=["Carbon Dioxide", "Oxygen"],
+        reader=ArxivReader(),
+    )
+)
+
+# Using the add_contents method
+asyncio.run(
+    knowledge.add_contents_async(
+        topics=["Carbon Dioxide", "Nitrogen"],
         reader=ArxivReader(),
     )
 )

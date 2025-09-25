@@ -18,8 +18,7 @@ stock_searcher = Agent(
     role="Searches the web for information on a stock.",
     tools=[
         YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
+            include_tools=["get_current_stock_price", "get_analyst_recommendations"],
         )
     ],
 )
@@ -37,9 +36,7 @@ company_info_agent = Agent(
     output_schema=CompanyAnalysis,
     tools=[
         YFinanceTools(
-            stock_price=False,
-            company_info=True,
-            company_news=True,
+            include_tools=["get_company_info", "get_company_news"],
         )
     ],
 )

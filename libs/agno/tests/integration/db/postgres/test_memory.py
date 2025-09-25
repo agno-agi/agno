@@ -241,3 +241,120 @@ def test_comprehensive_user_memory_fields(postgres_db_real: PostgresDb):
     assert retrieved.input == comprehensive_memory.input
     assert retrieved.agent_id == comprehensive_memory.agent_id
     assert retrieved.team_id == comprehensive_memory.team_id
+
+
+def test_upsert_memories(postgres_db_real: PostgresDb):
+    """Test upsert_memories for inserting new memories"""
+
+    # Create memories
+    memories = []
+    for i in range(5):
+        memory = UserMemory(
+            memory_id=f"bulk_memory_{i}",
+            memory=f"Bulk test memory {i} with user preferences and information",
+            topics=[f"topic_{i}", "bulk_test"],
+            user_id=f"user_{i}",
+            input=f"Input that generated memory {i}",
+            agent_id=f"agent_{i}",
+            updated_at=datetime.now(),
+        )
+        memories.append(memory)
+
+    # Bulk upsert memories
+    results = postgres_db_real.upsert_memories(memories)
+
+    # Verify results
+    assert len(results) == 5
+    for i, result in enumerate(results):
+        assert isinstance(result, UserMemory)
+        assert result.memory_id == f"bulk_memory_{i}"
+        assert result.user_id == f"user_{i}"
+        assert result.agent_id == f"agent_{i}"
+        assert result.topics is not None
+        assert f"topic_{i}" in result.topics
+        assert "bulk_test" in result.topics
+
+
+def test_upsert_memories_update(postgres_db_real: PostgresDb):
+    """Test upsert_memories for updating existing memories"""
+
+    # Create memories
+    initial_memories = []
+    for i in range(3):
+        memory = UserMemory(
+            memory_id=f"update_memory_{i}",
+            memory=f"Original memory {i}",
+            topics=["original"],
+            user_id=f"user_{i}",
+            input=f"Original input {i}",
+            updated_at=datetime.now(),
+        )
+        initial_memories.append(memory)
+    postgres_db_real.upsert_memories(initial_memories)
+
+    # Update memories
+    updated_memories = []
+    for i in range(3):
+        memory = UserMemory(
+            memory_id=f"update_memory_{i}",  # Same ID for update
+            memory=f"Updated memory {i} with more information",
+            topics=["updated", "enhanced"],
+            user_id=f"user_{i}",
+            input=f"Updated input {i}",
+            feedback="positive",
+            agent_id=f"new_agent_{i}",
+            updated_at=datetime.now(),
+        )
+        updated_memories.append(memory)
+    results = postgres_db_real.upsert_memories(updated_memories)
+    assert len(results) == 3
+
+    # Verify updates
+    for i, result in enumerate(results):
+        assert isinstance(result, UserMemory)
+        assert result.memory_id == f"update_memory_{i}"
+        assert "Updated memory" in result.memory
+        assert result.topics == ["updated", "enhanced"]
+        assert result.agent_id == f"new_agent_{i}"
+
+
+def test_upsert_memories_performance(postgres_db_real: PostgresDb):
+    """Ensure the bulk upsert method is considerably faster than individual upserts"""
+    import time as time_module
+
+    # Create memories
+    memories = []
+    for i in range(30):
+        memory = UserMemory(
+            memory_id=f"perf_memory_{i}",
+            memory=f"Performance test memory {i} with detailed information",
+            topics=["performance", "test"],
+            user_id="perf_user",
+            agent_id=f"perf_agent_{i}",
+            updated_at=datetime.now(),
+        )
+        memories.append(memory)
+
+    # Test individual upsert
+    start_time = time_module.time()
+    for memory in memories:
+        postgres_db_real.upsert_user_memory(memory)
+    individual_time = time_module.time() - start_time
+
+    # Clean up for bulk upsert
+    memory_ids = [m.memory_id for m in memories if m.memory_id]
+    postgres_db_real.delete_user_memories(memory_ids)
+
+    # Test bulk upsert
+    start_time = time_module.time()
+    postgres_db_real.upsert_memories(memories)
+    bulk_time = time_module.time() - start_time
+
+    # Verify all memories were created
+    all_memories = postgres_db_real.get_user_memories(user_id="perf_user")
+    assert len(all_memories) == 30
+
+    # Bulk should be at least 2x faster
+    assert bulk_time < individual_time / 2, (
+        f"Bulk upsert is not fast enough: {bulk_time:.3f}s vs {individual_time:.3f}s"
+    )

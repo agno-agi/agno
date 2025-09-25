@@ -1,0 +1,94 @@
+sources:
+  my-pg-source:
+    kind: postgres
+    host: db
+    port: 5432
+    database: toolbox_db
+    user: toolbox_user
+    password: my-password
+tools:
+  search-hotels-by-name:
+    kind: postgres-sql
+    source: my-pg-source
+    description: Search for hotels based on name.
+    parameters:
+      - name: name
+        type: string
+        description: The name of the hotel.
+    statement: SELECT * FROM hotels WHERE name ILIKE '%' || $1 || '%';
+  search-hotels-by-location:
+    kind: postgres-sql
+    source: my-pg-source
+    description: Search for hotels based on location.
+    parameters:
+      - name: location
+        type: string
+        description: The location of the hotel.
+    statement: SELECT * FROM hotels WHERE location ILIKE '%' || $1 || '%';
+  book-hotel:
+    kind: postgres-sql
+    source: my-pg-source
+    description: >-
+       Book a hotel by its ID. If the hotel is successfully booked, returns a NULL, raises an error if not.
+    parameters:
+      - name: hotel_id
+        type: string
+        description: The ID of the hotel to book.
+    statement: UPDATE hotels SET booked = B'1' WHERE id = $1;
+  update-hotel:
+    kind: postgres-sql
+    source: my-pg-source
+    description: >-
+      Update a hotel's check-in and check-out dates by its ID. Returns a message
+      indicating  whether the hotel was successfully updated or not.
+    parameters:
+      - name: hotel_id
+        type: string
+        description: The ID of the hotel to update.
+      - name: checkin_date
+        type: string
+        description: The new check-in date of the hotel.
+      - name: checkout_date
+        type: string
+        description: The new check-out date of the hotel.
+    statement: >-
+      UPDATE hotels SET checkin_date = CAST($2 as date), checkout_date = CAST($3
+      as date) WHERE id = $1;
+  cancel-hotel:
+    kind: postgres-sql
+    source: my-pg-source
+    description: Cancel a hotel by its ID.
+    parameters:
+      - name: hotel_id
+        type: string
+        description: The ID of the hotel to cancel.
+    statement: UPDATE hotels SET booked = B'0' WHERE id = $1;
+  find-hotels-by-tier-and-location:
+    kind: postgres-sql
+    source: my-pg-source
+    description: >-
+      Find hotels based on location. and price tier. Returns hotels that
+      match the criteria
+    parameters:
+      - name: location
+        type: string
+        description: The location to search for hotels (city or region).
+      - name: tier
+        type: string
+        description: The hotel tier/category (Luxury, Economy, Boutique, Extended-Stay).
+    statement: >-
+      SELECT *
+      FROM hotels 
+      WHERE location ILIKE '%' || $1 || '%' 
+      AND price_tier ILIKE '%' || $2 || '%' 
+      ORDER BY name;
+toolsets:
+  hotel-management:
+    - search-hotels-by-name
+    - search-hotels-by-location
+    - find-hotels-by-tier-and-location
+  booking-system:
+    - book-hotel
+    - update-hotel
+    - cancel-hotel
+

@@ -37,9 +37,7 @@ market_data_agent = Agent(
     role="Fetch and analyze stock market data",
     id="market-data",
     model=OpenAIChat(id="gpt-4.1"),
-    tools=[
-        YFinanceTools(stock_price=True, company_info=True, analyst_recommendations=True)
-    ],
+    tools=[YFinanceTools()],
     instructions=[
         "You are a market data specialist.",
         "Focus on current stock prices and key metrics.",

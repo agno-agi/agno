@@ -54,16 +54,18 @@ class TeamSession:
             log_warning("TeamSession is missing session_id")
             return None
 
-        if data.get("summary") is not None:
+        summary = data.get("summary")
+        if summary is not None and isinstance(summary, dict):
             data["summary"] = SessionSummary.from_dict(data["summary"])  # type: ignore
 
-        runs = data.get("runs", [])
+        runs = data.get("runs")
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
-        for run in runs:
-            if "agent_id" in run:
-                serialized_runs.append(RunOutput.from_dict(run))
-            elif "team_id" in run:
-                serialized_runs.append(TeamRunOutput.from_dict(run))
+        if runs is not None and isinstance(runs[0], dict):
+            for run in runs:
+                if "agent_id" in run:
+                    serialized_runs.append(RunOutput.from_dict(run))
+                elif "team_id" in run:
+                    serialized_runs.append(TeamRunOutput.from_dict(run))
 
         return cls(
             session_id=data.get("session_id"),  # type: ignore
