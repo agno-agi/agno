@@ -1,5 +1,9 @@
 """
-Essential AgentOS middleware examples - Rate Limiting & Request Logging.
+This example demonstrates how to add custom middleware to your AgentOS application.
+
+We add two middleware:
+- Rate Limiting: Limits requests per IP address
+- Request/Response Logging: Logs requests and responses
 """
 
 import time

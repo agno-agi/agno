@@ -76,7 +76,6 @@ class AgentOS:
         enable_mcp: bool = False,
         replace_routes: bool = True,
         telemetry: bool = True,
-        middleware: Optional[List[Tuple[type, Dict[str, Any]]]] = None,
     ):
         """Initialize AgentOS.
 
@@ -130,7 +129,6 @@ class AgentOS:
 
         self.enable_mcp = enable_mcp
         self.lifespan = lifespan
-        self.middleware = middleware or []
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools = []
@@ -186,27 +184,6 @@ class AgentOS:
 
             log_os_telemetry(launch=OSLaunch(os_id=self.os_id, data=self._get_telemetry_data()))
 
-    def _add_custom_middleware(self):
-        """Add custom middleware to the FastAPI app using clean tuple pattern"""
-        if not self.fastapi_app:
-            raise RuntimeError("FastAPI app must be created before adding middleware")
-
-        for middleware_item in self.middleware:
-            if isinstance(middleware_item, tuple) and len(middleware_item) == 2:
-                # Handle (middleware_class, params_dict) tuples - preferred pattern
-                middleware_class, params = middleware_item
-                if isinstance(middleware_class, type) and issubclass(middleware_class, BaseHTTPMiddleware):
-                    self.fastapi_app.add_middleware(middleware_class, **params)  # type: ignore
-                else:
-                    raise ValueError(
-                        f"First element of tuple must be a BaseHTTPMiddleware subclass, got: {middleware_class}"
-                    )
-            else:
-                raise ValueError(
-                    f"Middleware must be a tuple of (MiddlewareClass, params_dict). "
-                    f"Got: {type(middleware_item)}. "
-                    f"Example: (JWTMiddleware, {{'secret_key': 'my-secret'}})"
-                )
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
@@ -261,8 +238,6 @@ class AgentOS:
                 self.fastapi_app = self._make_app(lifespan=final_lifespan)
             else:
                 self.fastapi_app = self._make_app(lifespan=self.lifespan)
-
-        self._add_custom_middleware()
 
         # Add routes
         self._add_router(get_base_router(self, settings=self.settings))

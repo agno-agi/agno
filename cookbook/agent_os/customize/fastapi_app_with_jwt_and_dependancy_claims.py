@@ -44,7 +44,13 @@ app.add_middleware(
     secret_key=JWT_SECRET,
     excluded_route_paths=["/auth/login", "/docs", "/openapi.json"],
     validate_token=True,
-    dependencies_claims=["name", "email", "roles", "department", "permissions"]  # Claims to extract
+    dependencies_claims=[
+        "name",
+        "email",
+        "roles",
+        "department",
+        "permissions",
+    ],  # Claims to extract
 )
 
 # Mock user database
@@ -56,27 +62,28 @@ USERS = {
         "email": "admin@example.com",
         "roles": ["admin", "user"],
         "department": "IT",
-        "permissions": ["read", "write", "delete"]
+        "permissions": ["read", "write", "delete"],
     },
     "user": {
-        "password": "user123", 
+        "password": "user123",
         "user_id": "user_001",
         "name": "Regular User",
         "email": "user@example.com",
         "roles": ["user"],
         "department": "Sales",
-        "permissions": ["read"]
+        "permissions": ["read"],
     },
     "manager": {
         "password": "manager123",
-        "user_id": "manager_001", 
+        "user_id": "manager_001",
         "name": "Manager User",
         "email": "manager@example.com",
         "roles": ["manager", "user"],
         "department": "Marketing",
-        "permissions": ["read", "write"]
-    }
+        "permissions": ["read", "write"],
+    },
 }
+
 
 @app.post("/auth/login")
 async def login(username: str = Form(...), password: str = Form(...)):
@@ -99,22 +106,23 @@ async def login(username: str = Form(...), password: str = Form(...)):
 
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
+
 @app.get("/profile")
 async def get_user_profile(request: Request):
     """Get user profile using extracted dependencies - Direct access to request.state"""
     if not getattr(request.state, "user_id", None):
         raise HTTPException(status_code=401, detail="User not authenticated")
-    
+
     dependencies = request.state.dependencies
-    
+
     return {
         "user_id": request.state.user_id,
         "name": dependencies.get("name"),
-        "email": dependencies.get("email"), 
+        "email": dependencies.get("email"),
         "roles": dependencies.get("roles"),
         "department": dependencies.get("department"),
         "permissions": dependencies.get("permissions"),
-        "all_dependencies": dependencies
+        "all_dependencies": dependencies,
     }
 
 
@@ -124,11 +132,11 @@ async def admin_only_route(request: Request):
     user_roles = request.state.dependencies.get("roles", [])
     if "admin" not in user_roles:
         raise HTTPException(status_code=403, detail="Admin role required")
-    
+
     return {
         "message": "Welcome to the admin area!",
         "user": request.state.dependencies.get("name"),
-        "roles": user_roles
+        "roles": user_roles,
     }
 
 
@@ -138,13 +146,13 @@ async def manager_or_admin_route(request: Request):
     user_roles = request.state.dependencies.get("roles", [])
     if not any(role in user_roles for role in ["admin", "manager"]):
         raise HTTPException(status_code=403, detail="Manager or Admin role required")
-    
+
     return {
         "message": "Welcome to the management area!",
         "user": request.state.dependencies.get("name"),
         "email": request.state.dependencies.get("email"),
         "roles": user_roles,
-        "department": request.state.dependencies.get("department")
+        "department": request.state.dependencies.get("department"),
     }
 
 
@@ -152,13 +160,13 @@ async def manager_or_admin_route(request: Request):
 async def permissions_check(request: Request):
     """Check user permissions - Direct access"""
     permissions = request.state.dependencies.get("permissions", [])
-    
+
     return {
         "user": request.state.dependencies.get("name"),
         "permissions": permissions,
         "can_write": "write" in permissions,
         "can_delete": "delete" in permissions,
-        "can_read": "read" in permissions
+        "can_read": "read" in permissions,
     }
 
 
