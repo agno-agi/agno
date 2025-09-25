@@ -392,7 +392,7 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_info(f"Adding file {path} due to include/exclude filters")
 
-                self._add_to_contents_db(content)
+                await self._add_to_contents_db(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
                     self._update_content(content)
