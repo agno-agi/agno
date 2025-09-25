@@ -306,7 +306,7 @@ class Step:
                         final_message = message
                         if (self.add_workflow_history or add_workflow_history):
                             history_messages = workflow_session.get_workflow_history(
-                                num_history_runs=num_history_runs
+                                num_runs=num_history_runs
                             )
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
@@ -490,7 +490,7 @@ class Step:
                         final_message = message
                         if (self.add_workflow_history or add_workflow_history):
                             history_messages = workflow_session.get_workflow_history(
-                                num_history_runs=num_history_runs
+                                num_runs=num_history_runs
                             )
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
@@ -710,7 +710,7 @@ class Step:
                         final_message = message
                         if (self.add_workflow_history or add_workflow_history):
                             history_messages = workflow_session.get_workflow_history(
-                                num_history_runs=num_history_runs
+                                num_runs=num_history_runs
                             )
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
@@ -896,7 +896,7 @@ class Step:
                         final_message = message
                         if (self.add_workflow_history or add_workflow_history):
                             history_messages = workflow_session.get_workflow_history(
-                                num_history_runs=num_history_runs
+                                num_runs=num_history_runs
                             )
                             if history_messages:
                                 final_message = f"{history_messages}{message}"

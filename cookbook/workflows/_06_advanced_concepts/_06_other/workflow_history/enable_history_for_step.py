@@ -15,7 +15,6 @@ from agno.workflow.workflow import Workflow
 def create_content_creation_workflow():
     """Content creation workflow where only the content creator uses workflow history"""
 
-    # Research agent - doesn't need workflow history, just does research
     research_agent = Agent(
         name="Research Specialist",
         model=OpenAIChat(id="gpt-4o"),
@@ -28,7 +27,6 @@ def create_content_creation_workflow():
         ],
     )
 
-    # Content creator - BENEFITS from workflow history to see previous content patterns
     content_creator = Agent(
         name="Content Creator",
         model=OpenAIChat(id="gpt-4o"),
@@ -46,7 +44,6 @@ def create_content_creation_workflow():
         ],
     )
 
-    # Publisher - doesn't need full workflow history, just handles publishing
     publisher_agent = Agent(
         name="Content Publisher",
         model=OpenAIChat(id="gpt-4o"),
@@ -67,6 +64,7 @@ def create_content_creation_workflow():
             Step(
                 name="Research Phase",
                 agent=research_agent,
+                add_workflow_history=True,
             ),
             # Content creation step - uses workflow history to avoid repetition and give better results
             Step(
