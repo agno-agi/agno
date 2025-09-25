@@ -8,7 +8,7 @@ from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.models.aws_claude import format_messages
+from agno.utils.models.claude import format_messages
 
 try:
     from anthropic import AnthropicBedrock, APIConnectionError, APIStatusError, AsyncAnthropicBedrock, RateLimitError
