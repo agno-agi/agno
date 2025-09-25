@@ -4,7 +4,7 @@ from agno.agent import Agent
 from agno.models.ollama import Ollama
 
 agent = Agent(
-    model=Ollama(id="deepseek-v3.1:671b", host="https://ollama.com"),
+    model=Ollama(id="gpt-oss:120b-cloud"),
 )
 
-agent.print_response("How many r's in the word 'strawberry'?", stream=True)
+agent.print_response("What is the capital of France?", stream=True)
