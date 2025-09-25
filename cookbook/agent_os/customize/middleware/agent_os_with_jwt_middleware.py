@@ -16,7 +16,6 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 # JWT Secret (use environment variable in production)
 JWT_SECRET = "a-string-secret-at-least-256-bits-long"

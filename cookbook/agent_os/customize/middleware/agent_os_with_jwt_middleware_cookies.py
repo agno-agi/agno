@@ -6,7 +6,7 @@ This is useful for web applications that prefer to store JWT tokens in HTTP-only
 from datetime import UTC, datetime, timedelta
 
 import jwt
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Response
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
