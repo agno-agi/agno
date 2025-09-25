@@ -14,7 +14,7 @@ Workflow history enables your workflows to remember and reference previous conve
 ## Control Levels
 
 ### Workflow-Level History
-Enable history for **all steps** in the workflow:
+Add workflow history to **all steps** in the workflow:
 
 ```python
 workflow = Workflow(
