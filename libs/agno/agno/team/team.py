@@ -1399,10 +1399,11 @@ class Team:
         5. Prepare run messages
         6. Reason about the task if reasoning is enabled
         7. Get a response from the Model (includes running function calls)
-        8. Update Team Memory
-        9. Calculate session metrics
-        10. Add RunOutput to Team Session
-        11. Save session to storage
+        8. Calculate session metrics
+        9. Add RunOutput to Team Session
+        10. Save session to storage
+        11. Update Team Memory
+        12. Save session to storage
         """
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
@@ -1521,7 +1522,15 @@ class Team:
             # 8. Add the run to memory
             team_session.upsert_run(run_response=run_response)
 
-            # 9. Update Team Memory
+            # 9. Calculate session metrics
+            self._update_session_metrics(session=team_session)
+
+            run_response.status = RunStatus.completed
+
+            # 10. Parse team response model
+            self._convert_response_to_structured_format(run_response=run_response)
+
+            # 11. Update Team Memory
             async for _ in self._amake_memories_and_summaries(
                 run_response=run_response,
                 session=team_session,
@@ -1529,14 +1538,6 @@ class Team:
                 user_id=user_id,
             ):
                 pass
-
-            # 10. Calculate session metrics
-            self._update_session_metrics(session=team_session)
-
-            run_response.status = RunStatus.completed
-
-            # 11. Parse team response model
-            self._convert_response_to_structured_format(run_response=run_response)
 
             # 12. Save session to storage
             if self._has_async_db():

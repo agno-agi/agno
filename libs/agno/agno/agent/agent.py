@@ -1333,8 +1333,8 @@ class Agent:
         6. Reason about the task if reasoning is enabled
         7. Generate a response from the Model (includes running function calls)
         8. Update the RunOutput with the model response
-        9. Update Agent Memory
-        10. Calculate session metrics
+        9. Calculate session metrics
+        10. Update Agent Memory
         11. Add RunOutput to Agent Session
         12. Save session to storage
         """
@@ -1433,13 +1433,7 @@ class Agent:
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 9. Update Agent Memory
-            async for _ in self._amake_memories_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
-            ):
-                pass
-
-            # 10. Calculate session metrics
+            # 9. Calculate session metrics
             self._update_session_metrics(session=agent_session, run_response=run_response)
 
             run_response.status = RunStatus.completed
@@ -1450,6 +1444,12 @@ class Agent:
             # Set the run duration
             if run_response.metrics:
                 run_response.metrics.stop_timer()
+
+            # 10. Update Agent Memory
+            async for _ in self._amake_memories_and_summaries(
+                run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
+            ):
+                pass
 
             # Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
@@ -2570,8 +2570,8 @@ class Agent:
         8. Handle the updated tools
         9. Process model response
         10. Add the run to memory
-        11. Update Agent Memory
-        12. Calculate session metrics
+        11. Calculate session metrics
+        12. Update Agent Memory
         13. Save output to file if save_response_to_file is set
         14. Save session to storage
         """
@@ -2670,13 +2670,7 @@ class Agent:
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 11. Update Agent Memory
-            async for _ in self._amake_memories_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
-            ):
-                pass
-
-            # 12. Calculate session metrics
+            # 11. Calculate session metrics
             self._update_session_metrics(session=agent_session, run_response=run_response)
 
             run_response.status = RunStatus.completed
@@ -2687,6 +2681,12 @@ class Agent:
             # Set the run duration
             if run_response.metrics:
                 run_response.metrics.stop_timer()
+
+            # 12. Update Agent Memory
+            async for _ in self._amake_memories_and_summaries(
+                run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
+            ):
+                pass
 
             # 13. Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
