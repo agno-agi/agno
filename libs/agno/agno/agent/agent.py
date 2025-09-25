@@ -135,7 +135,7 @@ class Agent:
     add_session_state_to_context: bool = False
     # Set to True to give the agent tools to update the session_state dynamically
     enable_agentic_state: bool = False
-    # Set to True to overwrite the stored session_state with the session_state provided in the run
+    # Set to True to overwrite the stored session_state with the session_state provided in the run. Default behaviour merges the current session state with the session state in the db
     overwrite_stored_session_state: bool = False
     # If True, cache the current Agent session in memory for faster access
     cache_session: bool = False
