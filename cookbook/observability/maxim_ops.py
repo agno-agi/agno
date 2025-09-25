@@ -14,16 +14,18 @@ Steps to get started with Maxim:
 """
 
 from agno.agent import Agent
-from agno.team.team import Team
 from agno.models.openai import OpenAIChat
+from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 
 try:
-    from maxim import Maxim 
+    from maxim import Maxim
     from maxim.logger.agno import instrument_agno
 except ImportError:
-    raise ImportError("`maxim` not installed. Please install using `pip install maxim-py`")
+    raise ImportError(
+        "`maxim` not installed. Please install using `pip install maxim-py`"
+    )
 
 # Instrument Agno with Maxim for automatic tracing and logging
 instrument_agno(Maxim().logger())
@@ -51,7 +53,7 @@ multi_ai_team = Team(
     members=[web_search_agent, finance_agent],
     model=OpenAIChat(id="gpt-4o"),
     instructions="You are a helpful financial assistant. Answer user questions about stocks, companies, and financial data.",
-    markdown=True
+    markdown=True,
 )
 
 if __name__ == "__main__":
@@ -64,9 +66,14 @@ if __name__ == "__main__":
             print("Goodbye!")
             break
         messages.append({"role": "user", "content": user_input})
-        conversation = "\n".join([
-            ("User: " + m["content"]) if m["role"] == "user" else ("Agent: " + m["content"]) for m in messages
-        ])
+        conversation = "\n".join(
+            [
+                ("User: " + m["content"])
+                if m["role"] == "user"
+                else ("Agent: " + m["content"])
+                for m in messages
+            ]
+        )
         response = multi_ai_team.run(
             f"Conversation so far:\n{conversation}\n\nRespond to the latest user message."
         )

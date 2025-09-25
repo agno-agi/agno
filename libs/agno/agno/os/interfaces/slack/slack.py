@@ -7,6 +7,7 @@ from agno.agent.agent import Agent
 from agno.os.interfaces.base import BaseInterface
 from agno.os.interfaces.slack.router import attach_routes
 from agno.team.team import Team
+from agno.workflow.workflow import Workflow
 
 logger = logging.getLogger(__name__)
 
@@ -16,17 +17,18 @@ class Slack(BaseInterface):
 
     router: APIRouter
 
-    def __init__(self, agent: Optional[Agent] = None, team: Optional[Team] = None):
+    def __init__(self, agent: Optional[Agent] = None, team: Optional[Team] = None, workflow: Optional[Workflow] = None):
         self.agent = agent
         self.team = team
+        self.workflow = workflow
 
-        if not (self.agent or self.team):
-            raise ValueError("Slack requires an agent or a team")
+        if not (self.agent or self.team or self.workflow):
+            raise ValueError("Slack requires an agent, team or workflow")
 
     def get_router(self, **kwargs) -> APIRouter:
         # Cannot be overridden
         self.router = APIRouter(prefix="/slack", tags=["Slack"])
 
-        self.router = attach_routes(router=self.router, agent=self.agent, team=self.team)
+        self.router = attach_routes(router=self.router, agent=self.agent, team=self.team, workflow=self.workflow)
 
         return self.router
