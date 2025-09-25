@@ -60,7 +60,7 @@ audio_generations
 
 # Google OAuth token
 token.json
-
+credentials.json
 .composio.lock
 
 # Coverage
