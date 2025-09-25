@@ -621,7 +621,6 @@ class Knowledge:
 
         log_info(f"Adding content from {content.name}")
 
-        content.content_hash = self._build_content_hash(content)
         await self._add_to_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
@@ -630,10 +629,6 @@ class Knowledge:
 
         if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
             await self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
-            return
-
-        if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-            log_info(f"Content {content.content_hash} already exists, skipping")
             return
 
         read_documents = []
