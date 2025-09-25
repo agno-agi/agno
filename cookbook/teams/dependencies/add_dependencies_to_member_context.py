@@ -49,51 +49,16 @@ team = Team(
     model=OpenAIChat(id="gpt-4o-mini"),
     members=[profile_agent, context_agent],
     markdown=True,
+    show_members_responses=True,
 )
 
-response = team.run(
+team.print_response(
     "Please provide me with a personalized summary of today's priorities based on my profile and interests.",
     dependencies={
         "user_profile": get_user_profile,
         "current_context": get_current_context,
     },
-    add_dependencies_to_context=True,
+    add_dependencies_to_context=True,  # This setting will pass through to the member agents
+    # So we can observe the dependencies sent to the member agents
+    debug_mode=True,
 )
-
-print(response.content)
-
-# ------------------------------------------------------------
-# ASYNC EXAMPLE
-# ------------------------------------------------------------
-# async def test_async():
-#     async_response = await team.arun(
-#         "Based on my profile, what should I focus on this week? Include specific recommendations.",
-#         dependencies={
-#             "user_profile": get_user_profile,
-#             "current_context": get_current_context,
-#         },
-#         add_dependencies_to_context=True,
-#         debug_mode=True,
-#     )
-#
-#     print("\n=== Async Run Response ===")
-#     print(async_response.content)
-
-# # Run the async test
-# import asyncio
-# asyncio.run(test_async())
-
-# ------------------------------------------------------------
-# PRINT RESPONSE
-# ------------------------------------------------------------
-# team.print_response(
-#     "Please provide me with a personalized summary of today's priorities based on my profile and interests.",
-#     dependencies={
-#         "user_profile": get_user_profile,
-#         "current_context": get_current_context,
-#     },
-#     add_dependencies_to_context=True,
-#     debug_mode=True,
-# )
-
-# print(response.content)

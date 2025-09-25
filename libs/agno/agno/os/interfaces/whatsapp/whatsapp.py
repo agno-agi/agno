@@ -17,8 +17,8 @@ class Whatsapp(BaseInterface):
         self.agent = agent
         self.team = team
 
-        if not self.agent and not self.team:
-            raise ValueError("Whatsapp requires an agent and a team")
+        if not (self.agent or self.team):
+            raise ValueError("Whatsapp requires an agent or a team")
 
     def get_router(self, **kwargs) -> APIRouter:
         # Cannot be overridden
