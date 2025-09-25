@@ -22,6 +22,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.string import generate_id
 
 try:
     from sqlalchemy import TEXT, and_, cast, func, update
@@ -45,6 +46,7 @@ class MySQLDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        id: Optional[str] = None,
     ):
         """
         Interface for interacting with a MySQL database.
@@ -63,12 +65,20 @@ class MySQLDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
+            id (Optional[str]): ID of the database.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
+        if id is None:
+            base_seed = db_url or str(db_engine.url)  # type: ignore
+            schema_suffix = db_schema if db_schema is not None else "ai"
+            seed = f"{base_seed}#{schema_suffix}"
+            id = generate_id(seed)
+
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
@@ -340,8 +350,8 @@ class MySQLDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to read.
+            session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -405,6 +415,7 @@ class MySQLDb(BaseDb):
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
         Args:
+            session_type (Optional[SessionType]): The type of sessions to get.
             user_id (Optional[str]): The ID of the user to filter by.
             entity_id (Optional[str]): The ID of the agent / workflow to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
@@ -488,8 +499,8 @@ class MySQLDb(BaseDb):
                     raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            log_error(f"Exception getting sessions: {e}")
+            raise e
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -694,6 +705,217 @@ class MySQLDb(BaseDb):
             log_error(f"Exception upserting into sessions table: {e}")
             return None
 
+    def upsert_sessions(
+        self, sessions: List[Session], deserialize: Optional[bool] = True
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple sessions for improved performance on large datasets.
+
+        Args:
+            sessions (List[Session]): List of sessions to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+
+        Returns:
+            List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not sessions:
+            return []
+
+        try:
+            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                log_info("Sessions table not available, falling back to individual upserts")
+                return [
+                    result
+                    for session in sessions
+                    if session is not None
+                    for result in [self.upsert_session(session, deserialize=deserialize)]
+                    if result is not None
+                ]
+
+            # Group sessions by type for batch processing
+            agent_sessions = []
+            team_sessions = []
+            workflow_sessions = []
+
+            for session in sessions:
+                if isinstance(session, AgentSession):
+                    agent_sessions.append(session)
+                elif isinstance(session, TeamSession):
+                    team_sessions.append(session)
+                elif isinstance(session, WorkflowSession):
+                    workflow_sessions.append(session)
+
+            results: List[Union[Session, Dict[str, Any]]] = []
+
+            # Process each session type in bulk
+            with self.Session() as sess, sess.begin():
+                # Bulk upsert agent sessions
+                if agent_sessions:
+                    agent_data = []
+                    for session in agent_sessions:
+                        session_dict = session.to_dict()
+                        agent_data.append(
+                            {
+                                "session_id": session_dict.get("session_id"),
+                                "session_type": SessionType.AGENT.value,
+                                "agent_id": session_dict.get("agent_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "runs": session_dict.get("runs"),
+                                "agent_data": session_dict.get("agent_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "summary": session_dict.get("summary"),
+                                "metadata": session_dict.get("metadata"),
+                                "created_at": session_dict.get("created_at"),
+                                "updated_at": session_dict.get("created_at"),
+                            }
+                        )
+
+                    if agent_data:
+                        stmt = mysql.insert(table)
+                        stmt = stmt.on_duplicate_key_update(
+                            agent_id=stmt.inserted.agent_id,
+                            user_id=stmt.inserted.user_id,
+                            agent_data=stmt.inserted.agent_data,
+                            session_data=stmt.inserted.session_data,
+                            summary=stmt.inserted.summary,
+                            metadata=stmt.inserted.metadata,
+                            runs=stmt.inserted.runs,
+                            updated_at=int(time.time()),
+                        )
+                        sess.execute(stmt, agent_data)
+
+                        # Fetch the results for agent sessions
+                        agent_ids = [session.session_id for session in agent_sessions]
+                        select_stmt = select(table).where(table.c.session_id.in_(agent_ids))
+                        result = sess.execute(select_stmt).fetchall()
+
+                        for row in result:
+                            session_dict = dict(row._mapping)
+                            if deserialize:
+                                deserialized_agent_session = AgentSession.from_dict(session_dict)
+                                if deserialized_agent_session is None:
+                                    continue
+                                results.append(deserialized_agent_session)
+                            else:
+                                results.append(session_dict)
+
+                # Bulk upsert team sessions
+                if team_sessions:
+                    team_data = []
+                    for session in team_sessions:
+                        session_dict = session.to_dict()
+                        team_data.append(
+                            {
+                                "session_id": session_dict.get("session_id"),
+                                "session_type": SessionType.TEAM.value,
+                                "team_id": session_dict.get("team_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "runs": session_dict.get("runs"),
+                                "team_data": session_dict.get("team_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "summary": session_dict.get("summary"),
+                                "metadata": session_dict.get("metadata"),
+                                "created_at": session_dict.get("created_at"),
+                                "updated_at": session_dict.get("created_at"),
+                            }
+                        )
+
+                    if team_data:
+                        stmt = mysql.insert(table)
+                        stmt = stmt.on_duplicate_key_update(
+                            team_id=stmt.inserted.team_id,
+                            user_id=stmt.inserted.user_id,
+                            team_data=stmt.inserted.team_data,
+                            session_data=stmt.inserted.session_data,
+                            summary=stmt.inserted.summary,
+                            metadata=stmt.inserted.metadata,
+                            runs=stmt.inserted.runs,
+                            updated_at=int(time.time()),
+                        )
+                        sess.execute(stmt, team_data)
+
+                        # Fetch the results for team sessions
+                        team_ids = [session.session_id for session in team_sessions]
+                        select_stmt = select(table).where(table.c.session_id.in_(team_ids))
+                        result = sess.execute(select_stmt).fetchall()
+
+                        for row in result:
+                            session_dict = dict(row._mapping)
+                            if deserialize:
+                                deserialized_team_session = TeamSession.from_dict(session_dict)
+                                if deserialized_team_session is None:
+                                    continue
+                                results.append(deserialized_team_session)
+                            else:
+                                results.append(session_dict)
+
+                # Bulk upsert workflow sessions
+                if workflow_sessions:
+                    workflow_data = []
+                    for session in workflow_sessions:
+                        session_dict = session.to_dict()
+                        workflow_data.append(
+                            {
+                                "session_id": session_dict.get("session_id"),
+                                "session_type": SessionType.WORKFLOW.value,
+                                "workflow_id": session_dict.get("workflow_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "runs": session_dict.get("runs"),
+                                "workflow_data": session_dict.get("workflow_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "summary": session_dict.get("summary"),
+                                "metadata": session_dict.get("metadata"),
+                                "created_at": session_dict.get("created_at"),
+                                "updated_at": session_dict.get("created_at"),
+                            }
+                        )
+
+                    if workflow_data:
+                        stmt = mysql.insert(table)
+                        stmt = stmt.on_duplicate_key_update(
+                            workflow_id=stmt.inserted.workflow_id,
+                            user_id=stmt.inserted.user_id,
+                            workflow_data=stmt.inserted.workflow_data,
+                            session_data=stmt.inserted.session_data,
+                            summary=stmt.inserted.summary,
+                            metadata=stmt.inserted.metadata,
+                            runs=stmt.inserted.runs,
+                            updated_at=int(time.time()),
+                        )
+                        sess.execute(stmt, workflow_data)
+
+                        # Fetch the results for workflow sessions
+                        workflow_ids = [session.session_id for session in workflow_sessions]
+                        select_stmt = select(table).where(table.c.session_id.in_(workflow_ids))
+                        result = sess.execute(select_stmt).fetchall()
+
+                        for row in result:
+                            session_dict = dict(row._mapping)
+                            if deserialize:
+                                deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                                if deserialized_workflow_session is None:
+                                    continue
+                                results.append(deserialized_workflow_session)
+                            else:
+                                results.append(session_dict)
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+            # Fallback to individual upserts
+            return [
+                result
+                for session in sessions
+                if session is not None
+                for result in [self.upsert_session(session, deserialize=deserialize)]
+                if result is not None
+            ]
+
     # -- Memory methods --
     def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the database.
@@ -778,7 +1000,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            return []
+            raise e
 
     def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
         """Get a memory from the database.
@@ -900,7 +1122,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def clear_memories(self) -> None:
         """Clear all user memories from the database."""
@@ -1044,6 +1266,96 @@ class MySQLDb(BaseDb):
             log_error(f"Exception upserting user memory: {e}")
             return None
 
+    def upsert_memories(
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple user memories for improved performance on large datasets.
+
+        Args:
+            memories (List[UserMemory]): List of memories to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+
+        Returns:
+            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not memories:
+            return []
+
+        try:
+            table = self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                log_info("Memories table not available, falling back to individual upserts")
+                return [
+                    result
+                    for memory in memories
+                    if memory is not None
+                    for result in [self.upsert_user_memory(memory, deserialize=deserialize)]
+                    if result is not None
+                ]
+
+            # Prepare bulk data
+            bulk_data = []
+            for memory in memories:
+                if memory.memory_id is None:
+                    memory.memory_id = str(uuid4())
+
+                bulk_data.append(
+                    {
+                        "memory_id": memory.memory_id,
+                        "memory": memory.memory,
+                        "input": memory.input,
+                        "user_id": memory.user_id,
+                        "agent_id": memory.agent_id,
+                        "team_id": memory.team_id,
+                        "topics": memory.topics,
+                        "updated_at": int(time.time()),
+                    }
+                )
+
+            results: List[Union[UserMemory, Dict[str, Any]]] = []
+
+            with self.Session() as sess, sess.begin():
+                # Bulk upsert memories using MySQL ON DUPLICATE KEY UPDATE
+                stmt = mysql.insert(table)
+                stmt = stmt.on_duplicate_key_update(
+                    memory=stmt.inserted.memory,
+                    topics=stmt.inserted.topics,
+                    input=stmt.inserted.input,
+                    agent_id=stmt.inserted.agent_id,
+                    team_id=stmt.inserted.team_id,
+                    updated_at=int(time.time()),
+                )
+                sess.execute(stmt, bulk_data)
+
+                # Fetch results
+                memory_ids = [memory.memory_id for memory in memories if memory.memory_id]
+                select_stmt = select(table).where(table.c.memory_id.in_(memory_ids))
+                result = sess.execute(select_stmt).fetchall()
+
+                for row in result:
+                    memory_dict = dict(row._mapping)
+                    if deserialize:
+                        results.append(UserMemory.from_dict(memory_dict))
+                    else:
+                        results.append(memory_dict)
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+            # Fallback to individual upserts
+            return [
+                result
+                for memory in memories
+                if memory is not None
+                for result in [self.upsert_user_memory(memory, deserialize=deserialize)]
+                if result is not None
+            ]
+
     # -- Metrics methods --
     def _get_all_sessions_for_metrics_calculation(
         self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
@@ -1085,7 +1397,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from sessions table: {e}")
-            return []
+            raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
         """Get the first date for which metrics calculation is needed:
@@ -1622,7 +1934,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -1701,17 +2013,17 @@ class MySQLDb(BaseDb):
         if v1_table_type == "agent_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "team_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "workflow_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "memories":
             for memory in memories:

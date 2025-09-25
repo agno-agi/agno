@@ -1,14 +1,20 @@
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-import streamlit as st
+try:
+    from agno.agent import Agent
+    from agno.db.base import AsyncBaseDb, SessionType
+    from agno.models.anthropic import Claude
+    from agno.models.google import Gemini
+    from agno.models.openai import OpenAIChat
+    from agno.utils.log import logger
+except ImportError:
+    raise ImportError("`agno` not installed. Please install using `pip install agno`")
 
-from agno.agent import Agent
-from agno.db.base import AsyncBaseDb, SessionType
-from agno.models.anthropic import Claude
-from agno.models.google import Gemini
-from agno.models.openai import OpenAIChat
-from agno.utils.log import logger
+try:
+    import streamlit as st
+except ImportError:
+    raise ImportError("`streamlit` not installed. Please install using `pip install streamlit`")
 
 
 def add_message(role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None) -> None:

@@ -2,6 +2,19 @@
 Use MongoDb as the database for a team.
 
 Run `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
+
+Run a local MongoDB server using:
+```bash
+docker run -d \
+  --name local-mongo \
+  -p 27017:27017 \
+  -e MONGO_INITDB_ROOT_USERNAME=mongoadmin \
+  -e MONGO_INITDB_ROOT_PASSWORD=secret \
+  mongo
+```
+or use our script:
+```bash
+./scripts/run_mongodb.sh
 """
 
 from typing import List
@@ -15,7 +28,7 @@ from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel
 
 # MongoDB connection settings
-db_url = "mongodb://localhost:27017"
+db_url = "mongodb://mongoadmin:secret@localhost:27017"
 db = MongoDb(db_url=db_url)
 
 
@@ -53,7 +66,6 @@ hn_team = Team(
     ],
     output_schema=Article,
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
     add_member_tools_to_context=False,
 )

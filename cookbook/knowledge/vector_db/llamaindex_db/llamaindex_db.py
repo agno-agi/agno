@@ -8,7 +8,8 @@ from shutil import rmtree
 import httpx
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.llamaindex import LlamaIndexVectorDb
+from agno.models.openai import OpenAIChat
+from agno.vectordb.llamaindex.llamaindexdb import LlamaIndexVectorDb
 from llama_index.core import (
     SimpleDirectoryReader,
     StorageContext,
@@ -52,6 +53,7 @@ knowledge = Knowledge(
 
 # Create an agent with the knowledge instance
 agent = Agent(
+    model=OpenAIChat("gpt-5-mini"),
     knowledge=knowledge,
     search_knowledge=True,
     debug_mode=True,

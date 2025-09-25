@@ -1,16 +1,12 @@
 import json
 from pathlib import Path
 from textwrap import dedent
-from typing import Optional
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
-from agno.models.google import Gemini
-from agno.models.groq import Groq
-from agno.models.openai import OpenAIChat
 from agno.tools.file import FileTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.sql import SQLTools
@@ -42,7 +38,6 @@ agent_knowledge = Knowledge(
     # 5 references are added to the prompt
     max_results=5,
 )
-agent_knowledge.add_content(path=str(knowledge_dir))
 # *******************************
 
 
@@ -86,13 +81,16 @@ semantic_model = {
 semantic_model_str = json.dumps(semantic_model, indent=2)
 # *******************************
 
-description = dedent("""\
+description = dedent(
+    """\
     You are SQrL, an elite Text2SQL Agent with access to a database with F1 data from 1950 to 2020.
 
     You combine deep F1 knowledge with advanced SQL expertise to uncover insights from decades of racing data.
-""")
+"""
+)
 
-instructions = dedent("""\
+instructions = dedent(
+    """\
     You are a SQL expert focused on writing precise, efficient queries.
 
     When a user messages you, determine if you need query the database or can respond directly.
@@ -139,80 +137,52 @@ instructions = dedent("""\
     - **NEVER, EVER RUN CODE TO DELETE DATA OR ABUSE THE LOCAL SYSTEM**
     - ALWAYS FOLLOW THE `table rules` if provided. NEVER IGNORE THEM.
     </rules>
-""")
+"""
+)
 
 additional_context = (
-    dedent("""\n
+    dedent(
+        """\n
     The `semantic_model` contains information about tables and the relationships between them.
     If the users asks about the tables you have access to, simply share the table names from the `semantic_model`.
     <semantic_model>
-    """)
+    """
+    )
     + semantic_model_str
-    + dedent("""
+    + dedent(
+        """
     </semantic_model>\
-""")
+"""
+    )
 )
 
 
-def get_sql_agent(
-    name: str = "SQL Agent",
-    user_id: Optional[str] = None,
-    model_id: str = "openai:gpt-4o",
-    session_id: Optional[str] = None,
-    reasoning: bool = False,
-    debug_mode: bool = True,
-) -> Agent:
-    """Returns an instance of the SQL Agent.
-
-    Args:
-        user_id: Optional user identifier
-        debug_mode: Enable debug logging
-        model_id: Model identifier in format 'provider:model_name'
-    """
-    # Parse model provider and name
-    provider, model_name = model_id.split(":")
-
-    # Select appropriate model class based on provider
-    if provider == "openai":
-        model = OpenAIChat(id=model_name)
-    elif provider == "google":
-        model = Gemini(id=model_name)
-    elif provider == "anthropic":
-        model = Claude(id=model_name)
-    elif provider == "groq":
-        model = Groq(id=model_name)
-    else:
-        raise ValueError(f"Unsupported model provider: {provider}")
-
-    tools = [
-        SQLTools(db_url=db_url, list_tables=False),
+sql_agent = Agent(
+    name="SQL Agent",
+    model=Claude(id="claude-sonnet-4-0"),
+    db=db,
+    enable_user_memories=True,
+    knowledge=agent_knowledge,
+    tools=[
+        SQLTools(db_url=db_url, enable_list_tables=False),
         FileTools(base_dir=output_dir),
-    ]
-    if reasoning:
-        tools.append(ReasoningTools(add_instructions=True, add_few_shot=True))
+        ReasoningTools(add_instructions=True, add_few_shot=True),
+    ],
+    description=description,
+    instructions=instructions,
+    additional_context=additional_context,
+    # Enable Agentic Memory i.e. the ability to remember and recall user preferences
+    enable_agentic_memory=True,
+    # Enable Agentic Search i.e. the ability to search the knowledge base on-demand
+    search_knowledge=True,
+    # Enable the ability to read the chat history
+    read_chat_history=True,
+    # Enable the ability to read the tool call history
+    read_tool_call_history=True,
+    add_history_to_context=True,
+    add_datetime_to_context=True,
+)
 
-    return Agent(
-        name=name,
-        model=model,
-        user_id=user_id,
-        id=name,
-        session_id=session_id,
-        db=db,
-        enable_user_memories=True,
-        knowledge=agent_knowledge,
-        tools=tools,
-        description=description,
-        instructions=instructions,
-        additional_context=additional_context,
-        # Enable Agentic Memory i.e. the ability to remember and recall user preferences
-        enable_agentic_memory=True,
-        # Enable Agentic Search i.e. the ability to search the knowledge base on-demand
-        search_knowledge=True,
-        # Enable the ability to read the chat history
-        read_chat_history=True,
-        # Enable the ability to read the tool call history
-        read_tool_call_history=True,
-        debug_mode=debug_mode,
-        add_history_to_context=True,
-        add_datetime_to_context=True,
-    )
+
+if __name__ == "__main__":
+    agent_knowledge.add_content(path=str(knowledge_dir))

@@ -96,6 +96,7 @@ class RunContentEvent(BaseAgentRunEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: Optional[str] = None
+    model_provider_data: Optional[Dict[str, Any]] = None
     citations: Optional[Citations] = None
     response_audio: Optional[Audio] = None  # Model audio response
     image: Optional[Image] = None  # Image attached to the response
@@ -119,6 +120,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
+    model_provider_data: Optional[Dict[str, Any]] = None
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
@@ -337,6 +339,8 @@ class RunInput:
             result["videos"] = [vid.to_dict() for vid in self.videos]
         if self.audios:
             result["audios"] = [aud.to_dict() for aud in self.audios]
+        if self.files:
+            result["files"] = [file.to_dict() for file in self.files]
 
         return result
 
@@ -381,6 +385,8 @@ class RunOutput:
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
 
+    model_provider_data: Optional[Dict[str, Any]] = None
+
     model: Optional[str] = None
     model_provider: Optional[str] = None
     messages: Optional[List[Message]] = None
@@ -392,6 +398,7 @@ class RunOutput:
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
+    files: Optional[List[File]] = None  # Files attached to the response
     response_audio: Optional[Audio] = None  # Model audio response
 
     # Input media and messages from user
@@ -446,6 +453,7 @@ class RunOutput:
                 "images",
                 "videos",
                 "audio",
+                "files",
                 "response_audio",
                 "input",
                 "citations",
@@ -508,6 +516,14 @@ class RunOutput:
                 else:
                     _dict["audio"].append(aud)
 
+        if self.files is not None:
+            _dict["files"] = []
+            for file in self.files:
+                if isinstance(file, File):
+                    _dict["files"].append(file.to_dict())
+                else:
+                    _dict["files"].append(file)
+
         if self.response_audio is not None:
             if isinstance(self.response_audio, Audio):
                 _dict["response_audio"] = self.response_audio.to_dict()
@@ -559,7 +575,7 @@ class RunOutput:
         events = [run_output_event_from_dict(event) for event in events] if events else None
 
         messages = data.pop("messages", None)
-        messages = [Message.model_validate(message) for message in messages] if messages else None
+        messages = [Message.from_dict(message) for message in messages] if messages else None
 
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
@@ -576,6 +592,9 @@ class RunOutput:
         audio = data.pop("audio", [])
         audio = [Audio.model_validate(audio) for audio in audio] if audio else None
 
+        files = data.pop("files", [])
+        files = [File.model_validate(file) for file in files] if files else None
+
         response_audio = data.pop("response_audio", None)
         response_audio = Audio.model_validate(response_audio) if response_audio else None
 
@@ -591,7 +610,7 @@ class RunOutput:
         additional_input = data.pop("additional_input", None)
 
         if additional_input is not None:
-            additional_input = [Message.model_validate(message) for message in additional_input]
+            additional_input = [Message.from_dict(message) for message in additional_input]
 
         reasoning_steps = data.pop("reasoning_steps", None)
         if reasoning_steps is not None:
@@ -599,7 +618,7 @@ class RunOutput:
 
         reasoning_messages = data.pop("reasoning_messages", None)
         if reasoning_messages is not None:
-            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
+            reasoning_messages = [Message.from_dict(message) for message in reasoning_messages]
 
         references = data.pop("references", None)
         if references is not None:
@@ -613,6 +632,7 @@ class RunOutput:
             images=images,
             audio=audio,
             videos=videos,
+            files=files,
             response_audio=response_audio,
             input=input_obj,
             events=events,

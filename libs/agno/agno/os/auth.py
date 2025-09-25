@@ -1,7 +1,5 @@
-from typing import Optional
-
-from fastapi import Header, HTTPException
-from fastapi.security import HTTPBearer
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from agno.os.settings import AgnoAPISettings
 
@@ -20,7 +18,7 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         A dependency function that can be used with FastAPI's Depends()
     """
 
-    def auth_dependency(authorization: Optional[str] = Header(None)) -> bool:
+    def auth_dependency(credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
         # If no security key is set, skip authentication entirely
 
         return True
@@ -33,17 +31,10 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         breakpoint()
 
         # If security is enabled but no authorization header provided, fail
-        if not authorization:
+        if not credentials:
             raise HTTPException(status_code=401, detail="Authorization header required")
 
-        # Check if the authorization header starts with "Bearer "
-        if not authorization.startswith("Bearer "):
-            raise HTTPException(
-                status_code=401, detail="Invalid authorization header format. Expected 'Bearer <token>'"
-            )
-
-        # Extract the token from the authorization header
-        token = authorization[7:]  # Remove "Bearer " prefix
+        token = credentials.credentials
 
         # Verify the token
         if token != settings.os_security_key:
@@ -52,3 +43,22 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         return True
 
     return auth_dependency
+
+
+def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
+    """
+    Validate a bearer token for WebSocket authentication.
+
+    Args:
+        token: The bearer token to validate
+        settings: The API settings containing the security key
+
+    Returns:
+        True if the token is valid or authentication is disabled, False otherwise
+    """
+    # If no security key is set, skip authentication entirely
+    if not settings or not settings.os_security_key:
+        return True
+
+    # Verify the token matches the configured security key
+    return token == settings.os_security_key

@@ -19,3 +19,5 @@ uvicorn
 yfinance
 youtube-transcript-api
 elevenlabs
+firecrawl-py
+wikipedia

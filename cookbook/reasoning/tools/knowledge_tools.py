@@ -26,9 +26,9 @@ agno_docs.add_content(url="https://docs.agno.com/llms-full.txt")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,
-    think=True,
-    search=True,
-    analyze=True,
+    enable_think=True,
+    enable_search=True,
+    enable_analyze=True,
     add_few_shot=True,
 )
 
