@@ -1117,7 +1117,7 @@ class Agent:
         self._update_metadata(session=agent_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=agent_session, session_state=session_state)
+        session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -1756,7 +1756,7 @@ class Agent:
         self._update_metadata(session=agent_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=agent_session, session_state=session_state)
+        session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
         # Determine run dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -2023,7 +2023,7 @@ class Agent:
         self._update_metadata(session=agent_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=agent_session, session_state=session_state)
+        session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
@@ -2407,7 +2407,7 @@ class Agent:
         self._update_metadata(session=agent_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=agent_session, session_state=session_state)
+        session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
@@ -4256,8 +4256,8 @@ class Agent:
             log_warning(f"Error upserting session into db: {e}")
             return None
 
-    def _update_session_state(self, session: AgentSession, session_state: Dict[str, Any]):
-        """Load the existing Agent from an AgentSession (from the database)"""
+    def _load_session_state(self, session: AgentSession, session_state: Dict[str, Any]):
+        """Load and return the stored session_state from the database, optionally merging it with the given one"""
 
         # Get the session_state from the database and merge with proper precedence
         # At this point session_state contains: agent_defaults + run_params

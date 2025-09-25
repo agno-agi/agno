@@ -603,8 +603,8 @@ class Workflow:
             # Update the current metadata with the metadata from the database which is updated in place
             self.metadata = session.metadata
 
-    def _update_session_state(self, session: WorkflowSession, session_state: Dict[str, Any]):
-        """Load the existing Workflow from a WorkflowSession (from the database)"""
+    def _load_session_state(self, session: WorkflowSession, session_state: Dict[str, Any]):
+        """Load and return the stored session_state from the database, optionally merging it with the given one"""
 
         from agno.utils.merge_dict import merge_dictionaries
 
@@ -1721,7 +1721,7 @@ class Workflow:
         self._update_metadata(session=workflow_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=workflow_session, session_state=session_state)
+        session_state = self._load_session_state(session=workflow_session, session_state=session_state)
 
         self._prepare_steps()
 
@@ -1812,7 +1812,7 @@ class Workflow:
         self._update_metadata(session=workflow_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=workflow_session, session_state=session_state)
+        session_state = self._load_session_state(session=workflow_session, session_state=session_state)
 
         self._prepare_steps()
 
@@ -1972,7 +1972,7 @@ class Workflow:
         self._update_metadata(session=workflow_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=workflow_session, session_state=session_state)
+        session_state = self._load_session_state(session=workflow_session, session_state=session_state)
 
         log_debug(f"Workflow Run Start: {self.name}", center=True)
 
@@ -2142,7 +2142,7 @@ class Workflow:
         self._update_metadata(session=workflow_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=workflow_session, session_state=session_state)
+        session_state = self._load_session_state(session=workflow_session, session_state=session_state)
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
 

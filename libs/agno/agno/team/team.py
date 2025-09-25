@@ -1160,7 +1160,7 @@ class Team:
         self._update_metadata(session=team_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=team_session, session_state=session_state)
+        session_state = self._load_session_state(session=team_session, session_state=session_state)
 
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -1784,7 +1784,7 @@ class Team:
         self._update_metadata(session=team_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=team_session, session_state=session_state)
+        session_state = self._load_session_state(session=team_session, session_state=session_state)
 
         # Determine run dependencies (runtime override takes priority)
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -6108,8 +6108,8 @@ class Team:
             self._upsert_session(session=session)
             log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
-    def _update_session_state(self, session: TeamSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
-        """Load the existing Agent from an AgentSession (from the database)"""
+    def _load_session_state(self, session: TeamSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
+        """Load and return the stored session_state from the database, optionally merging it with the given one"""
 
         from agno.utils.merge_dict import merge_dictionaries
 
