@@ -24,7 +24,7 @@ workflow = Workflow(
 ```
 
 ### Step-Level History
-Enable history for **specific steps** only:
+Add workflow history to **specific steps** only:
 
 ```python
 Step(
