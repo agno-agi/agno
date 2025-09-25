@@ -11,6 +11,47 @@ Workflow history enables your workflows to remember and reference previous conve
 - **Maintain context continuity** - Create truly conversational experiences
 - **Learn from patterns** - Analyze historical data to make better decisions
 
+---
+
+With this enabled the workflow history gets sent to the agent/team of the step in the following string format-
+```bash
+<workflow_history_context>
+[run-1]
+input: ...
+response: ...
+
+[run-2]
+input: ...
+response: ...
+</workflow_history_context>
+```
+
+Along with this in case of custom function step you can access this history in the following ways-
+1. As a formatted context string as shown above
+2. In a structured format as well for more control
+```bash
+[
+    (<workflow input from run 1>)(<workflow output from run 1>),
+    (<workflow input from run 2>)(<workflow output from run 2>),
+]
+```
+
+Example-
+```python
+def my_smart_function(step_input: StepInput) -> StepOutput:
+    # Option 1: Structured data for analysis
+    history_tuples = step_input.get_workflow_history(num_runs=3)
+    for user_input, workflow_output in history_tuples:
+        # Process each conversation turn
+
+    # Option 2: Formatted context for agents  
+    context_string = step_input.get_workflow_history_context(num_runs=3)
+
+    return StepOutput(content="Analysis complete")
+```
+
+---
+
 ## Control Levels
 
 ### Workflow-Level History
@@ -139,46 +180,6 @@ python cli_app_continuous_execution_based_workflow.py support
 
 # Interactive menu
 python cli_app_continuous_execution_based_workflow.py
-```
-
-## Implementation Guide
-
-### Basic Setup
-
-```python
-from agno.workflow.workflow import Workflow
-from agno.workflow.step import Step
-from agno.db.sqlite import SqliteDb
-
-# Enable history at workflow level
-workflow = Workflow(
-    name="My Conversational Workflow",
-    db=SqliteDb(db_file="my_workflow.db"),  # Required for history
-    steps=[...],
-    add_workflow_history=True
-)
-
-# Or enable at step level
-step = Step(
-    name="History-Aware Step",
-    agent=my_agent,
-    add_workflow_history=True
-)
-```
-
-### Custom Function History Access
-
-```python
-def my_smart_function(step_input: StepInput) -> StepOutput:
-    # Option 1: Structured data for analysis
-    history_tuples = step_input.get_workflow_history(num_runs=3)
-    for user_input, workflow_output in history_tuples:
-        # Process each conversation turn
-        
-    # Option 2: Formatted context for agents  
-    context_string = step_input.get_workflow_history_context(num_runs=3)
-    
-    return StepOutput(content="Analysis complete")
 ```
 
 ## API Reference
