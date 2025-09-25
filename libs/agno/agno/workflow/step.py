@@ -310,7 +310,7 @@ class Step:
 
                         final_message = message
                         if (self.add_workflow_history or add_workflow_history) and workflow_session:
-                            history_messages = workflow_session.get_workflow_history(
+                            history_messages = workflow_session.get_workflow_history_context(
                                 num_runs=num_history_runs
                             )
                             if history_messages:
@@ -496,7 +496,7 @@ class Step:
 
                         final_message = message
                         if (self.add_workflow_history or add_workflow_history) and workflow_session:
-                            history_messages = workflow_session.get_workflow_history(
+                            history_messages = workflow_session.get_workflow_history_context(
                                 num_runs=num_history_runs
                             )
                             if history_messages:
@@ -718,7 +718,7 @@ class Step:
 
                         final_message = message
                         if (self.add_workflow_history or add_workflow_history) and workflow_session:
-                            history_messages = workflow_session.get_workflow_history(
+                            history_messages = workflow_session.get_workflow_history_context(
                                 num_runs=num_history_runs
                             )
                             if history_messages:
@@ -906,7 +906,7 @@ class Step:
 
                         final_message = message
                         if (self.add_workflow_history or add_workflow_history) and workflow_session:
-                            history_messages = workflow_session.get_workflow_history(
+                            history_messages = workflow_session.get_workflow_history_context(
                                 num_runs=num_history_runs
                             )
                             if history_messages:

@@ -19,7 +19,13 @@ def analyze_conversation_context(step_input: StepInput) -> StepOutput:
     current_request = step_input.input or ""
 
     # Get the conversation history that was created by previous steps
-    history = step_input.get_workflow_history(num_runs=3)
+    history_tuple = step_input.get_workflow_history(num_runs=3)
+
+    print("---------------- history tuple ----------------")
+    print(history_tuple)
+    print("---------------- history tuple ----------------")
+
+    history = step_input.get_workflow_history_context(num_runs=3) # history as a string for the agent to use
 
     print("---------------- history ----------------")
     print(history)
