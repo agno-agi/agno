@@ -1,0 +1,211 @@
+# Workflow History & Continuous Execution
+
+This guide demonstrates how to build conversational workflows that maintain context across multiple executions using Agno's workflow history feature.
+
+## What is Workflow History?
+
+Workflow history enables your workflows to remember and reference previous conversations, making them feel more natural and intelligent. Instead of treating each execution as isolated, workflows can:
+
+- **Build on previous interactions** - Reference what users said before
+- **Avoid repetitive questions** - Don't ask for information already provided
+- **Maintain context continuity** - Create truly conversational experiences
+- **Learn from patterns** - Analyze historical data to make better decisions
+
+## Control Levels
+
+### Workflow-Level History
+Enable history for **all steps** in the workflow:
+
+```python
+workflow = Workflow(
+    steps=[research_step, analysis_step, writing_step],
+    add_workflow_history=True  # All steps get history
+)
+```
+
+### Step-Level History
+Enable history for **specific steps** only:
+
+```python
+Step(
+    name="Content Creator", 
+    agent=content_agent,
+    add_workflow_history=True  # Only this step gets history
+)
+```
+
+## Where to start?
+
+### 1. Single-Step Conversational Workflow
+**File**: [`single_step_continuous_execution_workflow.py`](./single_step_continuous_execution_workflow.py)
+
+Learn the basics with a simple AI tutor that remembers your conversation:
+
+```python
+# Simple single-step workflow with history
+workflow = Workflow(
+    steps=[Step(name="AI Tutoring", agent=tutor_agent)],
+    add_workflow_history=True
+)
+```
+
+**Try it**: 
+- Ask about calculus, then follow up with related questions
+- Notice how the tutor references your previous discussions
+- See how it avoids repeating information
+
+---
+
+### 2. Multi-Step with Smart Analysis  
+**File**: [`workflow_with_history_enabled_for_steps.py`](./workflow_with_history_enabled_for_steps.py)
+
+A meal planning workflow that learns your preferences through conversation:
+
+```python
+# Multi-step workflow with preference analysis
+steps = [
+    Step("Meal Suggestion", agent=meal_suggester),
+    Step("Preference Analysis", executor=analyze_preferences),  # Custom function for analyzing outputs
+    Step("Recipe Recommendations", agent=recipe_specialist)
+]
+```
+
+**Key Features**:
+- Custom function analyzes conversation patterns
+- Agents adapt based on learned preferences  
+- Natural conversation flow across multiple steps
+
+---
+
+### 3. Step-Level Control
+**File**: [`enable_history_for_step.py`](./enable_history_for_step.py)
+
+Learn when to enable history for specific steps only:
+
+```python
+# Only content creator needs history, not research or publishing
+steps = [
+    Step("Research", agent=research_agent),                    # No history
+    Step("Content Creation", agent=content_agent, 
+         add_workflow_history=True),                          # Has history  
+    Step("Publishing", agent=publisher_agent)                 # No history
+]
+```
+
+**Why Step-Level Control?**
+- **Performance**: Only steps that benefit get history
+- **Focus**: Reduces noise for steps that don't need context
+- **Flexibility**: Mix history-aware and stateless steps
+
+---
+
+### 4. Custom Functions with History Access
+**File**: [`use_history_in_custom_function_step_continuous_execution_workflow.py`](./use_history_in_custom_function_step_continuous_execution_workflow.py)
+
+Show how custom Python functions can access and analyze workflow history:
+
+```python
+def analyze_content_strategy(step_input: StepInput) -> StepOutput:
+    # Get structured history data
+    history_data = step_input.get_workflow_history(num_runs=5)
+    
+    # Get formatted context string  
+    history_context = step_input.get_workflow_history_context(num_runs=3)
+    
+    # Analyze patterns, detect overlaps, make recommendations
+    # ... custom analysis logic ...
+```
+
+**Powerful Features**:
+- **Dual access**: Get structured data OR formatted context
+- **Pattern analysis**: Detect topic overlaps and content gaps
+- **Strategic recommendations**: Guide subsequent agents
+- **Real business value**: Prevent duplicate content, ensure progression
+
+---
+
+### 5. Interactive CLI Demos
+**File**: [`cli_app_continuous_execution_based_workflow.py`](./cli_app_continuous_execution_based_workflow.py)
+
+Production-ready examples with full CLI interfaces:
+
+- **Customer Support**: Multi-agent support pipeline with escalation
+- **Medical Consultation**: Triage → Physician → Care Coordination  
+- **Educational Tutoring**: Assessment → Teaching → Progress Planning
+
+```bash
+# Run specific demo
+python cli_app_continuous_execution_based_workflow.py support
+
+# Interactive menu
+python cli_app_continuous_execution_based_workflow.py
+```
+
+## Implementation Guide
+
+### Basic Setup
+
+```python
+from agno.workflow.workflow import Workflow
+from agno.workflow.step import Step
+from agno.db.sqlite import SqliteDb
+
+# Enable history at workflow level
+workflow = Workflow(
+    name="My Conversational Workflow",
+    db=SqliteDb(db_file="my_workflow.db"),  # Required for history
+    steps=[...],
+    add_workflow_history=True
+)
+
+# Or enable at step level
+step = Step(
+    name="History-Aware Step",
+    agent=my_agent,
+    add_workflow_history=True
+)
+```
+
+### Custom Function History Access
+
+```python
+def my_smart_function(step_input: StepInput) -> StepOutput:
+    # Option 1: Structured data for analysis
+    history_tuples = step_input.get_workflow_history(num_runs=3)
+    for user_input, workflow_output in history_tuples:
+        # Process each conversation turn
+        
+    # Option 2: Formatted context for agents  
+    context_string = step_input.get_workflow_history_context(num_runs=3)
+    
+    return StepOutput(content="Analysis complete")
+```
+
+## API Reference
+
+### Workflow Configuration
+```python
+Workflow(
+    add_workflow_history: bool = False,  # Enable for all steps
+    num_history_runs: int = 3           # Number of previous runs to include
+)
+```
+
+### Step Configuration  
+```python
+Step(
+    add_workflow_history: bool = False,  # Enable for this step only
+    num_history_runs: int = 3           # Override workflow default
+)
+```
+
+### History Access in Custom Functions
+```python
+# Structured data access
+step_input.get_workflow_history(num_runs: int = 3) -> List[Tuple[str, str]]
+
+# Formatted context string
+step_input.get_workflow_history_context(num_runs: int = 3) -> Optional[str]
+```
+
+--- 
