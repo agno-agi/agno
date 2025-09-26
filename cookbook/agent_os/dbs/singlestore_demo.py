@@ -1,4 +1,4 @@
-"""Example showing how to use AgentOS with SingleStore as database"""
+"""Example showing how to use AgentOS with SingleStore as our database provider"""
 
 from agno.agent import Agent
 from agno.db.singlestore import SingleStoreDb
