@@ -18,4 +18,4 @@ def test_accuracy_evals_telemetry():
         # Verify API was called with correct parameters
         mock_create.assert_called_once()
         call_args = mock_create.call_args[1]["launch"]
-        assert call_args.id == "test"
+        assert call_args.os_id == "test"

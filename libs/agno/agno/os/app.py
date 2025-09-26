@@ -1,12 +1,13 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Set, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from fastmcp.server.http import StarletteWithLifespan
 from rich import box
 from rich.panel import Panel
 from starlette.requests import Request
@@ -36,7 +37,7 @@ from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.session import get_session_router
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import update_cors_middleware
+from agno.os.utils import find_conflicting_routes, load_yaml_config, update_cors_middleware
 from agno.team.team import Team
 from agno.utils.log import logger
 from agno.utils.string import generate_id, generate_id_from_name
@@ -44,7 +45,7 @@ from agno.workflow.workflow import Workflow
 
 
 @asynccontextmanager
-async def mcp_lifespan(app, mcp_tools):
+async def mcp_lifespan(_, mcp_tools):
     """Manage MCP connection lifecycle inside a FastAPI app"""
     # Startup logic: connect to all contextual MCP servers
     for tool in mcp_tools:
@@ -101,7 +102,7 @@ class AgentOS:
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
 
-        self.config = self._load_yaml_config(config) if isinstance(config, str) else config
+        self.config = load_yaml_config(config) if isinstance(config, str) else config
 
         self.agents: Optional[List[Agent]] = agents
         self.workflows: Optional[List[Workflow]] = workflows
@@ -146,6 +147,7 @@ class AgentOS:
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools = []
+        self._mcp_app: Optional[StarletteWithLifespan] = None
 
         if self.agents:
             for agent in self.agents:
@@ -233,16 +235,16 @@ class AgentOS:
 
                 from agno.os.mcp import get_mcp_server
 
-                self.mcp_app = get_mcp_server(self)
+                self._mcp_app = get_mcp_server(self)
 
-                final_lifespan = self.mcp_app.lifespan
+                final_lifespan = self._mcp_app.lifespan  # type: ignore
                 if self.lifespan is not None:
                     # Combine both lifespans
                     @asynccontextmanager
                     async def combined_lifespan(app: FastAPI):
                         # Run both lifespans
                         async with self.lifespan(app):  # type: ignore
-                            async with self.mcp_app.lifespan(app):  # type: ignore
+                            async with self._mcp_app.lifespan(app):  # type: ignore
                                 yield
 
                     final_lifespan = combined_lifespan  # type: ignore
@@ -275,8 +277,8 @@ class AgentOS:
             self._add_router(fastapi_app, router)
 
         # Mount MCP if needed
-        if self.enable_mcp and self.mcp_app:
-            fastapi_app.mount("/", self.mcp_app)
+        if self.enable_mcp and self._mcp_app:
+            fastapi_app.mount("/", self._mcp_app)
         else:
             # Add the home router
             self._add_router(fastapi_app, get_home_router(self))
@@ -285,7 +287,7 @@ class AgentOS:
         if not self._app_set:
 
             @fastapi_app.exception_handler(HTTPException)
-            async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+            async def http_exception_handler(_, exc: HTTPException) -> JSONResponse:
                 return JSONResponse(
                     status_code=exc.status_code,
                     content={"detail": str(exc.detail)},
@@ -317,46 +319,15 @@ class AgentOS:
 
         return app.routes
 
-    def _get_existing_route_paths(self, fastapi_app: FastAPI) -> Dict[str, List[str]]:
-        """Get all existing route paths and methods from the FastAPI app.
-
-        Returns:
-            Dict[str, List[str]]: Dictionary mapping paths to list of HTTP methods
-        """
-        existing_paths: Dict[str, Any] = {}
-        for route in fastapi_app.routes:
-            if isinstance(route, APIRoute):
-                path = route.path
-                methods = list(route.methods) if route.methods else []
-                if path in existing_paths:
-                    existing_paths[path].extend(methods)
-                else:
-                    existing_paths[path] = methods
-        return existing_paths
-
     def _add_router(self, fastapi_app: FastAPI, router: APIRouter) -> None:
         """Add a router to the FastAPI app, avoiding route conflicts.
 
         Args:
             router: The APIRouter to add
         """
-        # Get existing routes
-        existing_paths = self._get_existing_route_paths(fastapi_app)
 
-        # Check for conflicts
-        conflicts = []
-        conflicting_routes = []
-
-        for route in router.routes:
-            if isinstance(route, APIRoute):
-                full_path = route.path
-                route_methods = list(route.methods) if route.methods else []
-
-                if full_path in existing_paths:
-                    conflicting_methods: Set[str] = set(route_methods) & set(existing_paths[full_path])
-                    if conflicting_methods:
-                        conflicts.append({"path": full_path, "methods": list(conflicting_methods), "route": route})
-                        conflicting_routes.append(route)
+        conflicts = find_conflicting_routes(fastapi_app, router)
+        conflicting_routes = [conflict["route"] for conflict in conflicts]
 
         if conflicts and self._app_set:
             if self.on_route_conflict == "preserve_base_app":
@@ -412,21 +383,6 @@ class AgentOS:
             "workflows": [workflow.id for workflow in self.workflows] if self.workflows else None,
             "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
         }
-
-    def _load_yaml_config(self, config_file_path: str) -> AgentOSConfig:
-        """Load a YAML config file and return the configuration as an AgentOSConfig instance."""
-        from pathlib import Path
-
-        import yaml
-
-        # Validate that the path points to a YAML file
-        path = Path(config_file_path)
-        if path.suffix.lower() not in [".yaml", ".yml"]:
-            raise ValueError(f"Config file must have a .yaml or .yml extension, got: {config_file_path}")
-
-        # Load the YAML file
-        with open(config_file_path, "r") as f:
-            return AgentOSConfig.model_validate(yaml.safe_load(f))
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover the databases used by all contextual agents, teams and workflows."""
@@ -609,11 +565,10 @@ class AgentOS:
         from rich.align import Align
         from rich.console import Console, Group
 
-        panel_group = []
-        panel_group.append(Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]"))
-        panel_group.append(
-            Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}")
-        )
+        panel_group = [
+            Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]"),
+            Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}"),
+        ]
         if bool(self.settings.os_security_key):
             panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: Security Enabled[/bold chartreuse3]"))
 
