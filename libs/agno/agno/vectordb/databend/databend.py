@@ -1,16 +1,18 @@
 import asyncio
 import json
+from datetime import datetime
 from hashlib import md5
 from typing import Any, Dict, List, Optional
-from datetime import datetime
 
 from agno.vectordb.databend.index import HNSW
 
 try:
-    from databend_driver import BlockingDatabendClient
-    from databend_driver import BlockingDatabendConnection
-    from databend_driver import AsyncDatabendClient
-    from databend_driver import AsyncDatabendConnection
+    from databend_driver import (
+        AsyncDatabendClient,
+        AsyncDatabendConnection,
+        BlockingDatabendClient,
+        BlockingDatabendConnection,
+    )
 except ImportError:
     raise ImportError("`databend-driver` not installed. Use `pip install databend-driver` to install it")
 
@@ -192,7 +194,7 @@ class Databend(VectorDb):
             columns = self._get_table_columns()
             column_defs = ", ".join(columns)
 
-            await self.async_client.exec(
+            await async_client.exec(
                 f"CREATE TABLE IF NOT EXISTS {self.database_name}.{self.table_name}({column_defs}) ENGINE = Fuse"
             )
 
@@ -516,7 +518,6 @@ class Databend(VectorDb):
                 updated_filters.update(metadata)
 
                 # Update the document
-                update_params = parameters.copy()
                 metadata_json = json.dumps(updated_metadata)
                 filters_json = json.dumps(updated_filters)
 
@@ -682,7 +683,8 @@ class Databend(VectorDb):
         """Drop the table asynchronously."""
         if await self.async_exists():
             log_debug(f"Async dropping table: {self.table_name}")
-            await self.async_client.exec(
+            async_client = await self._ensure_async_client()
+            await async_client.exec(
                 f"DROP TABLE {self.database_name}.{self.table_name}",
             )
 
