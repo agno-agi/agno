@@ -813,7 +813,6 @@ class Agent:
             # Grab updated run input
             run_response.input = run_input
 
-
         self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
@@ -997,7 +996,6 @@ class Agent:
 
             # Grab updated run input
             run_response.input = run_input
-
 
         self._determine_tools_for_model(
             model=self.model,
@@ -1398,7 +1396,7 @@ class Agent:
                     )
                     return response
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Guardrail trigger: {e.check_trigger}")
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
                 raise e
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -2090,7 +2088,7 @@ class Agent:
                     )
 
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Guardrail trigger: {e.check_trigger}")
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
                 raise e
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -2966,11 +2964,22 @@ class Agent:
             return
 
         # Prepare all possible arguments once
-        all_args = {"run_input": run_input, "agent": self, "session": session, "user_id": user_id, "debug_mode": debug_mode or self.debug_mode}
+        all_args = {
+            "run_input": run_input,
+            "agent": self,
+            "session": session,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield self._handle_event(run_response=run_response, event=create_pre_hook_started_event(from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__))
+            yield self._handle_event(
+                run_response=run_response,
+                event=create_pre_hook_started_event(
+                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                ),
+            )
             try:
                 if asyncio.iscoroutinefunction(hook):
                     raise ValueError(f"Cannot use an async hook with `run()`. Use `arun()` instead. Hook #{i + 1}")
@@ -2980,7 +2989,12 @@ class Agent:
 
                 hook(**filtered_args)
 
-                yield self._handle_event(run_response=run_response, event=create_pre_hook_completed_event(from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__))
+                yield self._handle_event(
+                    run_response=run_response,
+                    event=create_pre_hook_completed_event(
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    ),
+                )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -3006,11 +3020,22 @@ class Agent:
             return
 
         # Prepare all possible arguments once
-        all_args = {"run_input": run_input, "agent": self, "session": session, "user_id": user_id, "debug_mode": debug_mode or self.debug_mode}
+        all_args = {
+            "run_input": run_input,
+            "agent": self,
+            "session": session,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield self._handle_event(run_response=run_response, event=create_pre_hook_started_event(from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__))
+            yield self._handle_event(
+                run_response=run_response,
+                event=create_pre_hook_started_event(
+                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                ),
+            )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = self._filter_hook_args(hook, all_args)
@@ -3021,7 +3046,12 @@ class Agent:
                     # Synchronous function
                     hook(**filtered_args)
 
-                yield self._handle_event(run_response=run_response, event=create_pre_hook_completed_event(from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__))
+                yield self._handle_event(
+                    run_response=run_response,
+                    event=create_pre_hook_completed_event(
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    ),
+                )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -3044,7 +3074,6 @@ class Agent:
         """Execute multiple post-hook functions in succession."""
         if hooks is None:
             return
-
 
         # Prepare all possible arguments once
         all_args = {

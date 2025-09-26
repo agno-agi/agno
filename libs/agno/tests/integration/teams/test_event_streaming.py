@@ -347,24 +347,23 @@ def test_intermediate_steps_with_memory(shared_db):
     assert len(events[TeamRunEvent.memory_update_started]) == 1
     assert len(events[TeamRunEvent.memory_update_completed]) == 1
 
+
 def test_pre_hook_events_are_emitted(shared_db):
     """Test that the agent streams events."""
-    
+
     def pre_hook_1(run_input: TeamRunInput) -> None:
         run_input.input_content += " (Modified by pre-hook 1)"
-    
+
     def pre_hook_2(run_input: TeamRunInput) -> None:
         run_input.input_content += " (Modified by pre-hook 2)"
-    
+
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
         pre_hooks=[pre_hook_1, pre_hook_2],
         db=shared_db,
-        enable_user_memories=True,
         telemetry=False,
     )
-
 
     response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
 
@@ -390,32 +389,39 @@ def test_pre_hook_events_are_emitted(shared_db):
     assert events[TeamRunEvent.pre_hook_started][0].pre_hook_name == "pre_hook_1"
     assert events[TeamRunEvent.pre_hook_started][0].run_input.input_content == "Hello, how are you?"
     assert events[TeamRunEvent.pre_hook_completed][0].pre_hook_name == "pre_hook_1"
-    assert events[TeamRunEvent.pre_hook_completed][0].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
-    assert events[TeamRunEvent.pre_hook_started][1].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
+    assert (
+        events[TeamRunEvent.pre_hook_completed][0].run_input.input_content
+        == "Hello, how are you? (Modified by pre-hook 1)"
+    )
+    assert (
+        events[TeamRunEvent.pre_hook_started][1].run_input.input_content
+        == "Hello, how are you? (Modified by pre-hook 1)"
+    )
     assert events[TeamRunEvent.pre_hook_started][1].pre_hook_name == "pre_hook_2"
     assert events[TeamRunEvent.pre_hook_completed][1].pre_hook_name == "pre_hook_2"
-    assert events[TeamRunEvent.pre_hook_completed][1].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1) (Modified by pre-hook 2)"
+    assert (
+        events[TeamRunEvent.pre_hook_completed][1].run_input.input_content
+        == "Hello, how are you? (Modified by pre-hook 1) (Modified by pre-hook 2)"
+    )
 
 
 @pytest.mark.asyncio
 async def test_async_pre_hook_events_are_emitted(shared_db):
     """Test that the agent streams events."""
-    
+
     async def pre_hook_1(run_input: TeamRunInput) -> None:
         run_input.input_content += " (Modified by pre-hook 1)"
-    
+
     async def pre_hook_2(run_input: TeamRunInput) -> None:
         run_input.input_content += " (Modified by pre-hook 2)"
-    
+
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
         pre_hooks=[pre_hook_1, pre_hook_2],
         db=shared_db,
-        enable_user_memories=True,
         telemetry=False,
     )
-
 
     response_generator = team.arun("Hello, how are you?", stream=True, stream_intermediate_steps=True)
 
@@ -441,13 +447,20 @@ async def test_async_pre_hook_events_are_emitted(shared_db):
     assert events[TeamRunEvent.pre_hook_started][0].pre_hook_name == "pre_hook_1"
     assert events[TeamRunEvent.pre_hook_started][0].run_input.input_content == "Hello, how are you?"
     assert events[TeamRunEvent.pre_hook_completed][0].pre_hook_name == "pre_hook_1"
-    assert events[TeamRunEvent.pre_hook_completed][0].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
-    assert events[TeamRunEvent.pre_hook_started][1].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
+    assert (
+        events[TeamRunEvent.pre_hook_completed][0].run_input.input_content
+        == "Hello, how are you? (Modified by pre-hook 1)"
+    )
+    assert (
+        events[TeamRunEvent.pre_hook_started][1].run_input.input_content
+        == "Hello, how are you? (Modified by pre-hook 1)"
+    )
     assert events[TeamRunEvent.pre_hook_started][1].pre_hook_name == "pre_hook_2"
     assert events[TeamRunEvent.pre_hook_completed][1].pre_hook_name == "pre_hook_2"
-    assert events[TeamRunEvent.pre_hook_completed][1].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1) (Modified by pre-hook 2)"
-
-
+    assert (
+        events[TeamRunEvent.pre_hook_completed][1].run_input.input_content
+        == "Hello, how are you? (Modified by pre-hook 1) (Modified by pre-hook 2)"
+    )
 
 
 def test_intermediate_steps_with_structured_output(shared_db):

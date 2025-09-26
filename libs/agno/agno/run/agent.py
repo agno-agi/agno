@@ -13,6 +13,7 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.utils.log import logger
 
+
 @dataclass
 class RunInput:
     """Container for the raw input data passed to Agent.run().
@@ -33,6 +34,20 @@ class RunInput:
     videos: Optional[Sequence[Video]] = None
     audios: Optional[Sequence[Audio]] = None
     files: Optional[Sequence[File]] = None
+
+    def input_content_string(self) -> str:
+        if isinstance(self.input_content, (str)):
+            return self.input_content
+        elif isinstance(self.input_content, BaseModel):
+            return self.input_content.model_dump_json(exclude_none=True)
+        elif isinstance(self.input_content, Message):
+            import json
+
+            return json.dumps(self.input_content.to_dict())
+        elif isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], Message):
+            return json.dumps([m.to_dict() for m in self.input_content])
+        else:
+            return str(self.input_content)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation"""
@@ -89,7 +104,6 @@ class RunInput:
         )
 
 
-
 class RunEvent(str, Enum):
     """Events that can be sent by the run() functions"""
 
@@ -102,7 +116,7 @@ class RunEvent(str, Enum):
 
     run_paused = "RunPaused"
     run_continued = "RunContinued"
-    
+
     pre_hook_started = "PreHookStarted"
     pre_hook_completed = "PreHookCompleted"
 
@@ -242,6 +256,7 @@ class RunCancelledEvent(BaseAgentRunEvent):
     def is_cancelled(self):
         return True
 
+
 @dataclass
 class PreHookStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.pre_hook_started.value
@@ -254,6 +269,7 @@ class PreHookCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.pre_hook_completed.value
     pre_hook_name: Optional[str] = None
     run_input: Optional[RunInput] = None
+
 
 @dataclass
 class MemoryUpdateStartedEvent(BaseAgentRunEvent):
@@ -401,7 +417,7 @@ class RunOutput:
 
     # Input media and messages from user
     input: Optional[RunInput] = None
-    
+
     content: Optional[Any] = None
     content_type: str = "str"
 
@@ -424,7 +440,6 @@ class RunOutput:
     audio: Optional[List[Audio]] = None  # Audio attached to the response
     files: Optional[List[File]] = None  # Files attached to the response
     response_audio: Optional[Audio] = None  # Model audio response
-
 
     citations: Optional[Citations] = None
     references: Optional[List[MessageReferences]] = None

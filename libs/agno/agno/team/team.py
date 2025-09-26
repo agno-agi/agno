@@ -889,13 +889,17 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "debug_mode": debug_mode,
+            "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-
-            yield self._handle_event(run_response=run_response, event=create_team_pre_hook_started_event(from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__))
+            yield self._handle_event(
+                run_response=run_response,
+                event=create_team_pre_hook_started_event(
+                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                ),
+            )
             try:
                 if asyncio.iscoroutinefunction(hook):
                     raise ValueError(f"Cannot use an async hook with `run()`. Use `arun()` instead. Hook #{i + 1}")
@@ -905,7 +909,12 @@ class Team:
 
                 hook(**filtered_args)
 
-                yield self._handle_event(run_response=run_response, event=create_team_pre_hook_completed_event(from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__))
+                yield self._handle_event(
+                    run_response=run_response,
+                    event=create_team_pre_hook_completed_event(
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    ),
+                )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -933,12 +942,17 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "debug_mode": debug_mode,
+            "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield self._handle_event(run_response=run_response, event=create_team_pre_hook_started_event(from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__))
+            yield self._handle_event(
+                run_response=run_response,
+                event=create_team_pre_hook_started_event(
+                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                ),
+            )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = self._filter_hook_args(hook, all_args)
@@ -949,7 +963,12 @@ class Team:
                     # Synchronous function
                     hook(**filtered_args)
 
-                yield self._handle_event(run_response=run_response, event=create_team_pre_hook_completed_event(from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__))
+                yield self._handle_event(
+                    run_response=run_response,
+                    event=create_team_pre_hook_completed_event(
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    ),
+                )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -961,6 +980,9 @@ class Team:
         self,
         hooks: Optional[List[Callable[..., Any]]],
         run_output: TeamRunOutput,
+        session: TeamSession,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         """Execute multiple post-hook functions in succession."""
@@ -968,7 +990,13 @@ class Team:
             return
 
         # Prepare all possible arguments once
-        all_args = {"run_output": run_output, "team": self}
+        all_args = {
+            "run_output": run_output,
+            "team": self,
+            "session": session,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
@@ -991,6 +1019,9 @@ class Team:
         self,
         hooks: Optional[List[Callable[..., Any]]],
         run_output: TeamRunOutput,
+        session: TeamSession,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         """Execute multiple post-hook functions in succession (async version)."""
@@ -998,7 +1029,13 @@ class Team:
             return
 
         # Prepare all possible arguments once
-        all_args = {"run_output": run_output, "team": self}
+        all_args = {
+            "run_output": run_output,
+            "team": self,
+            "session": session,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
@@ -1021,9 +1058,8 @@ class Team:
         self,
         run_response: TeamRunOutput,
         session: TeamSession,
-        session_state: Optional[Dict[str, Any]] = None,
+        session_state: Dict[str, Any],
         user_id: Optional[str] = None,
-        team_run_context: Optional[Dict[str, Any]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1071,6 +1107,8 @@ class Team:
             # Grab updated run input
             run_response.input = run_input
 
+        # Initialize team run context
+        team_run_context: Dict[str, Any] = {}
 
         self.determine_tools_for_model(
             model=self.model,
@@ -1205,9 +1243,8 @@ class Team:
         self,
         run_response: TeamRunOutput,
         session: TeamSession,
-        session_state: Optional[Dict[str, Any]] = None,
+        session_state: Dict[str, Any],
         user_id: Optional[str] = None,
-        team_run_context: Optional[Dict[str, Any]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1250,11 +1287,13 @@ class Team:
                 debug_mode=debug_mode,
                 **kwargs,
             )
-            for event in pre_hook_iterator:
-                yield event
+            for pre_hook_event in pre_hook_iterator:
+                yield pre_hook_event
             # Grab updated run input
             run_response.input = run_input
 
+        # Initialize team run context
+        team_run_context: Dict[str, Any] = {}
 
         self.determine_tools_for_model(
             model=self.model,
@@ -1301,7 +1340,6 @@ class Team:
             log_error("No messages to be sent to the model.")
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
-
 
         try:
             # Start the Run by yielding a RunStarted event
@@ -1615,9 +1653,6 @@ class Team:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        # Initialize team run context
-        team_run_context: Dict[str, Any] = {}
-
         # If no retries are set, use the team's default retries
         retries = retries if retries is not None else self.retries
 
@@ -1655,7 +1690,6 @@ class Team:
                         run_response=run_response,
                         session=team_session,
                         session_state=session_state,
-                        team_run_context=team_run_context,
                         user_id=user_id,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history,
@@ -1677,7 +1711,6 @@ class Team:
                         run_response=run_response,
                         session=team_session,
                         session_state=session_state,
-                        team_run_context=team_run_context,
                         user_id=user_id,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history,
@@ -1745,7 +1778,7 @@ class Team:
         self,
         run_response: TeamRunOutput,
         session: TeamSession,
-        session_state: Optional[Dict[str, Any]] = None,
+        session_state: Dict[str, Any],
         user_id: Optional[str] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
@@ -1794,19 +1827,6 @@ class Team:
                 pass
             # Grab updated run input
             run_response.input = run_input
-
-        # Create a new run_response for this attempt
-        run_response = TeamRunOutput(
-            run_id=run_response.run_id,
-            session_id=session.session_id,
-            team_id=self.id,
-            team_name=self.name,
-            metadata=metadata,
-            input=run_input,
-        )
-
-        run_response.model = self.model.id if self.model is not None else None
-        run_response.model_provider = self.model.provider if self.model is not None else None
 
         # Initialize the team run context
         team_run_context: Dict[str, Any] = {}
@@ -1926,7 +1946,14 @@ class Team:
 
         # Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
-            await self._aexecute_post_hooks(hooks=self.post_hooks, run_output=run_response)
+            await self._aexecute_post_hooks(
+                hooks=self.post_hooks,
+                run_output=run_response,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1939,7 +1966,7 @@ class Team:
         self,
         run_response: TeamRunOutput,
         session: TeamSession,
-        session_state: Optional[Dict[str, Any]] = None,
+        session_state: Dict[str, Any],
         user_id: Optional[str] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
@@ -1972,9 +1999,10 @@ class Team:
             await self._aresolve_run_dependencies(dependencies=dependencies)
 
         # Execute pre-hooks
+        run_input = cast(TeamRunInput, run_response.input)
+        self.model = cast(Model, self.model)
         if self.pre_hooks is not None:
-            run_input = run_response.input
-            pre_hook_iterator =  self._aexecute_pre_hooks(
+            pre_hook_iterator = self._aexecute_pre_hooks(
                 hooks=self.pre_hooks,
                 run_response=run_response,
                 run_input=run_input,
@@ -1983,8 +2011,8 @@ class Team:
                 debug_mode=debug_mode,
                 **kwargs,
             )
-            async for event in pre_hook_iterator:
-                yield event
+            async for pre_hook_event in pre_hook_iterator:
+                yield pre_hook_event
             # Grab updated run input
             run_response.input = run_input
 
@@ -2000,11 +2028,11 @@ class Team:
             user_id=user_id,
             async_mode=True,
             knowledge_filters=knowledge_filters,
-            input_message=run_response.input.input_content,
-            images=run_response.input.images,
-            videos=run_response.input.videos,
-            audio=run_response.input.audios,
-            files=run_response.input.files,
+            input_message=run_input.input_content,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
             workflow_context=workflow_context,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -2020,11 +2048,11 @@ class Team:
             session=session,
             session_state=session_state,
             user_id=user_id,
-            input_message=run_response.input.input_content,
-            audio=run_response.input.audios,
-            images=run_response.input.images,
-            videos=run_response.input.videos,
-            files=run_response.input.files,
+            input_message=run_input.input_content,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,

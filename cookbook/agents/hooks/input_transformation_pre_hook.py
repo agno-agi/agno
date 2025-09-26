@@ -15,13 +15,20 @@ from agno.session.agent import AgentSession
 from agno.utils.log import log_debug
 
 
-def transform_input(run_input: RunInput, session: AgentSession, user_id: Optional[str] = None, debug_mode: Optional[bool] = None) -> None:
+def transform_input(
+    run_input: RunInput,
+    session: AgentSession,
+    user_id: Optional[str] = None,
+    debug_mode: Optional[bool] = None,
+) -> None:
     """
     Pre-hook: Rewrite the input to be more relevant to the agent's purpose.
 
     This hook rewrites the input to be more relevant to the agent's purpose.
     """
-    log_debug(f"Transforming input: {run_input.input_content} for user {user_id} and session {session.session_id}")
+    log_debug(
+        f"Transforming input: {run_input.input_content} for user {user_id} and session {session.session_id}"
+    )
 
     # Input transformation agent
     transformer_agent = Agent(
@@ -34,7 +41,7 @@ def transform_input(run_input: RunInput, session: AgentSession, user_id: Optiona
             "Keep the input as concise as possible.",
             "The agent's purpose is to provide investment guidance and financial planning advice.",
         ],
-        debug_mode=debug_mode
+        debug_mode=debug_mode,
     )
 
     transformation_result = transformer_agent.run(
@@ -69,5 +76,8 @@ agent = Agent(
 )
 
 agent.print_response(
-    input="I'm 35 years old and want to start investing for retirement. moderate risk tolerance. retirement savings in IRAs/401(k)s= $100,000. total savings is $200,000. my net worth is $300,000", session_id="test_session", user_id="test_user", stream=True
+    input="I'm 35 years old and want to start investing for retirement. moderate risk tolerance. retirement savings in IRAs/401(k)s= $100,000. total savings is $200,000. my net worth is $300,000",
+    session_id="test_session",
+    user_id="test_user",
+    stream=True,
 )

@@ -68,7 +68,7 @@ class EbsVolume(AwsResource):
     #
     # Default: gp2
     volume_type: Optional[Literal["standard", "io_1", "io_2", "gp_2", "sc_1", "st_1", "gp_3"]] = None
-    # Checks whether you have the required permissions for the action, without actually making the request,
+    # Guardrails whether you have the required permissions for the action, without actually making the request,
     # and provides an error response. If you have the required permissions, the error response is DryRunOperation.
     # Otherwise, it is UnauthorizedOperation .
     dry_run: Optional[bool] = None

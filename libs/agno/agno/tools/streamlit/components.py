@@ -47,7 +47,7 @@ def check_password(password_env_var: str = "APP_PASSWORD") -> bool:
         return True
 
     def check_first_run_password():
-        """Checks whether a password entered on the first run is correct."""
+        """Guardrails whether a password entered on the first run is correct."""
 
         if "first_run_password" in st.session_state:
             password_to_check = st.session_state["first_run_password"]
@@ -59,7 +59,7 @@ def check_password(password_env_var: str = "APP_PASSWORD") -> bool:
                 st.session_state["password_correct"] = False
 
     def check_updated_password():
-        """Checks whether an updated password is correct."""
+        """Guardrails whether an updated password is correct."""
 
         if "updated_password" in st.session_state:
             password_to_check = st.session_state["updated_password"]

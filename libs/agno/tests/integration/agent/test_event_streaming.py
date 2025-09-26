@@ -364,13 +364,13 @@ def test_intermediate_steps_with_memory(shared_db):
 
 def test_pre_hook_events_are_emitted(shared_db):
     """Test that the agent streams events."""
-    
+
     def pre_hook_1(run_input: RunInput) -> None:
         run_input.input_content += " (Modified by pre-hook 1)"
-    
+
     def pre_hook_2(run_input: RunInput) -> None:
         run_input.input_content += " (Modified by pre-hook 2)"
-    
+
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
@@ -402,23 +402,30 @@ def test_pre_hook_events_are_emitted(shared_db):
     assert events[RunEvent.pre_hook_started][0].pre_hook_name == "pre_hook_1"
     assert events[RunEvent.pre_hook_started][0].run_input.input_content == "Hello, how are you?"
     assert events[RunEvent.pre_hook_completed][0].pre_hook_name == "pre_hook_1"
-    assert events[RunEvent.pre_hook_completed][0].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
-    assert events[RunEvent.pre_hook_started][1].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
+    assert (
+        events[RunEvent.pre_hook_completed][0].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
+    )
+    assert (
+        events[RunEvent.pre_hook_started][1].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
+    )
     assert events[RunEvent.pre_hook_started][1].pre_hook_name == "pre_hook_2"
     assert events[RunEvent.pre_hook_completed][1].pre_hook_name == "pre_hook_2"
-    assert events[RunEvent.pre_hook_completed][1].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1) (Modified by pre-hook 2)"
+    assert (
+        events[RunEvent.pre_hook_completed][1].run_input.input_content
+        == "Hello, how are you? (Modified by pre-hook 1) (Modified by pre-hook 2)"
+    )
 
 
 @pytest.mark.asyncio
 async def test_async_pre_hook_events_are_emitted(shared_db):
     """Test that the agent streams events."""
-    
+
     async def pre_hook_1(run_input: RunInput) -> None:
         run_input.input_content += " (Modified by pre-hook 1)"
-    
+
     async def pre_hook_2(run_input: RunInput) -> None:
         run_input.input_content += " (Modified by pre-hook 2)"
-    
+
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
@@ -450,12 +457,18 @@ async def test_async_pre_hook_events_are_emitted(shared_db):
     assert events[RunEvent.pre_hook_started][0].pre_hook_name == "pre_hook_1"
     assert events[RunEvent.pre_hook_started][0].run_input.input_content == "Hello, how are you?"
     assert events[RunEvent.pre_hook_completed][0].pre_hook_name == "pre_hook_1"
-    assert events[RunEvent.pre_hook_completed][0].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
-    assert events[RunEvent.pre_hook_started][1].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
+    assert (
+        events[RunEvent.pre_hook_completed][0].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
+    )
+    assert (
+        events[RunEvent.pre_hook_started][1].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
+    )
     assert events[RunEvent.pre_hook_started][1].pre_hook_name == "pre_hook_2"
     assert events[RunEvent.pre_hook_completed][1].pre_hook_name == "pre_hook_2"
-    assert events[RunEvent.pre_hook_completed][1].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1) (Modified by pre-hook 2)"
-
+    assert (
+        events[RunEvent.pre_hook_completed][1].run_input.input_content
+        == "Hello, how are you? (Modified by pre-hook 1) (Modified by pre-hook 2)"
+    )
 
 
 def test_intermediate_steps_with_structured_output(shared_db):

@@ -1,6 +1,6 @@
+from enum import Enum
 from typing import List, Optional, Union
 
-from agno.checks import CheckTrigger
 from agno.models.message import Message
 
 
@@ -95,10 +95,22 @@ class EvalError(Exception):
     pass
 
 
+class CheckTrigger(Enum):
+    """Enum for guardrail triggers."""
+
+    OFF_TOPIC = "off_topic"
+    INPUT_NOT_ALLOWED = "input_not_allowed"
+    OUTPUT_NOT_ALLOWED = "output_not_allowed"
+    VALIDATION_FAILED = "validation_failed"
+
+    PROMPT_INJECTION = "prompt_injection"
+    PII_DETECTED = "pii_detected"
+
+
 class InputCheckError(Exception):
     """Exception raised when an input check fails."""
 
-    def __init__(self, message: str, check_trigger: CheckTrigger = CheckTrigger.VALIDATION_FAILED):
+    def __init__(self, message: str, check_trigger: CheckTrigger = CheckTrigger.INPUT_NOT_ALLOWED):
         super().__init__(message)
         self.message = message
         self.check_trigger = check_trigger
@@ -107,7 +119,7 @@ class InputCheckError(Exception):
 class OutputCheckError(Exception):
     """Exception raised when an output check fails."""
 
-    def __init__(self, message: str, check_trigger: CheckTrigger = CheckTrigger.VALIDATION_FAILED):
+    def __init__(self, message: str, check_trigger: CheckTrigger = CheckTrigger.OUTPUT_NOT_ALLOWED):
         super().__init__(message)
         self.message = message
         self.check_trigger = check_trigger

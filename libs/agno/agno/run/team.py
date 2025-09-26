@@ -14,6 +14,7 @@ from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.utils.log import log_error
 
+
 @dataclass
 class TeamRunInput:
     """Container for the raw input data passed to Agent.run().
@@ -32,6 +33,20 @@ class TeamRunInput:
     videos: Optional[Sequence[Video]] = None
     audios: Optional[Sequence[Audio]] = None
     files: Optional[Sequence[File]] = None
+
+    def input_content_string(self) -> str:
+        if isinstance(self.input_content, (str)):
+            return self.input_content
+        elif isinstance(self.input_content, BaseModel):
+            return self.input_content.model_dump_json(exclude_none=True)
+        elif isinstance(self.input_content, Message):
+            import json
+
+            return json.dumps(self.input_content.to_dict())
+        elif isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], Message):
+            return json.dumps([m.to_dict() for m in self.input_content])
+        else:
+            return str(self.input_content)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation"""
@@ -97,7 +112,7 @@ class TeamRunEvent(str, Enum):
     run_completed = "TeamRunCompleted"
     run_error = "TeamRunError"
     run_cancelled = "TeamRunCancelled"
-    
+
     pre_hook_started = "TeamPreHookStarted"
     pre_hook_completed = "TeamPreHookCompleted"
 
@@ -226,7 +241,7 @@ class RunCancelledEvent(BaseTeamRunEvent):
     @property
     def is_cancelled(self):
         return True
-    
+
 
 @dataclass
 class PreHookStartedEvent(BaseTeamRunEvent):
@@ -370,7 +385,6 @@ def team_run_output_event_from_dict(data: dict) -> BaseTeamRunEvent:
     if not event_class:
         raise ValueError(f"Unknown team event type: {event_type}")
     return event_class.from_dict(data)  # type: ignore
-
 
 
 @dataclass

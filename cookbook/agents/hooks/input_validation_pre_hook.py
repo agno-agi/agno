@@ -1,17 +1,15 @@
 """
 Example demonstrating how to use pre_hook and post_hook with Agno Agent.
 
-This example shows how to:
-1. Pre-hook: Comprehensive input validation using an AI agent
-2. Post-hook: Enhanced output formatting and structure
+This example shows how to do comprehensive input validation using an AI agent.
+
+Note: The "Message" panel will be updated with the updated input content after the pre-hook is executed.
 """
 
-from typing import Any
-
 from agno.agent import Agent
-from agno.checks import CheckTrigger
-from agno.exceptions import InputCheckError
+from agno.exceptions import CheckTrigger, InputCheckError
 from agno.models.openai import OpenAIChat
+from agno.run.agent import RunInput
 from pydantic import BaseModel
 
 
@@ -23,7 +21,7 @@ class InputValidationResult(BaseModel):
     recommendations: list[str]
 
 
-def comprehensive_input_validation(input: Any) -> None:
+def comprehensive_input_validation(run_input: RunInput) -> None:
     """
     Pre-hook: Comprehensive input validation using an AI agent.
 
@@ -53,7 +51,7 @@ def comprehensive_input_validation(input: Any) -> None:
     )
 
     validation_result = validator_agent.run(
-        input=f"Validate this user request: '{input}'"
+        input=f"Validate this user request: '{run_input.input_content}'"
     )
 
     result = validation_result.content
@@ -105,7 +103,15 @@ def main():
     print("-" * 40)
     try:
         response = agent.run(
-            input="I'm 35 years old and want to start investing for retirement. I can save $1000 per month and have moderate risk tolerance. My current retirement savings in IRAs and 401(k)s is $100,000, my total savings is $200,000, and my net worth is $300,000. Do you have advice for me?"
+            input="""
+            I'm 35 years old and want to start investing for retirement.
+            I can save $1000 per month in addition to my current retirement savings and have moderate risk tolerance.
+            My gross income is $100,000.
+            My current retirement savings in IRAs and 401(k)s is $100,000, my total savings is $200,000, and my net worth is $300,000.
+            My country is the United States.
+
+            Do you have advice for me?
+            """
         )
         print("✅ Success! Response validated by pre-hook:")
         print(response.content)
