@@ -135,7 +135,7 @@ class AgentOS:
         self.lifespan = lifespan
 
         # List of all MCP tools used inside the AgentOS
-        self.mcp_tools = []
+        self.mcp_tools: List[Union["MCPTools", "MultiMCPTools"]] = []  # type: ignore
 
         if self.agents:
             for agent in self.agents:
@@ -417,8 +417,10 @@ class AgentOS:
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover the databases used by all contextual agents, teams and workflows."""
-        dbs = {}
-        knowledge_dbs = {}  # Track databases specifically used for knowledge
+        from agno.db.base import BaseDb
+
+        dbs: Dict[str, BaseDb] = {}
+        knowledge_dbs: Dict[str, BaseDb] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
             if agent.db:
