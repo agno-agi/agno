@@ -1,7 +1,9 @@
 """
-AgentOS middleware example - Rate Limiting & Request Logging.
+This example demonstrates how to add custom middleware to your AgentOS application.
 
-This shows how to add custom middleware to your AgentOS.
+We add two middleware:
+- Rate Limiting: Limits requests per IP address
+- Request/Response Logging: Logs requests and responses
 """
 
 import time
@@ -173,7 +175,7 @@ if __name__ == "__main__":
     """
 
     agent_os.serve(
-        app="fastapi_app_with_custom_middleware:app",
+        app="agent_os_with_custom_middleware:app",
         host="localhost",
         port=7777,
         reload=True,
