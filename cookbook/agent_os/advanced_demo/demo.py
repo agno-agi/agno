@@ -16,7 +16,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Create the AgentOS
 agent_os = AgentOS(
-    os_id="agentos-demo",
+    id="agentos-demo",
     agents=[sage, agno_assist],
     teams=[finance_reasoning_team],
 )

@@ -64,7 +64,7 @@ evaluation = AccuracyEval(
 
 # Create the AgentOS instance
 agent_os = AgentOS(
-    os_id="json-demo-app",
+    id="json-demo-app",
     description="Example app using JSON file database for simple deployments and demos",
     agents=[agent],
     teams=[team],

@@ -9,8 +9,6 @@ from agno.os.config import (
     MemoryConfig,
     MemoryDomainConfig,
 )
-from agno.os.interfaces.slack import Slack
-from agno.os.interfaces.whatsapp import Whatsapp
 from agno.team import Team
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
@@ -55,9 +53,10 @@ basic_workflow = Workflow(
 # Setup our AgentOS app
 agent_os = AgentOS(
     description="Your AgentOS",
-    os_id="0001",
+    id="basic-os",
     agents=[basic_agent],
-    interfaces=[Whatsapp(agent=basic_agent), Slack(agent=basic_agent)],
+    teams=[basic_team],
+    workflows=[basic_workflow],
     # Configuration for the AgentOS
     config=AgentOSConfig(
         chat=ChatConfig(
