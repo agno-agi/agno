@@ -15,8 +15,10 @@ contents_db = PostgresDb(
 )
 
 vector_db = PgVector(
-    table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+    table_name="vectors",
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
 )
+
 # Create Knowledge Instance
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
@@ -25,10 +27,11 @@ knowledge = Knowledge(
     contents_db=contents_db,
 )
 
+
 asyncio.run(
     knowledge.add_content_async(
         name="CV",
-        path="cookbook/knowledge/testing_resources/cv_1.pdf",
+        path="cookbook/knowledge/testing_resources/manual.pdf",
         metadata={"user_tag": "Engineering Candidates"},
     )
 )
