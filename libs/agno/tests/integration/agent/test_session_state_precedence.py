@@ -259,3 +259,26 @@ def test_session_state_precedence_streaming(shared_db):
     assert final_state["stream_test"] == "run_state"  # Run overrides
     assert final_state["run_key"] == "run_value"  # Run key
     assert final_state["db_key"] == "db_value"  # DB key preserved
+
+
+def test_session_state_overwriting(shared_db):
+    """Test the stored session_state can be overwritten by the run state."""
+    session_id = f"overwrite_test_{uuid.uuid4()}"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        session_state={"overwrite_test": "agent_default"},
+        session_id=session_id,
+        # Overwritting should work
+        overwrite_db_session_state=True,
+    )
+
+    agent.run("First run", session_state={"original_field": "original_value"})
+    assert agent.get_session_state()["original_field"] == "original_value"
+
+    agent.run("Second run", session_state={"new_field": "new_value"})
+
+    # Asserting the original session_state was overwritten
+    assert agent.get_session_state().get("original_field") is None
+    assert agent.get_session_state().get("new_field") == "new_value"
