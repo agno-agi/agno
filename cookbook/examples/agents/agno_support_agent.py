@@ -159,7 +159,7 @@ def create_agent(
             - Share best practices and common pitfalls
             - Suggest related topics to explore
 
-        5. **Quality Guardrails**
+        5. **Quality Checks**
             - Verify technical accuracy against documentation
             - Test all code examples by running them
             - Check that all aspects of the question are addressed

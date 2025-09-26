@@ -57,7 +57,7 @@ gitpython==3.1.45
     #   streamlit
 google-auth==2.40.3
     # via google-genai
-google-genai==1.35.0
+google-genai==1.34.0
     # via -r cookbook/examples/streamlit_apps/mcp_agent/requirements.in
 groq==0.31.1
     # via -r cookbook/examples/streamlit_apps/mcp_agent/requirements.in
@@ -114,7 +114,7 @@ narwhals==2.4.0
     # via altair
 nest-asyncio==1.6.0
     # via -r cookbook/examples/streamlit_apps/mcp_agent/requirements.in
-numpy==2.3.3
+numpy==2.3.2
     # via
     #   lancedb
     #   pandas

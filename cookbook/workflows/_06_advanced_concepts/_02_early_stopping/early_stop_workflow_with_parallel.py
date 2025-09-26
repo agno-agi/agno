@@ -63,7 +63,7 @@ review_step = Step(name="Review Article", agent=reviewer)
 
 # Create workflow with parallel safety/quality checks
 workflow = Workflow(
-    name="Content Creation with Parallel Safety Guardrails",
+    name="Content Creation with Parallel Safety Checks",
     description="Creates content with parallel safety and quality checks that can stop the workflow",
     steps=[
         Parallel(

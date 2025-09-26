@@ -81,7 +81,7 @@ narwhals==2.4.0
     # via altair
 nest-asyncio==1.6.0
     # via -r cookbook/examples/streamlit_apps/image_generation/requirements.in
-numpy==2.3.3
+numpy==2.3.2
     # via
     #   onnxruntime
     #   opencv-python
