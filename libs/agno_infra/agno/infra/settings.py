@@ -93,8 +93,8 @@ class InfraSettings(BaseModel):
     # AWS Security Groups
     aws_security_group_ids: List[str] = []
 
-    @model_validator(mode='after')
-    def validate_and_set_computed_fields(self) -> 'InfraSettings':
+    @model_validator(mode="after")
+    def validate_and_set_computed_fields(self) -> "InfraSettings":
         """Validate and set computed fields after initialization."""
         self._validate_and_set_keys()
         self._validate_and_set_subnet_ids()
