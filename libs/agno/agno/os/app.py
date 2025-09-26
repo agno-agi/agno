@@ -135,7 +135,7 @@ class AgentOS:
         self.lifespan = lifespan
 
         # List of all MCP tools used inside the AgentOS
-        self.mcp_tools: List[Union["MCPTools", "MultiMCPTools"]] = []  # type: ignore
+        self.mcp_tools: List[Any] = []
 
         if self.agents:
             for agent in self.agents:
