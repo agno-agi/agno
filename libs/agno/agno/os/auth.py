@@ -36,3 +36,22 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         return True
 
     return auth_dependency
+
+
+def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
+    """
+    Validate a bearer token for WebSocket authentication.
+
+    Args:
+        token: The bearer token to validate
+        settings: The API settings containing the security key
+
+    Returns:
+        True if the token is valid or authentication is disabled, False otherwise
+    """
+    # If no security key is set, skip authentication entirely
+    if not settings or not settings.os_security_key:
+        return True
+
+    # Verify the token matches the configured security key
+    return token == settings.os_security_key

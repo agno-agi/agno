@@ -1,7 +1,9 @@
 import hashlib
 import json
 import re
+import uuid
 from typing import Optional, Type
+from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
@@ -156,6 +158,15 @@ def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Opti
 def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Optional[BaseModel]:
     structured_output = None
 
+    # Extract thinking content first to prevent <think> tags from corrupting JSON
+    from agno.utils.reasoning import extract_thinking_content
+
+    # handle thinking content b/w <think> tags
+    if "</think>" in content:
+        reasoning_content, output_content = extract_thinking_content(content)
+        if reasoning_content:
+            content = output_content
+
     # Clean content first to simplify all parsing attempts
     cleaned_content = _clean_json_content(content)
 
@@ -188,3 +199,33 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
                     logger.warning("All parsing attempts failed.")
 
     return structured_output
+
+
+def generate_id(seed: Optional[str] = None) -> str:
+    """
+    Generate a deterministic UUID5 based on a seed string.
+    If no seed is provided, generate a random UUID4.
+
+    Args:
+        seed (str): The seed string to generate the UUID from.
+
+    Returns:
+        str: A deterministic UUID5 string.
+    """
+    if seed is None:
+        return str(uuid4())
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, seed))
+
+
+def generate_id_from_name(name: Optional[str] = None) -> str:
+    """
+    Generate a deterministic ID from a name string.
+    If no name is provided, generate a random UUID4.
+
+    Args:
+        name (str): The name string to generate the ID from.
+    """
+    if name:
+        return name.lower().replace(" ", "-").replace("_", "-")
+    else:
+        return str(uuid4())

@@ -106,23 +106,35 @@ class WebsiteReader(Reader):
             """
             Check if the tag matches any of the relevant tags or class names
             """
-            if tag.name in ["article", "main"]:
+            if not isinstance(tag, Tag):
+                return False
+
+            if tag.name in ["article", "main", "section"]:
                 return True
-            if any(cls in ["content", "main-content", "post-content"] for cls in tag.get("class", [])):  # type: ignore
+
+            classes = tag.get("class", [])
+            content_classes = ["content", "main-content", "post-content", "entry-content", "article-body"]
+            if any(cls in content_classes for cls in classes):
                 return True
+
+            # Check for common content IDs
+            tag_id = tag.get("id", "")
+            if tag_id in ["content", "main", "article"]:
+                return True
+
             return False
 
-        # Use a single call to 'find' with a custom function to match tags or classes
+        # Try to find main content element
         element = soup.find(match)
         if element:
+            # Remove common unwanted elements from the found content
+            for unwanted in element.find_all(["script", "style", "nav", "header", "footer"]):
+                unwanted.decompose()
             return element.get_text(strip=True, separator=" ")
 
-        # If we only have a div without specific content classes, return empty string
-        if soup.find("div") and not any(
-            soup.find(class_=class_name) for class_name in ["content", "main-content", "post-content"]
-        ):
-            return ""
-
+        # Fallback: get full page content
+        for unwanted in soup.find_all(["script", "style", "nav", "header", "footer"]):
+            unwanted.decompose()
         return soup.get_text(strip=True, separator=" ")
 
     def crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
@@ -164,7 +176,7 @@ class WebsiteReader(Reader):
             if (
                 current_url in self._visited
                 or not urlparse(current_url).netloc.endswith(primary_domain)
-                or current_depth > self.max_depth
+                or (current_depth > self.max_depth and current_url != url)
                 or num_links >= self.max_links
             ):
                 continue
@@ -174,13 +186,14 @@ class WebsiteReader(Reader):
 
             try:
                 log_debug(f"Crawling: {current_url}")
-                response = (
-                    httpx.get(current_url, timeout=self.timeout, proxy=self.proxy)
-                    if self.proxy
-                    else httpx.get(current_url, timeout=self.timeout)
-                )
 
+                response = (
+                    httpx.get(current_url, timeout=self.timeout, proxy=self.proxy, follow_redirects=True)
+                    if self.proxy
+                    else httpx.get(current_url, timeout=self.timeout, follow_redirects=True)
+                )
                 response.raise_for_status()
+
                 soup = BeautifulSoup(response.content, "html.parser")
 
                 # Extract main content
@@ -213,9 +226,13 @@ class WebsiteReader(Reader):
 
             except httpx.HTTPStatusError as e:
                 # Log HTTP status errors but continue crawling other pages
-                logger.warning(f"HTTP status error while crawling {current_url}: {e}")
-                # For the initial URL, we should raise the error
-                if current_url == url and not crawler_result:
+                # Skip redirect errors (3xx) as they should be handled by follow_redirects
+                if e.response.status_code >= 300 and e.response.status_code < 400:
+                    logger.debug(f"Redirect encountered for {current_url}, skipping: {e}")
+                else:
+                    logger.warning(f"HTTP status error while crawling {current_url}: {e}")
+                # For the initial URL, we should raise the error only if it's not a redirect
+                if current_url == url and not crawler_result and not (300 <= e.response.status_code < 400):
                     raise
             except httpx.RequestError as e:
                 # Log request errors but continue crawling other pages

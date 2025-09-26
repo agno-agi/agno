@@ -14,6 +14,79 @@ from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.utils.log import log_error
 
+@dataclass
+class TeamRunInput:
+    """Container for the raw input data passed to Agent.run().
+    This captures the original input exactly as provided by the user,
+    separate from the processed messages that go to the model.
+    Attributes:
+        input_content: The literal input message/content passed to run()
+        images: Images directly passed to run()
+        videos: Videos directly passed to run()
+        audios: Audio files directly passed to run()
+        files: Files directly passed to run()
+    """
+
+    input_content: Union[str, List, Dict, Message, BaseModel, List[Message]]
+    images: Optional[Sequence[Image]] = None
+    videos: Optional[Sequence[Video]] = None
+    audios: Optional[Sequence[Audio]] = None
+    files: Optional[Sequence[File]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation"""
+        result: Dict[str, Any] = {}
+
+        if self.input_content is not None:
+            if isinstance(self.input_content, (str)):
+                result["input_content"] = self.input_content
+            elif isinstance(self.input_content, BaseModel):
+                result["input_content"] = self.input_content.model_dump(exclude_none=True)
+            elif isinstance(self.input_content, Message):
+                result["input_content"] = self.input_content.to_dict()
+            elif (
+                isinstance(self.input_content, list)
+                and self.input_content
+                and isinstance(self.input_content[0], Message)
+            ):
+                result["input_content"] = [m.to_dict() for m in self.input_content]
+            else:
+                result["input_content"] = self.input_content
+
+        if self.images:
+            result["images"] = [img.to_dict() for img in self.images]
+        if self.videos:
+            result["videos"] = [vid.to_dict() for vid in self.videos]
+        if self.audios:
+            result["audios"] = [aud.to_dict() for aud in self.audios]
+        if self.files:
+            result["files"] = [file.to_dict() for file in self.files]
+
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TeamRunInput":
+        """Create TeamRunInput from dictionary"""
+        images = None
+        if data.get("images"):
+            images = [Image.model_validate(img_data) for img_data in data["images"]]
+
+        videos = None
+        if data.get("videos"):
+            videos = [Video.model_validate(vid_data) for vid_data in data["videos"]]
+
+        audios = None
+        if data.get("audios"):
+            audios = [Audio.model_validate(aud_data) for aud_data in data["audios"]]
+
+        files = None
+        if data.get("files"):
+            files = [File.model_validate(file_data) for file_data in data["files"]]
+
+        return cls(
+            input_content=data.get("input_content", ""), images=images, videos=videos, audios=audios, files=files
+        )
+
 
 class TeamRunEvent(str, Enum):
     """Events that can be sent by the run() functions"""
@@ -24,6 +97,9 @@ class TeamRunEvent(str, Enum):
     run_completed = "TeamRunCompleted"
     run_error = "TeamRunError"
     run_cancelled = "TeamRunCancelled"
+    
+    pre_hook_started = "TeamPreHookStarted"
+    pre_hook_completed = "TeamPreHookCompleted"
 
     tool_call_started = "TeamToolCallStarted"
     tool_call_completed = "TeamToolCallCompleted"
@@ -98,6 +174,7 @@ class RunContentEvent(BaseTeamRunEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: Optional[str] = None
+    model_provider_data: Optional[Dict[str, Any]] = None
     citations: Optional[Citations] = None
     response_audio: Optional[Audio] = None  # Model audio response
     image: Optional[Image] = None  # Image attached to the response
@@ -121,6 +198,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
+    model_provider_data: Optional[Dict[str, Any]] = None
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
@@ -148,6 +226,20 @@ class RunCancelledEvent(BaseTeamRunEvent):
     @property
     def is_cancelled(self):
         return True
+    
+
+@dataclass
+class PreHookStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.pre_hook_started.value
+    pre_hook_name: Optional[str] = None
+    run_input: Optional[TeamRunInput] = None
+
+
+@dataclass
+class PreHookCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.pre_hook_completed.value
+    pre_hook_name: Optional[str] = None
+    run_input: Optional[TeamRunInput] = None
 
 
 @dataclass
@@ -228,6 +320,8 @@ TeamRunOutputEvent = Union[
     RunCompletedEvent,
     RunErrorEvent,
     RunCancelledEvent,
+    PreHookStartedEvent,
+    PreHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningCompletedEvent,
@@ -250,6 +344,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_completed.value: RunCompletedEvent,
     TeamRunEvent.run_error.value: RunErrorEvent,
     TeamRunEvent.run_cancelled.value: RunCancelledEvent,
+    TeamRunEvent.pre_hook_started.value: PreHookStartedEvent,
+    TeamRunEvent.pre_hook_completed.value: PreHookCompletedEvent,
     TeamRunEvent.reasoning_started.value: ReasoningStartedEvent,
     TeamRunEvent.reasoning_step.value: ReasoningStepEvent,
     TeamRunEvent.reasoning_completed.value: ReasoningCompletedEvent,
@@ -276,77 +372,6 @@ def team_run_output_event_from_dict(data: dict) -> BaseTeamRunEvent:
     return event_class.from_dict(data)  # type: ignore
 
 
-@dataclass
-class TeamRunInput:
-    """Container for the raw input data passed to Agent.run().
-    This captures the original input exactly as provided by the user,
-    separate from the processed messages that go to the model.
-    Attributes:
-        input_content: The literal input message/content passed to run()
-        images: Images directly passed to run()
-        videos: Videos directly passed to run()
-        audios: Audio files directly passed to run()
-        files: Files directly passed to run()
-    """
-
-    input_content: Union[str, List, Dict, Message, BaseModel, List[Message]]
-    images: Optional[Sequence[Image]] = None
-    videos: Optional[Sequence[Video]] = None
-    audios: Optional[Sequence[Audio]] = None
-    files: Optional[Sequence[File]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary representation"""
-        result: Dict[str, Any] = {}
-
-        if self.input_content is not None:
-            if isinstance(self.input_content, (str)):
-                result["input_content"] = self.input_content
-            elif isinstance(self.input_content, BaseModel):
-                result["input_content"] = self.input_content.model_dump(exclude_none=True)
-            elif isinstance(self.input_content, Message):
-                result["input_content"] = self.input_content.to_dict()
-            elif (
-                isinstance(self.input_content, list)
-                and self.input_content
-                and isinstance(self.input_content[0], Message)
-            ):
-                result["input_content"] = [m.to_dict() for m in self.input_content]
-            else:
-                result["input_content"] = self.input_content
-
-        if self.images:
-            result["images"] = [img.to_dict() for img in self.images]
-        if self.videos:
-            result["videos"] = [vid.to_dict() for vid in self.videos]
-        if self.audios:
-            result["audios"] = [aud.to_dict() for aud in self.audios]
-
-        return result
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "TeamRunInput":
-        """Create TeamRunInput from dictionary"""
-        images = None
-        if data.get("images"):
-            images = [Image.model_validate(img_data) for img_data in data["images"]]
-
-        videos = None
-        if data.get("videos"):
-            videos = [Video.model_validate(vid_data) for vid_data in data["videos"]]
-
-        audios = None
-        if data.get("audios"):
-            audios = [Audio.model_validate(aud_data) for aud_data in data["audios"]]
-
-        files = None
-        if data.get("files"):
-            files = [File.model_validate(file_data) for file_data in data["files"]]
-
-        return cls(
-            input_content=data.get("input_content", ""), images=images, videos=videos, audios=audios, files=files
-        )
-
 
 @dataclass
 class TeamRunOutput:
@@ -372,6 +397,7 @@ class TeamRunOutput:
     images: Optional[List[Image]] = None  # Images from member runs
     videos: Optional[List[Video]] = None  # Videos from member runs
     audio: Optional[List[Audio]] = None  # Audio from member runs
+    files: Optional[List[File]] = None  # Files from member runs
 
     response_audio: Optional[Audio] = None  # Model audio response
 
@@ -381,7 +407,7 @@ class TeamRunOutput:
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None
-
+    model_provider_data: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
 
     references: Optional[List[MessageReferences]] = None
@@ -421,6 +447,7 @@ class TeamRunOutput:
                 "images",
                 "videos",
                 "audio",
+                "files",
                 "response_audio",
                 "citations",
                 "events",
@@ -462,6 +489,9 @@ class TeamRunOutput:
 
         if self.audio is not None:
             _dict["audio"] = [aud.to_dict() for aud in self.audio]
+
+        if self.files is not None:
+            _dict["files"] = [file.to_dict() for file in self.files]
 
         if self.response_audio is not None:
             _dict["response_audio"] = self.response_audio.to_dict()
@@ -521,7 +551,7 @@ class TeamRunOutput:
         events = final_events
 
         messages = data.pop("messages", None)
-        messages = [Message.model_validate(message) for message in messages] if messages else None
+        messages = [Message.from_dict(message) for message in messages] if messages else None
 
         member_responses = data.pop("member_responses", [])
         parsed_member_responses: List[Union["TeamRunOutput", RunOutput]] = []
@@ -534,7 +564,7 @@ class TeamRunOutput:
 
         additional_input = data.pop("additional_input", None)
         if additional_input is not None:
-            additional_input = [Message.model_validate(message) for message in additional_input]
+            additional_input = [Message.from_dict(message) for message in additional_input]
 
         reasoning_steps = data.pop("reasoning_steps", None)
         if reasoning_steps is not None:
@@ -542,7 +572,7 @@ class TeamRunOutput:
 
         reasoning_messages = data.pop("reasoning_messages", None)
         if reasoning_messages is not None:
-            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
+            reasoning_messages = [Message.from_dict(message) for message in reasoning_messages]
 
         references = data.pop("references", None)
         if references is not None:
@@ -556,6 +586,9 @@ class TeamRunOutput:
 
         audio = data.pop("audio", [])
         audio = [Audio.model_validate(audio) for audio in audio] if audio else None
+
+        files = data.pop("files", [])
+        files = [File.model_validate(file) for file in files] if files else None
 
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
@@ -586,6 +619,7 @@ class TeamRunOutput:
             images=images,
             videos=videos,
             audio=audio,
+            files=files,
             response_audio=response_audio,
             input=input_obj,
             citations=citations,
@@ -620,3 +654,7 @@ class TeamRunOutput:
             if self.audio is None:
                 self.audio = []
             self.audio.extend(run_response.audio)
+        if run_response.files is not None:
+            if self.files is None:
+                self.files = []
+            self.files.extend(run_response.files)

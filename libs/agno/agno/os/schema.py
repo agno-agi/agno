@@ -461,11 +461,8 @@ class TeamResponse(BaseModel):
             "stream_member_events": False,
         }
 
-        if team.model is None:
-            raise ValueError("Team model is required")
-
         team.determine_tools_for_model(
-            model=team.model,
+            model=team.model,  # type: ignore
             session=TeamSession(session_id=str(uuid4()), session_data={}),
             run_response=TeamRunOutput(run_id=str(uuid4())),
             async_mode=True,
@@ -763,8 +760,10 @@ class TeamSessionDetailSchema(BaseModel):
     session_state: Optional[dict]
     metrics: Optional[dict]
     team_data: Optional[dict]
+    chat_history: Optional[List[dict]]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
+    total_tokens: Optional[int]
 
     @classmethod
     def from_session(cls, session: TeamSession) -> "TeamSessionDetailSchema":
@@ -783,6 +782,7 @@ class TeamSessionDetailSchema(BaseModel):
             if session.session_data
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
+            chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
         )
@@ -833,11 +833,14 @@ class RunSchema(BaseModel):
     content: Optional[Union[str, dict]]
     run_response_format: Optional[str]
     reasoning_content: Optional[str]
+    reasoning_steps: Optional[List[dict]]
     metrics: Optional[dict]
     messages: Optional[List[dict]]
     tools: Optional[List[dict]]
     events: Optional[List[dict]]
     created_at: Optional[datetime]
+    references: Optional[List[dict]]
+    reasoning_messages: Optional[List[dict]]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -852,10 +855,13 @@ class RunSchema(BaseModel):
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
             reasoning_content=run_dict.get("reasoning_content", ""),
+            reasoning_steps=run_dict.get("reasoning_steps", []),
             metrics=run_dict.get("metrics", {}),
             messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
             tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
+            references=run_dict.get("references", []),
+            reasoning_messages=run_dict.get("reasoning_messages", []),
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
             else None,
@@ -868,6 +874,7 @@ class TeamRunSchema(BaseModel):
     team_id: Optional[str]
     content: Optional[Union[str, dict]]
     reasoning_content: Optional[str]
+    reasoning_steps: Optional[List[dict]]
     run_input: Optional[str]
     run_response_format: Optional[str]
     metrics: Optional[dict]
@@ -875,6 +882,8 @@ class TeamRunSchema(BaseModel):
     messages: Optional[List[dict]]
     events: Optional[List[dict]]
     created_at: Optional[datetime]
+    references: Optional[List[dict]]
+    reasoning_messages: Optional[List[dict]]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -888,6 +897,7 @@ class TeamRunSchema(BaseModel):
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
             reasoning_content=run_dict.get("reasoning_content", ""),
+            reasoning_steps=run_dict.get("reasoning_steps", []),
             metrics=run_dict.get("metrics", {}),
             messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
             tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
@@ -895,6 +905,8 @@ class TeamRunSchema(BaseModel):
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
             else None,
+            references=run_dict.get("references", []),
+            reasoning_messages=run_dict.get("reasoning_messages", []),
         )
 
 
@@ -910,6 +922,10 @@ class WorkflowRunSchema(BaseModel):
     step_executor_runs: Optional[list[dict]]
     metrics: Optional[dict]
     created_at: Optional[int]
+    reasoning_content: Optional[str]
+    reasoning_steps: Optional[List[dict]]
+    references: Optional[List[dict]]
+    reasoning_messages: Optional[List[dict]]
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
@@ -926,6 +942,10 @@ class WorkflowRunSchema(BaseModel):
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),
             created_at=run_response["created_at"],
+            reasoning_content=run_response.get("reasoning_content", ""),
+            reasoning_steps=run_response.get("reasoning_steps", []),
+            references=run_response.get("references", []),
+            reasoning_messages=run_response.get("reasoning_messages", []),
         )
 
 

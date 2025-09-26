@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Optional
 
@@ -23,6 +23,6 @@ class OpenRouter(OpenAILike):
     name: str = "OpenRouter"
     provider: str = "OpenRouter"
 
-    api_key: Optional[str] = getenv("OPENROUTER_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("OPENROUTER_API_KEY"))
     base_url: str = "https://openrouter.ai/api/v1"
     max_tokens: int = 1024

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Optional
 
@@ -22,5 +22,5 @@ class V0(OpenAILike):
     name: str = "v0"
     provider: str = "Vercel"
 
-    api_key: Optional[str] = getenv("V0_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("V0_API_KEY"))
     base_url: str = "https://api.v0.dev/v1/"

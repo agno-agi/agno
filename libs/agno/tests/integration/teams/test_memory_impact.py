@@ -404,6 +404,7 @@ async def test_team_memory_with_multiple_members(shared_db):
                         "MockUsage", (), {"total_tokens": 100, "prompt_tokens": 50, "completion_tokens": 50}
                     )(),
                     "finish_reason": "stop",
+                    "provider_data": None,
                     "images": [],
                     "videos": [],
                     "audios": [],

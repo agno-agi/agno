@@ -202,7 +202,9 @@ def up(
 
     # Check for docker compose files
     current_dir = Path.cwd()
-    compose_files = find_compose_files(current_dir) or find_compose_files(Path(agno_config.active_infra_dir))  # type: ignore
+    compose_files = find_compose_files(current_dir)
+    if not compose_files and agno_config.active_infra_dir:
+        compose_files = find_compose_files(Path(agno_config.active_infra_dir))
     if infra_to_start is None and not compose_files:
         return
     elif compose_files:
@@ -389,7 +391,10 @@ def down(
 
     # Check for docker compose files
     current_dir = Path.cwd()
-    compose_files = find_compose_files(current_dir) or find_compose_files(Path(agno_config.active_infra_dir))  # type: ignore
+    compose_files = find_compose_files(current_dir)
+    if not compose_files and agno_config.active_infra_dir:
+        compose_files = find_compose_files(Path(agno_config.active_infra_dir))
+
     if infra_to_stop is None and not compose_files:
         return
     elif compose_files:

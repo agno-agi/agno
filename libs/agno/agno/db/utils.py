@@ -1,7 +1,6 @@
 """Logic shared across different database implementations"""
 
 import json
-import uuid
 from datetime import date, datetime
 from uuid import UUID
 
@@ -87,16 +86,3 @@ def deserialize_session_json_fields(session: dict) -> dict:
             session["runs"] = json.loads(session["runs"])
 
     return session
-
-
-def generate_deterministic_id(seed: str) -> str:
-    """
-    Generate a deterministic UUID5 based on a seed string.
-
-    Args:
-        seed (str): The seed string to generate the UUID from.
-
-    Returns:
-        str: A deterministic UUID5 string.
-    """
-    return str(uuid.uuid5(uuid.NAMESPACE_DNS, seed))

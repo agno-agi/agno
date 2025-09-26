@@ -1,5 +1,5 @@
 """
-Async example using Mistral with tool calls.
+Async example using Nvidia with tool calls.
 """
 
 import asyncio

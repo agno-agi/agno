@@ -1,4 +1,4 @@
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.media import Audio, Image
 from agno.models.message import Citations
@@ -19,13 +19,16 @@ from agno.run.agent import (
     RunContentEvent,
     RunContinuedEvent,
     RunErrorEvent,
+    RunInput,
     RunOutput,
     RunPausedEvent,
     RunStartedEvent,
+    PreHookStartedEvent,
+    PreHookCompletedEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
-from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
+from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent, TeamRunInput
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent
 from agno.run.team import OutputModelResponseStartedEvent as TeamOutputModelResponseStartedEvent
@@ -40,6 +43,8 @@ from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import TeamRunOutput
+from agno.run.team import PreHookStartedEvent as TeamPreHookStartedEvent
+from agno.run.team import PreHookCompletedEvent as TeamPreHookCompletedEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 
@@ -76,6 +81,7 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         content_type=from_run_response.content_type,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
         citations=from_run_response.citations,  # type: ignore
+        model_provider_data=from_run_response.model_provider_data,  # type: ignore
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
@@ -100,6 +106,7 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         content_type=from_run_response.content_type,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
         citations=from_run_response.citations,  # type: ignore
+        model_provider_data=from_run_response.model_provider_data,  # type: ignore
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
@@ -173,6 +180,54 @@ def create_run_cancelled_event(from_run_response: RunOutput, reason: str) -> Run
         run_id=from_run_response.run_id,
         reason=reason,
     )
+
+
+
+def create_pre_hook_started_event(from_run_response: RunOutput, pre_hook_name: Optional[str] = None, run_input: Optional[RunInput] = None) -> PreHookStartedEvent:
+    from copy import deepcopy
+    return PreHookStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        pre_hook_name=pre_hook_name,
+        run_input=deepcopy(run_input),
+    )
+
+def create_team_pre_hook_started_event(from_run_response: TeamRunOutput, pre_hook_name: Optional[str] = None, run_input: Optional[TeamRunInput] = None) -> TeamPreHookStartedEvent:
+    from copy import deepcopy
+    return TeamPreHookStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        pre_hook_name=pre_hook_name,
+        run_input=deepcopy(run_input),
+    )
+    
+
+def create_pre_hook_completed_event(from_run_response: RunOutput, pre_hook_name: Optional[str] = None, run_input: Optional[RunInput] = None) -> PreHookCompletedEvent:
+    from copy import deepcopy
+    return PreHookCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        pre_hook_name=pre_hook_name,
+        run_input=deepcopy(run_input),
+    )
+
+def create_team_pre_hook_completed_event(from_run_response: TeamRunOutput, pre_hook_name: Optional[str] = None, run_input: Optional[TeamRunInput] = None) -> TeamPreHookCompletedEvent:
+    from copy import deepcopy
+    return TeamPreHookCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        pre_hook_name=pre_hook_name,
+        run_input=deepcopy(run_input),
+    )
+
 
 
 def create_memory_update_started_event(from_run_response: RunOutput) -> MemoryUpdateStartedEvent:
@@ -343,6 +398,7 @@ def create_run_output_content_event(
     content_type: Optional[str] = None,
     reasoning_content: Optional[str] = None,
     redacted_reasoning_content: Optional[str] = None,
+    model_provider_data: Optional[Dict[str, Any]] = None,
     citations: Optional[Citations] = None,
     response_audio: Optional[Audio] = None,
     image: Optional[Image] = None,
@@ -364,6 +420,7 @@ def create_run_output_content_event(
         additional_input=from_run_response.additional_input,
         reasoning_steps=from_run_response.reasoning_steps,
         reasoning_messages=from_run_response.reasoning_messages,
+        model_provider_data=model_provider_data,
     )
 
 
@@ -374,6 +431,7 @@ def create_team_run_output_content_event(
     reasoning_content: Optional[str] = None,
     redacted_reasoning_content: Optional[str] = None,
     citations: Optional[Citations] = None,
+    model_provider_data: Optional[Dict[str, Any]] = None,
     response_audio: Optional[Audio] = None,
     image: Optional[Image] = None,
 ) -> TeamRunContentEvent:
@@ -388,6 +446,7 @@ def create_team_run_output_content_event(
         content_type=content_type or "str",
         reasoning_content=thinking_combined,
         citations=citations,
+        model_provider_data=model_provider_data,
         response_audio=response_audio,
         image=image,
         references=from_run_response.references,  # type: ignore

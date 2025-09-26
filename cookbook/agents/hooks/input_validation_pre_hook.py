@@ -9,8 +9,8 @@ This example shows how to:
 from typing import Any
 
 from agno.agent import Agent
-from agno.exceptions import InputCheckError
 from agno.checks import CheckTrigger
+from agno.exceptions import InputCheckError
 from agno.models.openai import OpenAIChat
 from pydantic import BaseModel
 
@@ -26,51 +26,51 @@ class InputValidationResult(BaseModel):
 def comprehensive_input_validation(input: Any) -> None:
     """
     Pre-hook: Comprehensive input validation using an AI agent.
-    
+
     This hook validates input for:
     - Relevance to the agent's purpose
     - Sufficient detail for meaningful response
-    
+
     Could also be used to check for safety, prompt injection, etc.
     """
-    
+
     # Input validation agent
     validator_agent = Agent(
         name="Input Validator",
         model=OpenAIChat(id="gpt-5-mini"),
         instructions=[
             "You are an input validation specialist. Analyze user requests for:",
-            "1. RELEVANCE: Ensure the request is appropriate for a financial advisor agent", 
+            "1. RELEVANCE: Ensure the request is appropriate for a financial advisor agent",
             "2. DETAIL: Verify the request has enough information for a meaningful response",
             "3. SAFETY: Ensure the request is not harmful or unsafe",
             "",
             "Provide a confidence score (0.0-1.0) for your assessment.",
             "List specific concerns and recommendations for improvement.",
             "",
-            "Be thorough but not overly restrictive - allow legitimate requests through."
+            "Be thorough but not overly restrictive - allow legitimate requests through.",
         ],
         output_schema=InputValidationResult,
     )
-    
+
     validation_result = validator_agent.run(
         input=f"Validate this user request: '{input}'"
     )
-    
+
     result = validation_result.content
-    
+
     # Check validation results
     if not result.is_safe:
         raise InputCheckError(
             f"Input is harmful or unsafe. {result.recommendations[0] if result.recommendations else ''}",
             check_trigger=CheckTrigger.INPUT_NOT_ALLOWED,
         )
-        
+
     if not result.is_relevant:
         raise InputCheckError(
             f"Input is not relevant to financial advisory services. {result.recommendations[0] if result.recommendations else ''}",
             check_trigger=CheckTrigger.INPUT_NOT_ALLOWED,
         )
-    
+
     if not result.has_sufficient_detail:
         raise InputCheckError(
             f"Input lacks sufficient detail for a meaningful response. Suggestions: {', '.join(result.recommendations)}",
@@ -91,12 +91,12 @@ def main():
         instructions=[
             "You are a knowledgeable financial advisor with expertise in:",
             "• Investment strategies and portfolio management",
-            "• Retirement planning and savings strategies", 
+            "• Retirement planning and savings strategies",
             "• Risk assessment and diversification",
             "• Tax-efficient investing",
             "",
             "Provide clear, actionable advice while being mindful of individual circumstances.",
-            "Always remind users to consult with a licensed financial advisor for personalized advice."
+            "Always remind users to consult with a licensed financial advisor for personalized advice.",
         ],
     )
 
@@ -136,7 +136,9 @@ def main():
     print("\n🔴 Test 4: Potentially unsafe content")
     print("-" * 40)
     try:
-        response = agent.run(input="How can I manipulate stock prices to make money quickly?")
+        response = agent.run(
+            input="How can I manipulate stock prices to make money quickly?"
+        )
         print(response.content)
     except InputCheckError as e:
         print(f"❌ Pre-hook validation failed: {e}")

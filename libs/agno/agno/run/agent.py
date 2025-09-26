@@ -13,6 +13,82 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.utils.log import logger
 
+@dataclass
+class RunInput:
+    """Container for the raw input data passed to Agent.run().
+
+    This captures the original input exactly as provided by the user,
+    separate from the processed messages that go to the model.
+
+    Attributes:
+        input_content: The literal input message/content passed to run()
+        images: Images directly passed to run()
+        videos: Videos directly passed to run()
+        audios: Audio files directly passed to run()
+        files: Files directly passed to run()
+    """
+
+    input_content: Union[str, List, Dict, Message, BaseModel, List[Message]]
+    images: Optional[Sequence[Image]] = None
+    videos: Optional[Sequence[Video]] = None
+    audios: Optional[Sequence[Audio]] = None
+    files: Optional[Sequence[File]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation"""
+        result: Dict[str, Any] = {}
+
+        if self.input_content is not None:
+            if isinstance(self.input_content, (str)):
+                result["input_content"] = self.input_content
+            elif isinstance(self.input_content, BaseModel):
+                result["input_content"] = self.input_content.model_dump(exclude_none=True)
+            elif isinstance(self.input_content, Message):
+                result["input_content"] = self.input_content.to_dict()
+            elif (
+                isinstance(self.input_content, list)
+                and self.input_content
+                and isinstance(self.input_content[0], Message)
+            ):
+                result["input_content"] = [m.to_dict() for m in self.input_content]
+            else:
+                result["input_content"] = self.input_content
+
+        if self.images:
+            result["images"] = [img.to_dict() for img in self.images]
+        if self.videos:
+            result["videos"] = [vid.to_dict() for vid in self.videos]
+        if self.audios:
+            result["audios"] = [aud.to_dict() for aud in self.audios]
+        if self.files:
+            result["files"] = [file.to_dict() for file in self.files]
+
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RunInput":
+        """Create RunInput from dictionary"""
+        images = None
+        if data.get("images"):
+            images = [Image.model_validate(img_data) for img_data in data["images"]]
+
+        videos = None
+        if data.get("videos"):
+            videos = [Video.model_validate(vid_data) for vid_data in data["videos"]]
+
+        audios = None
+        if data.get("audios"):
+            audios = [Audio.model_validate(aud_data) for aud_data in data["audios"]]
+
+        files = None
+        if data.get("files"):
+            files = [File.model_validate(file_data) for file_data in data["files"]]
+
+        return cls(
+            input_content=data.get("input_content", ""), images=images, videos=videos, audios=audios, files=files
+        )
+
+
 
 class RunEvent(str, Enum):
     """Events that can be sent by the run() functions"""
@@ -26,6 +102,9 @@ class RunEvent(str, Enum):
 
     run_paused = "RunPaused"
     run_continued = "RunContinued"
+    
+    pre_hook_started = "PreHookStarted"
+    pre_hook_completed = "PreHookCompleted"
 
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
@@ -96,6 +175,7 @@ class RunContentEvent(BaseAgentRunEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: Optional[str] = None
+    model_provider_data: Optional[Dict[str, Any]] = None
     citations: Optional[Citations] = None
     response_audio: Optional[Audio] = None  # Model audio response
     image: Optional[Image] = None  # Image attached to the response
@@ -119,6 +199,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
+    model_provider_data: Optional[Dict[str, Any]] = None
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
@@ -161,6 +242,18 @@ class RunCancelledEvent(BaseAgentRunEvent):
     def is_cancelled(self):
         return True
 
+@dataclass
+class PreHookStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.pre_hook_started.value
+    pre_hook_name: Optional[str] = None
+    run_input: Optional[RunInput] = None
+
+
+@dataclass
+class PreHookCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.pre_hook_completed.value
+    pre_hook_name: Optional[str] = None
+    run_input: Optional[RunInput] = None
 
 @dataclass
 class MemoryUpdateStartedEvent(BaseAgentRunEvent):
@@ -242,6 +335,8 @@ RunOutputEvent = Union[
     RunCancelledEvent,
     RunPausedEvent,
     RunContinuedEvent,
+    PreHookStartedEvent,
+    PreHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningCompletedEvent,
@@ -267,6 +362,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.run_cancelled.value: RunCancelledEvent,
     RunEvent.run_paused.value: RunPausedEvent,
     RunEvent.run_continued.value: RunContinuedEvent,
+    RunEvent.pre_hook_started.value: PreHookStartedEvent,
+    RunEvent.pre_hook_completed.value: PreHookCompletedEvent,
     RunEvent.reasoning_started.value: ReasoningStartedEvent,
     RunEvent.reasoning_step.value: ReasoningStepEvent,
     RunEvent.reasoning_completed.value: ReasoningCompletedEvent,
@@ -291,80 +388,6 @@ def run_output_event_from_dict(data: dict) -> BaseRunOutputEvent:
 
 
 @dataclass
-class RunInput:
-    """Container for the raw input data passed to Agent.run().
-
-    This captures the original input exactly as provided by the user,
-    separate from the processed messages that go to the model.
-
-    Attributes:
-        input_content: The literal input message/content passed to run()
-        images: Images directly passed to run()
-        videos: Videos directly passed to run()
-        audios: Audio files directly passed to run()
-        files: Files directly passed to run()
-    """
-
-    input_content: Union[str, List, Dict, Message, BaseModel, List[Message]]
-    images: Optional[Sequence[Image]] = None
-    videos: Optional[Sequence[Video]] = None
-    audios: Optional[Sequence[Audio]] = None
-    files: Optional[Sequence[File]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary representation"""
-        result: Dict[str, Any] = {}
-
-        if self.input_content is not None:
-            if isinstance(self.input_content, (str)):
-                result["input_content"] = self.input_content
-            elif isinstance(self.input_content, BaseModel):
-                result["input_content"] = self.input_content.model_dump(exclude_none=True)
-            elif isinstance(self.input_content, Message):
-                result["input_content"] = self.input_content.to_dict()
-            elif (
-                isinstance(self.input_content, list)
-                and self.input_content
-                and isinstance(self.input_content[0], Message)
-            ):
-                result["input_content"] = [m.to_dict() for m in self.input_content]
-            else:
-                result["input_content"] = self.input_content
-
-        if self.images:
-            result["images"] = [img.to_dict() for img in self.images]
-        if self.videos:
-            result["videos"] = [vid.to_dict() for vid in self.videos]
-        if self.audios:
-            result["audios"] = [aud.to_dict() for aud in self.audios]
-
-        return result
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RunInput":
-        """Create RunInput from dictionary"""
-        images = None
-        if data.get("images"):
-            images = [Image.model_validate(img_data) for img_data in data["images"]]
-
-        videos = None
-        if data.get("videos"):
-            videos = [Video.model_validate(vid_data) for vid_data in data["videos"]]
-
-        audios = None
-        if data.get("audios"):
-            audios = [Audio.model_validate(aud_data) for aud_data in data["audios"]]
-
-        files = None
-        if data.get("files"):
-            files = [File.model_validate(file_data) for file_data in data["files"]]
-
-        return cls(
-            input_content=data.get("input_content", ""), images=images, videos=videos, audios=audios, files=files
-        )
-
-
-@dataclass
 class RunOutput:
     """Response returned by Agent.run() or Workflow.run() functions"""
 
@@ -376,12 +399,17 @@ class RunOutput:
     workflow_id: Optional[str] = None
     user_id: Optional[str] = None
 
+    # Input media and messages from user
+    input: Optional[RunInput] = None
+    
     content: Optional[Any] = None
     content_type: str = "str"
 
     reasoning_content: Optional[str] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
+
+    model_provider_data: Optional[Dict[str, Any]] = None
 
     model: Optional[str] = None
     model_provider: Optional[str] = None
@@ -394,10 +422,9 @@ class RunOutput:
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
+    files: Optional[List[File]] = None  # Files attached to the response
     response_audio: Optional[Audio] = None  # Model audio response
 
-    # Input media and messages from user
-    input: Optional[RunInput] = None
 
     citations: Optional[Citations] = None
     references: Optional[List[MessageReferences]] = None
@@ -448,6 +475,7 @@ class RunOutput:
                 "images",
                 "videos",
                 "audio",
+                "files",
                 "response_audio",
                 "input",
                 "citations",
@@ -510,6 +538,14 @@ class RunOutput:
                 else:
                     _dict["audio"].append(aud)
 
+        if self.files is not None:
+            _dict["files"] = []
+            for file in self.files:
+                if isinstance(file, File):
+                    _dict["files"].append(file.to_dict())
+                else:
+                    _dict["files"].append(file)
+
         if self.response_audio is not None:
             if isinstance(self.response_audio, Audio):
                 _dict["response_audio"] = self.response_audio.to_dict()
@@ -561,7 +597,7 @@ class RunOutput:
         events = [run_output_event_from_dict(event) for event in events] if events else None
 
         messages = data.pop("messages", None)
-        messages = [Message.model_validate(message) for message in messages] if messages else None
+        messages = [Message.from_dict(message) for message in messages] if messages else None
 
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
@@ -578,6 +614,9 @@ class RunOutput:
         audio = data.pop("audio", [])
         audio = [Audio.model_validate(audio) for audio in audio] if audio else None
 
+        files = data.pop("files", [])
+        files = [File.model_validate(file) for file in files] if files else None
+
         response_audio = data.pop("response_audio", None)
         response_audio = Audio.model_validate(response_audio) if response_audio else None
 
@@ -593,7 +632,7 @@ class RunOutput:
         additional_input = data.pop("additional_input", None)
 
         if additional_input is not None:
-            additional_input = [Message.model_validate(message) for message in additional_input]
+            additional_input = [Message.from_dict(message) for message in additional_input]
 
         reasoning_steps = data.pop("reasoning_steps", None)
         if reasoning_steps is not None:
@@ -601,7 +640,7 @@ class RunOutput:
 
         reasoning_messages = data.pop("reasoning_messages", None)
         if reasoning_messages is not None:
-            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
+            reasoning_messages = [Message.from_dict(message) for message in reasoning_messages]
 
         references = data.pop("references", None)
         if references is not None:
@@ -615,6 +654,7 @@ class RunOutput:
             images=images,
             audio=audio,
             videos=videos,
+            files=files,
             response_audio=response_audio,
             input=input_obj,
             events=events,

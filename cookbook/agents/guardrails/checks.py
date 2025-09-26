@@ -6,14 +6,12 @@ This example shows how to:
 """
 
 from agno.agent import Agent
+from agno.checks import Checks, CheckTrigger
 from agno.exceptions import InputCheckError, OutputCheckError
-from agno.checks import CheckTrigger
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunOutput
-from agno.checks import Checks
 from agno.utils.pprint import pprint_run_response
 from pydantic import BaseModel
-
 
 
 def main():

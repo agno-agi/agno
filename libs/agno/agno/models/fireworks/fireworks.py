@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Optional
 
@@ -22,5 +22,5 @@ class Fireworks(OpenAILike):
     name: str = "Fireworks"
     provider: str = "Fireworks"
 
-    api_key: Optional[str] = getenv("FIREWORKS_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("FIREWORKS_API_KEY"))
     base_url: str = "https://api.fireworks.ai/inference/v1"
