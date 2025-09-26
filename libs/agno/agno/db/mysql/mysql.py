@@ -757,7 +757,6 @@ class MySQLDb(BaseDb):
                 if agent_sessions:
                     agent_data = []
                     for session in agent_sessions:
-                        session_dict = session.to_dict()
                         serialized_session = serialize_session_json_fields(session.to_dict())
                         agent_data.append(
                             {
