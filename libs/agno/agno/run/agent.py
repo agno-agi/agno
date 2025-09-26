@@ -36,13 +36,12 @@ class RunInput:
     files: Optional[Sequence[File]] = None
 
     def input_content_string(self) -> str:
+        import json
         if isinstance(self.input_content, (str)):
             return self.input_content
         elif isinstance(self.input_content, BaseModel):
             return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, Message):
-            import json
-
             return json.dumps(self.input_content.to_dict())
         elif isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], Message):
             return json.dumps([m.to_dict() for m in self.input_content])
