@@ -5,14 +5,7 @@ from agno.tools.yfinance import YFinanceTools
 # Create an Agent with Groq and YFinanceTools
 finance_agent = Agent(
     model=Groq(id="deepseek-r1-distill-llama-70b-specdec"),
-    tools=[
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            stock_fundamentals=True,
-            company_info=True,
-        )
-    ],
+    tools=[YFinanceTools()],
     description="You are an investment analyst with deep expertise in market analysis",
     instructions=[
         "Use tables to display data where possible.",

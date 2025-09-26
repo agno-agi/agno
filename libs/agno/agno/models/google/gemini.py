@@ -16,9 +16,8 @@ from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.utils.gemini import convert_schema, format_function_definitions, format_image_for_message
+from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
     from google import genai
@@ -87,7 +86,7 @@ class Gemini(Model):
     presence_penalty: Optional[float] = None
     frequency_penalty: Optional[float] = None
     seed: Optional[int] = None
-    response_modalities: Optional[list[str]] = None  # "Text" and/or "Image"
+    response_modalities: Optional[list[str]] = None  # "TEXT", "IMAGE", and/or "AUDIO"
     speech_config: Optional[dict[str, Any]] = None
     cached_content: Optional[Any] = None
     thinking_budget: Optional[int] = None  # Thinking budget for Gemini 2.5 models
@@ -191,12 +190,9 @@ class Gemini(Model):
 
         if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             config["response_mime_type"] = "application/json"  # type: ignore
-            # Convert Pydantic model to JSON schema, then normalize for Gemini, then convert to Gemini schema format
-
-            # Get the normalized schema for Gemini
-            normalized_schema = get_response_schema_for_provider(response_format, "gemini")
-            gemini_schema = convert_schema(normalized_schema)
-            config["response_schema"] = gemini_schema
+            # Convert Pydantic model using our hybrid approach
+            # This will handle complex schemas with nested models, dicts, and circular refs
+            config["response_schema"] = prepare_response_schema(response_format)
 
         # Add thinking configuration
         thinking_config_params = {}
@@ -817,11 +813,21 @@ class Gemini(Model):
                                 model_response.content += content_str
 
                 if hasattr(part, "inline_data") and part.inline_data is not None:
-                    if model_response.images is None:
-                        model_response.images = []
-                    model_response.images.append(
-                        Image(id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type)
-                    )
+                    # Handle audio responses (for TTS models)
+                    if part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
+                        # Store raw bytes data
+                        model_response.audio = Audio(
+                            id=str(uuid4()),
+                            content=part.inline_data.data,
+                            mime_type=part.inline_data.mime_type,
+                        )
+                    # Image responses
+                    else:
+                        if model_response.images is None:
+                            model_response.images = []
+                        model_response.images.append(
+                            Image(id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type)
+                        )
 
                 # Extract function call if present
                 if hasattr(part, "function_call") and part.function_call is not None:
@@ -929,11 +935,23 @@ class Gemini(Model):
                                 model_response.content += text_content
 
                     if hasattr(part, "inline_data") and part.inline_data is not None:
-                        if model_response.images is None:
-                            model_response.images = []
-                        model_response.images.append(
-                            Image(id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type)
-                        )
+                        # Audio responses
+                        if part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
+                            # Store raw bytes audio data
+                            model_response.audio = Audio(
+                                id=str(uuid4()),
+                                content=part.inline_data.data,
+                                mime_type=part.inline_data.mime_type,
+                            )
+                        # Image responses
+                        else:
+                            if model_response.images is None:
+                                model_response.images = []
+                            model_response.images.append(
+                                Image(
+                                    id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                                )
+                            )
 
                     # Extract function call if present
                     if hasattr(part, "function_call") and part.function_call is not None:

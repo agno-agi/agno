@@ -464,7 +464,7 @@ class E2BTools(Toolkit):
 
             result = f"Contents of {directory_path}:\n"
             for file in files:
-                file_type = "Directory" if file.is_dir else "File"
+                file_type = "Directory" if file.type == "directory" else "File"
                 size = f"{file.size} bytes" if file.size is not None else "Unknown size"
                 result += f"- {file.name} ({file_type}, {size})\n"
 
@@ -486,12 +486,19 @@ class E2BTools(Toolkit):
         try:
             content = self.sandbox.files.read(file_path)
 
-            # Try to decode as text if encoding is provided
-            try:
-                text_content = content.decode(encoding)
-                return text_content
-            except UnicodeDecodeError:
-                return f"File read successfully but contains binary data ({len(content)} bytes). Use download_file_from_sandbox to save it."
+            # Check if content is already a string or if it's bytes that need decoding
+            if isinstance(content, str):
+                return content
+            elif isinstance(content, bytes):
+                # Try to decode as text if encoding is provided
+                try:
+                    text_content = content.decode(encoding)
+                    return text_content
+                except UnicodeDecodeError:
+                    return f"File read successfully but contains binary data ({len(content)} bytes). Use download_file_from_sandbox to save it."
+            else:
+                # Handle unexpected content type
+                return f"Unexpected content type: {type(content)}. Expected str or bytes."
 
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error reading file: {str(e)}"})

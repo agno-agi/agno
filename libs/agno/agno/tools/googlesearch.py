@@ -82,7 +82,7 @@ class GoogleSearchTools(Toolkit):
         log_debug(f"Searching Google [{language}] for: {query}")
 
         # Perform Google search using the googlesearch-python package
-        results = list(search(query, num=max_results, lang=language))
+        results = list(search(query, num_results=max_results, lang=language))
 
         # Collect the search results
         res: List[Dict[str, str]] = []

@@ -1,14 +1,14 @@
-# Agno Demo Agents
+# AgentOS Demo
 
-This cookbook contains a collection of demo agents that showcase the capabilities of Agno.
+This cookbook contains a collection of demo agents that showcase the capabilities of AgentOS.
 
 > Note: Fork and clone the repository if needed
 
 ### 1. Create a virtual environment
 
 ```shell
-uv venv --python 3.12
-source .venv/bin/activate
+uv venv .demoenv --python 3.12
+source .demoenv/bin/activate
 ```
 
 ### 2. Install libraries
@@ -76,10 +76,9 @@ export GROQ_API_KEY=***
 ### 6. Run the OS demo
 
 ```shell
-python cookbook/demo/os.py
+python cookbook/demo/run.py
 ```
 
 - Open [os.agno.com](https://os.agno.com/) and connect to your running OS to chat with the demo agents.
 
 ### 7. Message us on [discord](https://agno.link/discord) if you have any questions
-

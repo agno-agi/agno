@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.0.2"
+version = "2.0.10"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -111,6 +111,8 @@ memori = ["memorisdk"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
 psycopg = ["psycopg-binary", "psycopg"]
+reportlab = ["reportlab"]
+scrapegraph = ["scrapegraph-py"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -223,6 +225,7 @@ tools = [
   "agno[browserbase]",
   "agno[agentql]",
   "agno[opencv]",
+  "agno[scrapegraph]",
   "agno[valyu]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
@@ -232,6 +235,7 @@ tools = [
   "agno[memori]",
   "agno[google_bigquery]",
   "agno[psycopg]",
+  "agno[reportlab]",
   "agno[trafilatura]",
   "agno[neo4j]",
 ]
@@ -467,6 +471,7 @@ module = [
   "acouchbase.*",
   "zep_cloud.*",
   "oxylabs.*",
+  "reportlab.*",
   "surrealdb.*",
   "trafilatura.*"
 ]

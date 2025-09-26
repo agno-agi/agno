@@ -9,18 +9,18 @@ In addition you can pass your own lifespan to AgentOS.
 from contextlib import asynccontextmanager
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_info
 
 # Setup the database
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = SqliteDb(db_file="tmp/agentos.db")
 
 mcp_tools = MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")
 
-# Setup basic agents, teams and workflows
+# Setup basic support agent
 agno_support_agent = Agent(
     id="agno-support-agent",
     name="Agno Support Agent",
@@ -51,11 +51,11 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    """Run our AgentOS.
+    """Run your AgentOS.
 
     You can see test your AgentOS at:
     http://localhost:7777/docs
 
     """
     # Don't use reload=True here, this can cause issues with the lifespan
-    agent_os.serve(app="mcp_tools_example_existing_lifespan:app")
+    agent_os.serve(app="mcp_tools_existing_lifespan:app")

@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
 
@@ -115,8 +115,21 @@ class BaseRunOutputEvent:
 
         return _dict
 
-    def to_json(self) -> str:
+    def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
         import json
+        from datetime import date, datetime, time
+        from enum import Enum
+
+        def json_serializer(obj):
+            # Datetime like
+            if isinstance(obj, (datetime, date, time)):
+                return obj.isoformat()
+            # Enums
+            if isinstance(obj, Enum):
+                v = obj.value
+                return v if isinstance(v, (str, int, float, bool, type(None))) else obj.name
+            # Fallback to string
+            return str(obj)
 
         try:
             _dict = self.to_dict()
@@ -124,7 +137,10 @@ class BaseRunOutputEvent:
             log_error("Failed to convert response event to json", exc_info=True)
             raise
 
-        return json.dumps(_dict, indent=2)
+        if indent is None:
+            return json.dumps(_dict, separators=separators, default=json_serializer, ensure_ascii=False)
+        else:
+            return json.dumps(_dict, indent=indent, separators=separators, default=json_serializer, ensure_ascii=False)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]):

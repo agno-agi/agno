@@ -24,14 +24,7 @@ from agno.tools.yfinance import YFinanceTools
 finance_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            stock_fundamentals=True,
-            historical_prices=True,
-            company_info=True,
-            company_news=True,
-        )
+        YFinanceTools(),
     ],
     instructions=dedent("""\
         You are a seasoned Wall Street analyst with deep expertise in market analysis! 📊

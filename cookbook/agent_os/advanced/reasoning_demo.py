@@ -9,7 +9,6 @@ from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.knowledge import KnowledgeTools
 from agno.tools.reasoning import ReasoningTools
-from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -22,11 +21,8 @@ finance_agent = Agent(
     id="finance-agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
+        DuckDuckGoTools(
+            enable_news=True,
         )
     ],
     instructions=["Always use tables to display data"],
@@ -94,13 +90,12 @@ agno_docs = Knowledge(
         search_type=SearchType.hybrid,
     ),
 )
-agno_docs.add_content(name="Agno Docs", url="https://www.paulgraham.com/read.html")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,
-    think=True,
-    search=True,
-    analyze=True,
+    enable_think=True,
+    enable_search=True,
+    enable_analyze=True,
     add_few_shot=True,
 )
 knowledge_agent = Agent(
@@ -151,4 +146,5 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
+    agno_docs.add_content(name="Agno Docs", url="https://www.paulgraham.com/read.html")
     agent_os.serve(app="reasoning_demo:app", reload=True)

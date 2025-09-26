@@ -54,16 +54,18 @@ class TeamSession:
             log_warning("TeamSession is missing session_id")
             return None
 
-        if data.get("summary") is not None:
+        summary = data.get("summary")
+        if summary is not None and isinstance(summary, dict):
             data["summary"] = SessionSummary.from_dict(data["summary"])  # type: ignore
 
-        runs = data.get("runs", [])
+        runs = data.get("runs")
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
-        for run in runs:
-            if "agent_id" in run:
-                serialized_runs.append(RunOutput.from_dict(run))
-            elif "team_id" in run:
-                serialized_runs.append(TeamRunOutput.from_dict(run))
+        if runs is not None and isinstance(runs[0], dict):
+            for run in runs:
+                if "agent_id" in run:
+                    serialized_runs.append(RunOutput.from_dict(run))
+                elif "team_id" in run:
+                    serialized_runs.append(TeamRunOutput.from_dict(run))
 
         return cls(
             session_id=data.get("session_id"),  # type: ignore
@@ -92,6 +94,7 @@ class TeamSession:
         if messages is None:
             return
 
+        # Make message duration None
         for m in messages or []:
             if m.metrics is not None:
                 m.metrics.duration = None
@@ -159,12 +162,14 @@ class TeamSession:
                 continue
 
             for message in run_response.messages or []:
-                # Skip messages with specified role
-                if skip_role and message.role == skip_role:
-                    continue
                 # Skip messages that were tagged as history in previous runs
                 if hasattr(message, "from_history") and message.from_history and skip_history_messages:
                     continue
+
+                # Skip messages with specified role
+                if skip_role and message.role == skip_role:
+                    continue
+
                 if message.role == "system":
                     # Only add the system message once
                     if system_message is None:

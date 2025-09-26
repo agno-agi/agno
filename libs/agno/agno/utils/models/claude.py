@@ -69,11 +69,11 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     try:
         # Case 0: Image is an Anthropic uploaded file
         if image.content is not None and hasattr(image.content, "id"):
-            return {"type": "image", "source": {"type": "file", "file_id": image.content.id}}
+            content_bytes = image.content
 
         # Case 1: Image is a URL
         if image.url is not None:
-            return {"type": "image", "source": {"type": "url", "url": image.url}}
+            content_bytes = image.get_content_bytes()  # type: ignore
 
         # Case 2: Image is a local file path
         elif image.filepath is not None:
@@ -279,6 +279,15 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                             type="tool_use",
                         )
                     )
+        elif message.role == "tool":
+            content = []
+            content.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": message.tool_call_id,
+                    "content": str(message.content),
+                }
+            )
 
         # Skip empty assistant responses
         if message.role == "assistant" and not content:
