@@ -648,7 +648,6 @@ class FunctionCall(BaseModel):
             entrypoint_args["audios"] = self.function._audios
         if "files" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["files"] = self.function._files
-
         return entrypoint_args
 
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
