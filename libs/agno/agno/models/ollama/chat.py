@@ -11,6 +11,7 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
+from agno.utils.reasoning import extract_thinking_content
 
 try:
     from ollama import AsyncClient as AsyncOllamaClient
@@ -346,6 +347,16 @@ class Ollama(Model):
 
         if response_message.get("content") is not None:
             model_response.content = response_message.get("content")
+
+        # Extract thinking content between <think> tags if present
+        if model_response.content and model_response.content.find("<think>") != -1:
+            reasoning_content, clean_content = extract_thinking_content(model_response.content)
+
+            if reasoning_content:
+                # Store extracted thinking content separately
+                model_response.reasoning_content = reasoning_content
+                # Update main content with clean version
+                model_response.content = clean_content
 
         if response_message.get("tool_calls") is not None:
             if model_response.tool_calls is None:

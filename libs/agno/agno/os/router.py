@@ -72,6 +72,24 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
     sig = inspect.signature(endpoint_func)
     known_fields = set(sig.parameters.keys())
     kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
+
+    # Handle JSON parameters. They are passed as strings and need to be deserialized.
+
+    if session_state := kwargs.get("session_state"):
+        try:
+            session_state_dict = json.loads(session_state)  # type: ignore
+            kwargs["session_state"] = session_state_dict
+        except json.JSONDecodeError:
+            kwargs.pop("session_state")
+            log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
+    if dependencies := kwargs.get("dependencies"):
+        try:
+            dependencies_dict = json.loads(dependencies)  # type: ignore
+            kwargs["dependencies"] = dependencies_dict
+        except json.JSONDecodeError:
+            kwargs.pop("dependencies")
+            log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
+
     return kwargs
 
 

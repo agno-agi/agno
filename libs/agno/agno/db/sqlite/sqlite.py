@@ -185,7 +185,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Could not create table '{table_name}': {e}")
-            raise
+            raise e
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
@@ -264,7 +264,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error loading existing table {table_name}: {e}")
-            raise
+            raise e
 
     # -- Session methods --
 
@@ -295,7 +295,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
-            return False
+            raise e
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete all given sessions from the database.
@@ -320,6 +320,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
+            raise e
 
     def get_session(
         self,
@@ -378,7 +379,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_debug(f"Exception reading from sessions table: {e}")
-            return None
+            raise e
 
     def get_sessions(
         self,
@@ -481,7 +482,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_debug(f"Exception reading from sessions table: {e}")
-            return []
+            raise e
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -544,7 +545,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
-            return None
+            raise e
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -685,7 +686,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception upserting into table: {e}")
-            return None
+            raise e
 
     def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True
@@ -934,6 +935,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
+            raise e
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from the database.
@@ -957,6 +959,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
+            raise e
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
@@ -977,7 +980,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_debug(f"Exception reading from memory table: {e}")
-            return []
+            raise e
 
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True
@@ -1015,7 +1018,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_debug(f"Exception reading from memorytable: {e}")
-            return None
+            raise e
 
     def get_user_memories(
         self,
@@ -1099,7 +1102,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error reading from memory table: {e}")
-            return []
+            raise e
 
     def get_user_memory_stats(
         self,
@@ -1168,7 +1171,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting user memory stats: {e}")
-            return [], 0
+            raise e
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -1230,7 +1233,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting user memory: {e}")
-            return None
+            raise e
 
     def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True
@@ -1342,6 +1345,7 @@ class SqliteDb(BaseDb):
             from agno.utils.log import log_warning
 
             log_warning(f"Exception deleting all memories: {e}")
+            raise e
 
     # -- Metrics methods --
 
@@ -1385,7 +1389,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error reading from sessions table: {e}")
-            return []
+            raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
         """Get the first date for which metrics calculation is needed:
@@ -1530,7 +1534,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting metrics: {e}")
-            return [], None
+            raise e
 
     # -- Knowledge methods --
 
@@ -1554,6 +1558,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {e}")
+            raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -1582,7 +1587,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge content: {e}")
-            return None
+            raise e
 
     def get_knowledge_contents(
         self,
@@ -1632,7 +1637,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge contents: {e}")
-            return [], 0
+            raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
@@ -1680,7 +1685,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge content: {e}")
-            return None
+            raise e
 
     # -- Eval methods --
 
@@ -1715,7 +1720,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error creating eval run: {e}")
-            return None
+            raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
         """Delete an eval run from the database.
@@ -1738,7 +1743,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting eval run {eval_run_id}: {e}")
-            raise
+            raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the database.
@@ -1761,7 +1766,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
-            raise
+            raise e
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -1799,7 +1804,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_runs(
         self,
@@ -1893,7 +1898,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            return []
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -1935,7 +1940,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {e}")
-            raise
+            raise e
 
     # -- Migrations --
 
