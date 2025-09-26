@@ -2,7 +2,6 @@
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.eval.accuracy import AccuracyEval
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
