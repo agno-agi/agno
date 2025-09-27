@@ -113,6 +113,7 @@ class Mem0Tools(Toolkit):
                 messages_list,
                 user_id=resolved_user_id,
                 infer=self.infer,
+                async_mode=True,
             )
             return json.dumps(result)
         except Exception as e:
