@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import WebSocket
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.metrics import Metrics
+from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_warning
 
 
@@ -77,6 +78,8 @@ class StepInput:
     videos: Optional[List[Video]] = None
     audio: Optional[List[Audio]] = None
     files: Optional[List[File]] = None
+
+    workflow_session: Optional["WorkflowSession"] = None
 
     def get_input_as_string(self) -> Optional[str]:
         """Convert input to string representation"""
@@ -168,6 +171,20 @@ class StepInput:
 
         # Use the helper method to get the deepest content
         return self._get_deepest_step_content(last_output)  # type: ignore[return-value]
+
+    def get_workflow_history(self, num_runs: int = 3) -> List[Tuple[str, str]]:
+        """Get workflow conversation history as structured data for custom function steps"""
+        if not self.workflow_session:
+            return []
+
+        return self.workflow_session.get_workflow_history(num_runs=num_runs)
+
+    def get_workflow_history_context(self, num_runs: int = 3) -> Optional[str]:
+        """Get formatted workflow conversation history context for custom function steps"""
+        if not self.workflow_session:
+            return None
+
+        return self.workflow_session.get_workflow_history_context(num_runs=num_runs)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
