@@ -11,6 +11,8 @@ from agno.run.agent import (
     OutputModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     ParserModelResponseStartedEvent,
+    PreHookCompletedEvent,
+    PreHookStartedEvent,
     ReasoningCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
@@ -19,6 +21,7 @@ from agno.run.agent import (
     RunContentEvent,
     RunContinuedEvent,
     RunErrorEvent,
+    RunInput,
     RunOutput,
     RunPausedEvent,
     RunStartedEvent,
@@ -31,6 +34,8 @@ from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelRe
 from agno.run.team import OutputModelResponseStartedEvent as TeamOutputModelResponseStartedEvent
 from agno.run.team import ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent
 from agno.run.team import ParserModelResponseStartedEvent as TeamParserModelResponseStartedEvent
+from agno.run.team import PreHookCompletedEvent as TeamPreHookCompletedEvent
+from agno.run.team import PreHookStartedEvent as TeamPreHookStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
@@ -39,7 +44,7 @@ from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
-from agno.run.team import TeamRunOutput
+from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 
@@ -174,6 +179,66 @@ def create_run_cancelled_event(from_run_response: RunOutput, reason: str) -> Run
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
+    )
+
+
+def create_pre_hook_started_event(
+    from_run_response: RunOutput, pre_hook_name: Optional[str] = None, run_input: Optional[RunInput] = None
+) -> PreHookStartedEvent:
+    from copy import deepcopy
+
+    return PreHookStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        pre_hook_name=pre_hook_name,
+        run_input=deepcopy(run_input),
+    )
+
+
+def create_team_pre_hook_started_event(
+    from_run_response: TeamRunOutput, pre_hook_name: Optional[str] = None, run_input: Optional[TeamRunInput] = None
+) -> TeamPreHookStartedEvent:
+    from copy import deepcopy
+
+    return TeamPreHookStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        pre_hook_name=pre_hook_name,
+        run_input=deepcopy(run_input),
+    )
+
+
+def create_pre_hook_completed_event(
+    from_run_response: RunOutput, pre_hook_name: Optional[str] = None, run_input: Optional[RunInput] = None
+) -> PreHookCompletedEvent:
+    from copy import deepcopy
+
+    return PreHookCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        pre_hook_name=pre_hook_name,
+        run_input=deepcopy(run_input),
+    )
+
+
+def create_team_pre_hook_completed_event(
+    from_run_response: TeamRunOutput, pre_hook_name: Optional[str] = None, run_input: Optional[TeamRunInput] = None
+) -> TeamPreHookCompletedEvent:
+    from copy import deepcopy
+
+    return TeamPreHookCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        pre_hook_name=pre_hook_name,
+        run_input=deepcopy(run_input),
     )
 
 

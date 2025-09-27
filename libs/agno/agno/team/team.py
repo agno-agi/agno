@@ -31,7 +31,12 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import BaseDb, SessionType, UserMemory
-from agno.exceptions import ModelProviderError, RunCancelledException
+from agno.exceptions import (
+    InputCheckError,
+    ModelProviderError,
+    OutputCheckError,
+    RunCancelledException,
+)
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
@@ -62,6 +67,8 @@ from agno.utils.events import (
     create_team_memory_update_started_event,
     create_team_parser_model_response_completed_event,
     create_team_parser_model_response_started_event,
+    create_team_pre_hook_completed_event,
+    create_team_pre_hook_started_event,
     create_team_reasoning_completed_event,
     create_team_reasoning_started_event,
     create_team_reasoning_step_event,
@@ -263,6 +270,12 @@ class Team:
     # A list of hooks to be called before and after the tool call
     tool_hooks: Optional[List[Callable]] = None
 
+    # --- Team Hooks ---
+    # Functions called right after team session is loaded, before processing starts
+    pre_hooks: Optional[List[Callable[..., Any]]] = None
+    # Functions called after output is generated but before the response is returned
+    post_hooks: Optional[List[Callable[..., Any]]] = None
+
     # --- Structured output ---
     # Input schema for validating input
     input_schema: Optional[Type[BaseModel]] = None
@@ -401,6 +414,8 @@ class Team:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
+        pre_hooks: Optional[Union[Callable[..., Any], List[Callable[..., Any]]]] = None,
+        post_hooks: Optional[Union[Callable[..., Any], List[Callable[..., Any]]]] = None,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parser_model: Optional[Model] = None,
@@ -497,6 +512,10 @@ class Team:
         self.tool_choice = tool_choice
         self.tool_call_limit = tool_call_limit
         self.tool_hooks = tool_hooks
+
+        # Initialize hooks with backward compatibility
+        self.pre_hooks = self._normalize_hooks(pre_hooks)
+        self.post_hooks = self._normalize_hooks(post_hooks)
 
         self.input_schema = input_schema
         self.output_schema = output_schema
@@ -811,36 +830,339 @@ class Team:
         """
         return cancel_run_global(run_id)
 
+    def _normalize_hooks(
+        self,
+        hooks: Optional[Union[Callable[..., Any], List[Callable[..., Any]]]],
+    ) -> Optional[List[Callable[..., Any]]]:
+        """Normalize hooks to a list format"""
+        result_hooks = []
+
+        if hooks is not None:
+            if isinstance(hooks, list):
+                result_hooks.extend(hooks)
+            else:
+                result_hooks.append(hooks)
+
+        return result_hooks if result_hooks else None
+
+    def _filter_hook_args(self, hook: Callable[..., Any], all_args: Dict[str, Any]) -> Dict[str, Any]:
+        """Filter arguments to only include those that the hook function accepts."""
+        import inspect
+
+        try:
+            sig = inspect.signature(hook)
+            accepted_params = set(sig.parameters.keys())
+
+            has_var_keyword = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
+
+            # If the function has **kwargs, pass all arguments
+            if has_var_keyword:
+                return all_args
+
+            # Otherwise, filter to only include accepted parameters
+            filtered_args = {key: value for key, value in all_args.items() if key in accepted_params}
+
+            return filtered_args
+
+        except Exception as e:
+            log_warning(f"Could not inspect hook signature, passing all arguments: {e}")
+            # If signature inspection fails, pass all arguments as fallback
+            return all_args
+
+    def _execute_pre_hooks(
+        self,
+        hooks: Optional[List[Callable[..., Any]]],
+        run_response: TeamRunOutput,
+        run_input: TeamRunInput,
+        session: TeamSession,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> Iterator[TeamRunOutputEvent]:
+        """Execute multiple pre-hook functions in succession."""
+        if hooks is None:
+            return
+
+        # Prepare all possible arguments once
+        all_args = {
+            "run_input": run_input,
+            "team": self,
+            "session": session,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
+        all_args.update(kwargs)
+
+        for i, hook in enumerate(hooks):
+            yield self._handle_event(
+                run_response=run_response,
+                event=create_team_pre_hook_started_event(
+                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                ),
+            )
+            try:
+                if asyncio.iscoroutinefunction(hook):
+                    raise ValueError(f"Cannot use an async hook with `run()`. Use `arun()` instead. Hook #{i + 1}")
+
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = self._filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+                yield self._handle_event(
+                    run_response=run_response,
+                    event=create_team_pre_hook_completed_event(
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    ),
+                )
+
+            except (InputCheckError, OutputCheckError) as e:
+                raise e
+            except Exception as e:
+                log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
+                log_exception(e)
+
+    async def _aexecute_pre_hooks(
+        self,
+        hooks: Optional[List[Callable[..., Any]]],
+        run_response: TeamRunOutput,
+        run_input: TeamRunInput,
+        session: TeamSession,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[TeamRunOutputEvent]:
+        """Execute multiple pre-hook functions in succession (async version)."""
+        if hooks is None:
+            return
+
+        # Prepare all possible arguments once
+        all_args = {
+            "run_input": run_input,
+            "team": self,
+            "session": session,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
+        all_args.update(kwargs)
+
+        for i, hook in enumerate(hooks):
+            yield self._handle_event(
+                run_response=run_response,
+                event=create_team_pre_hook_started_event(
+                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                ),
+            )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = self._filter_hook_args(hook, all_args)
+
+                if asyncio.iscoroutinefunction(hook):
+                    await hook(**filtered_args)
+                else:
+                    # Synchronous function
+                    hook(**filtered_args)
+
+                yield self._handle_event(
+                    run_response=run_response,
+                    event=create_team_pre_hook_completed_event(
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    ),
+                )
+
+            except (InputCheckError, OutputCheckError) as e:
+                raise e
+            except Exception as e:
+                log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
+                log_exception(e)
+
+    def _execute_post_hooks(
+        self,
+        hooks: Optional[List[Callable[..., Any]]],
+        run_output: TeamRunOutput,
+        session: TeamSession,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Execute multiple post-hook functions in succession."""
+        if hooks is None:
+            return
+
+        # Prepare all possible arguments once
+        all_args = {
+            "run_output": run_output,
+            "team": self,
+            "session": session,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
+        all_args.update(kwargs)
+
+        for i, hook in enumerate(hooks):
+            try:
+                if asyncio.iscoroutinefunction(hook):
+                    raise ValueError(f"Cannot use an async hook with `run()`. Use `arun()` instead. Hook #{i + 1}")
+
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = self._filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+            except (InputCheckError, OutputCheckError) as e:
+                raise e
+            except Exception as e:
+                log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
+                log_exception(e)
+
+    async def _aexecute_post_hooks(
+        self,
+        hooks: Optional[List[Callable[..., Any]]],
+        run_output: TeamRunOutput,
+        session: TeamSession,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Execute multiple post-hook functions in succession (async version)."""
+        if hooks is None:
+            return
+
+        # Prepare all possible arguments once
+        all_args = {
+            "run_output": run_output,
+            "team": self,
+            "session": session,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
+        all_args.update(kwargs)
+
+        for i, hook in enumerate(hooks):
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = self._filter_hook_args(hook, all_args)
+
+                if asyncio.iscoroutinefunction(hook):
+                    await hook(**filtered_args)
+                else:
+                    hook(**filtered_args)
+
+            except (InputCheckError, OutputCheckError) as e:
+                raise e
+            except Exception as e:
+                log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
+                log_exception(e)
+
     def _run(
         self,
         run_response: TeamRunOutput,
-        run_messages: RunMessages,
         session: TeamSession,
+        session_state: Dict[str, Any],
         user_id: Optional[str] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
 
         Steps:
-        1. Reason about the task(s) if reasoning is enabled
-        2. Get a response from the model
-        3. Update Team Memory
-        4. Add RunOutput to Team Session
-        5. Calculate session metrics
-        6. Save session to storage
+        1. Execute pre-hooks
+        2. Get run messages
+        3. Reason about the task(s) if reasoning is enabled
+        4. Get a response from the model
+        5. Update TeamRunOutput
+        6. Execute post-hooks
+        7. Add RunOutput to Team Session
+        8. Calculate session metrics
+        9. Update Team Memory
+        10. Save session to storage
         """
-        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
-        # 1. Reason about the task(s) if reasoning is enabled
+        # 1. Execute pre-hooks
+        run_input = cast(TeamRunInput, run_response.input)
+        self.model = cast(Model, self.model)
+        if self.pre_hooks is not None:
+            # Can modify the run input
+            pre_hook_iterator = self._execute_pre_hooks(
+                hooks=self.pre_hooks,
+                run_response=run_response,
+                run_input=run_input,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+            # Consume the generator without yielding
+            deque(pre_hook_iterator, maxlen=0)
+            # Grab updated run input
+            run_response.input = run_input
+
+        # Initialize team run context
+        team_run_context: Dict[str, Any] = {}
+
+        self.determine_tools_for_model(
+            model=self.model,
+            run_response=run_response,
+            team_run_context=team_run_context,
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            async_mode=False,
+            knowledge_filters=knowledge_filters,
+            input_message=run_input.input_content,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
+            debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            metadata=metadata,
+        )
+
+        # 2. Prepare run messages
+        run_messages: RunMessages = self._get_run_messages(
+            run_response=run_response,
+            input=run_input.input_content,
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            **kwargs,
+        )
+        if len(run_messages.messages) == 0:
+            log_error("No messages to be sent to the model.")
+
+        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
+
+        # 3. Reason about the task(s) if reasoning is enabled
         self._handle_reasoning(run_response=run_response, run_messages=run_messages)
 
         # Check for cancellation before model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # 2. Get the model response for the team leader
+        # 4. Get the model response for the team leader
         self.model = cast(Model, self.model)
         model_response: ModelResponse = self.model.response(
             messages=run_messages.messages,
@@ -861,7 +1183,7 @@ class Team:
         # If a parser model is provided, structure the response separately
         self._parse_response_with_parser_model(model_response, run_messages)
 
-        #  Update TeamRunOutput
+        #  5. Update TeamRunOutput
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         if self.store_media:
@@ -874,10 +1196,28 @@ class Team:
         # Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
 
-        # 3. Add the RunOutput to Team Session
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
+
+        # 6. Execute post-hooks after output is generated but before response is returned
+        if self.post_hooks is not None:
+            self._execute_post_hooks(
+                hooks=self.post_hooks,
+                run_output=run_response,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+
+        # 7. Add the RunOutput to Team Session
         session.upsert_run(run_response=run_response)
 
-        # 4. Update Team Memory
+        # 8. Calculate session metrics
+        self._update_session_metrics(session=session)
+
+        # 9. Update Team Memory
         response_iterator = self._make_memories_and_summaries(
             run_response=run_response,
             run_messages=run_messages,
@@ -886,10 +1226,7 @@ class Team:
         )
         deque(response_iterator, maxlen=0)
 
-        # 5. Calculate session metrics
-        self._update_session_metrics(session=session)
-
-        # 6. Save session to storage
+        # 10. Save session to storage
         self.save_session(session=session)
 
         # Log Team Telemetry
@@ -905,36 +1242,111 @@ class Team:
     def _run_stream(
         self,
         run_response: TeamRunOutput,
-        run_messages: RunMessages,
         session: TeamSession,
+        session_state: Dict[str, Any],
         user_id: Optional[str] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
         yield_run_response: bool = False,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
         """Run the Team and return the response iterator.
 
         Steps:
-        1. Reason about the task(s) if reasoning is enabled
-        2. Get a response from the model
-        3. Update Team Memory
-        4. Add RunOutput to Team Session
-        5. Calculate session metrics
-        6. Save session to storage
+        1. Execute pre-hooks
+        2. Prepare run messages
+        3. Reason about the task(s) if reasoning is enabled
+        4. Get a response from the model
+        5. Add RunOutput to Team Session
+        6. Calculate session metrics
+        7. Update Team Memory
+        8. Save session to storage
         """
-
-        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
-
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
+
+        # 1. Execute pre-hooks
+        run_input = cast(TeamRunInput, run_response.input)
+        self.model = cast(Model, self.model)
+        if self.pre_hooks is not None:
+            # Can modify the run input
+            pre_hook_iterator = self._execute_pre_hooks(
+                hooks=self.pre_hooks,
+                run_response=run_response,
+                run_input=run_input,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+            for pre_hook_event in pre_hook_iterator:
+                yield pre_hook_event
+            # Grab updated run input
+            run_response.input = run_input
+
+        # Initialize team run context
+        team_run_context: Dict[str, Any] = {}
+
+        self.determine_tools_for_model(
+            model=self.model,
+            run_response=run_response,
+            team_run_context=team_run_context,
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            async_mode=False,
+            knowledge_filters=knowledge_filters,
+            input_message=run_input.input_content,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
+            workflow_context=workflow_context,
+            debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            metadata=metadata,
+        )
+        # 2. Prepare run messages
+        run_messages: RunMessages = self._get_run_messages(
+            run_response=run_response,
+            input=run_input.input_content,
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            **kwargs,
+        )
+        if len(run_messages.messages) == 0:
+            log_error("No messages to be sent to the model.")
+
+        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         try:
             # Start the Run by yielding a RunStarted event
             if stream_intermediate_steps:
                 yield self._handle_event(create_team_run_started_event(run_response), run_response, workflow_context)
 
-            # 1. Reason about the task(s) if reasoning is enabled
+            # 3. Reason about the task(s) if reasoning is enabled
             yield from self._handle_reasoning_stream(
                 run_response=run_response,
                 run_messages=run_messages,
@@ -943,7 +1355,7 @@ class Team:
             # Check for cancellation before model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 2. Get a response from the model
+            # 4. Get a response from the model
             if self.output_model is None:
                 for event in self._handle_model_response_stream(
                     session=session,
@@ -996,18 +1408,16 @@ class Team:
 
             run_response.status = RunStatus.completed
 
-            # 3. Add the run to Team Session
+            # Set the run duration
+            if run_response.metrics:
+                run_response.metrics.stop_timer()
+
+            # TODO: For now we don't run post-hooks during streaming
+
+            # 5. Add the run to Team Session
             session.upsert_run(run_response=run_response)
 
-            # 4. Update Team Memory
-            yield from self._make_memories_and_summaries(
-                run_response=run_response,
-                run_messages=run_messages,
-                session=session,
-                user_id=user_id,
-            )
-
-            # 5. Calculate session metrics
+            # 6. Calculate session metrics
             self._update_session_metrics(session=session)
 
             completed_event = self._handle_event(
@@ -1018,7 +1428,15 @@ class Team:
                 workflow_context,
             )
 
-            # 6. Save session to storage
+            # 7. Update Team Memory
+            yield from self._make_memories_and_summaries(
+                run_response=run_response,
+                run_messages=run_messages,
+                session=session,
+                user_id=user_id,
+            )
+
+            # 8. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1148,7 +1566,7 @@ class Team:
 
         # Create RunInput to capture the original user input
         run_input = TeamRunInput(
-            input_content=input,
+            input_content=validated_input,
             images=image_artifacts,
             videos=video_artifacts,
             audios=audio_artifacts,
@@ -1231,31 +1649,9 @@ class Team:
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
 
-        # Initialize team run context
-        team_run_context: Dict[str, Any] = {}
-
-        self.determine_tools_for_model(
-            model=self.model,
-            run_response=run_response,
-            team_run_context=team_run_context,
-            session=team_session,
-            session_state=session_state,
-            user_id=user_id,
-            async_mode=False,
-            knowledge_filters=effective_filters,
-            input_message=input,
-            images=images,
-            videos=videos,
-            audio=audio,
-            files=files,
-            workflow_context=workflow_context,
-            debug_mode=debug_mode,
-            add_history_to_context=add_history,
-            add_session_state_to_context=add_session_state,
-            dependencies=run_dependencies,
-            add_dependencies_to_context=add_dependencies,
-            metadata=metadata,
-        )
+        # Start the run metrics timer, to calculate the run duration
+        run_response.metrics = Metrics()
+        run_response.metrics.start_timer()
 
         # If no retries are set, use the team's default retries
         retries = retries if retries is not None else self.retries
@@ -1274,11 +1670,11 @@ class Team:
                     session=team_session,
                     session_state=session_state,
                     user_id=user_id,
-                    input_message=validated_input,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
+                    input_message=run_input.input_content,
+                    audio=run_input.audios,
+                    images=run_input.images,
+                    videos=run_input.videos,
+                    files=run_input.files,
                     knowledge_filters=effective_filters,
                     add_history_to_context=add_history,
                     dependencies=run_dependencies,
@@ -1292,23 +1688,39 @@ class Team:
                 if stream:
                     response_iterator = self._run_stream(
                         run_response=run_response,
-                        run_messages=run_messages,
                         session=team_session,
+                        session_state=session_state,
                         user_id=user_id,
+                        knowledge_filters=effective_filters,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        metadata=metadata,
+                        dependencies=run_dependencies,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
+                        debug_mode=debug_mode,
+                        **kwargs,
                     )
 
                     return response_iterator  # type: ignore
                 else:
                     return self._run(
                         run_response=run_response,
-                        run_messages=run_messages,
                         session=team_session,
+                        session_state=session_state,
                         user_id=user_id,
+                        knowledge_filters=effective_filters,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        metadata=metadata,
+                        dependencies=run_dependencies,
                         response_format=response_format,
+                        debug_mode=debug_mode,
+                        **kwargs,
                     )
 
             except ModelProviderError as e:
@@ -1365,14 +1777,9 @@ class Team:
     async def _arun(
         self,
         run_response: TeamRunOutput,
-        input_message: Union[str, List, Dict, Message, BaseModel, List[Message]],
         session: TeamSession,
-        session_state: Optional[Dict[str, Any]] = None,
+        session_state: Dict[str, Any],
         user_id: Optional[str] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1380,35 +1787,84 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        workflow_context: Optional[Dict] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
 
         Steps:
         1. Resolve dependencies
-        2. Prepare run messages
-        3. Reason about the task(s) if reasoning is enabled
-        4. Get a response from the model
-        5. Update Team Memory
+        2. Execute pre-hooks
+        3. Prepare run messages
+        4. Reason about the task(s) if reasoning is enabled
+        5. Get a response from the model
         6. Add RunOutput to Team Session
         7. Calculate session metrics
-        8. Save session to storage
+        8. Update Team Memory
+        9. Save session to storage
         """
         # 1. Resolve callable dependencies if present
         if dependencies is not None:
             await self._aresolve_run_dependencies(dependencies=dependencies)
 
-        # 2. Prepare run messages
+        run_input = cast(TeamRunInput, run_response.input)
+        self.model = cast(Model, self.model)
+        # 2. Execute pre-hooks after session is loaded but before processing starts
+        if self.pre_hooks is not None:
+            pre_hook_iterator = self._aexecute_pre_hooks(
+                hooks=self.pre_hooks,
+                run_response=run_response,
+                run_input=run_input,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+
+            # Consume the async iterator without yielding
+            async for _ in pre_hook_iterator:
+                pass
+            # Grab updated run input
+            run_response.input = run_input
+
+        # Initialize the team run context
+        team_run_context: Dict[str, Any] = {}
+
+        self.determine_tools_for_model(
+            model=self.model,
+            run_response=run_response,
+            team_run_context=team_run_context,
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            async_mode=True,
+            knowledge_filters=knowledge_filters,
+            input_message=run_input.input_content,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
+            workflow_context=workflow_context,
+            debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
+        )
+
+        # 3. Prepare run messages
         run_messages = self._get_run_messages(
             run_response=run_response,
             session=session,
             session_state=session_state,
             user_id=user_id,
-            input_message=input_message,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
+            input_message=run_input.input_content,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -1424,13 +1880,13 @@ class Team:
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
-        # 3. Reason about the task(s) if reasoning is enabled
+        # 4. Reason about the task(s) if reasoning is enabled
         await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
         # Check for cancellation before model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # 4. Get the model response for the team leader
+        # 5. Get the model response for the team leader
         model_response = await self.model.aresponse(
             messages=run_messages.messages,
             tools=self._tools_for_model,
@@ -1463,7 +1919,11 @@ class Team:
         # Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
 
-        # 5. Add the run to memory
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
+
+        # 6. Add the run to session
         session.upsert_run(run_response=run_response)
 
         # 6. Update Team Memory
@@ -1484,6 +1944,17 @@ class Team:
         # Log Team Telemetry
         await self._alog_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
+        # Execute post-hooks after output is generated but before response is returned
+        if self.post_hooks is not None:
+            await self._aexecute_post_hooks(
+                hooks=self.post_hooks,
+                run_output=run_response,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
         # Always clean up the run tracking
@@ -1494,14 +1965,9 @@ class Team:
     async def _arun_stream(
         self,
         run_response: TeamRunOutput,
-        input_message: Union[str, List, Dict, Message, BaseModel, List[Message]],
         session: TeamSession,
-        session_state: Optional[Dict[str, Any]] = None,
+        session_state: Dict[str, Any],
         user_id: Optional[str] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1512,6 +1978,7 @@ class Team:
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
         yield_run_response: bool = False,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
         """Run the Team and return the response.
@@ -1531,17 +1998,61 @@ class Team:
         if dependencies is not None:
             await self._aresolve_run_dependencies(dependencies=dependencies)
 
+        # Execute pre-hooks
+        run_input = cast(TeamRunInput, run_response.input)
+        self.model = cast(Model, self.model)
+        if self.pre_hooks is not None:
+            pre_hook_iterator = self._aexecute_pre_hooks(
+                hooks=self.pre_hooks,
+                run_response=run_response,
+                run_input=run_input,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+            async for pre_hook_event in pre_hook_iterator:
+                yield pre_hook_event
+            # Grab updated run input
+            run_response.input = run_input
+
+        # Initialize the team run context
+        team_run_context: Dict[str, Any] = {}
+
+        self.determine_tools_for_model(
+            model=self.model,
+            run_response=run_response,
+            team_run_context=team_run_context,
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            async_mode=True,
+            knowledge_filters=knowledge_filters,
+            input_message=run_input.input_content,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
+            workflow_context=workflow_context,
+            debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
+        )
+
         # 2. Prepare run messages
         run_messages = self._get_run_messages(
             run_response=run_response,
             session=session,
             session_state=session_state,
             user_id=user_id,
-            input_message=input_message,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
+            input_message=run_input.input_content,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -1552,6 +2063,7 @@ class Team:
         )
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
+
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
@@ -1623,6 +2135,10 @@ class Team:
                 yield event
 
             run_response.status = RunStatus.completed
+
+            # Set the run duration
+            if run_response.metrics:
+                run_response.metrics.stop_timer()
 
             # 5. Add the run to Team Session
             session.upsert_run(run_response=run_response)
@@ -1773,7 +2289,7 @@ class Team:
 
         # Create RunInput to capture the original user input
         run_input = TeamRunInput(
-            input_content=input,
+            input_content=validated_input,
             images=image_artifacts,
             videos=video_artifacts,
             audios=audio_artifacts,
@@ -1804,7 +2320,6 @@ class Team:
         workflow_context = kwargs.pop("workflow_context", None)
 
         effective_filters = knowledge_filters
-
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
             effective_filters = self._get_effective_filters(knowledge_filters)
@@ -1851,31 +2366,9 @@ class Team:
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
 
-        # Initialize the team run context
-        team_run_context: Dict[str, Any] = {}
-
-        self.determine_tools_for_model(
-            model=self.model,
-            run_response=run_response,
-            team_run_context=team_run_context,
-            session=team_session,  # type: ignore
-            session_state=session_state,
-            user_id=user_id,
-            async_mode=True,
-            knowledge_filters=effective_filters,
-            input_message=input,
-            images=images,
-            videos=videos,
-            audio=audio,
-            files=files,
-            workflow_context=workflow_context,
-            debug_mode=debug_mode,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            dependencies=dependencies,
-            metadata=metadata,
-        )
+        # Start the run metrics timer, to calculate the run duration
+        run_response.metrics = Metrics()
+        run_response.metrics.start_timer()
 
         # If no retries are set, use the team's default retries
         retries = retries if retries is not None else self.retries
@@ -1890,14 +2383,9 @@ class Team:
                 if stream:
                     response_iterator = self._arun_stream(
                         run_response=run_response,
-                        input_message=validated_input,
                         session=team_session,  # type: ignore
                         session_state=session_state,
                         user_id=user_id,
-                        audio=audio,
-                        images=images,
-                        videos=videos,
-                        files=files,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history,
                         add_dependencies_to_context=add_dependencies,
@@ -1908,20 +2396,16 @@ class Team:
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
+                        debug_mode=debug_mode,
                         **kwargs,
                     )
                     return response_iterator  # type: ignore
                 else:
                     return self._arun(  # type: ignore
                         run_response=run_response,
-                        input_message=validated_input,
                         session=team_session,  # type: ignore
                         user_id=user_id,
                         session_state=session_state,
-                        audio=audio,
-                        images=images,
-                        videos=videos,
-                        files=files,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history,
                         add_dependencies_to_context=add_dependencies,
@@ -1929,6 +2413,8 @@ class Team:
                         metadata=metadata,
                         response_format=response_format,
                         dependencies=run_dependencies,
+                        workflow_context=workflow_context,
+                        debug_mode=debug_mode,
                         **kwargs,
                     )
 
@@ -2050,11 +2536,12 @@ class Team:
         # Update the TeamRunOutput metrics
         run_response.metrics = self._calculate_metrics(messages_for_run_response)
 
-        for tool_call in model_response.tool_calls:
-            tool_name = tool_call.get("tool_name", "")
-            if tool_name.lower() in ["think", "analyze"]:
-                tool_args = tool_call.get("tool_args", {})
-                self._update_reasoning_content_from_tool_call(run_response, tool_name, tool_args)
+        if model_response.tool_executions:
+            for tool_call in model_response.tool_executions:
+                tool_name = tool_call.tool_name
+                if tool_name and tool_name.lower() in ["think", "analyze"]:
+                    tool_args = tool_call.tool_args
+                    self._update_reasoning_content_from_tool_call(run_response, tool_name, tool_args)
 
     def _handle_model_response_stream(
         self,
