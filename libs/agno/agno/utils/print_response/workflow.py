@@ -131,6 +131,19 @@ def print_response(
 
             response_timer.stop()
 
+            if workflow_response.agent_response is not None:
+                from agno.workflow.utils import WorkflowResponse
+
+                if isinstance(workflow_response.agent_response, WorkflowResponse):
+                    content = workflow_response.agent_response.content
+                    if content is not None:
+                        agent_response_panel = create_panel(
+                            content=Markdown(content) if markdown else content,
+                            title="Agent Response",
+                            border_style="blue",
+                        )
+                        console.print(agent_response_panel)  # type: ignore
+
             if show_step_details and workflow_response.step_results:
                 for i, step_output in enumerate(workflow_response.step_results):
                     print_step_output_recursive(step_output, i + 1, markdown, console)  # type: ignore
@@ -863,6 +876,19 @@ async def aprint_response(
             )  # type: ignore
 
             response_timer.stop()
+
+            if workflow_response.agent_response is not None:
+                from agno.workflow.utils import WorkflowResponse
+
+                if isinstance(workflow_response.agent_response, WorkflowResponse):
+                    content = workflow_response.agent_response.content
+                    if content is not None:
+                        agent_response_panel = create_panel(
+                            content=Markdown(content) if markdown else content,
+                            title="Agent Response",
+                            border_style="blue",
+                        )
+                        console.print(agent_response_panel)  # type: ignore
 
             if show_step_details and workflow_response.step_results:
                 for i, step_output in enumerate(workflow_response.step_results):

@@ -480,3 +480,6 @@ class StepType(str, Enum):
     PARALLEL = "Parallel"
     CONDITION = "Condition"
     ROUTER = "Router"
+    AGENT = "Agent"
+    TEAM = "Team"
+    CALLABLE = "Callable"
