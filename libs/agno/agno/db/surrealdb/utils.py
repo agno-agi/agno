@@ -21,12 +21,12 @@ def _query_aux(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
     query: str,
     vars: dict[str, Any],
-) -> Union[list, dict]:
+) -> Union[list, dict, str, int]:
     try:
         response = client.query(query, vars)
-        logger.debug(f"Query: {query} with {vars}, Response: {response}")
+        logger.debug(f"-- Query: {query} with {vars}\n-- Response: {response}")
     except Exception as e:
-        logger.error(f"Query execution error: {query} with {vars}, Error: {e}")
+        logger.error(f"!! Query execution error: {query} with {vars}, Error: {e}")
         raise e
     return response
 
@@ -42,7 +42,13 @@ def query(
         if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):
             return [getattr(record_type, "from_dict").__call__(x) for x in response]
         else:
-            return [record_type(**x) for x in response]
+            result: Sequence[RecordType] = []
+            for x in response:
+                if isinstance(x, dict):
+                    result.append(record_type(**x))
+                else:
+                    result.append(record_type.__call__(x))
+            return result
     else:
         raise ValueError(f"Unexpected response type: {type(response)}")
 
@@ -59,7 +65,9 @@ def query_one(
     elif not isinstance(response, list):
         if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):
             return getattr(record_type, "from_dict").__call__(response)
-        else:
+        elif isinstance(response, dict):
             return record_type(**response)
+        else:
+            return record_type.__call__(response)
     else:
         raise ValueError(f"Unexpected response type: {type(response)}")

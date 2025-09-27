@@ -3,12 +3,15 @@ from textwrap import dedent
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from agno.db.surrealdb.models import (
+    TableType,
     deserialize_eval_run_record,
     deserialize_knowledge_row,
     deserialize_session,
     deserialize_sessions,
     deserialize_user_memories,
     deserialize_user_memory,
+    desurrealize_user_memory,
+    get_schema,
     get_session_type,
     serialize_eval_run_record,
     serialize_knowledge_row,
@@ -72,7 +75,10 @@ class SurrealDb(BaseDb):
         self._db_creds = db_creds
         self._db_ns = db_ns
         self._db_db = db_db
-        self._users_table: str = "user"
+        self._users_table_name: str = "agno_users"
+        self._agents_table_name: str = "agno_agents"
+        self._teams_table_name: str = "agno_teams"
+        self._workflows_table_name: str = "agno_workflows"
 
     @property
     def client(self) -> Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection]:
@@ -80,12 +86,36 @@ class SurrealDb(BaseDb):
             self._client = build_client(self._db_url, self._db_creds, self._db_ns, self._db_db)
         return self._client
 
-    def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = True):
-        if table_type == "sessions":
-            return self.session_table_name
+    def _table_exists(self, table_name: str) -> bool:
+        response = self._query_one("INFO FOR DB", {}, dict)
+        if response is None:
+            raise Exception("Failed to retrieve database information")
+        return table_name in response.get("tables", [])
 
+    def _create_table(self, table_type: TableType, table_name: str):
+        query = get_schema(table_type, table_name)
+        self.client.query(query)
+
+    def _get_table(self, table_type: TableType, create_table_if_not_found: bool = True):
+        if table_type == "sessions":
+            table_name = self.session_table_name
+        elif table_type == "memories":
+            table_name = self.memory_table_name
+        elif table_type == "users":
+            table_name = self._users_table_name
+        elif table_type == "agents":
+            table_name = self._agents_table_name
+        elif table_type == "teams":
+            table_name = self._teams_table_name
+        elif table_type == "workflows":
+            table_name = self._workflows_table_name
         else:
             raise NotImplementedError(f"Unknown table type: {table_type}")
+
+        if create_table_if_not_found and not self._table_exists(table_name):
+            self._create_table(table_type, table_name)
+
+        return table_name
 
     def _query(
         self,
@@ -107,7 +137,8 @@ class SurrealDb(BaseDb):
         total_count_query = COUNT_QUERY.format(
             table=table,
             where_clause=where_clause,
-            group_clause="GROUP ALL" if group_by is None else f"GROUP BY{group_by}",
+            group_clause="GROUP ALL" if group_by is None else f"GROUP BY {group_by}",
+            group_fields="" if group_by is None else f", {group_by}",
         )
         count_result = self._query_one(total_count_query, where_vars, dict)
         total_count = count_result.get("count") if count_result else 0
@@ -129,7 +160,7 @@ class SurrealDb(BaseDb):
             return
 
         records = [RecordID(table, id) for id in session_ids]
-        self.client.query("DELETE FROM $table WHERE id IN $records", {"table": table, "records": records})
+        self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
 
     def get_session(
         self,
@@ -139,8 +170,8 @@ class SurrealDb(BaseDb):
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         table_type = "sessions"
-        table = self._get_table(table_type)
-        record = RecordID(table, session_id)
+        sessions_table = self._get_table(table_type)
+        record = RecordID(sessions_table, session_id)
         where = WhereClause()
         if user_id is not None:
             where = where.and_("user", RecordID("user", user_id))
@@ -158,8 +189,9 @@ class SurrealDb(BaseDb):
         """)
         vars = {"record": record, **where_vars}
         raw = self._query_one(query, vars, dict)
-        if not raw or not deserialize:
+        if raw is None or not deserialize:
             return raw
+
         return deserialize_session(session_type, raw)
 
     def get_sessions(
@@ -224,6 +256,7 @@ class SurrealDb(BaseDb):
 
         if not deserialize:
             return list(sessions_raw), total_count
+
         return deserialize_sessions(session_type, list(sessions_raw))
 
     def rename_session(
@@ -240,7 +273,7 @@ class SurrealDb(BaseDb):
         """)
         session_raw = self._query_one(query, vars, dict)
 
-        if not session_raw or not deserialize:
+        if session_raw is None or not deserialize:
             return session_raw
         return deserialize_session(session_type, session_raw)
 
@@ -258,9 +291,39 @@ class SurrealDb(BaseDb):
             },
             dict,
         )
-        if not session_raw or not deserialize:
+        if session_raw is None or not deserialize:
             return session_raw
+
         return deserialize_session(session_type, session_raw)
+
+    def upsert_sessions(
+        self, sessions: List[Session], deserialize: Optional[bool] = True
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        table_type = "sessions"
+        if not sessions:
+            return []
+        session_type = get_session_type(sessions[0])
+        table = self._get_table(table_type)
+        sessions_raw: List[Dict[str, Any]] = []
+        for session in sessions:
+            # UPSERT does only work for one record at a time
+            session_raw = self._query_one(
+                "UPSERT ONLY $record CONTENT $content",
+                {
+                    "record": RecordID(table, session.session_id),
+                    "content": serialize_session(session),
+                },
+                dict,
+            )
+            if session_raw:
+                sessions_raw.append(session_raw)
+        if not deserialize:
+            return list(sessions_raw)
+
+        # wrapping with list because of:
+        # Type "List[Session]" is not assignable to return type "List[Session | Dict[str, Any]]"
+        # Consider switching from "list" to "Sequence" which is covariant
+        return list(deserialize_sessions(session_type, sessions_raw))
 
     # --- Memory ---
 
@@ -289,22 +352,23 @@ class SurrealDb(BaseDb):
         query = dedent(f"""
             RETURN (
                 SELECT
-                    array::flatten(topics).distinct() as topics
+                    array::flatten(topics) as topics
                 FROM ONLY {table}
                 GROUP ALL
-                LIMIT 1
-            ).topics;
+            ).topics.distinct();
         """)
-        result = self._query_one(query, vars, list[str])
-        return result or []
+        result = self._query(query, vars, str)
+        return list(result)
 
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         table_type = "memories"
-        record = RecordID(table_type, memory_id)
-        result = self._query_one("SELECT * FROM $record", {"record": record}, dict)
-        if not result or not deserialize:
+        table_name = self._get_table(table_type)
+        record = RecordID(table_name, memory_id)
+        query = "SELECT * FROM ONLY $record"
+        result = self._query_one(query, {"record": record}, dict)
+        if result is None or not deserialize:
             return result
         return deserialize_user_memory(result)
 
@@ -324,11 +388,19 @@ class SurrealDb(BaseDb):
         table_type = "memories"
         table = self._get_table(table_type)
         where = WhereClause()
-        where.and_("user", user_id)
-        where.and_("agent", agent_id)
-        where.and_("team", team_id)
-        where.and_("topics", topics, "CONTAINSANY")
-        where.and_("memory", search_content, "~")
+        if user_id is not None:
+            rec_id = RecordID(self._get_table("users"), user_id)
+            where.and_("user", rec_id)
+        if agent_id is not None:
+            rec_id = RecordID(self._get_table("agents"), agent_id)
+            where.and_("agent", rec_id)
+        if team_id is not None:
+            rec_id = RecordID(self._get_table("teams"), team_id)
+            where.and_("team", rec_id)
+        if topics is not None:
+            where.and_("topics", topics, "CONTAINSANY")
+        if search_content is not None:
+            where.and_("memory", search_content, "~")
         where_clause, where_vars = where.build()
 
         # Total count
@@ -343,9 +415,9 @@ class SurrealDb(BaseDb):
             {order_limit_start_clause}
         """)
         result = self._query(query, where_vars, dict)
-        if not result or not deserialize:
-            return list(result), total_count
-        return deserialize_user_memories(result)
+        if deserialize:
+            return deserialize_user_memories(result)
+        return [desurrealize_user_memory(x) for x in result], total_count
 
     def get_user_memory_stats(
         self,
@@ -353,23 +425,26 @@ class SurrealDb(BaseDb):
         page: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         table_type = "memories"
-        table = self._get_table(table_type)
+        memories_table_name = self._get_table(table_type)
         where = WhereClause()
-        where.and_("!!user", "false", "=")
+        where.and_("!!user", True, "=")
         where_clause, where_vars = where.build()
         # Group
-        group_clause = "GROUP BY user_id"
+        group_clause = "GROUP BY user"
         # Order
         order_limit_start_clause = order_limit_start("last_memory_updated_at", "DESC", limit, page)
         # Total count
-        total_count = self._count(table, where_clause, where_vars, "GROUP BY user")
+        total_count = (
+            self._query_one(f"(SELECT user FROM {memories_table_name} GROUP BY user).map(|$x| $x.user).len()", {}, int)
+            or 0
+        )
         # Query
         query = dedent(f"""
             SELECT
                 user,
                 count(id) AS total_memories,
-                max(updated_at) AS last_memory_updated_at
-            FROM {table}
+                time::max(updated_at) AS last_memory_updated_at
+            FROM {memories_table_name}
             {where_clause}
             {group_clause}
             {order_limit_start_clause}
@@ -382,12 +457,55 @@ class SurrealDb(BaseDb):
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         table_type = "memories"
         table = self._get_table(table_type)
-        record = RecordID(table, memory.memory_id)
-        query = "UPSERT ONLY $record CONTENT $content"
-        result = self._query_one(query, {"record": record, "content": serialize_user_memory(memory)}, dict)
-        if not result or not deserialize:
-            return result
+        user_table = self._get_table("users")
+        if memory.memory_id:
+            record = RecordID(table, memory.memory_id)
+            query = "UPSERT ONLY $record CONTENT $content"
+            result = self._query_one(
+                query, {"record": record, "content": serialize_user_memory(memory, table, user_table)}, dict
+            )
+        else:
+            query = f"CREATE ONLY {table} CONTENT $content"
+            result = self._query_one(query, {"content": serialize_user_memory(memory, table, user_table)}, dict)
+        if result is None:
+            return None
+        elif not deserialize:
+            return desurrealize_user_memory(result)
         return deserialize_user_memory(result)
+
+    def upsert_memories(
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        table_type = "memories"
+        if not memories:
+            return []
+        table = self._get_table(table_type)
+        user_table_name = self._get_table("users")
+        raw = []
+        for memory in memories:
+            if memory.memory_id:
+                # UPSERT does only work for one record at a time
+                session_raw = self._query_one(
+                    "UPSERT ONLY $record CONTENT $content",
+                    {
+                        "record": RecordID(table, memory.memory_id),
+                        "content": serialize_user_memory(memory, table, user_table_name),
+                    },
+                    dict,
+                )
+            else:
+                session_raw = self._query_one(
+                    f"CREATE ONLY {table} CONTENT $content",
+                    {"content": serialize_user_memory(memory, table, user_table_name)},
+                    dict,
+                )
+            raw.append(session_raw)
+        if raw is None or not deserialize:
+            return [desurrealize_user_memory(x) for x in raw]
+        # wrapping with list because of:
+        # Type "List[Session]" is not assignable to return type "List[Session | Dict[str, Any]]"
+        # Consider switching from "list" to "Sequence" which is covariant
+        return list(deserialize_user_memories(raw))
 
     # --- Metrics ---
     def get_metrics(
@@ -395,9 +513,11 @@ class SurrealDb(BaseDb):
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        # TODO
         raise NotImplementedError
 
     def calculate_metrics(self) -> Optional[Any]:
+        # TODO
         raise NotImplementedError
 
     # --- Knowledge ---
@@ -523,7 +643,7 @@ class SurrealDb(BaseDb):
         """)
         result = self._query(query, where_vars, dict)
 
-        if not result or not deserialize:
+        if not deserialize:
             return list(result), total_count
         return [deserialize_eval_run_record(x) for x in result]
 

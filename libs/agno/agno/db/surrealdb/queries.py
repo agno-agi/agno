@@ -6,6 +6,7 @@ OPERATOR = Literal["=", "!=", "<=", ">=", "~", "IN", "CONTAINSANY"]
 COUNT_QUERY: Final[str] = dedent("""
     RETURN (
         SELECT count(id) AS count
+        {group_fields}
         FROM {table}
         {where_clause}
         {group_clause}

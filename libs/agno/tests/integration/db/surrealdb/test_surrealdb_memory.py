@@ -17,12 +17,10 @@
 # ```
 
 import pytest
-from surrealdb import RecordID
 
-from agno.db.base import SessionType
+from agno.db.schemas.memory import UserMemory
 from agno.db.surrealdb import SurrealDb
 from agno.debug import enable_debug_mode
-from agno.session.agent import AgentSession
 
 enable_debug_mode()
 
@@ -43,41 +41,25 @@ def db() -> SurrealDb:
 
 
 def test_crud_memory(db: SurrealDb):
-    session = AgentSession(session_id="123", agent_id="1")
-
-    # upsert
-    db.upsert_session(session)
-
-    # list
-    sessions = db.get_sessions(SessionType.AGENT)
-    assert isinstance(sessions, list)
-    assert len(sessions) == 1
-    assert sessions[0].session_id == "123"
-
-    # list, unserialized
-    sessions = db.get_sessions(SessionType.AGENT, deserialize=False)
-    assert isinstance(sessions, tuple) and len(sessions[0]) == 1 and sessions[1] == 1
-
-    # find one
-    session_got = db.get_session("123", SessionType.AGENT)
-    assert isinstance(session_got, AgentSession) and session_got.session_id == "123"
-
-    # find one, wrong type
-    wrong = db.get_session("123", SessionType.TEAM)
-    assert wrong is None
-
-    # rename
-    renamed = db.rename_session("123", SessionType.AGENT, "new name", False)
-    assert (
-        isinstance(renamed, dict)
-        and renamed.get("agent") == RecordID("agent", "1")
-        and renamed.get("session_name") == "new name"
+    new_mem = UserMemory(
+        "Gavilar was Dalinar's brother and King of Alethkar", user_id="1", topics=["cosmere", "stormlight"]
     )
-
-    # delete
-    deleted = db.delete_session("123")
-    assert deleted
-
-    # list, emtpy
-    sessions = db.get_sessions(SessionType.AGENT, deserialize=False)
-    assert isinstance(sessions, tuple) and len(sessions[0]) == 0 and sessions[1] == 0
+    new_mem_2 = UserMemory("Reen was Vin's brother", user_id="2", topics=["cosmere", "mistborn"])
+    new_mem_3 = UserMemory("Zeen was Spensa's father", user_id="2", topics=["cosmere", "skyward"])
+    db.clear_memories()
+    _mem = db.upsert_user_memory(new_mem)
+    _last_mems = db.upsert_memories([new_mem_2, new_mem_3])
+    stats, count = db.get_user_memory_stats()
+    assert count == 2
+    topics = db.get_all_memory_topics()
+    assert set(topics) == set(["stormlight", "mistborn", "skyward", "cosmere"])
+    user_mems, count = db.get_user_memories("1", deserialize=False)
+    assert isinstance(user_mems, list)
+    mem_id = user_mems[0].get("memory_id")
+    assert mem_id
+    user_mem = db.get_user_memory(mem_id)
+    assert isinstance(user_mem, UserMemory)
+    assert user_mem.user_id == "1"
+    db.delete_user_memory(mem_id)
+    user_mems, count = db.get_user_memories("1", deserialize=False)
+    assert count == 0
