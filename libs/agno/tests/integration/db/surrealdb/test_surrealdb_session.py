@@ -77,7 +77,7 @@ def test_crud_sessions(db: SurrealDb):
     renamed = db.rename_session("1", SessionType.AGENT, "new name", False)
     assert (
         isinstance(renamed, dict)
-        and renamed.get("agent") == RecordID("agent", "1")
+        and renamed.get("agent") == RecordID(db.table_names["agents"], "1")
         and renamed.get("session_name") == "new name"
     )
 

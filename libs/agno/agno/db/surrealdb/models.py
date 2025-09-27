@@ -16,15 +16,14 @@ from agno.session.workflow import WorkflowSession
 TableType = Literal["sessions", "memories", "users", "knowledge", "evals", "agents", "teams", "workflows"]
 
 
-# TODO: get table names from SurrealDb instance
-def serialize_session(session: Session) -> dict:
+def serialize_session(session: Session, table_names: dict[TableType, str]) -> dict:
     _dict = session.to_dict()
     if isinstance(session, AgentSession):
-        _dict["agent"] = RecordID("agent", session.agent_id)
+        _dict["agent"] = RecordID(table_names["agents"], session.agent_id)
     elif isinstance(session, TeamSession):
-        _dict["team"] = RecordID("team", session.team_id)
+        _dict["team"] = RecordID(table_names["teams"], session.team_id)
     elif isinstance(session, WorkflowSession):
-        _dict["workflow"] = RecordID("workflow", session.workflow_id)
+        _dict["workflow"] = RecordID(table_names["workflows"], session.workflow_id)
     return _dict
 
 

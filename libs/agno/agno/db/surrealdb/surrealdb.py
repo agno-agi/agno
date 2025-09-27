@@ -86,6 +86,19 @@ class SurrealDb(BaseDb):
             self._client = build_client(self._db_url, self._db_creds, self._db_ns, self._db_db)
         return self._client
 
+    @property
+    def table_names(self) -> dict[TableType, str]:
+        return {
+            "agents": self._agents_table_name,
+            "evals": self.eval_table_name,
+            "knowledge": self.knowledge_table_name,
+            "memories": self.memory_table_name,
+            "sessions": self.session_table_name,
+            "teams": self._users_table_name,
+            "users": self._users_table_name,
+            "workflows": self._workflows_table_name,
+        }
+
     def _table_exists(self, table_name: str) -> bool:
         response = self._query_one("INFO FOR DB", {}, dict)
         if response is None:
@@ -287,7 +300,7 @@ class SurrealDb(BaseDb):
             "UPSERT ONLY $record CONTENT $content",
             {
                 "record": RecordID(table, session.session_id),
-                "content": serialize_session(session),
+                "content": serialize_session(session, self.table_names),
             },
             dict,
         )
@@ -311,7 +324,7 @@ class SurrealDb(BaseDb):
                 "UPSERT ONLY $record CONTENT $content",
                 {
                     "record": RecordID(table, session.session_id),
-                    "content": serialize_session(session),
+                    "content": serialize_session(session, self.table_names),
                 },
                 dict,
             )
