@@ -84,6 +84,18 @@ def test_basic_intermediate_steps_events():
     assert team_completed_event.metrics.total_tokens > 0
 
 
+def test_basic_intermediate_steps_events_with_parent_run_id():
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        telemetry=False,
+    )
+
+    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    for run_response_delta in response_generator:
+        assert run_response_delta.parent_run_id is not None
+
+
 def test_basic_intermediate_steps_events_persisted(shared_db):
     """Test that the agent streams events."""
     team = Team(
