@@ -324,7 +324,7 @@ async def team_response_streamer(
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
     except InputCheckError as e:
-        error_response = RunErrorEvent(
+        error_response = TeamRunErrorEvent(
             content=str(e),
         )
         yield format_sse_event(error_response)

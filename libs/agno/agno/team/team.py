@@ -2521,7 +2521,7 @@ class Team:
             for tool_call in model_response.tool_executions:
                 tool_name = tool_call.tool_name
                 if tool_name and tool_name.lower() in ["think", "analyze"]:
-                    tool_args = tool_call.tool_args
+                    tool_args = tool_call.tool_args or {}
                     self._update_reasoning_content_from_tool_call(run_response, tool_name, tool_args)
 
     def _handle_model_response_stream(
