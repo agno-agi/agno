@@ -92,8 +92,12 @@ def test_basic_intermediate_steps_events_with_parent_run_id():
     )
 
     response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    one_event_found = False
     for run_response_delta in response_generator:
         assert run_response_delta.parent_run_id is not None
+        one_event_found = True
+
+    assert one_event_found
 
 
 def test_basic_intermediate_steps_events_persisted(shared_db):
