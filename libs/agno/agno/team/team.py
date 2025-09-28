@@ -866,9 +866,6 @@ class Team:
                 ),
             )
             try:
-                if asyncio.iscoroutinefunction(hook):
-                    raise ValueError(f"Cannot use an async hook with `run()`. Use `arun()` instead. Hook #{i + 1}")
-
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
@@ -966,9 +963,6 @@ class Team:
 
         for i, hook in enumerate(hooks):
             try:
-                if asyncio.iscoroutinefunction(hook):
-                    raise ValueError(f"Cannot use an async hook with `run()`. Use `arun()` instead. Hook #{i + 1}")
-
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
