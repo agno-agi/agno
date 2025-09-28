@@ -7,7 +7,7 @@ This example shows how to:
 3. Leverage team context for better input preparation
 """
 
-from typing import Any, Optional
+from typing import Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat

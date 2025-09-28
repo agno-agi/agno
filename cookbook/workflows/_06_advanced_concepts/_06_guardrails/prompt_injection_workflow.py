@@ -114,19 +114,19 @@ async def main():
             response = await guardrails_workflow.arun(input=test_case["input"])
 
             if test_case["should_work"]:
-                print(f"✅ Request processed successfully!")
+                print("✅ Request processed successfully!")
                 print(f"Response preview: {response.content[:200]}...")
             else:
-                print(f"⚠️ WARNING: This should have been blocked but wasn't!")
+                print("⚠️ WARNING: This should have been blocked but wasn't!")
                 print(f"Response: {response.content[:200]}...")
 
         except InputCheckError as e:
             if not test_case["should_work"]:
-                print(f"✅ Prompt injection blocked successfully!")
+                print("✅ Prompt injection blocked successfully!")
                 print(f"   Reason: {e.message}")
                 print(f"   Trigger: {e.check_trigger}")
             else:
-                print(f"❌ Unexpected blocking of legitimate request!")
+                print("❌ Unexpected blocking of legitimate request!")
                 print(f"   Error: {e.message}")
         except Exception as e:
             print(f"❌ Unexpected error: {str(e)}")

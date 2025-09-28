@@ -7,9 +7,7 @@ This example shows how to:
 3. Enhance the user experience through content modification
 """
 
-import json
 from datetime import datetime
-from typing import Any
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat

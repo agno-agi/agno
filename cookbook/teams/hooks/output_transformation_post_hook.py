@@ -8,9 +8,7 @@ This example shows how to:
 4. Aggregate insights from multiple team members
 """
 
-import json
 from datetime import datetime
-from typing import Any
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat

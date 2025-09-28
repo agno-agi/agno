@@ -6,7 +6,7 @@ This example shows how to:
 2. Post-hook: Enhanced output formatting and structure
 """
 
-from typing import Any, Optional
+from typing import Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
