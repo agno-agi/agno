@@ -10,7 +10,7 @@ This example shows how to:
 import asyncio
 
 from agno.exceptions import InputCheckError
-from agno.guardrails import Guardrails
+from agno.guardrails import PIIDetectionGuardrail
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 
@@ -25,7 +25,7 @@ async def main():
         name="Privacy-Protected Team",
         members=[],
         model=OpenAIChat(id="gpt-4o-mini"),
-        pre_hooks=[Guardrails.async_pii_detection],
+        pre_hooks=[PIIDetectionGuardrail()],
         description="An agent that helps with customer service while protecting privacy.",
         instructions="You are a helpful customer service assistant. Always protect user privacy and handle sensitive information appropriately.",
     )

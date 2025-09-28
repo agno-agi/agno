@@ -7,7 +7,7 @@ This example shows how to:
 
 from agno.agent import Agent
 from agno.exceptions import InputCheckError
-from agno.guardrails import Guardrails
+from agno.guardrails import PromptInjectionGuardrail
 from agno.models.openai import OpenAIChat
 
 
@@ -20,7 +20,7 @@ def main():
     agent = Agent(
         name="Guardrails Demo Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        pre_hooks=[Guardrails.prompt_injection],
+        pre_hooks=[PromptInjectionGuardrail()],
         description="An agent that tells jokes and provides helpful information.",
         instructions="You are a friendly assistant that tells jokes and provides helpful information. Always maintain a positive and helpful tone.",
     )

@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agno.agent.agent import Agent
+from agno.exceptions import InputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
@@ -245,7 +246,11 @@ async def agent_response_streamer(
         )
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
-
+    except InputCheckError as e:
+        error_response = RunErrorEvent(
+            content=str(e),
+        )
+        yield format_sse_event(error_response)
     except Exception as e:
         import traceback
 
@@ -274,6 +279,11 @@ async def agent_continue_response_streamer(
         )
         async for run_response_chunk in continue_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
+    except InputCheckError as e:
+        error_response = RunErrorEvent(
+            content=str(e),
+        )
+        yield format_sse_event(error_response)
 
     except Exception as e:
         import traceback
@@ -313,6 +323,11 @@ async def team_response_streamer(
         )
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
+    except InputCheckError as e:
+        error_response = RunErrorEvent(
+            content=str(e),
+        )
+        yield format_sse_event(error_response)
 
     except Exception as e:
         import traceback
@@ -366,6 +381,8 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
 
         await websocket_manager.register_workflow_websocket(workflow_run_output.run_id, websocket)  # type: ignore
 
+    except InputCheckError as e:
+        await websocket.send_text(json.dumps({"event": "error", "error": str(e)}))
     except Exception as e:
         logger.error(f"Error executing workflow via WebSocket: {e}")
         await websocket.send_text(json.dumps({"event": "error", "error": str(e)}))
@@ -390,6 +407,12 @@ async def workflow_response_streamer(
 
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
+
+    except InputCheckError as e:
+        error_response = WorkflowErrorEvent(
+            error=str(e),
+        )
+        yield format_sse_event(error_response)
 
     except Exception as e:
         import traceback
@@ -774,21 +797,25 @@ def get_base_router(
                 media_type="text/event-stream",
             )
         else:
-            run_response = cast(
-                RunOutput,
-                await agent.arun(
-                    input=message,
-                    session_id=session_id,
-                    user_id=user_id,
-                    images=base64_images if base64_images else None,
-                    audio=base64_audios if base64_audios else None,
-                    videos=base64_videos if base64_videos else None,
-                    files=input_files if input_files else None,
-                    stream=False,
-                    **kwargs,
-                ),
-            )
-            return run_response.to_dict()
+            try:
+                run_response = cast(
+                    RunOutput,
+                    await agent.arun(
+                        input=message,
+                        session_id=session_id,
+                        user_id=user_id,
+                        images=base64_images if base64_images else None,
+                        audio=base64_audios if base64_audios else None,
+                        videos=base64_videos if base64_videos else None,
+                        files=input_files if input_files else None,
+                        stream=False,
+                        **kwargs,
+                    ),
+                )
+                return run_response.to_dict()
+
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
     @router.post(
         "/agents/{agent_id}/runs/{run_id}/cancel",
@@ -891,17 +918,21 @@ def get_base_router(
                 media_type="text/event-stream",
             )
         else:
-            run_response_obj = cast(
-                RunOutput,
-                await agent.acontinue_run(
-                    run_id=run_id,  # run_id from path
-                    updated_tools=updated_tools,
-                    session_id=session_id,
-                    user_id=user_id,
-                    stream=False,
-                ),
-            )
-            return run_response_obj.to_dict()
+            try:
+                run_response_obj = cast(
+                    RunOutput,
+                    await agent.acontinue_run(
+                        run_id=run_id,  # run_id from path
+                        updated_tools=updated_tools,
+                        session_id=session_id,
+                        user_id=user_id,
+                        stream=False,
+                    ),
+                )
+                return run_response_obj.to_dict()
+
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
     @router.get(
         "/agents",
@@ -1122,18 +1153,22 @@ def get_base_router(
                 media_type="text/event-stream",
             )
         else:
-            run_response = await team.arun(
-                input=message,
-                session_id=session_id,
-                user_id=user_id,
-                images=base64_images if base64_images else None,
-                audio=base64_audios if base64_audios else None,
-                videos=base64_videos if base64_videos else None,
-                files=document_files if document_files else None,
-                stream=False,
-                **kwargs,
-            )
-            return run_response.to_dict()
+            try:
+                run_response = await team.arun(
+                    input=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                    files=document_files if document_files else None,
+                    stream=False,
+                    **kwargs,
+                )
+                return run_response.to_dict()
+
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
     @router.post(
         "/teams/{team_id}/runs/{run_id}/cancel",
@@ -1497,6 +1532,9 @@ def get_base_router(
                     **kwargs,
                 )
                 return run_response.to_dict()
+
+        except InputCheckError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             # Handle unexpected runtime errors
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")

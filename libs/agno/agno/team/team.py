@@ -37,6 +37,7 @@ from agno.exceptions import (
     OutputCheckError,
     RunCancelledException,
 )
+from agno.guardrails import BaseGuardrail
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
@@ -80,6 +81,7 @@ from agno.utils.events import (
     create_team_tool_call_completed_event,
     create_team_tool_call_started_event,
 )
+from agno.utils.hooks import filter_hook_args, normalize_hooks
 from agno.utils.knowledge import get_agentic_or_user_search_filters
 from agno.utils.log import (
     log_debug,
@@ -272,9 +274,9 @@ class Team:
 
     # --- Team Hooks ---
     # Functions called right after team session is loaded, before processing starts
-    pre_hooks: Optional[List[Callable[..., Any]]] = None
+    pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
-    post_hooks: Optional[List[Callable[..., Any]]] = None
+    post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
 
     # --- Structured output ---
     # Input schema for validating input
@@ -414,8 +416,8 @@ class Team:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
-        pre_hooks: Optional[Union[Callable[..., Any], List[Callable[..., Any]]]] = None,
-        post_hooks: Optional[Union[Callable[..., Any], List[Callable[..., Any]]]] = None,
+        pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
+        post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parser_model: Optional[Model] = None,
@@ -514,8 +516,8 @@ class Team:
         self.tool_hooks = tool_hooks
 
         # Initialize hooks with backward compatibility
-        self.pre_hooks = self._normalize_hooks(pre_hooks)
-        self.post_hooks = self._normalize_hooks(post_hooks)
+        self.pre_hooks = pre_hooks
+        self.post_hooks = post_hooks
 
         self.input_schema = input_schema
         self.output_schema = output_schema
@@ -597,6 +599,8 @@ class Team:
         self._formatter: Optional[SafeFormatter] = None
 
         self._rebuild_tools = True
+
+        self._hooks_normalised = False
 
     @property
     def should_parse_structured_output(self) -> bool:
@@ -830,45 +834,6 @@ class Team:
         """
         return cancel_run_global(run_id)
 
-    def _normalize_hooks(
-        self,
-        hooks: Optional[Union[Callable[..., Any], List[Callable[..., Any]]]],
-    ) -> Optional[List[Callable[..., Any]]]:
-        """Normalize hooks to a list format"""
-        result_hooks = []
-
-        if hooks is not None:
-            if isinstance(hooks, list):
-                result_hooks.extend(hooks)
-            else:
-                result_hooks.append(hooks)
-
-        return result_hooks if result_hooks else None
-
-    def _filter_hook_args(self, hook: Callable[..., Any], all_args: Dict[str, Any]) -> Dict[str, Any]:
-        """Filter arguments to only include those that the hook function accepts."""
-        import inspect
-
-        try:
-            sig = inspect.signature(hook)
-            accepted_params = set(sig.parameters.keys())
-
-            has_var_keyword = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
-
-            # If the function has **kwargs, pass all arguments
-            if has_var_keyword:
-                return all_args
-
-            # Otherwise, filter to only include accepted parameters
-            filtered_args = {key: value for key, value in all_args.items() if key in accepted_params}
-
-            return filtered_args
-
-        except Exception as e:
-            log_warning(f"Could not inspect hook signature, passing all arguments: {e}")
-            # If signature inspection fails, pass all arguments as fallback
-            return all_args
-
     def _execute_pre_hooks(
         self,
         hooks: Optional[List[Callable[..., Any]]],
@@ -905,7 +870,7 @@ class Team:
                     raise ValueError(f"Cannot use an async hook with `run()`. Use `arun()` instead. Hook #{i + 1}")
 
                 # Filter arguments to only include those that the hook accepts
-                filtered_args = self._filter_hook_args(hook, all_args)
+                filtered_args = filter_hook_args(hook, all_args)
 
                 hook(**filtered_args)
 
@@ -955,7 +920,7 @@ class Team:
             )
             try:
                 # Filter arguments to only include those that the hook accepts
-                filtered_args = self._filter_hook_args(hook, all_args)
+                filtered_args = filter_hook_args(hook, all_args)
 
                 if asyncio.iscoroutinefunction(hook):
                     await hook(**filtered_args)
@@ -1005,7 +970,7 @@ class Team:
                     raise ValueError(f"Cannot use an async hook with `run()`. Use `arun()` instead. Hook #{i + 1}")
 
                 # Filter arguments to only include those that the hook accepts
-                filtered_args = self._filter_hook_args(hook, all_args)
+                filtered_args = filter_hook_args(hook, all_args)
 
                 hook(**filtered_args)
 
@@ -1041,7 +1006,7 @@ class Team:
         for i, hook in enumerate(hooks):
             try:
                 # Filter arguments to only include those that the hook accepts
-                filtered_args = self._filter_hook_args(hook, all_args)
+                filtered_args = filter_hook_args(hook, all_args)
 
                 if asyncio.iscoroutinefunction(hook):
                     await hook(**filtered_args)
@@ -1094,7 +1059,7 @@ class Team:
         if self.pre_hooks is not None:
             # Can modify the run input
             pre_hook_iterator = self._execute_pre_hooks(
-                hooks=self.pre_hooks,
+                hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
                 session=session,
@@ -1203,7 +1168,7 @@ class Team:
         # 6. Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
             self._execute_post_hooks(
-                hooks=self.post_hooks,
+                hooks=self.post_hooks,  # type: ignore
                 run_output=run_response,
                 session=session,
                 user_id=user_id,
@@ -1279,7 +1244,7 @@ class Team:
         if self.pre_hooks is not None:
             # Can modify the run input
             pre_hook_iterator = self._execute_pre_hooks(
-                hooks=self.pre_hooks,
+                hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
                 session=session,
@@ -1547,11 +1512,19 @@ class Team:
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team and return the response."""
 
+        # Create a run_id for this specific run
+        run_id = str(uuid4())
+
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
+        # Normalise hook & guardails
+        if not self._hooks_normalised:
+            if self.pre_hooks:
+                self.pre_hooks = normalize_hooks(self.pre_hooks)
+            if self.post_hooks:
+                self.post_hooks = normalize_hooks(self.post_hooks)
+            self._hooks_normalised = True
 
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
@@ -1723,6 +1696,9 @@ class Team:
                         **kwargs,
                     )
 
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                raise e
             except ModelProviderError as e:
                 import time
 
@@ -1813,7 +1789,7 @@ class Team:
         # 2. Execute pre-hooks after session is loaded but before processing starts
         if self.pre_hooks is not None:
             pre_hook_iterator = self._aexecute_pre_hooks(
-                hooks=self.pre_hooks,
+                hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
                 session=session,
@@ -1947,7 +1923,7 @@ class Team:
         # Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
             await self._aexecute_post_hooks(
-                hooks=self.post_hooks,
+                hooks=self.post_hooks,  # type: ignore
                 run_output=run_response,
                 session=session,
                 user_id=user_id,
@@ -2003,7 +1979,7 @@ class Team:
         self.model = cast(Model, self.model)
         if self.pre_hooks is not None:
             pre_hook_iterator = self._aexecute_pre_hooks(
-                hooks=self.pre_hooks,
+                hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
                 session=session,
@@ -2270,11 +2246,19 @@ class Team:
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
 
+        # Create a run_id for this specific run
+        run_id = str(uuid4())
+
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
+        # Normalise hook & guardails
+        if not self._hooks_normalised:
+            if self.pre_hooks:
+                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)
+            if self.post_hooks:
+                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)
+            self._hooks_normalised = True
 
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
@@ -2418,6 +2402,9 @@ class Team:
                         **kwargs,
                     )
 
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                raise e
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 last_exception = e

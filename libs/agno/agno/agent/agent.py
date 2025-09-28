@@ -35,6 +35,7 @@ from agno.exceptions import (
     RunCancelledException,
     StopAgentRun,
 )
+from agno.guardrails import BaseGuardrail
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
@@ -85,6 +86,7 @@ from agno.utils.events import (
     create_tool_call_completed_event,
     create_tool_call_started_event,
 )
+from agno.utils.hooks import filter_hook_args, normalize_hooks
 from agno.utils.knowledge import get_agentic_or_user_search_filters
 from agno.utils.log import (
     log_debug,
@@ -219,9 +221,9 @@ class Agent:
 
     # --- Agent Hooks ---
     # Functions called right after agent-session is loaded, before processing starts
-    pre_hooks: Optional[List[Callable[..., Any]]] = None
+    pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
-    post_hooks: Optional[List[Callable[..., Any]]] = None
+    post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
 
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
@@ -393,8 +395,8 @@ class Agent:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
-        pre_hooks: Optional[Union[Callable[..., Any], List[Callable[..., Any]]]] = None,
-        post_hooks: Optional[Union[Callable[..., Any], List[Callable[..., Any]]]] = None,
+        pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
+        post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -498,8 +500,8 @@ class Agent:
         self.tool_hooks = tool_hooks
 
         # Initialize hooks with backward compatibility
-        self.pre_hooks = self._normalize_hooks(pre_hooks)
-        self.post_hooks = self._normalize_hooks(post_hooks)
+        self.pre_hooks = pre_hooks
+        self.post_hooks = post_hooks
 
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
@@ -572,6 +574,8 @@ class Agent:
         self._rebuild_tools: bool = True
 
         self._formatter: Optional[SafeFormatter] = None
+
+        self._hooks_normalised = False
 
     def set_id(self) -> None:
         if self.id is None:
@@ -800,7 +804,7 @@ class Agent:
         if self.pre_hooks is not None:
             # Can modify the run input
             pre_hook_iterator = self._execute_pre_hooks(
-                hooks=self.pre_hooks,
+                hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
                 session=session,
@@ -902,7 +906,7 @@ class Agent:
         # 6. Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
             self._execute_post_hooks(
-                hooks=self.post_hooks,
+                hooks=self.post_hooks,  # type: ignore
                 run_output=run_response,
                 session=session,
                 user_id=user_id,
@@ -983,7 +987,7 @@ class Agent:
         if self.pre_hooks is not None:
             # Can modify the run input
             pre_hook_iterator = self._execute_pre_hooks(
-                hooks=self.pre_hooks,
+                hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
                 session=session,
@@ -1252,6 +1256,14 @@ class Agent:
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
 
+        # Normalise hook & guardails
+        if not self._hooks_normalised:
+            if self.pre_hooks:
+                self.pre_hooks = normalize_hooks(self.pre_hooks)
+            if self.post_hooks:
+                self.post_hooks = normalize_hooks(self.post_hooks)
+            self._hooks_normalised = True
+
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
         )
@@ -1396,7 +1408,7 @@ class Agent:
                     )
                     return response
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
                 raise e
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -1492,7 +1504,7 @@ class Agent:
         if self.pre_hooks is not None:
             # Can modify the run input
             pre_hook_iterator = self._aexecute_pre_hooks(
-                hooks=self.pre_hooks,
+                hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
                 session=session,
@@ -1593,7 +1605,7 @@ class Agent:
         # 7. Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
             await self._aexecute_post_hooks(
-                hooks=self.post_hooks,
+                hooks=self.post_hooks,  # type: ignore
                 run_output=run_response,
                 session=session,
                 user_id=user_id,
@@ -1675,7 +1687,7 @@ class Agent:
         if self.pre_hooks is not None:
             # Can modify the run input
             pre_hook_iterator = self._aexecute_pre_hooks(
-                hooks=self.pre_hooks,
+                hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
                 session=session,
@@ -1947,6 +1959,14 @@ class Agent:
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
 
+        # Normalise hook & guardails
+        if not self._hooks_normalised:
+            if self.pre_hooks:
+                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)
+            if self.post_hooks:
+                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)
+            self._hooks_normalised = True
+
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
         )
@@ -2187,6 +2207,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        **kwargs,
     ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
         """Continue a previous run.
 
@@ -2285,6 +2306,7 @@ class Agent:
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
+            dependencies=run_dependencies,
             user_id=user_id,
             async_mode=False,
             knowledge_filters=effective_filters,
@@ -2323,6 +2345,8 @@ class Agent:
                         user_id=user_id,
                         session=agent_session,
                         response_format=response_format,
+                        debug_mode=debug_mode,
+                        **kwargs,
                     )
                     return response
             except ModelProviderError as e:
@@ -2369,6 +2393,8 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs,
     ) -> RunOutput:
         """Continue a previous run.
 
@@ -2416,6 +2442,16 @@ class Agent:
         # Set the run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
+
+        if self.post_hooks is not None:
+            self._execute_post_hooks(
+                hooks=self.post_hooks,  # type: ignore
+                run_output=run_response,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
 
         # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
@@ -2572,6 +2608,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        **kwargs,
     ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
         """Continue a previous run.
 
@@ -2703,6 +2740,8 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         dependencies=run_dependencies,
+                        debug_mode=debug_mode,
+                        **kwargs,
                     )
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -2748,6 +2787,8 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs,
     ) -> RunOutput:
         """Continue a previous run.
 
@@ -2798,6 +2839,16 @@ class Agent:
         # Set the run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
+
+        if self.post_hooks is not None:
+            await self._aexecute_post_hooks(
+                hooks=self.post_hooks,  # type: ignore
+                run_output=run_response,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
 
         # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
@@ -2910,45 +2961,6 @@ class Agent:
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
-    def _normalize_hooks(
-        self,
-        hooks: Optional[Union[Callable[..., Any], List[Callable[..., Any]]]],
-    ) -> Optional[List[Callable[..., Any]]]:
-        """Normalize hooks to a list format"""
-        result_hooks = []
-
-        if hooks is not None:
-            if isinstance(hooks, list):
-                result_hooks.extend(hooks)
-            else:
-                result_hooks.append(hooks)
-
-        return result_hooks if result_hooks else None
-
-    def _filter_hook_args(self, hook: Callable[..., Any], all_args: Dict[str, Any]) -> Dict[str, Any]:
-        """Filter arguments to only include those that the hook function accepts."""
-        import inspect
-
-        try:
-            sig = inspect.signature(hook)
-            accepted_params = set(sig.parameters.keys())
-
-            has_var_keyword = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
-
-            # If the function has **kwargs, pass all arguments
-            if has_var_keyword:
-                return all_args
-
-            # Otherwise, filter to only include accepted parameters
-            filtered_args = {key: value for key, value in all_args.items() if key in accepted_params}
-
-            return filtered_args
-
-        except Exception as e:
-            log_warning(f"Could not inspect hook signature, passing all arguments: {e}")
-            # If signature inspection fails, pass all arguments as fallback
-            return all_args
-
     def _execute_pre_hooks(
         self,
         hooks: Optional[List[Callable[..., Any]]],
@@ -2985,7 +2997,7 @@ class Agent:
                     raise ValueError(f"Cannot use an async hook with `run()`. Use `arun()` instead. Hook #{i + 1}")
 
                 # Filter arguments to only include those that the hook accepts
-                filtered_args = self._filter_hook_args(hook, all_args)
+                filtered_args = filter_hook_args(hook, all_args)
 
                 hook(**filtered_args)
 
@@ -3038,7 +3050,7 @@ class Agent:
             )
             try:
                 # Filter arguments to only include those that the hook accepts
-                filtered_args = self._filter_hook_args(hook, all_args)
+                filtered_args = filter_hook_args(hook, all_args)
 
                 if asyncio.iscoroutinefunction(hook):
                     await hook(**filtered_args)
@@ -3091,7 +3103,7 @@ class Agent:
                     raise ValueError(f"Cannot use an async hook with `run()`. Use `arun()` instead. Hook #{i + 1}")
 
                 # Filter arguments to only include those that the hook accepts
-                filtered_args = self._filter_hook_args(hook, all_args)
+                filtered_args = filter_hook_args(hook, all_args)
 
                 hook(**filtered_args)
             except (InputCheckError, OutputCheckError) as e:
@@ -3129,7 +3141,7 @@ class Agent:
         for i, hook in enumerate(hooks):
             try:
                 # Filter arguments to only include those that the hook accepts
-                filtered_args = self._filter_hook_args(hook, all_args)
+                filtered_args = filter_hook_args(hook, all_args)
 
                 if asyncio.iscoroutinefunction(hook):
                     await hook(**filtered_args)

@@ -5,9 +5,8 @@ This example shows how to:
 1. An input validation check that checks for prompt injection
 """
 
-from agno.agent import Agent
 from agno.exceptions import InputCheckError
-from agno.guardrails import Guardrails
+from agno.guardrails import PromptInjectionGuardrail
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 
@@ -21,7 +20,7 @@ def main():
     team = Team(
         name="Guardrails Demo Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        pre_hooks=[Guardrails.prompt_injection],
+        pre_hooks=[PromptInjectionGuardrail()],
         members=[],
         description="An agent that tells jokes and provides helpful information.",
         instructions="You are a friendly assistant that tells jokes and provides helpful information. Always maintain a positive and helpful tone.",

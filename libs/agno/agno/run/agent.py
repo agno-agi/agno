@@ -37,6 +37,7 @@ class RunInput:
 
     def input_content_string(self) -> str:
         import json
+
         if isinstance(self.input_content, (str)):
             return self.input_content
         elif isinstance(self.input_content, BaseModel):
