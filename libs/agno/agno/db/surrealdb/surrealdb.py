@@ -182,8 +182,7 @@ class SurrealDb(BaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
-        table_type = "sessions"
-        sessions_table = self._get_table(table_type)
+        sessions_table = self._get_table("sessions")
         record = RecordID(sessions_table, session_id)
         where = WhereClause()
         if user_id is not None:
@@ -221,8 +220,7 @@ class SurrealDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
-        table_type = "sessions"
-        table = self._get_table(table_type)
+        table = self._get_table("sessions")
 
         # -- Filters
         where = WhereClause()
@@ -275,8 +273,7 @@ class SurrealDb(BaseDb):
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
-        table_type = "sessions"
-        table = self._get_table(table_type)
+        table = self._get_table("sessions")
         vars = {"record": RecordID(table, session_id), "name": session_name}
 
         # Query
@@ -293,9 +290,8 @@ class SurrealDb(BaseDb):
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
-        table_type = "sessions"
         session_type = get_session_type(session)
-        table = self._get_table(table_type)
+        table = self._get_table("sessions")
         session_raw = self._query_one(
             "UPSERT ONLY $record CONTENT $content",
             {
@@ -312,11 +308,10 @@ class SurrealDb(BaseDb):
     def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True
     ) -> List[Union[Session, Dict[str, Any]]]:
-        table_type = "sessions"
         if not sessions:
             return []
         session_type = get_session_type(sessions[0])
-        table = self._get_table(table_type)
+        table = self._get_table("sessions")
         sessions_raw: List[Dict[str, Any]] = []
         for session in sessions:
             # UPSERT does only work for one record at a time
@@ -341,24 +336,20 @@ class SurrealDb(BaseDb):
     # --- Memory ---
 
     def clear_memories(self) -> None:
-        table_type = "memories"
-        table = self._get_table(table_type)
+        table = self._get_table("memories")
         _ = self.client.delete(table)
 
     def delete_user_memory(self, memory_id: str) -> None:
-        table_type = "memories"
-        table = self._get_table(table_type)
+        table = self._get_table("memories")
         self.client.delete(RecordID(table, memory_id))
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
-        table_type = "memories"
-        table = self._get_table(table_type)
+        table = self._get_table("memories")
         records = [RecordID(table, memory_id) for memory_id in memory_ids]
         _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
 
     def get_all_memory_topics(self) -> List[str]:
-        table_type = "memories"
-        table = self._get_table(table_type)
+        table = self._get_table("memories")
         vars: dict[str, Any] = {}
 
         # Query
@@ -376,8 +367,7 @@ class SurrealDb(BaseDb):
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
-        table_type = "memories"
-        table_name = self._get_table(table_type)
+        table_name = self._get_table("memories")
         record = RecordID(table_name, memory_id)
         query = "SELECT * FROM ONLY $record"
         result = self._query_one(query, {"record": record}, dict)
@@ -398,8 +388,7 @@ class SurrealDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
-        table_type = "memories"
-        table = self._get_table(table_type)
+        table = self._get_table("memories")
         where = WhereClause()
         if user_id is not None:
             rec_id = RecordID(self._get_table("users"), user_id)
@@ -437,8 +426,7 @@ class SurrealDb(BaseDb):
         limit: Optional[int] = None,
         page: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        table_type = "memories"
-        memories_table_name = self._get_table(table_type)
+        memories_table_name = self._get_table("memories")
         where = WhereClause()
         where.and_("!!user", True, "=")
         where_clause, where_vars = where.build()
@@ -468,8 +456,7 @@ class SurrealDb(BaseDb):
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
-        table_type = "memories"
-        table = self._get_table(table_type)
+        table = self._get_table("memories")
         user_table = self._get_table("users")
         if memory.memory_id:
             record = RecordID(table, memory.memory_id)
@@ -489,12 +476,11 @@ class SurrealDb(BaseDb):
     def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
-        table_type = "memories"
         if not memories:
             return []
-        table = self._get_table(table_type)
+        table = self._get_table("memories")
         user_table_name = self._get_table("users")
-        raw = []
+        raw: list[dict] = []
         for memory in memories:
             if memory.memory_id:
                 # UPSERT does only work for one record at a time
@@ -512,7 +498,8 @@ class SurrealDb(BaseDb):
                     {"content": serialize_user_memory(memory, table, user_table_name)},
                     dict,
                 )
-            raw.append(session_raw)
+            if session_raw is not None:
+                raw.append(session_raw)
         if raw is None or not deserialize:
             return [desurrealize_user_memory(x) for x in raw]
         # wrapping with list because of:
@@ -535,8 +522,7 @@ class SurrealDb(BaseDb):
 
     # --- Knowledge ---
     def delete_knowledge_content(self, id: str):
-        table_type = "knowledge"
-        table = self._get_table(table_type)
+        table = self._get_table("knowledge")
         self.client.delete(RecordID(table, id))
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -552,8 +538,7 @@ class SurrealDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        table_type = "knowledge"
-        table = self._get_table(table_type)
+        table = self._get_table("knowledge")
         where = WhereClause()
         where_clause, where_vars = where.build()
 
@@ -572,8 +557,7 @@ class SurrealDb(BaseDb):
         return [deserialize_knowledge_row(row) for row in result], total_count
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow) -> Optional[KnowledgeRow]:
-        table_type = "knowledge"
-        table = self._get_table(table_type)
+        table = self._get_table("knowledge")
         record = RecordID(table, knowledge_row.id)
         query = "UPSERT ONLY $record CONTENT $content"
         result = self._query_one(query, {"record": record, "content": serialize_knowledge_row(knowledge_row)}, dict)
@@ -581,15 +565,13 @@ class SurrealDb(BaseDb):
 
     # --- Evals ---
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
-        table_type = "evals"
-        table = self._get_table(table_type)
+        table = self._get_table("evals")
         query = f"CREATE {table} CONTENT $content"
         result = self._query_one(query, {"content": serialize_eval_run_record(eval_run)}, dict)
         return deserialize_eval_run_record(result) if result else None
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
-        table_type = "evals"
-        table = self._get_table(table_type)
+        table = self._get_table("evals")
         records = [RecordID(table, id) for id in eval_run_ids]
         _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
 
@@ -617,8 +599,7 @@ class SurrealDb(BaseDb):
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
-        table_type = "evals"
-        table = self._get_table(table_type)
+        table = self._get_table("evals")
 
         where = WhereClause()
         if filter_type is not None:
@@ -663,8 +644,7 @@ class SurrealDb(BaseDb):
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-        table_type = "evals"
-        table = self._get_table(table_type)
+        table = self._get_table("evals")
         vars = {"record": RecordID(table, eval_run_id), "name": name}
 
         # Query

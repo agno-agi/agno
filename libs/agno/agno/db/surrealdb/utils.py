@@ -42,7 +42,7 @@ def query(
         if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):
             return [getattr(record_type, "from_dict").__call__(x) for x in response]
         else:
-            result: Sequence[RecordType] = []
+            result: list[RecordType] = []
             for x in response:
                 if isinstance(x, dict):
                     result.append(record_type(**x))
