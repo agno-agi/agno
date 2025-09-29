@@ -276,9 +276,9 @@ def test_jwt_middleware_excluded_routes(jwt_test_agent):
         dependencies_claims=["name", "email"],
         validate=True,
         excluded_route_paths=[
-            "/health",   # Exclude health endpoint
-            "/sessions", # Exclude sessions endpoint
-            "/sessions/*", # Exclude sessions endpoint with wildcard
+            "/health",  # Exclude health endpoint
+            "/sessions",  # Exclude sessions endpoint
+            "/sessions/*",  # Exclude sessions endpoint with wildcard
         ],
     )
 
@@ -287,7 +287,7 @@ def test_jwt_middleware_excluded_routes(jwt_test_agent):
     # Health endpoint should work without token (excluded)
     response = client.get("/health")
     assert response.status_code == 200
-    
+
     # Sessions endpoint should work without token (excluded)
     response = client.get("/sessions")
     assert response.status_code == 200
@@ -295,7 +295,6 @@ def test_jwt_middleware_excluded_routes(jwt_test_agent):
     # Sessions endpoint should work without token (excluded)
     response = client.get("/sessions/123")
     assert response.status_code != 401
-
 
     # Agent endpoint should require token (not excluded)
     response = client.post(

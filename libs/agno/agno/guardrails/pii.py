@@ -1,5 +1,5 @@
-from typing import Dict, Optional, Union
 from re import Pattern
+from typing import Dict, Optional, Union
 
 from agno.exceptions import CheckTrigger, InputCheckError
 from agno.guardrails.base import BaseGuardrail

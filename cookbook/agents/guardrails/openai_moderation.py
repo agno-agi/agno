@@ -97,6 +97,7 @@ async def main():
         )
     except InputCheckError as e:
         import json
+
         print(f"✅ Violence blocked: {e.message[:100]}...")
         print(f"   {json.dumps(e.additional_data, indent=2)}")
         print(f"   Trigger: {e.check_trigger}")

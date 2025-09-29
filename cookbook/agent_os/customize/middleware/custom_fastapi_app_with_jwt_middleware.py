@@ -4,7 +4,7 @@ This example demonstrates how to use our JWT middleware with your custom FastAPI
 # Note: This example won't work with the AgentOS UI, because of the token validation mechanism in the JWT middleware.
 """
 
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from agno.agent import Agent

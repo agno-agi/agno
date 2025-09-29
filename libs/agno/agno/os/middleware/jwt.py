@@ -1,6 +1,6 @@
 import fnmatch
-from os import getenv
 from enum import Enum
+from os import getenv
 from typing import List, Optional
 
 import jwt
@@ -78,6 +78,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
         self.secret_key = secret_key or getenv("JWT_SECRET_KEY")
+        if not self.secret_key:
+            raise ValueError("Secret key is required")
         self.algorithm = algorithm
         self.token_header_key = token_header_key
         self.token_source = token_source
@@ -138,12 +140,12 @@ class JWTMiddleware(BaseHTTPMiddleware):
         """Check if a route path matches any of the excluded patterns."""
         if not self.excluded_route_paths:
             return False
-        
+
         for excluded_path in self.excluded_route_paths:
             # Support both exact matches and wildcard patterns
             if fnmatch.fnmatch(path, excluded_path):
                 return True
-        
+
         return False
 
     async def dispatch(self, request: Request, call_next) -> Response:
@@ -161,7 +163,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         # Decode JWT token
         try:
-            payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
+            payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])  # type: ignore
 
             # Extract scopes claims
             scopes = []

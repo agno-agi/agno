@@ -42,6 +42,7 @@ app: FastAPI = FastAPI(
     version="1.0.0",
 )
 
+
 # Custom landing page (conflicts with AgentOS home route)
 @app.get("/")
 async def get_custom_home():
