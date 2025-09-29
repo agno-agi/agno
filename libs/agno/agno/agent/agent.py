@@ -1111,7 +1111,7 @@ class Agent:
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input,
+            input_content=validated_input,
             images=image_artifacts,
             videos=video_artifacts,
             audios=audio_artifacts,
@@ -1841,7 +1841,11 @@ class Agent:
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=validated_input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=files,
         )
 
         # Extract workflow context from kwargs if present
