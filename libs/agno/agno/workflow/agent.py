@@ -43,18 +43,34 @@ class WorkflowAgent(Agent):
         Initialize WorkflowAgent with restricted parameters.
         
         Args:
-            model: The model to use for the agent
+            model: The model to use for the agent (required)
             name: Agent name (defaults to "Workflow Agent")
             description: Agent description
             instructions: Custom instructions (will be combined with workflow context)
-            **kwargs: Additional arguments passed to Agent (limited set)
+            **kwargs: Additional arguments - only debug_mode and monitoring are allowed
+        
+        Raises:
+            ValueError: If any disallowed parameters are provided
         """
         
-        # Filter kwargs to only allow specific parameters
+        # Define allowed additional kwargs beyond the core parameters
         allowed_kwargs = {
             "debug_mode",
             "monitoring",
         }
+        
+        # Check for unallowed parameters
+        unallowed_params = set(kwargs.keys()) - allowed_kwargs
+        if unallowed_params:
+            raise ValueError(
+                f"WorkflowAgent does not support the following parameters: {', '.join(sorted(unallowed_params))}.\n"
+                f"Allowed parameters are:\n"
+                f"  - Core: model (required), name, description, instructions\n"
+                f"  - Additional: {', '.join(sorted(allowed_kwargs))}\n"
+                f"Not allowed: tools, knowledge, db, reasoning, and other Agent-specific parameters"
+            )
+        
+        # Filter kwargs to only allow specific parameters
         filtered_kwargs = {k: v for k, v in kwargs.items() if k in allowed_kwargs}
         
         super().__init__(
