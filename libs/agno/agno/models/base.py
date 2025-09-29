@@ -1587,7 +1587,7 @@ class Model(ABC):
             function_call_success, function_call_timer, function_call, function_execution_result = result
 
             # Check if this result contains an async generator
-            if isinstance(function_call.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
+            if isinstance(function_call.result, (AsyncGeneratorType, AsyncIterator)):
                 async_generator_results.append(result)
             else:
                 non_async_generator_results.append(result)
@@ -1595,7 +1595,7 @@ class Model(ABC):
         # Process async generators with real-time event streaming using asyncio.Queue
         async_generator_outputs = {}
         event_queue: asyncio.Queue = asyncio.Queue()
-        active_generators = len(async_generator_results)
+        active_generators_count = len(async_generator_results)
 
         # Create background tasks for each async generator
         async def process_async_generator(result, generator_id):
@@ -1649,14 +1649,14 @@ class Model(ABC):
             generator_tasks.append(task)
 
         # Stream events from the queue as they arrive
-        completed_generators = 0
-        while completed_generators < active_generators:
+        completed_generators_count = 0
+        while completed_generators_count < active_generators_count:
             try:
                 event = await event_queue.get()
 
                 # Check if this is a completion signal
                 if isinstance(event, tuple) and event[0] == "GENERATOR_DONE":
-                    completed_generators += 1
+                    completed_generators_count += 1
                     continue
 
                 # Yield the actual event

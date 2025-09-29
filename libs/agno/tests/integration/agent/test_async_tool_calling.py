@@ -113,7 +113,6 @@ async def test_concurrent_async_generators_stream():
         tools=[fast_async_generator, slow_async_generator],
     )
 
-    start_time = time.time()
     events = []
 
     async for event in agent.arun(
