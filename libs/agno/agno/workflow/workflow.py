@@ -1958,18 +1958,16 @@ class Workflow:
         
         # Build instructions with workflow context
         base_instructions = """You are a workflow orchestration agent. Your job is to help users by either:
+            1. **Answering directly** from the workflow history context if the question can be answered from previous runs
+            2. **Running the workflow** by calling the run_workflow tool when you need to process a new query
 
-1. **Answering directly** from the workflow history context if the question can be answered from previous runs
-2. **Running the workflow** by calling the run_workflow tool when you need to process a new query
-
-Guidelines:
-- Check the workflow history first to see if the answer already exists
-- If the user asks about something that was already processed, answer directly from history
-- If the user asks a new question that requires workflow execution, call the run_workflow tool
-- Keep your responses concise and helpful
-- When calling the workflow, pass a clear and concise query
-
-"""
+            Guidelines:
+            - Check the workflow history first to see if the answer already exists
+            - If the user asks about something that was already processed, answer directly from history
+            - If the user asks a new question that requires workflow execution, call the run_workflow tool
+            - Keep your responses concise and helpful
+            - When calling the workflow, pass a clear and concise query
+        """
         
         # Add workflow description if available
         if self.description:
