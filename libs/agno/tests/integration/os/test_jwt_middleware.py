@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import jwt
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
@@ -57,7 +58,6 @@ def jwt_test_client(jwt_test_agent):
         JWTMiddleware,
         secret_key=JWT_SECRET,
         algorithm="HS256",
-        token_prefix="Bearer",
         user_id_claim="sub",  # Extract user_id from 'sub' claim
         session_id_claim="session_id",  # Extract session_id from 'session_id' claim
         dependencies_claims=["name", "email", "roles", "org_id"],  # Extract these as dependencies
@@ -180,7 +180,7 @@ def test_jwt_middleware_validation_disabled(jwt_test_agent):
         JWTMiddleware,
         secret_key=JWT_SECRET,
         algorithm="HS256",
-        token_prefix="Bearer",
+        token_header_key="Authorization",
         user_id_claim="sub",
         session_id_claim="session_id",
         dependencies_claims=["name", "email", "roles"],
@@ -219,7 +219,7 @@ def test_jwt_middleware_custom_claims_configuration(jwt_test_agent):
         JWTMiddleware,
         secret_key=JWT_SECRET,
         algorithm="HS256",
-        token_prefix="Bearer",
+        token_header_key="Authorization",
         user_id_claim="custom_user_id",  # Different claim name
         session_id_claim="custom_session",  # Different claim name
         dependencies_claims=["department", "level"],  # Different dependency claims
@@ -270,7 +270,7 @@ def test_jwt_middleware_excluded_routes(jwt_test_agent):
         JWTMiddleware,
         secret_key=JWT_SECRET,
         algorithm="HS256",
-        token_prefix="Bearer",
+        token_header_key="Authorization",
         user_id_claim="sub",
         session_id_claim="session_id",
         dependencies_claims=["name", "email"],
@@ -531,3 +531,459 @@ def test_jwt_middleware_cookie_invalid_token_fails(jwt_test_agent):
 
     assert response.status_code == 401
     assert "Invalid token" in response.json()["detail"]
+
+
+def test_jwt_middleware_scopes_string_format(jwt_test_agent):
+    """Test JWT middleware with scopes claim as space-separated string."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        secret_key=JWT_SECRET,
+        algorithm="HS256",
+        scopes_claim="scope",  # Standard OAuth2 scope claim
+        user_id_claim="sub",
+        validate=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with string scopes
+    payload = {
+        "sub": "test_user_123",
+        "scope": "read write admin",  # Space-separated string
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Scopes extracted"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test string scopes", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+
+def test_jwt_middleware_scopes_list_format(jwt_test_agent):
+    """Test JWT middleware with scopes claim as list."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        secret_key=JWT_SECRET,
+        algorithm="HS256",
+        scopes_claim="permissions",  # Custom scope claim name
+        user_id_claim="sub",
+        validate=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with list scopes
+    payload = {
+        "sub": "test_user_123",
+        "permissions": ["read", "write", "admin"],  # List format
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "List scopes extracted"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test list scopes", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+
+def test_jwt_middleware_no_scopes_claim(jwt_test_agent):
+    """Test JWT middleware when no scopes claim is configured."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        secret_key=JWT_SECRET,
+        algorithm="HS256",
+        scopes_claim=None,  # No scopes extraction
+        user_id_claim="sub",
+        validate=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with scopes that should be ignored
+    payload = {
+        "sub": "test_user_123",
+        "scope": "read write admin",  # This should be ignored
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "No scopes configured"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test no scopes", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+
+def test_jwt_middleware_session_state_claims(jwt_test_agent):
+    """Test JWT middleware with session_state_claims extraction."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        secret_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        session_state_claims=["session_data", "user_preferences", "theme"],
+        validate=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with session state claims
+    payload = {
+        "sub": "test_user_123",
+        "session_data": {"last_login": "2023-10-01T10:00:00Z"},
+        "user_preferences": {"language": "en", "timezone": "UTC"},
+        "theme": "dark",
+        "other_claim": "should_be_ignored",  # Not in session_state_claims
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Session state extracted"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test session state", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+
+def test_jwt_middleware_custom_token_header_key(jwt_test_agent):
+    """Test JWT middleware with custom token header key instead of Authorization."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    custom_header_key = "X-Auth-Token"
+    app.add_middleware(
+        JWTMiddleware,
+        secret_key=JWT_SECRET,
+        algorithm="HS256",
+        token_header_key=custom_header_key,
+        user_id_claim="sub",
+        validate=True,
+    )
+
+    client = TestClient(app)
+
+    # Create valid token
+    payload = {
+        "sub": "test_user_123",
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Custom header success"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        # Test with custom header
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={custom_header_key: f"Bearer {token}"},
+            data={"message": "Test custom header", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+        # Test that Authorization header is ignored when custom header is configured
+        mock_arun.reset_mock()
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},  # Should be ignored
+            data={"message": "Should fail", "stream": "false"},
+        )
+
+        assert response.status_code == 401  # Should fail because custom header key is missing
+
+
+def test_jwt_middleware_malformed_authorization_header(jwt_test_agent):
+    """Test JWT middleware with malformed Authorization headers."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        secret_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+    )
+
+    client = TestClient(app)
+
+    # Create valid token for testing
+    payload = {
+        "sub": "test_user_123",
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    # Test malformed header without space
+    response = client.post(
+        "/agents/jwt-test-agent/runs",
+        headers={"Authorization": f"Bearer{token}"},  # No space between Bearer and token
+        data={"message": "Test malformed header", "stream": "false"},
+    )
+    assert response.status_code == 401
+
+    # Test header with just "Bearer" and no token
+    response = client.post(
+        "/agents/jwt-test-agent/runs",
+        headers={"Authorization": "Bearer"},
+        data={"message": "Test bearer only", "stream": "false"},
+    )
+    assert response.status_code == 401
+
+    # Test header without Bearer prefix
+    response = client.post(
+        "/agents/jwt-test-agent/runs",
+        headers={"Authorization": token},  # No Bearer prefix
+        data={"message": "Test no bearer prefix", "stream": "false"},
+    )
+    assert response.status_code == 401
+
+
+def test_jwt_middleware_missing_session_id_claim(jwt_test_agent):
+    """Test JWT middleware when session_id_claim doesn't exist in token."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        secret_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        session_id_claim="missing_session_claim",  # Claim that won't exist
+        validate=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token without the expected session_id_claim
+    payload = {
+        "sub": "test_user_123",
+        "session_id": "test_session_456",  # Different from configured session_id_claim
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type(
+        "MockRunOutput", (), {"to_dict": lambda self: {"content": "Missing session claim handled"}}
+    )()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test missing session claim", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+        # Should still be called, but without session_id
+        call_args = mock_arun.call_args
+        assert call_args.kwargs.get("user_id") == "test_user_123"
+        assert call_args.kwargs.get("session_id") != "test_session_456"
+
+
+def test_jwt_middleware_general_exception_during_decode(jwt_test_agent):
+    """Test JWT middleware handles general exceptions during token decode."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        secret_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+    )
+
+    client = TestClient(app)
+
+    # Patch jwt.decode to raise a general exception
+    with patch("jwt.decode", side_effect=Exception("General decode error")):
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": "Bearer some.valid.format"},
+            data={"message": "Test general exception", "stream": "false"},
+        )
+
+        assert response.status_code == 401
+        assert "Error decoding token: General decode error" in response.json()["detail"]
+
+
+def test_jwt_middleware_different_algorithm_rs256(jwt_test_agent):
+    """Test JWT middleware with RS256 algorithm."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    # Generate RSA key pair for testing
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+    public_key = private_key.public_key()
+    public_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM, format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        secret_key=public_pem.decode("utf-8"),  # Use public key for verification
+        algorithm="RS256",
+        user_id_claim="sub",
+        validate=True,
+    )
+
+    client = TestClient(app)
+
+    # Create RS256 token
+    payload = {
+        "sub": "test_user_123",
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, private_pem, algorithm="RS256")
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "RS256 success"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test RS256", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+
+def test_jwt_middleware_request_state_token_storage(jwt_test_agent):
+    """Test that JWT middleware stores token and authentication status in request.state."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    # We'll need to create a custom endpoint to inspect request.state
+    @app.get("/test-request-state")
+    async def test_endpoint(request: Request):
+        return {
+            "has_token": hasattr(request.state, "token"),
+            "has_authenticated": hasattr(request.state, "authenticated"),
+            "authenticated": getattr(request.state, "authenticated", None),
+            "token_present": hasattr(request.state, "token") and getattr(request.state, "token") is not None,
+        }
+
+    app.add_middleware(
+        JWTMiddleware,
+        secret_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=False,  # Don't fail on validation errors, just set authenticated=False
+    )
+
+    client = TestClient(app)
+
+    # Test with valid token
+    payload = {
+        "sub": "test_user_123",
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    valid_token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.get("/test-request-state", headers={"Authorization": f"Bearer {valid_token}"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["has_token"] is True
+    assert data["has_authenticated"] is True
+    assert data["authenticated"] is True
+    assert data["token_present"] is True
+
+    # Test with invalid token (should still store token but mark as not authenticated)
+    response = client.get("/test-request-state", headers={"Authorization": "Bearer invalid.token.here"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["has_token"] is True
+    assert data["has_authenticated"] is True
+    assert data["authenticated"] is False
+    assert data["token_present"] is True

@@ -60,7 +60,6 @@ app.add_middleware(
     JWTMiddleware,
     secret_key=JWT_SECRET,
     algorithm="HS256",
-    token_prefix="Bearer",
     user_id_claim="sub",  # Extract user_id from 'sub' claim
     session_id_claim="session_id",  # Extract session_id from 'session_id' claim
     dependencies_claims=["name", "email", "roles"],

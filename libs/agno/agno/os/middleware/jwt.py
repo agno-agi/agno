@@ -44,7 +44,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         app,
         secret_key: str,
         algorithm: str = "HS256",
-        token_prefix: str = "Bearer",
+        token_header_key: str = "Authorization",
         token_source: TokenSource = TokenSource.HEADER,
         cookie_name: str = "access_token",
         validate: bool = True,
@@ -62,7 +62,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             app: The FastAPI app instance
             secret_key: The secret key to use for JWT validation
             algorithm: The algorithm to use for JWT validation
-            token_prefix: The prefix to use for JWT validation (only used when token_source is header)
+            token_header_key: The key to use for the Authorization header (only used when token_source is header)
             token_source: Where to extract the JWT token from (header, cookie, or both)
             cookie_name: The name of the cookie containing the JWT token (only used when token_source is cookie/both)
             validate: Whether to validate the JWT token
@@ -76,7 +76,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.secret_key = secret_key
         self.algorithm = algorithm
-        self.token_prefix = token_prefix
+        self.token_header_key = token_header_key
         self.token_source = token_source
         self.cookie_name = cookie_name
         self.validate = validate
@@ -89,14 +89,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     def _extract_token_from_header(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header."""
-        authorization = request.headers.get("Authorization", "")
+        authorization = request.headers.get(self.token_header_key, "")
         if not authorization:
             return None
 
         try:
-            scheme, token = authorization.split(" ", 1)
-            if scheme.lower() != self.token_prefix.lower():
-                return None
+            # Remove the "Bearer " prefix (if present)
+            _, token = authorization.split(" ", 1)
             return token
         except ValueError:
             return None
