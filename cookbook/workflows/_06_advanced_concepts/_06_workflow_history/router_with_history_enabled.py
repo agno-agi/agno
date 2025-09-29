@@ -91,13 +91,13 @@ def simple_intent_router(step_input: StepInput) -> List[Step]:
     
     # Simple routing logic
     if any(keyword in current_message_lower for keyword in tech_keywords):
-        print(f"🔧 Routing to Technical Support")
+        print("🔧 Routing to Technical Support")
         return [tech_support_step]
     elif any(keyword in current_message_lower for keyword in billing_keywords):
-        print(f"💳 Routing to Billing Support")
+        print("💳 Routing to Billing Support")
         return [billing_support_step]
     else:
-        print(f"🎧 Routing to General Support")
+        print("🎧 Routing to General Support")
         return [general_support_step]
 
 
