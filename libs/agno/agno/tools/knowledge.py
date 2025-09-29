@@ -39,21 +39,21 @@ class KnowledgeTools(Toolkit):
         # The knowledge to search
         self.knowledge: Knowledge = knowledge
 
-        tools: List[Any] = []
-        if enable_think or all:
-            tools.append(self.think)
-        if enable_search or all:
-            tools.append(self.search)
-        if enable_analyze or all:
-            tools.append(self.analyze)
-
         super().__init__(
             name="knowledge_tools",
             instructions=self.instructions,
             add_instructions=add_instructions,
-            tools=tools,
+            auto_register=False,  # We'll register manually with custom names
             **kwargs,
         )
+
+        # Register tools with custom names
+        if enable_think or all:
+            self.register(self.think, name="think")
+        if enable_search or all:
+            self.register(self.search, name="search_knowledge")
+        if enable_analyze or all:
+            self.register(self.analyze, name="analyze_knowledge")
 
     def think(self, session_state: Dict[str, Any], thought: str) -> str:
         """Use this tool as a scratchpad to reason about the question, refine your approach, brainstorm search terms, or revise your plan.
