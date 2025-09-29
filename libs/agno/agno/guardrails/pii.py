@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Dict, Optional, Union
 
 from agno.exceptions import CheckTrigger, InputCheckError
 from agno.guardrails.base import BaseGuardrail
@@ -7,12 +7,19 @@ from agno.run.team import TeamRunInput
 
 
 class PIIDetectionGuardrail(BaseGuardrail):
-    """Guardrail for detecting Personally Identifiable Information (PII)."""
+    """Guardrail for detecting Personally Identifiable Information (PII).
 
-    def __init__(self):
+    Args:
+        mask_pii: Whether to mask the PII in the input, rather than raising an error.
+        pii_patterns: A dictionary of PII patterns to detect. If not provided, a default set of patterns will be used.
+    """
+
+    def __init__(self, mask_pii: bool = False, pii_patterns: Optional[Dict[str, str]] = None):
         import re
 
-        self.pii_patterns = {
+        self.mask_pii = mask_pii
+
+        self.pii_patterns = pii_patterns or {
             "SSN": re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
             "Credit Card": re.compile(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"),
             "Email": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"),
@@ -27,11 +34,21 @@ class PIIDetectionGuardrail(BaseGuardrail):
             if pattern.search(content):
                 detected_pii.append(pii_type)
         if detected_pii:
-            raise InputCheckError(
-                "Potential PII detected in input",
-                additional_data={"detected_pii": detected_pii},
-                check_trigger=CheckTrigger.PII_DETECTED,
-            )
+            if self.mask_pii:
+                for pii_type in detected_pii:
+
+                    def mask_match(match):
+                        return "*" * len(match.group(0))
+
+                    content = self.pii_patterns[pii_type].sub(mask_match, content)
+                run_input.input_content = content
+                return
+            else:
+                raise InputCheckError(
+                    "Potential PII detected in input",
+                    additional_data={"detected_pii": detected_pii},
+                    check_trigger=CheckTrigger.PII_DETECTED,
+                )
 
     async def async_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
         """Asynchronously check for PII patterns in the input."""
@@ -41,8 +58,18 @@ class PIIDetectionGuardrail(BaseGuardrail):
             if pattern.search(content):
                 detected_pii.append(pii_type)
         if detected_pii:
-            raise InputCheckError(
-                "Potential PII detected in input",
-                additional_data={"detected_pii": detected_pii},
-                check_trigger=CheckTrigger.PII_DETECTED,
-            )
+            if self.mask_pii:
+                for pii_type in detected_pii:
+
+                    def mask_match(match):
+                        return "*" * len(match.group(0))
+
+                    content = self.pii_patterns[pii_type].sub(mask_match, content)
+                run_input.input_content = content
+                return
+            else:
+                raise InputCheckError(
+                    "Potential PII detected in input",
+                    additional_data={"detected_pii": detected_pii},
+                    check_trigger=CheckTrigger.PII_DETECTED,
+                )

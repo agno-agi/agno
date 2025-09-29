@@ -116,6 +116,22 @@ async def main():
     print("🎯 PII Detection Demo Complete")
     print("All sensitive information was successfully blocked!")
 
+    # Create an agent with PII detection which masks the PII in the input
+    agent = Agent(
+        name="Privacy-Protected Agent (Masked)",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        pre_hooks=[PIIDetectionGuardrail(mask_pii=True)],
+        description="An agent that helps with customer service while protecting privacy.",
+        instructions="You are a helpful customer service assistant. Always protect user privacy and handle sensitive information appropriately.",
+    )
+
+    # Test 8: Request with SSN (should be masked)
+    print("\n🔴 Test 8: Input containing SSN")
+    print("-" * 30)
+    agent.print_response(
+        input="Hi, my Social Security Number is 123-45-6789. Can you help me with my account?",
+    )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

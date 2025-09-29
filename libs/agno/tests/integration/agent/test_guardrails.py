@@ -22,6 +22,12 @@ def pii_detection_guardrail():
 
 
 @pytest.fixture
+def pii_masking_guardrail():
+    """Fixture for PIIDetectionGuardrail with masking enabled."""
+    return PIIDetectionGuardrail(mask_pii=True)
+
+
+@pytest.fixture
 def openai_moderation_guardrail():
     """Fixture for OpenAIModerationGuardrail."""
     return OpenAIModerationGuardrail()
@@ -56,6 +62,17 @@ def guarded_agent_pii():
         model=OpenAIChat(id="gpt-5-mini"),
         pre_hooks=[PIIDetectionGuardrail()],
         instructions="You are a helpful assistant that protects user privacy.",
+    )
+
+
+@pytest.fixture
+def guarded_agent_pii_masking():
+    """Fixture for agent with PII masking protection."""
+    return Agent(
+        name="PII Masking Agent",
+        model=OpenAIChat(id="gpt-5-mini"),
+        pre_hooks=[PIIDetectionGuardrail(mask_pii=True)],
+        instructions="You are a helpful assistant that masks user PII for privacy.",
     )
 
 
@@ -348,6 +365,179 @@ def test_pii_detection_works_with_team_run_input(pii_detection_guardrail):
     assert exc_info.value.check_trigger == CheckTrigger.PII_DETECTED
 
 
+# PII Masking Tests
+
+
+def test_pii_masking_initialization(pii_masking_guardrail):
+    """Test masking guardrail initialization."""
+    assert pii_masking_guardrail.mask_pii is True
+    assert isinstance(pii_masking_guardrail.pii_patterns, dict)
+    expected_types = ["SSN", "Credit Card", "Email", "Phone"]
+    for pii_type in expected_types:
+        assert pii_type in pii_masking_guardrail.pii_patterns
+
+
+def test_pii_masking_safe_input_passes(pii_masking_guardrail):
+    """Test that safe input without PII passes through unchanged."""
+    safe_inputs = [
+        "Hello, how can I help you today?",
+        "I'd like to know about your return policy.",
+        "Can you tell me the store hours?",
+        "What products do you have available?",
+    ]
+
+    for safe_input in safe_inputs:
+        run_input = RunInput(input_content=safe_input)
+        original_content = run_input.input_content
+        # Should not raise any exception and content should be unchanged
+        pii_masking_guardrail.check(run_input)
+        assert run_input.input_content == original_content
+
+
+def test_pii_masking_ssn_masked(pii_masking_guardrail):
+    """Test that Social Security Numbers are properly masked."""
+    ssn = "123-45-6789"
+    ssn_input = f"My SSN is {ssn}"
+
+    run_input = RunInput(input_content=ssn_input)
+    # Should not raise any exception
+    pii_masking_guardrail.check(run_input)
+    assert run_input.input_content == f"My SSN is {'*' * len(ssn)}"
+
+
+def test_pii_masking_credit_card_masked(pii_masking_guardrail):
+    """Test that credit card numbers are properly masked."""
+    credit_card_number = "4532 1234 5678 9012"
+    credit_card_input = f"My card number is {credit_card_number}"
+
+    run_input = RunInput(input_content=credit_card_input)
+    # Should not raise any exception
+    pii_masking_guardrail.check(run_input)
+    assert run_input.input_content == f"My card number is {'*' * len(credit_card_number)}"
+
+
+def test_pii_masking_email_masked(pii_masking_guardrail):
+    """Test that email addresses are properly masked."""
+    email = "john.doe@example.com"
+    email_input = f"Send the receipt to {email}"
+
+    run_input = RunInput(input_content=email_input)
+    # Should not raise any exception
+    pii_masking_guardrail.check(run_input)
+    assert run_input.input_content == f"Send the receipt to {'*' * len(email)}"
+
+
+def test_pii_masking_phone_number_masked(pii_masking_guardrail):
+    """Test that phone numbers are properly masked."""
+    phone = "555-123-4567"
+    phone_input = f"Call me at {phone}"
+
+    run_input = RunInput(input_content=phone_input)
+    # Should not raise any exception
+    pii_masking_guardrail.check(run_input)
+    assert run_input.input_content == f"Call me at {'*' * len(phone)}"
+
+
+def test_pii_masking_multiple_pii_types(pii_masking_guardrail):
+    """Test that multiple PII types in the same input are all masked."""
+    email = "john@example.com"
+    phone = "555-123-4567"
+    mixed_input = f"My email is {email} and my phone is {phone}"
+    expected_output = f"My email is {'*' * len(email)} and my phone is {'*' * len(phone)}"
+
+    run_input = RunInput(input_content=mixed_input)
+    # Should not raise any exception
+    pii_masking_guardrail.check(run_input)
+    assert run_input.input_content == expected_output
+
+
+def test_pii_masking_works_with_team_run_input(pii_masking_guardrail):
+    """Test that masking works with TeamRunInput as well."""
+    ssn = "123-45-6789"
+    team_run_input = TeamRunInput(input_content=f"My SSN is {ssn}")
+
+    # Should not raise any exception
+    pii_masking_guardrail.check(team_run_input)
+    assert team_run_input.input_content == f"My SSN is {'*' * len(ssn)}"
+
+
+# PII Masking Async Tests
+
+
+@pytest.mark.asyncio
+async def test_pii_masking_safe_input_passes_async(pii_masking_guardrail):
+    """Test that safe input passes through without error in async mode."""
+    safe_input = "Hello, how can I help you today?"
+    run_input = RunInput(input_content=safe_input)
+    original_content = run_input.input_content
+
+    # Should not raise any exception and content should be unchanged
+    await pii_masking_guardrail.async_check(run_input)
+    assert run_input.input_content == original_content
+
+
+@pytest.mark.asyncio
+async def test_pii_masking_ssn_masked_async(pii_masking_guardrail):
+    """Test that SSN masking works in async mode."""
+    ssn = "123-45-6789"
+    ssn_input = f"My SSN is {ssn}"
+    run_input = RunInput(input_content=ssn_input)
+
+    # Should not raise any exception
+    await pii_masking_guardrail.async_check(run_input)
+    assert run_input.input_content == f"My SSN is {'*' * len(ssn)}"
+
+
+@pytest.mark.asyncio
+async def test_pii_masking_credit_card_masked_async(pii_masking_guardrail):
+    """Test that credit card masking works in async mode."""
+    credit_card_number = "4532 1234 5678 9012"
+    cc_input = f"My card number is {credit_card_number}"
+    run_input = RunInput(input_content=cc_input)
+
+    # Should not raise any exception
+    await pii_masking_guardrail.async_check(run_input)
+    assert run_input.input_content == f"My card number is {'*' * len(credit_card_number)}"
+
+
+@pytest.mark.asyncio
+async def test_pii_masking_email_masked_async(pii_masking_guardrail):
+    """Test that email masking works in async mode."""
+    email = "john.doe@example.com"
+    email_input = f"Send the receipt to {email}"
+    run_input = RunInput(input_content=email_input)
+
+    # Should not raise any exception
+    await pii_masking_guardrail.async_check(run_input)
+    assert run_input.input_content == f"Send the receipt to {'*' * len(email)}"
+
+
+@pytest.mark.asyncio
+async def test_pii_masking_phone_masked_async(pii_masking_guardrail):
+    """Test that phone masking works in async mode."""
+    phone = "555-123-4567"
+    phone_input = f"Call me at {phone}"
+    run_input = RunInput(input_content=phone_input)
+
+    # Should not raise any exception
+    await pii_masking_guardrail.async_check(run_input)
+    assert run_input.input_content == f"Call me at {'*' * len(phone)}"
+
+
+@pytest.mark.asyncio
+async def test_pii_masking_multiple_pii_types_async(pii_masking_guardrail):
+    """Test that multiple PII masking works in async mode."""
+    email = "john@example.com"
+    phone = "555-123-4567"
+    mixed_input = f"My email is {email} and my phone is {phone}"
+    expected_output = f"My email is {'*' * len(email)} and my phone is {'*' * len(phone)}"
+
+    run_input = RunInput(input_content=mixed_input)
+    # Should not raise any exception
+    await pii_masking_guardrail.async_check(run_input)
+    assert run_input.input_content == expected_output
+
+
 # OpenAIModerationGuardrail Tests
 def test_openai_moderation_initialization_custom_params():
     """Test guardrail initialization with custom parameters."""
@@ -451,6 +641,45 @@ async def test_agent_with_pii_detection_guardrail_blocked_input(guarded_agent_pi
 
 
 @pytest.mark.asyncio
+async def test_agent_with_pii_masking_guardrail_safe_input(guarded_agent_pii_masking):
+    """Test agent integration with PII masking guardrail - safe input."""
+    # Safe input should work normally
+    result = await guarded_agent_pii_masking.arun("Can you help me with my account?")
+    assert result is not None
+    assert result.content is not None
+
+
+@pytest.mark.asyncio
+async def test_agent_with_pii_masking_guardrail_masks_ssn(guarded_agent_pii_masking):
+    """Test agent integration with PII masking guardrail - SSN gets masked."""
+    # PII input should be masked and processed
+    result = await guarded_agent_pii_masking.arun("My SSN is 123-45-6789, can you help?")
+    assert result is not None
+    assert result.content is not None
+    # The agent should have received the masked input "My SSN is ***, can you help?"
+
+
+@pytest.mark.asyncio
+async def test_agent_with_pii_masking_guardrail_masks_email(guarded_agent_pii_masking):
+    """Test agent integration with PII masking guardrail - email gets masked."""
+    # PII input should be masked and processed
+    result = await guarded_agent_pii_masking.arun("Send updates to john.doe@example.com please")
+    assert result is not None
+    assert result.content is not None
+    # The agent should have received the masked input "Send updates to *** please"
+
+
+@pytest.mark.asyncio
+async def test_agent_with_pii_masking_guardrail_masks_multiple_pii(guarded_agent_pii_masking):
+    """Test agent integration with PII masking guardrail - multiple PII types get masked."""
+    # Multiple PII input should be masked and processed
+    result = await guarded_agent_pii_masking.arun("My email is john@example.com and phone is 555-123-4567")
+    assert result is not None
+    assert result.content is not None
+    # The agent should have received the masked input "My email is *** and phone is ***"
+
+
+@pytest.mark.asyncio
 async def test_agent_with_openai_moderation_guardrail_safe_input(guarded_agent_openai_moderation):
     """Test agent integration with OpenAI moderation guardrail - safe input."""
     # Safe content should pass
@@ -521,3 +750,38 @@ def test_agent_with_pii_detection_guardrail_blocked_input_sync(guarded_agent_pii
         guarded_agent_pii.run("My SSN is 123-45-6789, can you help?")
 
     assert exc_info.value.check_trigger == CheckTrigger.PII_DETECTED
+
+
+def test_agent_with_pii_masking_guardrail_safe_input_sync(guarded_agent_pii_masking):
+    """Test agent integration with PII masking guardrail - safe input (sync)."""
+    # Safe input should work normally
+    result = guarded_agent_pii_masking.run("Can you help me with my account?")
+    assert result is not None
+    assert result.content is not None
+
+
+def test_agent_with_pii_masking_guardrail_masks_ssn_sync(guarded_agent_pii_masking):
+    """Test agent integration with PII masking guardrail - SSN gets masked (sync)."""
+    # PII input should be masked and processed
+    result = guarded_agent_pii_masking.run("My SSN is 123-45-6789, can you help?")
+    assert result is not None
+    assert result.content is not None
+    # The agent should have received the masked input "My SSN is ***, can you help?"
+
+
+def test_agent_with_pii_masking_guardrail_masks_email_sync(guarded_agent_pii_masking):
+    """Test agent integration with PII masking guardrail - email gets masked (sync)."""
+    # PII input should be masked and processed
+    result = guarded_agent_pii_masking.run("Send updates to john.doe@example.com please")
+    assert result is not None
+    assert result.content is not None
+    # The agent should have received the masked input "Send updates to *** please"
+
+
+def test_agent_with_pii_masking_guardrail_masks_multiple_pii_sync(guarded_agent_pii_masking):
+    """Test agent integration with PII masking guardrail - multiple PII types get masked (sync)."""
+    # Multiple PII input should be masked and processed
+    result = guarded_agent_pii_masking.run("My email is john@example.com and phone is 555-123-4567")
+    assert result is not None
+    assert result.content is not None
+    # The agent should have received the masked input "My email is *** and phone is ***"
