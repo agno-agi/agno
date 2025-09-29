@@ -26,26 +26,29 @@ How to Get These Credentials:
 4. Create OAuth 2.0 credentials:
    - Go to "APIs & Services" > "Credentials"
    - Click "Create Credentials" > "OAuth client ID"
-   - Go through the OAuth consent screen setup
-   - Give it a name and click "Create"
+   - Enable the OAuth Consent Screen if you haven't already
+   - After enabling the Consent Screen, click on "Create Credentials" > "OAuth client ID"
    - You'll receive:
      * Client ID (GOOGLE_CLIENT_ID)
      * Client Secret (GOOGLE_CLIENT_SECRET)
    - The Project ID (GOOGLE_PROJECT_ID) is visible in the project dropdown at the top of the page
 
 5. Add auth redirect URI:
-   - Go to https://console.cloud.google.com/auth/clients and add the redirect URI as http://127.0.0.1/
+   - Go to https://console.cloud.google.com/auth/clients
+   - Add `http://localhost:54718/` as a recognized redirect URI
 
 
 6. Set up environment variables:
    Create a .envrc file in your project root with:
-   ```
+   ``
    export GOOGLE_CLIENT_ID=your_client_id_here
    export GOOGLE_CLIENT_SECRET=your_client_secret_here
    export GOOGLE_PROJECT_ID=your_project_id_here
-   export GOOGLE_REDIRECT_URI=http://127.0.0.1/  # Default value
-   ```
+   export GOOGLE_REDIRECT_URI=http://localhost:54718/  # Default value
+   ``
+---
 
+Remember to install the dependencies using `pip install google google-auth-oauthlib`
 """
 
 import mimetypes
