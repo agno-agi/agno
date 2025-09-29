@@ -2175,6 +2175,7 @@ class Workflow:
             audio=audio,  # type: ignore
             images=images,  # type: ignore
             videos=videos,  # type: ignore
+            files=files,
         )
         log_debug(
             f"Created async pipeline input with session state keys: {list(session_state.keys()) if session_state else 'None'}"
