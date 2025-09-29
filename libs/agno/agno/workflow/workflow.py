@@ -1001,7 +1001,6 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except RunCancelledException as e:
-                # Handle run cancellation
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.content = str(e)
@@ -1013,6 +1012,7 @@ class Workflow:
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
+                raise e
 
             finally:
                 self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
@@ -1230,6 +1230,7 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
+                raise e
 
         # Yield workflow completed event
         workflow_completed_event = WorkflowCompletedEvent(
@@ -1444,6 +1445,7 @@ class Workflow:
                 logger.error(f"Workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
+                raise e
 
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
@@ -1471,6 +1473,7 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
+
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
@@ -1668,6 +1671,7 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
+                raise e
 
         # Yield workflow completed event
         workflow_completed_event = WorkflowCompletedEvent(
