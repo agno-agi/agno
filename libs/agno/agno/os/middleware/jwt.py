@@ -188,6 +188,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             if session_state:
                 request.state.session_state = session_state
 
+            request.state.token = token
             request.state.authenticated = True
 
             log_debug(f"JWT decoded successfully for user: {user_id}")
@@ -200,13 +201,17 @@ class JWTMiddleware(BaseHTTPMiddleware):
             if self.validate:
                 return JSONResponse(status_code=401, content={"detail": "Token has expired"})
             request.state.authenticated = False
+            request.state.token = token
 
         except jwt.InvalidTokenError as e:
             if self.validate:
                 return JSONResponse(status_code=401, content={"detail": f"Invalid token: {str(e)}"})
             request.state.authenticated = False
+            request.state.token = token
         except Exception as e:
+            if self.validate:
+                return JSONResponse(status_code=401, content={"detail": f"Error decoding token: {str(e)}"})
             request.state.authenticated = False
-            return JSONResponse(status_code=401, content={"detail": f"Error decoding token: {str(e)}"})
+            request.state.token = token
 
         return await call_next(request)
