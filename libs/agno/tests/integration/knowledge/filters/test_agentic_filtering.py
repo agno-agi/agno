@@ -10,7 +10,7 @@ from agno.knowledge.reader.csv_reader import CSVReader
 from agno.models.anthropic.claude import Claude
 from agno.models.google.gemini import Gemini
 from agno.models.openai.chat import OpenAIChat
-from agno.vectordb.lancedb import LanceDb  # Changed from ChromaDb to LanceDb
+from agno.vectordb.lancedb import LanceDb 
 
 # Sample CSV data to use in tests
 EMPLOYEE_CSV_DATA = """id,name,department,salary,years_experience
