@@ -89,7 +89,7 @@ class Knowledge:
                     url=argument.get("url"),
                     metadata=argument.get("metadata"),
                     topics=argument.get("topics"),
-                    text_contents=argument.get("text_contents"),
+                    text_content=argument.get("text_content"),
                     reader=argument.get("reader"),
                     include=argument.get("include"),
                     exclude=argument.get("exclude"),
@@ -251,7 +251,9 @@ class Knowledge:
     ) -> None:
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
-            log_info("At least one of 'path', 'url', 'text_content', 'topics', or 'remote_content' must be provided.")
+            log_warning(
+                "At least one of 'path', 'url', 'text_content', 'topics', or 'remote_content' must be provided."
+            )
             return
 
         if not skip_if_exists:

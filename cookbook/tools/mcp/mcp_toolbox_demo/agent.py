@@ -12,7 +12,7 @@ from agno.tools.mcp_toolbox import MCPToolbox
 url = "http://127.0.0.1:5001"
 
 
-async def run_agent(message: str = None) -> None:
+async def run_agent(message: str) -> None:
     """Run an interactive CLI for the Hotel agent with the given message."""
 
     # Approach 1: Load specific toolset at initialization
@@ -38,7 +38,7 @@ async def run_agent(message: str = None) -> None:
         )
 
         # Run an interactive command-line interface to interact with the agent.
-        await agent.acli_app(message=message, stream=True)
+        await agent.acli_app(input=message, stream=True, stream_intermediate_steps=True)
 
 
 async def run_agent_manual_loading(message: str) -> None:
@@ -78,17 +78,16 @@ async def run_agent_manual_loading(message: str) -> None:
             """
             ),
             markdown=True,
-            show_tool_calls=True,
-            add_history_to_messages=True,
+            add_history_to_context=True,
             debug_mode=True,
         )
 
-        await agent.acli_app(message=message, stream=True)
+        await agent.acli_app(input=message, stream=True, stream_intermediate_steps=True)
 
 
 if __name__ == "__main__":
     # Use the original approach
-    asyncio.run(run_agent(message=None))
+    asyncio.run(run_agent(message=""))
 
     # Or use the manual loading approach
     # asyncio.run(run_agent_manual_loading(message=None))
