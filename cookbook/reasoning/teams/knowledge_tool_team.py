@@ -19,9 +19,9 @@ agno_docs.add_content(url="https://www.paulgraham.com/read.html")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,
-    think=True,
-    search=True,
-    analyze=True,
+    enable_think=True,
+    enable_search=True,
+    enable_analyze=True,
     add_few_shot=True,
 )
 

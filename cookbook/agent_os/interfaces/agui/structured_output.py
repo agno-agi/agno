@@ -27,15 +27,15 @@ class MovieScript(BaseModel):
 
 
 chat_agent = Agent(
-    name="Assistant",
+    name="Output Schema Agent",
     model=OpenAIChat(id="gpt-4o"),
     description="You write movie scripts.",
     markdown=True,
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 
-# Setup our AgentOS app
+# Setup your AgentOS app
 agent_os = AgentOS(
     agents=[chat_agent],
     interfaces=[AGUI(agent=chat_agent)],
@@ -43,4 +43,11 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="structured_output:app", port=8002, reload=True)
+    """Run your AgentOS.
+
+    You can see the configuration and available apps at:
+    http://localhost:9001/config
+
+    """
+
+    agent_os.serve(app="structured_output:app", port=9001, reload=True)

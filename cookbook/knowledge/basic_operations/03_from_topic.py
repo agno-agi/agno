@@ -3,7 +3,7 @@
 It is important to specify the reader for the content when using topics.
 
 1. Run: `pip install agno wikipedia arxiv` to install the dependencies
-2. Run: `python cookbook/agent_concepts/knowledge/05_from_topic.py` to run the cookbook
+2. Run: `python cookbook/agent_concepts/knowledge/03_from_topic.py` to run the cookbook
 """
 
 import asyncio
@@ -35,7 +35,15 @@ asyncio.run(
 asyncio.run(
     knowledge.add_content_async(
         metadata={"user_tag": "Arxiv content"},
-        topics=["Carbon Dioxide"],
+        topics=["Carbon Dioxide", "Oxygen"],
+        reader=ArxivReader(),
+    )
+)
+
+# Using the add_contents method
+asyncio.run(
+    knowledge.add_contents_async(
+        topics=["Carbon Dioxide", "Nitrogen"],
         reader=ArxivReader(),
     )
 )

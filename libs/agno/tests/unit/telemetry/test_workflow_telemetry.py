@@ -2,12 +2,17 @@ from unittest.mock import patch
 
 import pytest
 
+from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
+def dummy_step(step_input):
+    """Simple dummy step for testing"""
+    from agno.workflow.types import StepOutput
+    return StepOutput(content="Test step executed")
 
 def test_workflow_telemetry():
     """Test that telemetry logging is called during sync workflow run."""
-    workflow = Workflow()
+    workflow = Workflow(steps=[Step(executor=dummy_step)])
 
     # Assert telemetry is active by default
     assert workflow.telemetry
@@ -30,7 +35,7 @@ def test_workflow_telemetry():
 @pytest.mark.asyncio
 async def test_workflow_telemetry_async():
     """Test that telemetry logging is called during async workflow run."""
-    workflow = Workflow()
+    workflow = Workflow(steps=[Step(executor=dummy_step)])
 
     # Assert telemetry is active by default
     assert workflow.telemetry

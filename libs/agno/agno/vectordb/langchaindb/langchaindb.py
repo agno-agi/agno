@@ -63,9 +63,7 @@ class LangChainVectorDb(VectorDb):
         logger.warning("LangChainKnowledgeBase.async_upsert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
-    def search(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Returns relevant documents matching the query"""
 
         try:
@@ -79,7 +77,7 @@ class LangChainVectorDb(VectorDb):
         if self.vectorstore is not None and self.knowledge_retriever is None:
             log_debug("Creating knowledge retriever")
             if self.search_kwargs is None:
-                self.search_kwargs = {"k": num_documents}
+                self.search_kwargs = {"k": limit}
             if filters is not None:
                 self.search_kwargs.update(filters)
             self.knowledge_retriever = self.vectorstore.as_retriever(search_kwargs=self.search_kwargs)
@@ -91,7 +89,7 @@ class LangChainVectorDb(VectorDb):
         if not isinstance(self.knowledge_retriever, BaseRetriever):
             raise ValueError(f"Knowledge retriever is not of type BaseRetriever: {self.knowledge_retriever}")
 
-        log_debug(f"Getting {num_documents} relevant documents for query: {query}")
+        log_debug(f"Getting {limit} relevant documents for query: {query}")
         lc_documents: List[LangChainDocument] = self.knowledge_retriever.invoke(input=query)
         documents = []
         for lc_doc in lc_documents:
@@ -104,9 +102,9 @@ class LangChainVectorDb(VectorDb):
         return documents
 
     async def async_search(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
-        return self.search(query, num_documents, filters)
+        return self.search(query, limit, filters)
 
     def drop(self) -> None:
         raise NotImplementedError

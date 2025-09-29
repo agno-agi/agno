@@ -1,7 +1,7 @@
 from typing import Any, Callable, Dict, List, Optional, Union
-from uuid import uuid4
 
-from fastapi import HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
+from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb
@@ -57,12 +57,20 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
     if is_workflow_run:
         step_executor_runs = run_dict.get("step_executor_runs", [])
         if step_executor_runs:
-            for message in step_executor_runs[0].get("messages", []):
+            for message in reversed(step_executor_runs[0].get("messages", [])):
                 if message.get("role") == "user":
                     return message.get("content", "")
 
+        # Check the input field directly as final fallback
+        if run_dict.get("input") is not None:
+            input_value = run_dict.get("input")
+            if isinstance(input_value, str):
+                return input_value
+            else:
+                return str(input_value)
+
     if run_dict.get("messages") is not None:
-        for message in run_dict["messages"]:
+        for message in reversed(run_dict["messages"]):
             if message.get("role") == "user":
                 return message.get("content", "")
 
@@ -110,27 +118,21 @@ def process_image(file: UploadFile) -> Image:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Image(content=content)
+    return Image(content=content, format=extract_format(file), mime_type=file.content_type)
 
 
 def process_audio(file: UploadFile) -> Audio:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    format = None
-    if file.filename and "." in file.filename:
-        format = file.filename.split(".")[-1].lower()
-    elif file.content_type:
-        format = file.content_type.split("/")[-1]
-
-    return Audio(content=content, format=format)
+    return Audio(content=content, format=extract_format(file), mime_type=file.content_type)
 
 
 def process_video(file: UploadFile) -> Video:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Video(content=content, format=file.content_type)
+    return Video(content=content, format=extract_format(file), mime_type=file.content_type)
 
 
 def process_document(file: UploadFile) -> Optional[FileMedia]:
@@ -138,11 +140,21 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         content = file.file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
-
-        return FileMedia(content=content)
+        return FileMedia(
+            content=content, filename=file.filename, format=extract_format(file), mime_type=file.content_type
+        )
     except Exception as e:
         logger.error(f"Error processing document {file.filename}: {e}")
         return None
+
+
+def extract_format(file: UploadFile):
+    format = None
+    if file.filename and "." in file.filename:
+        format = file.filename.split(".")[-1].lower()
+    elif file.content_type:
+        format = file.content_type.split("/")[-1]
+    return format
 
 
 def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
@@ -263,8 +275,129 @@ def _generate_schema_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
     return schema
 
 
-def generate_id(name: Optional[str] = None) -> str:
-    if name:
-        return name.lower().replace(" ", "-").replace("_", "-")
-    else:
-        return str(uuid4())
+def update_cors_middleware(app: FastAPI, new_origins: list):
+    existing_origins: List[str] = []
+
+    # TODO: Allow more options where CORS is properly merged and user can disable this behaviour
+
+    # Extract existing origins from current CORS middleware
+    for middleware in app.user_middleware:
+        if middleware.cls == CORSMiddleware:
+            if hasattr(middleware, "kwargs"):
+                existing_origins = middleware.kwargs.get("allow_origins", [])
+            break
+    # Merge origins
+    merged_origins = list(set(new_origins + existing_origins))
+    final_origins = [origin for origin in merged_origins if origin != "*"]
+
+    # Remove existing CORS
+    app.user_middleware = [m for m in app.user_middleware if m.cls != CORSMiddleware]
+    app.middleware_stack = None
+
+    # Add updated CORS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=final_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["*"],
+    )
+
+
+def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
+    """Recursively collect MCP tools from a team and its members."""
+    # Check the team tools
+    if team.tools:
+        for tool in team.tools:
+            type_name = type(tool).__name__
+            if type_name in ("MCPTools", "MultiMCPTools"):
+                if tool not in mcp_tools:
+                    mcp_tools.append(tool)
+
+    # Recursively check team members
+    if team.members:
+        for member in team.members:
+            if isinstance(member, Agent):
+                if member.tools:
+                    for tool in member.tools:
+                        type_name = type(tool).__name__
+                        if type_name in ("MCPTools", "MultiMCPTools"):
+                            if tool not in mcp_tools:
+                                mcp_tools.append(tool)
+
+            elif isinstance(member, Team):
+                # Recursively check nested team
+                collect_mcp_tools_from_team(member, mcp_tools)
+
+
+def collect_mcp_tools_from_workflow(workflow: Workflow, mcp_tools: List[Any]) -> None:
+    """Recursively collect MCP tools from a workflow and its steps."""
+    from agno.workflow.steps import Steps
+
+    # Recursively check workflow steps
+    if workflow.steps:
+        if isinstance(workflow.steps, list):
+            # Handle list of steps
+            for step in workflow.steps:
+                collect_mcp_tools_from_workflow_step(step, mcp_tools)
+
+        elif isinstance(workflow.steps, Steps):
+            # Handle Steps container
+            if steps := workflow.steps.steps:
+                for step in steps:
+                    collect_mcp_tools_from_workflow_step(step, mcp_tools)
+
+        elif callable(workflow.steps):
+            pass
+
+
+def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> None:
+    """Collect MCP tools from a single workflow step."""
+    from agno.workflow.condition import Condition
+    from agno.workflow.loop import Loop
+    from agno.workflow.parallel import Parallel
+    from agno.workflow.router import Router
+    from agno.workflow.step import Step
+    from agno.workflow.steps import Steps
+
+    if isinstance(step, Step):
+        # Check step's agent
+        if step.agent:
+            if step.agent.tools:
+                for tool in step.agent.tools:
+                    type_name = type(tool).__name__
+                    if type_name in ("MCPTools", "MultiMCPTools"):
+                        if tool not in mcp_tools:
+                            mcp_tools.append(tool)
+        # Check step's team
+        if step.team:
+            collect_mcp_tools_from_team(step.team, mcp_tools)
+
+    elif isinstance(step, Steps):
+        if steps := step.steps:
+            for step in steps:
+                collect_mcp_tools_from_workflow_step(step, mcp_tools)
+
+    elif isinstance(step, (Parallel, Loop, Condition, Router)):
+        # These contain other steps - recursively check them
+        if hasattr(step, "steps") and step.steps:
+            for sub_step in step.steps:
+                collect_mcp_tools_from_workflow_step(sub_step, mcp_tools)
+
+    elif isinstance(step, Agent):
+        # Direct agent in workflow steps
+        if step.tools:
+            for tool in step.tools:
+                type_name = type(tool).__name__
+                if type_name in ("MCPTools", "MultiMCPTools"):
+                    if tool not in mcp_tools:
+                        mcp_tools.append(tool)
+
+    elif isinstance(step, Team):
+        # Direct team in workflow steps
+        collect_mcp_tools_from_team(step, mcp_tools)
+
+    elif isinstance(step, Workflow):
+        # Nested workflow
+        collect_mcp_tools_from_workflow(step, mcp_tools)

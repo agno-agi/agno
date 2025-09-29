@@ -101,6 +101,142 @@ def test_upsert_documents(chroma_db, sample_documents):
     assert "spicy and sour" in results[0].content
 
 
+def test_metadata_flattening(chroma_db):
+    """Test that complex metadata structures are properly flattened for ChromaDB compatibility"""
+
+    # Test the _flatten_metadata method directly
+    complex_metadata = {
+        "simple_string": "value",
+        "simple_int": 42,
+        "simple_float": 3.14,
+        "simple_bool": True,
+        "nested_dict": {"doc_type": "recipe_book", "category": {"main": "cooking", "sub": "thai"}},
+        "list_value": ["item1", "item2", "item3"],
+        "mixed_list": [1, "string", True, {"nested": "value"}],
+        "none_value": None,
+    }
+
+    flattened = chroma_db._flatten_metadata(complex_metadata)
+
+    # Check that simple values are preserved
+    assert flattened["simple_string"] == "value"
+    assert flattened["simple_int"] == 42
+    assert flattened["simple_float"] == 3.14
+    assert flattened["simple_bool"] is True
+
+    # Check that nested dicts are flattened with dot notation
+    assert flattened["nested_dict.doc_type"] == "recipe_book"
+    assert flattened["nested_dict.category.main"] == "cooking"
+    assert flattened["nested_dict.category.sub"] == "thai"
+
+    # Check that lists are converted to JSON strings
+    assert flattened["list_value"] == '["item1", "item2", "item3"]'
+    assert flattened["mixed_list"] == '[1, "string", true, {"nested": "value"}]'
+
+    # Check that None values are excluded
+    assert "none_value" not in flattened
+
+    # Ensure all values are ChromaDB-compatible types
+    for key, value in flattened.items():
+        assert isinstance(value, (str, int, float, bool)), (
+            f"Value {value} of type {type(value)} is not ChromaDB compatible"
+        )
+
+
+def test_complex_metadata_insertion(chroma_db):
+    """Test inserting documents with complex metadata that previously caused errors"""
+
+    # This is the exact scenario that was causing the original error
+    complex_doc = Document(
+        content="This is a recipe book with complex metadata",
+        meta_data={
+            "doc_type": "recipe_book",  # This nested dict was causing the error
+            "categories": ["cooking", "thai", "asian"],
+            "nested_info": {"author": "Chef John", "publication": {"year": 2023, "publisher": "Cooking Press"}},
+            "tags": ["spicy", "coconut", "traditional"],
+            "rating": 4.5,
+            "is_vegetarian": False,
+        },
+        name="complex_recipe_book",
+        content_id="recipe_book_001",
+    )
+
+    # This should not raise any ChromaDB validation errors
+    chroma_db.insert(content_hash="complex_hash", documents=[complex_doc])
+    assert chroma_db.get_count() == 1
+
+    # Verify we can search and retrieve the document
+    results = chroma_db.search("recipe book", limit=1)
+    assert len(results) == 1
+    assert results[0].name == "complex_recipe_book"
+
+    # Verify some of the flattened metadata made it through
+    # Note: The exact metadata format may vary after flattening, but the document should be retrievable
+
+
+def test_update_metadata_with_complex_data(chroma_db):
+    """Test updating metadata with complex nested structures (the original error scenario)"""
+
+    # First insert a simple document
+    simple_doc = Document(
+        content="A simple document for metadata testing",
+        meta_data={"type": "test"},
+        name="metadata_test",
+        content_id="test_content_001",
+    )
+
+    chroma_db.insert(content_hash="meta_hash", documents=[simple_doc])
+    assert chroma_db.get_count() == 1
+
+    # Now try to update with the complex metadata that was causing the error
+    complex_update_metadata = {
+        "doc_type": {"category": "recipe_book", "subcategory": "thai_cooking"},
+        "filters": {"cuisine": "thai", "difficulty": "medium", "ingredients": ["coconut", "lemongrass", "chilies"]},
+        "ratings": [4, 5, 4, 5, 3],
+        "is_featured": True,
+        "price": 29.99,
+    }
+
+    # This should not raise the original ValueError about dict metadata
+    try:
+        chroma_db.update_metadata(content_id="test_content_001", metadata=complex_update_metadata)
+        # If we get here without an exception, the fix worked
+        assert True
+    except ValueError as e:
+        if "Expected metadata value to be a str, int, float or bool, got" in str(e):
+            pytest.fail(f"ChromaDB metadata validation error not fixed: {e}")
+        else:
+            # Some other error, re-raise it
+            raise
+
+
+def test_edge_case_metadata_types(chroma_db):
+    """Test various edge cases for metadata flattening"""
+
+    # Test deeply nested structures
+    deep_nested = {"level1": {"level2": {"level3": {"level4": "deep_value"}}}}
+
+    flattened = chroma_db._flatten_metadata(deep_nested)
+    assert flattened["level1.level2.level3.level4"] == "deep_value"
+
+    # Test empty structures
+    empty_metadata = {"empty_dict": {}, "empty_list": [], "valid_string": "test"}
+
+    flattened = chroma_db._flatten_metadata(empty_metadata)
+    assert flattened["empty_dict"] == "{}"
+    assert flattened["empty_list"] == "[]"
+    assert flattened["valid_string"] == "test"
+
+    # Test mixed types in lists
+    mixed_metadata = {"mixed_array": ["string", 42, 3.14, True, {"nested": "object"}, [1, 2, 3]]}
+
+    flattened = chroma_db._flatten_metadata(mixed_metadata)
+    # Should be converted to JSON string
+    assert isinstance(flattened["mixed_array"], str)
+    assert "string" in flattened["mixed_array"]
+    assert "42" in flattened["mixed_array"]
+
+
 def test_name_exists(chroma_db, sample_documents):
     """Test name existence check"""
     chroma_db.insert(content_hash="test_hash", documents=[sample_documents[0]])

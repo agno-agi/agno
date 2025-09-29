@@ -210,8 +210,8 @@ class ReaderFactory:
         if any(domain in url_lower for domain in ["youtube.com", "youtu.be"]):
             return cls.create_reader("youtube")
 
-        # Default to URL reader
-        return cls.create_reader("url")
+        # Default to website reader
+        return cls.create_reader("website")
 
     @classmethod
     def get_all_reader_keys(cls) -> List[str]:
@@ -228,7 +228,11 @@ class ReaderFactory:
                 reader_keys.append(reader_key)
 
         # Define priority order for URL readers
-        url_reader_priority = ["url", "website", "firecrawl", "pdf_url", "csv_url", "youtube", "web_search"]
+        url_reader_priority = [
+            "website",
+            "firecrawl",
+            "youtube",
+        ]
 
         # Sort with URL readers in priority order, others alphabetically
         def sort_key(reader_key):

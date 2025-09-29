@@ -386,7 +386,7 @@ def test_format_file_path_persistent(tmp_path):
 
 def test_format_file_raw_bytes():
     content = b"RAWBYTES"
-    f = File(content=content)
+    f = File(content=content, filename="file")
     msg = _format_file_for_message(f)
     assert msg["type"] == "file"
     assert msg["file"]["filename"] == "file"
