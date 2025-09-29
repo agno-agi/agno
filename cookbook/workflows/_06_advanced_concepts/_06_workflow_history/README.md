@@ -182,6 +182,34 @@ python cli_app_continuous_execution_based_workflow.py support
 python cli_app_continuous_execution_based_workflow.py
 ```
 
+### 6. Router with Shared History
+**File**: [`router_with_history_enabled.py`](./router_with_history_enabled.py)
+
+Demonstrates how different specialist agents can share the same conversation history, creating seamless handoffs:
+
+```python
+# All agents get the full conversation context
+tech_step = Step("Technical Support", agent=tech_agent, add_workflow_history=True)
+billing_step = Step("Billing Support", agent=billing_agent, add_workflow_history=True) 
+general_step = Step("General Support", agent=general_agent, add_workflow_history=True)
+
+# Simple router that focuses on shared history, not complex logic
+Router(selector=simple_intent_router, choices=[tech_step, billing_step, general_step])
+```
+
+**Example Conversation Flow:**
+
+```python
+Customer: "I'm getting an error message"
+→ Technical Support: "I'm sorry to hear about the error. Could you provide more details?"
+Customer: "On login it says internal server error 500"
+→ Technical Support: "Thank you for the details about the 500 error you mentioned earlier. Here's how to troubleshoot..."
+Customer: "Thanks, also do I need to make sure my billing is done?"
+→ Billing Support: "Certainly! Let me help with billing. I see you were having a 500 error issue..."
+Customer: "Could less funds be the reason for the above error?"
+→ Technical Support: "Generally, 500 errors aren't billing-related. However, given your earlier billing question..."
+```
+
 ## API Reference
 
 ### Workflow Configuration
