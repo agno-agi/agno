@@ -20,7 +20,6 @@ from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
 from fastapi import FastAPI
-from starlette.middleware.cors import CORSMiddleware
 
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
