@@ -109,7 +109,7 @@ class WorkflowSession:
     def get_workflow_history_context(self, num_runs: int = 3) -> Optional[str]:
         """Get formatted workflow history context for steps"""
         history_data = self.get_workflow_history(num_runs)
-        
+
         if not history_data:
             return None
 
@@ -118,12 +118,12 @@ class WorkflowSession:
 
         for i, (input_str, response_str) in enumerate(history_data, 1):
             context_parts.append(f"[run-{i}]")
-            
+
             if input_str:
                 context_parts.append(f"input: {input_str}")
             if response_str:
                 context_parts.append(f"response: {response_str}")
-                
+
             context_parts.append("")  # Empty line between runs
 
         context_parts.append("</workflow_history_context>")

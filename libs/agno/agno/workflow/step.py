@@ -61,7 +61,7 @@ class Step:
     # If False, only warn about missing inputs
     strict_input_validation: bool = False
 
-    add_workflow_history: bool = False
+    add_workflow_history: Optional[bool] = None
     num_history_runs: int = 3
 
     _retry_count: int = 0
@@ -78,7 +78,7 @@ class Step:
         timeout_seconds: Optional[int] = None,
         skip_on_failure: bool = False,
         strict_input_validation: bool = False,
-        add_workflow_history: bool = False,
+        add_workflow_history: Optional[bool] = None,
         num_history_runs: int = 3,
     ):
         # Auto-detect name for function executors if not provided
@@ -308,11 +308,13 @@ class Step:
 
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
+                        use_history = (
+                            self.add_workflow_history if self.add_workflow_history is not None else add_workflow_history
+                        )
+
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
-                            history_messages = workflow_session.get_workflow_history_context(
-                                num_runs=num_history_runs
-                            )
+                        if use_history and workflow_session:
+                            history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
@@ -494,11 +496,16 @@ class Step:
 
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
+                        use_history = (
+                            self.add_workflow_history if self.add_workflow_history is not None else add_workflow_history
+                        )
+
+                        print(f"use_history: {use_history}")
+
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
-                            history_messages = workflow_session.get_workflow_history_context(
-                                num_runs=num_history_runs
-                            )
+                        if use_history and workflow_session:
+                            history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
+                            print(f"history_messages: {history_messages}")
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
@@ -716,11 +723,13 @@ class Step:
 
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
+                        use_history = (
+                            self.add_workflow_history if self.add_workflow_history is not None else add_workflow_history
+                        )
+
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
-                            history_messages = workflow_session.get_workflow_history_context(
-                                num_runs=num_history_runs
-                            )
+                        if use_history and workflow_session:
+                            history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
@@ -904,11 +913,13 @@ class Step:
 
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
+                        use_history = (
+                            self.add_workflow_history if self.add_workflow_history is not None else add_workflow_history
+                        )
+
                         final_message = message
-                        if (self.add_workflow_history or add_workflow_history) and workflow_session:
-                            history_messages = workflow_session.get_workflow_history_context(
-                                num_runs=num_history_runs
-                            )
+                        if use_history and workflow_session:
+                            history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 

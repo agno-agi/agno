@@ -75,6 +75,21 @@ Step(
 )
 ```
 
+### Precedence Logic
+
+**Step-level settings always take precedence over workflow-level settings**:
+
+```python
+workflow = Workflow(
+    steps=[
+        Step("Research", agent=research_agent),                              # None → inherits workflow setting
+        Step("Analysis", agent=analysis_agent, add_workflow_history=False),  # False → overrides workflow  
+        Step("Writing", agent=writing_agent, add_workflow_history=True),     # True → overrides workflow
+    ],
+    add_workflow_history=True  # Default for all steps
+)
+```
+
 ## Where to start?
 
 ### 1. Single-Step Conversational Workflow

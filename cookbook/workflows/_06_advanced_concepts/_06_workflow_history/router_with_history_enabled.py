@@ -10,6 +10,7 @@ The router uses basic intent detection, but the real value is in the shared hist
 """
 
 from typing import List
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -17,7 +18,6 @@ from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput
 from agno.workflow.workflow import Workflow
-
 
 # Define specialized customer service agents
 tech_support_agent = Agent(
@@ -33,7 +33,7 @@ tech_support_agent = Agent(
 )
 
 billing_agent = Agent(
-    name="Billing & Account Specialist", 
+    name="Billing & Account Specialist",
     model=OpenAIChat(id="gpt-4o"),
     instructions=[
         "You are a billing and account specialist.",
@@ -46,7 +46,7 @@ billing_agent = Agent(
 
 general_support_agent = Agent(
     name="General Customer Support",
-    model=OpenAIChat(id="gpt-4o"), 
+    model=OpenAIChat(id="gpt-4o"),
     instructions=[
         "You are a general customer support representative.",
         "You have access to the full conversation history with this customer.",
@@ -61,19 +61,19 @@ general_support_agent = Agent(
 tech_support_step = Step(
     name="Technical Support",
     agent=tech_support_agent,
-    add_workflow_history=True,  
+    add_workflow_history=True,
 )
 
 billing_support_step = Step(
-    name="Billing Support", 
+    name="Billing Support",
     agent=billing_agent,
-    add_workflow_history=True, 
+    add_workflow_history=True,
 )
 
 general_support_step = Step(
     name="General Support",
-    agent=general_support_agent, 
-    add_workflow_history=True, 
+    agent=general_support_agent,
+    add_workflow_history=True,
 )
 
 
@@ -84,11 +84,28 @@ def simple_intent_router(step_input: StepInput) -> List[Step]:
     """
     current_message = step_input.input or ""
     current_message_lower = current_message.lower()
-    
+
     # Simple keyword matching for intent detection
-    tech_keywords = ["api", "error", "bug", "technical", "login", "not working", "broken", "crash"]
-    billing_keywords = ["billing", "payment", "refund", "charge", "subscription", "invoice", "plan"]
-    
+    tech_keywords = [
+        "api",
+        "error",
+        "bug",
+        "technical",
+        "login",
+        "not working",
+        "broken",
+        "crash",
+    ]
+    billing_keywords = [
+        "billing",
+        "payment",
+        "refund",
+        "charge",
+        "subscription",
+        "invoice",
+        "plan",
+    ]
+
     # Simple routing logic
     if any(keyword in current_message_lower for keyword in tech_keywords):
         print("🔧 Routing to Technical Support")
@@ -103,7 +120,7 @@ def simple_intent_router(step_input: StepInput) -> List[Step]:
 
 def create_smart_customer_service_workflow():
     """Customer service workflow with simple routing and shared history"""
-    
+
     return Workflow(
         name="Smart Customer Service",
         description="Simple routing to specialists with shared conversation history",
@@ -123,7 +140,7 @@ def create_smart_customer_service_workflow():
 def demo_smart_customer_service_cli():
     """Demo the smart customer service workflow with CLI"""
     workflow = create_smart_customer_service_workflow()
-    
+
     print("🎧 Smart Customer Service Demo")
     print("=" * 60)
     print("")
