@@ -893,6 +893,9 @@ class Workflow:
         workflow_run_response.status = RunStatus.running
         register_run(workflow_run_response.run_id)  # type: ignore
 
+        # Store exception to re-raise after cleanup
+        captured_exception: Optional[Exception] = None
+
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                 raise ValueError("Cannot use async function with synchronous execution")
@@ -1001,7 +1004,6 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except RunCancelledException as e:
-                # Handle run cancellation
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.content = str(e)
@@ -1013,6 +1015,7 @@ class Workflow:
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
+                captured_exception = e
 
             finally:
                 self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
@@ -1024,6 +1027,9 @@ class Workflow:
         # Log Workflow Telemetry
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+
+        if captured_exception is not None:
+            raise captured_exception
 
         return workflow_run_response
 
@@ -1040,6 +1046,9 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
+
+        # Store exception to re-raise after cleanup
+        captured_exception: Optional[Exception] = None
 
         # Register run for cancellation tracking
         if workflow_run_response.run_id:
@@ -1230,6 +1239,7 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
+                captured_exception = e
 
         # Yield workflow completed event
         workflow_completed_event = WorkflowCompletedEvent(
@@ -1254,6 +1264,9 @@ class Workflow:
         # Log Workflow Telemetry
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+
+        if captured_exception is not None:
+            raise captured_exception
 
     async def _acall_custom_function(
         self, func: Callable, execution_input: WorkflowExecutionInput, **kwargs: Any
@@ -1317,6 +1330,9 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
+
+        # Store exception to re-raise after cleanup
+        captured_exception: Optional[Exception] = None
 
         # Register run for cancellation tracking
         register_run(workflow_run_response.run_id)  # type: ignore
@@ -1444,6 +1460,7 @@ class Workflow:
                 logger.error(f"Workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
+                captured_exception = e
 
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
@@ -1454,6 +1471,9 @@ class Workflow:
         # Log Workflow Telemetry
         if self.telemetry:
             await self._alog_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+
+        if captured_exception is not None:
+            raise captured_exception
 
         return workflow_run_response
 
@@ -1471,6 +1491,10 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
+
+        # Store exception to re-raise after cleanup
+        captured_exception: Optional[Exception] = None
+
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
@@ -1668,6 +1692,7 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
+                captured_exception = e
 
         # Yield workflow completed event
         workflow_completed_event = WorkflowCompletedEvent(
@@ -1692,6 +1717,9 @@ class Workflow:
 
         # Always clean up the run tracking
         cleanup_run(workflow_run_response.run_id)  # type: ignore
+
+        if captured_exception is not None:
+            raise captured_exception
 
     async def _arun_background(
         self,
