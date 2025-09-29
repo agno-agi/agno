@@ -1338,8 +1338,8 @@ class Agent:
         7. Generate a response from the Model (includes running function calls)
         8. Update the RunOutput with the model response
         9. Calculate session metrics
-        10. Update Agent Memory
-        11. Add RunOutput to Agent Session
+        10. Add RunOutput to Agent Session
+        11. Update Agent Memory
         12. Save session to storage
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
@@ -1449,12 +1449,6 @@ class Agent:
             if run_response.metrics:
                 run_response.metrics.stop_timer()
 
-            # 10. Update Agent Memory
-            async for _ in self._amake_memories_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
-            ):
-                pass
-
             # Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
                 run_response=run_response,
@@ -1463,8 +1457,14 @@ class Agent:
                 user_id=user_id,
             )
 
-            # 11. Add RunOutput to Agent Session
+            # 10. Add RunOutput to Agent Session
             agent_session.upsert_run(run=run_response)
+
+            # 11. Update Agent Memory
+            async for _ in self._amake_memories_and_summaries(
+                run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
+            ):
+                pass
 
             # 12. Save session to storage
             if self._has_async_db():
@@ -1529,9 +1529,9 @@ class Agent:
         5. Prepare run messages
         6. Reason about the task if reasoning is enabled
         7. Generate a response from the Model (includes running function calls)
-        8. Update Agent Memory
-        9. Calculate session metrics
-        10. Add RunOutput to Agent Session
+        8. Calculate session metrics
+        9. Add RunOutput to Agent Session
+        10. Update Agent Memory
         11. Save session to storage
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
@@ -1664,13 +1664,7 @@ class Agent:
                     yield item
                 return
 
-            # 8. Update Agent Memory
-            async for event in self._amake_memories_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
-            ):
-                yield event
-
-            # 9. Calculate session metrics
+            # 8. Calculate session metrics
             self._update_session_metrics(session=agent_session, run_response=run_response)
 
             run_response.status = RunStatus.completed
@@ -1691,8 +1685,14 @@ class Agent:
                 user_id=user_id,
             )
 
-            # 10. Add RunOutput to Agent Session
+            # 9. Add RunOutput to Agent Session
             agent_session.upsert_run(run=run_response)
+
+            # 10. Update Agent Memory
+            async for event in self._amake_memories_and_summaries(
+                run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
+            ):
+                yield event
 
             # 11. Save session to storage
             if self._has_async_db():
@@ -2584,7 +2584,11 @@ class Agent:
             await self._aresolve_run_dependencies(dependencies=dependencies)
 
         # 2. Read existing session from db
-        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        if self._has_async_db():
+            agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+        else:
+            agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+
         self._update_metadata(session=agent_session)
 
         # 4. Update session state
