@@ -24,6 +24,9 @@ class WorkflowSession:
 
     # Workflow runs - stores WorkflowRunOutput objects in memory
     runs: Optional[List[WorkflowRunOutput]] = None
+    
+    # Workflow agent responses - stores agent decisions and responses
+    workflow_agent_responses: Optional[List[Dict[str, Any]]] = None # TODO: make a type for this like WorkflowAgentResponse
 
     # Session Data: session_name, session_state, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
@@ -40,6 +43,9 @@ class WorkflowSession:
     def __post_init__(self):
         if self.runs is None:
             self.runs = []
+        
+        if self.workflow_agent_responses is None:
+            self.workflow_agent_responses = []
 
         # Ensure session_data, workflow_data, and metadata are dictionaries, not None
         if self.session_data is None:
@@ -92,6 +98,7 @@ class WorkflowSession:
             "workflow_id": self.workflow_id,
             "workflow_name": self.workflow_name,
             "runs": runs_data,
+            "workflow_agent_responses": self.workflow_agent_responses,
             "session_data": self.session_data,
             "workflow_data": self.workflow_data,
             "metadata": self.metadata,
@@ -128,6 +135,7 @@ class WorkflowSession:
             workflow_id=data.get("workflow_id"),
             workflow_name=data.get("workflow_name"),
             runs=runs,
+            workflow_agent_responses=data.get("workflow_agent_responses"),
             session_data=data.get("session_data"),
             workflow_data=data.get("workflow_data"),
             metadata=data.get("metadata"),

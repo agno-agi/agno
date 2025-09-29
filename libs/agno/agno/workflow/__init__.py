@@ -1,3 +1,4 @@
+from agno.workflow.agent import WorkflowAgent
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
@@ -9,6 +10,7 @@ from agno.workflow.workflow import Workflow
 
 __all__ = [
     "Workflow",
+    "WorkflowAgent",
     "Steps",
     "Step",
     "Loop",

@@ -13,7 +13,6 @@ from agno.utils.log import log_error
 
 if TYPE_CHECKING:
     from agno.workflow.types import StepOutput, WorkflowMetrics
-    from agno.workflow.utils import WorkflowResponse
 else:
     StepOutput = Any
     WorkflowMetrics = Any
@@ -480,13 +479,14 @@ class WorkflowRunOutput:
     audio: Optional[List[Audio]] = None
     response_audio: Optional[Audio] = None
 
-    agent_response: Optional["WorkflowResponse"] = None
-
     # Store actual step execution results as StepOutput objects
     step_results: List[Union[StepOutput, List[StepOutput]]] = field(default_factory=list)
 
     # Store agent/team responses separately with parent_run_id references
     step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
+
+    # Workflow agent response - stores agent decision and response when workflow agent is used
+    workflow_agent_response: Optional[Dict[str, Any]] = None # TODO: make a type for this like WorkflowAgentResponse
 
     # Store events from workflow execution
     events: Optional[List[WorkflowRunOutputEvent]] = None
@@ -519,6 +519,7 @@ class WorkflowRunOutput:
                 "step_executor_runs",
                 "events",
                 "metrics",
+                "workflow_agent_response",
             ]
         }
 
@@ -554,8 +555,8 @@ class WorkflowRunOutput:
         if self.step_executor_runs:
             _dict["step_executor_runs"] = [run.to_dict() for run in self.step_executor_runs]
 
-        if self.agent_response is not None:
-            _dict["agent_response"] = self.agent_response.model_dump(exclude_none=True)
+        if self.workflow_agent_response is not None:
+            _dict["workflow_agent_response"] = self.workflow_agent_response
 
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
@@ -603,12 +604,8 @@ class WorkflowRunOutput:
                     step_executor_runs.append(TeamRunOutput.from_dict(run_data))
                 else:
                     step_executor_runs.append(RunOutput.from_dict(run_data))
-        
-        agent_response = data.pop("agent_response", None)
-        if agent_response:
-            from agno.workflow.utils import WorkflowResponse
 
-            agent_response = WorkflowResponse.model_validate(agent_response)
+        workflow_agent_response = data.pop("workflow_agent_response", None)
 
         metadata = data.pop("metadata", None)
 
@@ -647,12 +644,12 @@ class WorkflowRunOutput:
 
         return cls(
             step_results=parsed_step_results,
+            workflow_agent_response=workflow_agent_response,
             metadata=metadata,
             images=images,
             videos=videos,
             audio=audio,
             response_audio=response_audio,
-            agent_response=agent_response,
             events=events,
             metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
