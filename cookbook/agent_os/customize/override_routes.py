@@ -43,16 +43,6 @@ app: FastAPI = FastAPI(
     version="1.0.0",
 )
 
-# Add Middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 # Custom landing page (conflicts with AgentOS home route)
 @app.get("/")
 async def get_custom_home():

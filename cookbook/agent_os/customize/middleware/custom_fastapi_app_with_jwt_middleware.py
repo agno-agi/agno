@@ -4,7 +4,7 @@ This example demonstrates how to use our JWT middleware with your custom FastAPI
 # Note: This example won't work with the AgentOS UI, because of the token validation mechanism in the JWT middleware.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 import jwt
 from agno.agent import Agent
@@ -57,8 +57,8 @@ async def login(username: str = Form(...), password: str = Form(...)):
         payload = {
             "sub": "user_123",
             "username": username,
-            "exp": datetime.utcnow() + timedelta(hours=24),
-            "iat": datetime.utcnow(),
+            "exp": datetime.now(UTC) + timedelta(hours=24),
+            "iat": datetime.now(UTC),
         }
         token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
         return {"access_token": token, "token_type": "bearer"}
