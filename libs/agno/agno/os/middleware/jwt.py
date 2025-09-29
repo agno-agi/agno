@@ -1,3 +1,4 @@
+import fnmatch
 from enum import Enum
 from typing import List, Optional
 
@@ -44,8 +45,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
         app,
         secret_key: str,
         algorithm: str = "HS256",
-        token_header_key: str = "Authorization",
         token_source: TokenSource = TokenSource.HEADER,
+        token_header_key: str = "Authorization",
         cookie_name: str = "access_token",
         validate: bool = True,
         excluded_route_paths: Optional[List[str]] = None,
@@ -131,8 +132,20 @@ class JWTMiddleware(BaseHTTPMiddleware):
         else:
             return "JWT token missing"
 
+    def _is_route_excluded(self, path: str) -> bool:
+        """Check if a route path matches any of the excluded patterns."""
+        if not self.excluded_route_paths:
+            return False
+        
+        for excluded_path in self.excluded_route_paths:
+            # Support both exact matches and wildcard patterns
+            if fnmatch.fnmatch(path, excluded_path):
+                return True
+        
+        return False
+
     async def dispatch(self, request: Request, call_next) -> Response:
-        if self.excluded_route_paths and request.url.path in self.excluded_route_paths:
+        if self._is_route_excluded(request.url.path):
             return await call_next(request)
 
         # Extract JWT token from configured source (header, cookie, or both)
