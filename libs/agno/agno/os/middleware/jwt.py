@@ -49,10 +49,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
         cookie_name: str = "access_token",
         validate: bool = True,
         excluded_route_paths: Optional[List[str]] = None,
+        scopes_claim: Optional[str] = None,
         user_id_claim: str = "sub",
-        session_id_claim: Optional[str] = None,
+        session_id_claim: str = "session_id",
         dependencies_claims: Optional[List[str]] = None,
-        session_state_claim: Optional[str] = None,
+        session_state_claims: Optional[List[str]] = None,
     ):
         """
         Initialize the JWT middleware.
@@ -66,10 +67,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
             cookie_name: The name of the cookie containing the JWT token (only used when token_source is cookie/both)
             validate: Whether to validate the JWT token
             excluded_route_paths: A list of route paths to exclude from JWT validation
+            scopes_claim: The claim to use for scopes extraction
             user_id_claim: The claim to use for user ID extraction
             session_id_claim: The claim to use for session ID extraction
-            dependencies_claims: A list of claims to extract from the JWT token
-            session_state_claim: The claim to use for session state extraction
+            dependencies_claims: A list of claims to extract from the JWT token for dependencies
+            session_state_claims: A list of claims to extract from the JWT token for session state
         """
         super().__init__(app)
         self.secret_key = secret_key
@@ -79,10 +81,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.cookie_name = cookie_name
         self.validate = validate
         self.excluded_route_paths = excluded_route_paths
+        self.scopes_claim = scopes_claim
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
         self.dependencies_claims = dependencies_claims or []
-        self.session_state_claim = session_state_claim
+        self.session_state_claims = session_state_claims or []
 
     def _extract_token_from_header(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header."""
@@ -146,9 +149,26 @@ class JWTMiddleware(BaseHTTPMiddleware):
         try:
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
 
+            # Extract scopes claims
+            scopes = []
+            if self.scopes_claim in payload:
+                extracted_scopes = payload[self.scopes_claim]
+                if isinstance(extracted_scopes, str):
+                    scopes = extracted_scopes.split(" ")
+                else:
+                    scopes = extracted_scopes
+            if scopes:
+                request.state.scopes = scopes
+
             # Extract user information
-            user_id = payload.get(self.user_id_claim)
-            session_id = payload.get(self.session_id_claim)
+            if self.user_id_claim in payload:
+                user_id = payload[self.user_id_claim]
+                request.state.user_id = user_id
+            if self.session_id_claim in payload:
+                session_id = payload[self.session_id_claim]
+                request.state.session_id = session_id
+            else:
+                session_id = None
 
             # Extract dependency claims
             dependencies = {}
@@ -156,19 +176,15 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 if claim in payload:
                     dependencies[claim] = payload[claim]
 
+            if dependencies:
+                request.state.dependencies = dependencies
+
             # Extract session state claims
             session_state = {}
             for claim in self.session_state_claims:
                 if claim in payload:
                     session_state[claim] = payload[claim]
 
-            # Store everything in request state
-            if user_id:
-                request.state.user_id = user_id
-            if session_id:
-                request.state.session_id = session_id
-            if dependencies:
-                request.state.dependencies = dependencies
             if session_state:
                 request.state.session_state = session_state
 
