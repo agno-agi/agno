@@ -20,7 +20,6 @@ from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
 from fastapi import FastAPI
-from starlette.middleware.cors import CORSMiddleware
 
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -42,16 +41,6 @@ app: FastAPI = FastAPI(
     title="Custom FastAPI App",
     version="1.0.0",
 )
-
-# Add Middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 # Custom landing page (conflicts with AgentOS home route)
 @app.get("/")
