@@ -256,7 +256,7 @@ def test_pii_detection_ssn_detection(pii_detection_guardrail):
             pii_detection_guardrail.check(run_input)
 
         assert exc_info.value.check_trigger == CheckTrigger.PII_DETECTED
-        assert "SSN" in exc_info.value.message
+        assert "SSN" in exc_info.value.additional_data["detected_pii"]
 
 
 @pytest.mark.asyncio
@@ -286,7 +286,7 @@ def test_pii_detection_credit_card_detection(pii_detection_guardrail):
             pii_detection_guardrail.check(run_input)
 
         assert exc_info.value.check_trigger == CheckTrigger.PII_DETECTED
-        assert "Credit Card" in exc_info.value.message
+        assert "Credit Card" in exc_info.value.additional_data["detected_pii"]
 
 
 def test_pii_detection_email_detection(pii_detection_guardrail):
@@ -304,7 +304,7 @@ def test_pii_detection_email_detection(pii_detection_guardrail):
             pii_detection_guardrail.check(run_input)
 
         assert exc_info.value.check_trigger == CheckTrigger.PII_DETECTED
-        assert "Email" in exc_info.value.message
+        assert "Email" in exc_info.value.additional_data["detected_pii"]
 
 
 def test_pii_detection_phone_number_detection(pii_detection_guardrail):
@@ -322,7 +322,7 @@ def test_pii_detection_phone_number_detection(pii_detection_guardrail):
             pii_detection_guardrail.check(run_input)
 
         assert exc_info.value.check_trigger == CheckTrigger.PII_DETECTED
-        assert "Phone" in exc_info.value.message
+        assert "Phone" in exc_info.value.additional_data["detected_pii"]
 
 
 def test_pii_detection_multiple_pii_types(pii_detection_guardrail):
@@ -335,7 +335,7 @@ def test_pii_detection_multiple_pii_types(pii_detection_guardrail):
 
     assert exc_info.value.check_trigger == CheckTrigger.PII_DETECTED
     # Should catch the first one it finds (likely email since it comes first in the patterns dict)
-    assert "Email" in exc_info.value.message
+    assert "Email" in exc_info.value.additional_data["detected_pii"]
 
 
 def test_pii_detection_works_with_team_run_input(pii_detection_guardrail):
@@ -349,17 +349,6 @@ def test_pii_detection_works_with_team_run_input(pii_detection_guardrail):
 
 
 # OpenAIModerationGuardrail Tests
-
-
-def test_openai_moderation_initialization_default_params():
-    """Test guardrail initialization with default parameters."""
-    # Skip if no API key - will be handled in the guardrail itself
-    guardrail = OpenAIModerationGuardrail()
-    assert guardrail.moderation_model == "omni-moderation-latest"
-    assert len(guardrail.raise_for_categories) > 0
-    assert "violence" in guardrail.raise_for_categories
-
-
 def test_openai_moderation_initialization_custom_params():
     """Test guardrail initialization with custom parameters."""
     custom_categories = ["violence", "hate"]

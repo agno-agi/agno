@@ -22,17 +22,27 @@ class PIIDetectionGuardrail(BaseGuardrail):
     def check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
         """Check for PII patterns in the input."""
         content = run_input.input_content_string()
+        detected_pii = []
         for pii_type, pattern in self.pii_patterns.items():
             if pattern.search(content):
-                raise InputCheckError(
-                    f"Potential {pii_type} detected in input", check_trigger=CheckTrigger.PII_DETECTED
-                )
+                detected_pii.append(pii_type)
+        if detected_pii:
+            raise InputCheckError(
+                "Potential PII detected in input",
+                additional_data={"detected_pii": detected_pii},
+                check_trigger=CheckTrigger.PII_DETECTED,
+            )
 
     async def async_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
         """Asynchronously check for PII patterns in the input."""
         content = run_input.input_content_string()
+        detected_pii = []
         for pii_type, pattern in self.pii_patterns.items():
             if pattern.search(content):
-                raise InputCheckError(
-                    f"Potential {pii_type} detected in input", check_trigger=CheckTrigger.PII_DETECTED
-                )
+                detected_pii.append(pii_type)
+        if detected_pii:
+            raise InputCheckError(
+                "Potential PII detected in input",
+                additional_data={"detected_pii": detected_pii},
+                check_trigger=CheckTrigger.PII_DETECTED,
+            )

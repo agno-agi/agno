@@ -246,6 +246,11 @@ class RunErrorEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_error.value
     content: Optional[str] = None
 
+    # From exceptions
+    error_type: Optional[str] = None
+    error_id: Optional[str] = None
+    additional_data: Optional[Dict[str, Any]] = None
+
 
 @dataclass
 class RunCancelledEvent(BaseAgentRunEvent):

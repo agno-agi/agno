@@ -155,6 +155,11 @@ class WorkflowErrorEvent(BaseWorkflowRunOutputEvent):
     event: str = WorkflowRunEvent.workflow_error.value
     error: Optional[str] = None
 
+    # From exceptions
+    error_type: Optional[str] = None
+    error_id: Optional[str] = None
+    additional_data: Optional[Dict[str, Any]] = None
+
 
 @dataclass
 class WorkflowCancelledEvent(BaseWorkflowRunOutputEvent):

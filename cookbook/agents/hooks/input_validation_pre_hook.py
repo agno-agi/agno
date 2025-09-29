@@ -66,7 +66,7 @@ def comprehensive_input_validation(run_input: RunInput) -> None:
     if not result.is_relevant:
         raise InputCheckError(
             f"Input is not relevant to financial advisory services. {result.recommendations[0] if result.recommendations else ''}",
-            check_trigger=CheckTrigger.INPUT_NOT_ALLOWED,
+            check_trigger=CheckTrigger.OFF_TOPIC,
         )
 
     if not result.has_sufficient_detail:

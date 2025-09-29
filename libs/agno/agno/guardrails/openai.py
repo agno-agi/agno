@@ -49,26 +49,10 @@ class OpenAIModerationGuardrail(BaseGuardrail):
     ):
         self.moderation_model = moderation_model
         self.api_key = api_key or getenv("OPENAI_API_KEY")
-        self.raise_for_categories = raise_for_categories or [
-            "sexual",
-            "sexual/minors",
-            "harassment",
-            "harassment/threatening",
-            "hate",
-            "hate/threatening",
-            "illicit",
-            "illicit/violent",
-            "self-harm",
-            "self-harm/intent",
-            "self-harm/instructions",
-            "violence",
-            "violence/graphic",
-        ]
+        self.raise_for_categories = raise_for_categories
 
     def check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
         """Check for content that violates OpenAI's content policy."""
-        import json
-
         try:
             from openai import OpenAI as OpenAIClient
         except ImportError:
@@ -98,20 +82,23 @@ class OpenAIModerationGuardrail(BaseGuardrail):
 
             trigger_validation = False
 
-            for category in self.raise_for_categories:
-                if moderation_result["categories"][category]:
-                    trigger_validation = True
+            if self.raise_for_categories is not None:
+                for category in self.raise_for_categories:
+                    if moderation_result["categories"][category]:
+                        trigger_validation = True
+            else:
+                # Since at least one category is flagged, we need to raise the check
+                trigger_validation = True
 
             if trigger_validation:
                 raise InputCheckError(
-                    f"OpenAI moderation violation detected.\n{json.dumps(moderation_result, indent=2)}",
+                    "OpenAI moderation violation detected.",
+                    additional_data=moderation_result,
                     check_trigger=CheckTrigger.INPUT_NOT_ALLOWED,
                 )
 
     async def async_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
         """Check for content that violates OpenAI's content policy."""
-        import json
-
         try:
             from openai import AsyncOpenAI as OpenAIClient
         except ImportError:
@@ -141,12 +128,17 @@ class OpenAIModerationGuardrail(BaseGuardrail):
 
             trigger_validation = False
 
-            for category in self.raise_for_categories:
-                if moderation_result["categories"][category]:
-                    trigger_validation = True
+            if self.raise_for_categories is not None:
+                for category in self.raise_for_categories:
+                    if moderation_result["categories"][category]:
+                        trigger_validation = True
+            else:
+                # Since at least one category is flagged, we need to raise the check
+                trigger_validation = True
 
             if trigger_validation:
                 raise InputCheckError(
-                    f"OpenAI moderation violation detected.\n{json.dumps(moderation_result, indent=2)}",
+                    "OpenAI moderation violation detected.",
+                    additional_data=moderation_result,
                     check_trigger=CheckTrigger.INPUT_NOT_ALLOWED,
                 )

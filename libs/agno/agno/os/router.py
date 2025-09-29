@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agno.agent.agent import Agent
-from agno.exceptions import InputCheckError
+from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
@@ -246,9 +246,12 @@ async def agent_response_streamer(
         )
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
-    except InputCheckError as e:
+    except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
         )
         yield format_sse_event(error_response)
     except Exception as e:
@@ -279,9 +282,12 @@ async def agent_continue_response_streamer(
         )
         async for run_response_chunk in continue_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
-    except InputCheckError as e:
+    except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
         )
         yield format_sse_event(error_response)
 
@@ -291,6 +297,8 @@ async def agent_continue_response_streamer(
         traceback.print_exc(limit=3)
         error_response = RunErrorEvent(
             content=str(e),
+            error_type=e.type if hasattr(e, "type") else None,
+            error_id=e.error_id if hasattr(e, "error_id") else None,
         )
         yield format_sse_event(error_response)
         return
@@ -323,9 +331,12 @@ async def team_response_streamer(
         )
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
-    except InputCheckError as e:
+    except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
             content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
         )
         yield format_sse_event(error_response)
 
@@ -335,6 +346,8 @@ async def team_response_streamer(
         traceback.print_exc()
         error_response = TeamRunErrorEvent(
             content=str(e),
+            error_type=e.type if hasattr(e, "type") else None,
+            error_id=e.error_id if hasattr(e, "error_id") else None,
         )
         yield format_sse_event(error_response)
         return
@@ -381,11 +394,28 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
 
         await websocket_manager.register_workflow_websocket(workflow_run_output.run_id, websocket)  # type: ignore
 
-    except InputCheckError as e:
-        await websocket.send_text(json.dumps({"event": "error", "error": str(e)}))
+    except (InputCheckError, OutputCheckError) as e:
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "event": "error",
+                    "error": str(e),
+                    "error_type": e.type,
+                    "error_id": e.error_id,
+                    "additional_data": e.additional_data,
+                }
+            )
+        )
     except Exception as e:
         logger.error(f"Error executing workflow via WebSocket: {e}")
-        await websocket.send_text(json.dumps({"event": "error", "error": str(e)}))
+        error_payload = {
+            "event": "error",
+            "error": str(e),
+            "error_type": e.type if hasattr(e, "type") else None,
+            "error_id": e.error_id if hasattr(e, "error_id") else None,
+        }
+        error_payload = {k: v for k, v in error_payload.items() if v is not None}
+        await websocket.send_text(json.dumps(error_payload))
 
 
 async def workflow_response_streamer(
@@ -408,9 +438,12 @@ async def workflow_response_streamer(
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
 
-    except InputCheckError as e:
+    except (InputCheckError, OutputCheckError) as e:
         error_response = WorkflowErrorEvent(
             error=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
         )
         yield format_sse_event(error_response)
 
@@ -420,6 +453,8 @@ async def workflow_response_streamer(
         traceback.print_exc()
         error_response = WorkflowErrorEvent(
             error=str(e),
+            error_type=e.type if hasattr(e, "type") else None,
+            error_id=e.error_id if hasattr(e, "error_id") else None,
         )
         yield format_sse_event(error_response)
         return

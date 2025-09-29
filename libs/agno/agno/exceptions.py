@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from agno.models.message import Message
 
@@ -18,6 +18,8 @@ class AgentRunException(Exception):
         self.agent_message = agent_message
         self.messages = messages
         self.stop_execution = stop_execution
+        self.type = "agent_run_error"
+        self.error_id = "agent_run_error"
 
 
 class RetryAgentRun(AgentRunException):
@@ -33,6 +35,7 @@ class RetryAgentRun(AgentRunException):
         super().__init__(
             exc, user_message=user_message, agent_message=agent_message, messages=messages, stop_execution=False
         )
+        self.error_id = "retry_agent_run_error"
 
 
 class StopAgentRun(AgentRunException):
@@ -48,6 +51,7 @@ class StopAgentRun(AgentRunException):
         super().__init__(
             exc, user_message=user_message, agent_message=agent_message, messages=messages, stop_execution=True
         )
+        self.error_id = "stop_agent_run_error"
 
 
 class RunCancelledException(Exception):
@@ -55,6 +59,8 @@ class RunCancelledException(Exception):
 
     def __init__(self, message: str = "Operation cancelled by user"):
         super().__init__(message)
+        self.type = "run_cancelled_error"
+        self.error_id = "run_cancelled_error"
 
 
 class AgnoError(Exception):
@@ -64,6 +70,8 @@ class AgnoError(Exception):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+        self.type = "agno_error"
+        self.error_id = "agno_error"
 
     def __str__(self) -> str:
         return str(self.message)
@@ -79,6 +87,9 @@ class ModelProviderError(AgnoError):
         self.model_name = model_name
         self.model_id = model_id
 
+        self.type = "model_provider_error"
+        self.error_id = "model_provider_error"
+
 
 class ModelRateLimitError(ModelProviderError):
     """Exception raised when a model provider returns a rate limit error."""
@@ -87,6 +98,7 @@ class ModelRateLimitError(ModelProviderError):
         self, message: str, status_code: int = 429, model_name: Optional[str] = None, model_id: Optional[str] = None
     ):
         super().__init__(message, status_code, model_name, model_id)
+        self.error_id = "model_rate_limit_error"
 
 
 class EvalError(Exception):
@@ -110,16 +122,34 @@ class CheckTrigger(Enum):
 class InputCheckError(Exception):
     """Exception raised when an input check fails."""
 
-    def __init__(self, message: str, check_trigger: CheckTrigger = CheckTrigger.INPUT_NOT_ALLOWED):
+    def __init__(
+        self,
+        message: str,
+        check_trigger: CheckTrigger = CheckTrigger.INPUT_NOT_ALLOWED,
+        additional_data: Optional[Dict[str, Any]] = None,
+    ):
         super().__init__(message)
+        self.type = "input_check_error"
+        self.error_id = check_trigger.value
+
         self.message = message
         self.check_trigger = check_trigger
+        self.additional_data = additional_data
 
 
 class OutputCheckError(Exception):
     """Exception raised when an output check fails."""
 
-    def __init__(self, message: str, check_trigger: CheckTrigger = CheckTrigger.OUTPUT_NOT_ALLOWED):
+    def __init__(
+        self,
+        message: str,
+        check_trigger: CheckTrigger = CheckTrigger.OUTPUT_NOT_ALLOWED,
+        additional_data: Optional[Dict[str, Any]] = None,
+    ):
         super().__init__(message)
+        self.type = "output_check_error"
+        self.error_id = check_trigger.value
+
         self.message = message
         self.check_trigger = check_trigger
+        self.additional_data = additional_data
