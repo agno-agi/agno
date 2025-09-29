@@ -239,7 +239,7 @@ class AgentOS:
             else:
                 self.fastapi_app = self._make_app(lifespan=self.lifespan)
 
-        # Add routes with conflict detection
+        # Add routes
         self._add_router(get_base_router(self, settings=self.settings))
         self._add_router(get_websocket_router(self, settings=self.settings))
         self._add_router(get_health_router())
@@ -267,7 +267,6 @@ class AgentOS:
         if self.enable_mcp and self.mcp_app:
             self.fastapi_app.mount("/", self.mcp_app)
 
-        # Add middleware (only if app is not set)
         if not self._app_set:
 
             @self.fastapi_app.exception_handler(HTTPException)
