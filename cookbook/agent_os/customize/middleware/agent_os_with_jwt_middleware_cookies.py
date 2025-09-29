@@ -6,13 +6,13 @@ This is useful for web applications that prefer to store JWT tokens in HTTP-only
 from datetime import UTC, datetime, timedelta
 
 import jwt
-from fastapi import FastAPI, Response
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware
 from agno.os.middleware.jwt import TokenSource
+from fastapi import FastAPI, Response
 
 # JWT Secret (use environment variable in production)
 JWT_SECRET = "a-string-secret-at-least-256-bits-long"
@@ -48,6 +48,7 @@ profile_agent = Agent(
 
 app = FastAPI()
 
+
 # Add a simple endpoint to set the JWT authentication cookie
 @app.get("/set-auth-cookie")
 async def set_auth_cookie(response: Response):
@@ -66,9 +67,9 @@ async def set_auth_cookie(response: Response):
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),
     }
-    
+
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
-    
+
     # Set HTTP-only cookie (more secure than localStorage for JWT storage)
     response.set_cookie(
         key="auth_token",
@@ -78,13 +79,13 @@ async def set_auth_cookie(response: Response):
         samesite="strict",  # CSRF protection
         max_age=24 * 60 * 60,  # 24 hours
     )
-    
+
     return {
         "message": "Authentication cookie set successfully",
         "cookie_name": "auth_token",
         "expires_in": "24 hours",
         "security_features": ["httponly", "secure", "samesite=strict"],
-        "instructions": "Now you can make authenticated requests without Authorization headers"
+        "instructions": "Now you can make authenticated requests without Authorization headers",
     }
 
 
@@ -109,7 +110,12 @@ app.add_middleware(
     cookie_name="auth_token",  # Name of the cookie containing the JWT
     user_id_claim="sub",  # Extract user_id from 'sub' claim
     session_id_claim="session_id",  # Extract session_id from 'session_id' claim
-    dependencies_claims=["name", "email", "roles", "org"],  # Additional claims to extract
+    dependencies_claims=[
+        "name",
+        "email",
+        "roles",
+        "org",
+    ],  # Additional claims to extract
     validate=True,  # We want to ensure the token is valid
 )
 
@@ -141,5 +147,7 @@ if __name__ == "__main__":
     4. The agent will access your profile from the JWT cookie claims
     5. Visit /clear-auth-cookie to logout
     """
-    
-    agent_os.serve(app="agent_os_with_jwt_middleware_cookies:app", port=7777, reload=True)
+
+    agent_os.serve(
+        app="agent_os_with_jwt_middleware_cookies:app", port=7777, reload=True
+    )

@@ -693,11 +693,22 @@ def get_base_router(
         kwargs = await _get_request_kwargs(request, create_agent_run)
 
         if hasattr(request.state, "user_id"):
+            if user_id:
+                log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
         if hasattr(request.state, "session_id"):
+            if session_id:
+                log_warning("Session ID parameter passed in both request state and kwargs, using request state")
             session_id = request.state.session_id
+        if hasattr(request.state, "session_state"):
+            session_state = request.state.session_state
+            if "session_state" in kwargs:
+                log_warning("Session state parameter passed in both request state and kwargs, using request state")
+            kwargs["session_state"] = session_state
         if hasattr(request.state, "dependencies"):
             dependencies = request.state.dependencies
+            if "dependencies" in kwargs:
+                log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
 
         agent = get_agent_by_id(agent_id, os.agents)
@@ -1056,11 +1067,22 @@ def get_base_router(
         kwargs = await _get_request_kwargs(request, create_team_run)
 
         if hasattr(request.state, "user_id"):
+            if user_id:
+                log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
         if hasattr(request.state, "session_id"):
+            if session_id:
+                log_warning("Session ID parameter passed in both request state and kwargs, using request state")
             session_id = request.state.session_id
+        if hasattr(request.state, "session_state"):
+            session_state = request.state.session_state
+            if "session_state" in kwargs:
+                log_warning("Session state parameter passed in both request state and kwargs, using request state")
+            kwargs["session_state"] = session_state
         if hasattr(request.state, "dependencies"):
             dependencies = request.state.dependencies
+            if "dependencies" in kwargs:
+                log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
@@ -1487,11 +1509,22 @@ def get_base_router(
         kwargs = await _get_request_kwargs(request, create_workflow_run)
 
         if hasattr(request.state, "user_id"):
+            if user_id:
+                log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
         if hasattr(request.state, "session_id"):
+            if session_id:
+                log_warning("Session ID parameter passed in both request state and kwargs, using request state")
             session_id = request.state.session_id
+        if hasattr(request.state, "session_state"):
+            session_state = request.state.session_state
+            if "session_state" in kwargs:
+                log_warning("Session state parameter passed in both request state and kwargs, using request state")
+            kwargs["session_state"] = session_state
         if hasattr(request.state, "dependencies"):
             dependencies = request.state.dependencies
+            if "dependencies" in kwargs:
+                log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
 
         # Retrieve the workflow by ID

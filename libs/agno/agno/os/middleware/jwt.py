@@ -11,8 +11,9 @@ from agno.utils.log import log_debug
 
 class TokenSource(str, Enum):
     """Enum for JWT token source options."""
+
     HEADER = "header"
-    COOKIE = "cookie" 
+    COOKIE = "cookie"
     BOTH = "both"  # Try header first, then cookie
 
 
@@ -32,7 +33,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     Claims are stored as:
     - request.state.user_id: User ID from configured claim
-    - request.state.session_id: Session ID from configured claim  
+    - request.state.session_id: Session ID from configured claim
     - request.state.dependencies: Dictionary of dependency claims
     - request.state.authenticated: Boolean authentication status
 
@@ -51,6 +52,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         user_id_claim: str = "sub",
         session_id_claim: Optional[str] = None,
         dependencies_claims: Optional[List[str]] = None,
+        session_state_claim: Optional[str] = None,
     ):
         """
         Initialize the JWT middleware.
@@ -67,6 +69,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             user_id_claim: The claim to use for user ID extraction
             session_id_claim: The claim to use for session ID extraction
             dependencies_claims: A list of claims to extract from the JWT token
+            session_state_claim: The claim to use for session state extraction
         """
         super().__init__(app)
         self.secret_key = secret_key
@@ -79,6 +82,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
         self.dependencies_claims = dependencies_claims or []
+        self.session_state_claim = session_state_claim
 
     def _extract_token_from_header(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header."""
@@ -152,15 +156,29 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 if claim in payload:
                     dependencies[claim] = payload[claim]
 
+            # Extract session state claims
+            session_state = {}
+            for claim in self.session_state_claims:
+                if claim in payload:
+                    session_state[claim] = payload[claim]
+
             # Store everything in request state
-            request.state.user_id = user_id
-            request.state.session_id = session_id
-            request.state.dependencies = dependencies
+            if user_id:
+                request.state.user_id = user_id
+            if session_id:
+                request.state.session_id = session_id
+            if dependencies:
+                request.state.dependencies = dependencies
+            if session_state:
+                request.state.session_state = session_state
+
             request.state.authenticated = True
 
             log_debug(f"JWT decoded successfully for user: {user_id}")
             if dependencies:
                 log_debug(f"Extracted dependencies: {dependencies}")
+            if session_state:
+                log_debug(f"Extracted session state: {session_state}")
 
         except jwt.ExpiredSignatureError:
             if self.validate:
@@ -171,5 +189,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
             if self.validate:
                 return JSONResponse(status_code=401, content={"detail": f"Invalid token: {str(e)}"})
             request.state.authenticated = False
+        except Exception as e:
+            request.state.authenticated = False
+            return JSONResponse(status_code=401, content={"detail": f"Error decoding token: {str(e)}"})
 
         return await call_next(request)

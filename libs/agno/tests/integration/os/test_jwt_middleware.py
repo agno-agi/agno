@@ -294,11 +294,11 @@ def test_jwt_middleware_excluded_routes(jwt_test_agent):
 
 def test_jwt_middleware_cookie_token_source(jwt_test_agent, jwt_token):
     """Test JWT middleware with cookie as token source."""
-    
+
     # Create AgentOS with cookie-based JWT middleware
     agent_os = AgentOS(agents=[jwt_test_agent])
     app = agent_os.get_app()
-    
+
     app.add_middleware(
         JWTMiddleware,
         secret_key=JWT_SECRET,
@@ -310,17 +310,15 @@ def test_jwt_middleware_cookie_token_source(jwt_test_agent, jwt_token):
         dependencies_claims=["name", "email", "roles", "org_id"],
         validate=True,
     )
-    
+
     client = TestClient(app)
-    
+
     # Mock the agent's arun method
-    mock_run_output = type("MockRunOutput", (), {
-        "to_dict": lambda self: {"content": "Cookie auth successful"}
-    })()
-    
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Cookie auth successful"}})()
+
     with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
         mock_arun.return_value = mock_run_output
-        
+
         # Request with JWT in cookie should succeed
         client.cookies.set("jwt_token", jwt_token)
         response = client.post(
@@ -330,10 +328,10 @@ def test_jwt_middleware_cookie_token_source(jwt_test_agent, jwt_token):
                 "stream": "false",
             },
         )
-        
+
         assert response.status_code == 200
         mock_arun.assert_called_once()
-        
+
         # Verify JWT claims are passed to agent
         call_args = mock_arun.call_args
         assert call_args.kwargs["user_id"] == "test_user_123"
@@ -342,10 +340,10 @@ def test_jwt_middleware_cookie_token_source(jwt_test_agent, jwt_token):
 
 def test_jwt_middleware_cookie_missing_token_fails(jwt_test_agent):
     """Test that cookie-based middleware fails when cookie is missing."""
-    
+
     agent_os = AgentOS(agents=[jwt_test_agent])
     app = agent_os.get_app()
-    
+
     app.add_middleware(
         JWTMiddleware,
         secret_key=JWT_SECRET,
@@ -353,25 +351,25 @@ def test_jwt_middleware_cookie_missing_token_fails(jwt_test_agent):
         cookie_name="jwt_token",
         validate=True,
     )
-    
+
     client = TestClient(app)
-    
+
     # Request without cookie should fail
     response = client.post(
         "/agents/jwt-test-agent/runs",
         data={"message": "This should fail", "stream": "false"},
     )
-    
+
     assert response.status_code == 401
     assert "JWT cookie 'jwt_token' missing" in response.json()["detail"]
 
 
 def test_jwt_middleware_both_token_sources_header_first(jwt_test_agent, jwt_token):
     """Test JWT middleware with both token sources, header takes precedence."""
-    
+
     agent_os = AgentOS(agents=[jwt_test_agent])
     app = agent_os.get_app()
-    
+
     app.add_middleware(
         JWTMiddleware,
         secret_key=JWT_SECRET,
@@ -380,9 +378,9 @@ def test_jwt_middleware_both_token_sources_header_first(jwt_test_agent, jwt_toke
         user_id_claim="sub",
         validate=True,
     )
-    
+
     client = TestClient(app)
-    
+
     # Create different token for cookie to verify header is used
     cookie_payload = {
         "sub": "cookie_user_456",
@@ -390,14 +388,12 @@ def test_jwt_middleware_both_token_sources_header_first(jwt_test_agent, jwt_toke
         "iat": datetime.now(UTC),
     }
     cookie_token = jwt.encode(cookie_payload, JWT_SECRET, algorithm="HS256")
-    
-    mock_run_output = type("MockRunOutput", (), {
-        "to_dict": lambda self: {"content": "Both sources test"}
-    })()
-    
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Both sources test"}})()
+
     with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
         mock_arun.return_value = mock_run_output
-        
+
         # Set both header and cookie - header should take precedence
         client.cookies.set("jwt_cookie", cookie_token)
         response = client.post(
@@ -405,20 +401,20 @@ def test_jwt_middleware_both_token_sources_header_first(jwt_test_agent, jwt_toke
             headers={"Authorization": f"Bearer {jwt_token}"},
             data={"message": "Test both sources", "stream": "false"},
         )
-        
+
         assert response.status_code == 200
         call_args = mock_arun.call_args
-        
+
         # Should use header token (test_user_123), not cookie token (cookie_user_456)
         assert call_args.kwargs["user_id"] == "test_user_123"
 
 
 def test_jwt_middleware_both_token_sources_cookie_fallback(jwt_test_agent, jwt_token):
     """Test JWT middleware with both token sources, falls back to cookie."""
-    
+
     agent_os = AgentOS(agents=[jwt_test_agent])
     app = agent_os.get_app()
-    
+
     app.add_middleware(
         JWTMiddleware,
         secret_key=JWT_SECRET,
@@ -427,23 +423,21 @@ def test_jwt_middleware_both_token_sources_cookie_fallback(jwt_test_agent, jwt_t
         user_id_claim="sub",
         validate=True,
     )
-    
+
     client = TestClient(app)
-    
-    mock_run_output = type("MockRunOutput", (), {
-        "to_dict": lambda self: {"content": "Cookie fallback test"}
-    })()
-    
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Cookie fallback test"}})()
+
     with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
         mock_arun.return_value = mock_run_output
-        
+
         # Only set cookie, no header - should fall back to cookie
         client.cookies.set("jwt_cookie", jwt_token)
         response = client.post(
             "/agents/jwt-test-agent/runs",
             data={"message": "Test cookie fallback", "stream": "false"},
         )
-        
+
         assert response.status_code == 200
         call_args = mock_arun.call_args
         assert call_args.kwargs["user_id"] == "test_user_123"
@@ -451,10 +445,10 @@ def test_jwt_middleware_both_token_sources_cookie_fallback(jwt_test_agent, jwt_t
 
 def test_jwt_middleware_both_token_sources_missing_both_fails(jwt_test_agent):
     """Test that both token sources fail when neither header nor cookie present."""
-    
+
     agent_os = AgentOS(agents=[jwt_test_agent])
     app = agent_os.get_app()
-    
+
     app.add_middleware(
         JWTMiddleware,
         secret_key=JWT_SECRET,
@@ -462,25 +456,25 @@ def test_jwt_middleware_both_token_sources_missing_both_fails(jwt_test_agent):
         cookie_name="jwt_cookie",
         validate=True,
     )
-    
+
     client = TestClient(app)
-    
+
     # Request with neither header nor cookie should fail
     response = client.post(
         "/agents/jwt-test-agent/runs",
         data={"message": "This should fail", "stream": "false"},
     )
-    
+
     assert response.status_code == 401
     assert "JWT token missing from both Authorization header and 'jwt_cookie' cookie" in response.json()["detail"]
 
 
 def test_jwt_middleware_custom_cookie_name(jwt_test_agent, jwt_token):
     """Test JWT middleware with custom cookie name."""
-    
+
     agent_os = AgentOS(agents=[jwt_test_agent])
     app = agent_os.get_app()
-    
+
     custom_cookie_name = "custom_auth_token"
     app.add_middleware(
         JWTMiddleware,
@@ -490,36 +484,34 @@ def test_jwt_middleware_custom_cookie_name(jwt_test_agent, jwt_token):
         user_id_claim="sub",
         validate=True,
     )
-    
+
     client = TestClient(app)
-    
-    mock_run_output = type("MockRunOutput", (), {
-        "to_dict": lambda self: {"content": "Custom cookie name test"}
-    })()
-    
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Custom cookie name test"}})()
+
     with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
         mock_arun.return_value = mock_run_output
-        
+
         # Set JWT in custom-named cookie
         client.cookies.set(custom_cookie_name, jwt_token)
         response = client.post(
             "/agents/jwt-test-agent/runs",
             data={"message": "Test custom cookie name", "stream": "false"},
         )
-        
+
         assert response.status_code == 200
         mock_arun.assert_called_once()
-        
+
         call_args = mock_arun.call_args
         assert call_args.kwargs["user_id"] == "test_user_123"
 
 
 def test_jwt_middleware_cookie_invalid_token_fails(jwt_test_agent):
     """Test that cookie-based middleware fails with invalid token."""
-    
+
     agent_os = AgentOS(agents=[jwt_test_agent])
     app = agent_os.get_app()
-    
+
     app.add_middleware(
         JWTMiddleware,
         secret_key=JWT_SECRET,
@@ -527,15 +519,15 @@ def test_jwt_middleware_cookie_invalid_token_fails(jwt_test_agent):
         cookie_name="jwt_token",
         validate=True,
     )
-    
+
     client = TestClient(app)
-    
+
     # Set invalid token in cookie
     client.cookies.set("jwt_token", "invalid.jwt.token")
     response = client.post(
         "/agents/jwt-test-agent/runs",
         data={"message": "This should fail", "stream": "false"},
     )
-    
+
     assert response.status_code == 401
     assert "Invalid token" in response.json()["detail"]
