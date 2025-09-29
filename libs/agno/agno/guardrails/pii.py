@@ -12,16 +12,22 @@ class PIIDetectionGuardrail(BaseGuardrail):
 
     Args:
         mask_pii: Whether to mask the PII in the input, rather than raising an error.
+        enable_ssn_check: Whether to check for Social Security Numbers. True by default.
+        enable_credit_card_check: Whether to check for credit cards. True by default.
+        enable_email_check: Whether to check for emails. True by default.
+        enable_phone_check: Whether to check for phone numbers. True by default.
         pii_patterns: A dictionary of PII patterns to detect. If not provided, a default set of patterns will be used.
     """
 
-    def __init__(self,
-                 mask_pii: bool = False, 
-                 enable_ssn_check: bool = True,
-                 enable_credit_card_check: bool = True,
-                 enable_email_check: bool = True,
-                 enable_phone_check: bool = True,
-                 pii_patterns: Optional[Dict[str, Pattern[str]]] = None):
+    def __init__(
+        self,
+        mask_pii: bool = False,
+        enable_ssn_check: bool = True,
+        enable_credit_card_check: bool = True,
+        enable_email_check: bool = True,
+        enable_phone_check: bool = True,
+        pii_patterns: Optional[Dict[str, Pattern[str]]] = None,
+    ):
         import re
 
         self.mask_pii = mask_pii
