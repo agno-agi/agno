@@ -1434,8 +1434,6 @@ class Model(ABC):
             success = False
             raise e
 
-        print(f"Result: {result}")
-
         function_call_timer.stop()
         return success, function_call_timer, function_call, result
 
