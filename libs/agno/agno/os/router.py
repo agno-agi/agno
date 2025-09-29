@@ -522,7 +522,7 @@ def get_websocket_router(
                     await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
 
         except Exception as e:
-            if "1012" not in str(e):
+            if "1012" not in str(e) and "1001" not in str(e):
                 logger.error(f"WebSocket error: {e}")
         finally:
             # Clean up the websocket connection
