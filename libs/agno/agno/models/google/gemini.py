@@ -1051,9 +1051,9 @@ class Gemini(Model):
 
         metrics.input_tokens = response_usage.prompt_token_count or 0
         metrics.output_tokens = response_usage.candidates_token_count or 0
-        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
         if response_usage.thoughts_token_count is not None:
             metrics.output_tokens += response_usage.thoughts_token_count or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0
 
