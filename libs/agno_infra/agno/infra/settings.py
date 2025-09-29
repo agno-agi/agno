@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class InfraSettings(BaseModel):
@@ -93,10 +93,12 @@ class InfraSettings(BaseModel):
     # AWS Security Groups
     aws_security_group_ids: List[str] = []
 
-    def __post_init__(self):
+    @model_validator(mode="after")
+    def validate_and_set_computed_fields(self) -> "InfraSettings":
         """Validate and set computed fields after initialization."""
         self._validate_and_set_keys()
         self._validate_and_set_subnet_ids()
+        return self
 
     def _validate_and_set_keys(self):
         """Validate and set environment keys if not provided."""
