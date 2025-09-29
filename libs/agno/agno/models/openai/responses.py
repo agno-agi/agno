@@ -790,7 +790,11 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], tool_call_ids: List[str]
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        tool_call_ids: Optional[List[str]] = None,
+        **kwargs,
     ) -> None:
         """
         Handle the results of function calls.
@@ -798,11 +802,13 @@ class OpenAIResponses(Model):
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
-            tool_ids (List[str]): The tool ids.
+            tool_call_ids (Optional[List[str]]): The tool call ids.
+            **kwargs: Additional keyword arguments for compatibility with base class.
         """
         if len(function_call_results) > 0:
             for _fc_message_index, _fc_message in enumerate(function_call_results):
-                _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
+                if tool_call_ids and _fc_message_index < len(tool_call_ids):
+                    _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
                 messages.append(_fc_message)
 
     def process_response_stream(

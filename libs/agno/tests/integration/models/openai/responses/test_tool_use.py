@@ -123,6 +123,93 @@ def test_tool_use_with_native_structured_outputs():
     assert response.content.currency is not None
 
 
+def test_tool_use_with_structured_outputs_streaming():
+    """Test streaming with structured outputs and tool calls"""
+
+    class NumbersResponse(BaseModel):
+        number_1: int = Field(..., description="First random number")
+        number_2: int = Field(..., description="Second random number")
+        number_3: int = Field(..., description="Third random number")
+
+    def get_random_number() -> int:
+        """Returns a random number between 1 and 100."""
+        import random
+
+        return random.randint(1, 100)
+
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-5-mini"),
+        tools=[get_random_number],
+        output_schema=NumbersResponse,
+        telemetry=False,
+    )
+
+    responses = []
+    tool_call_seen = False
+
+    for chunk in agent.run("Give me 3 random numbers", stream=True, stream_intermediate_steps=True):
+        responses.append(chunk)
+
+        # Check for tool call events
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
+            if chunk.tool.tool_name:  # type: ignore
+                tool_call_seen = True
+
+    # Verify we got tool calls
+    assert tool_call_seen, "No tool calls observed in stream"
+
+    # Get the final response
+    final_response = responses[-1]
+    assert isinstance(final_response.content, NumbersResponse)
+    assert final_response.content.number_1 is not None
+    assert final_response.content.number_2 is not None
+    assert final_response.content.number_3 is not None
+
+
+@pytest.mark.asyncio
+async def test_async_tool_use_with_structured_outputs_streaming():
+    """Test async streaming with structured outputs and tool calls (regression test for issue #4829)."""
+
+    class NumbersResponse(BaseModel):
+        number_1: int = Field(..., description="First random number")
+        number_2: int = Field(..., description="Second random number")
+        number_3: int = Field(..., description="Third random number")
+
+    async def get_random_number() -> int:
+        """Returns a random number between 1 and 100."""
+        import random
+
+        return random.randint(1, 100)
+
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-5-mini"),
+        tools=[get_random_number],
+        output_schema=NumbersResponse,
+        telemetry=False,
+    )
+
+    responses = []
+    tool_call_seen = False
+
+    async for chunk in agent.arun("Give me 3 random numbers", stream=True, stream_intermediate_steps=True):
+        responses.append(chunk)
+
+        # Check for tool call events
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
+            if chunk.tool.tool_name:  # type: ignore
+                tool_call_seen = True
+
+    # Verify we got tool calls
+    assert tool_call_seen, "No tool calls observed in async stream"
+
+    # Get the final response
+    final_response = responses[-1]
+    assert isinstance(final_response.content, NumbersResponse)
+    assert final_response.content.number_1 is not None
+    assert final_response.content.number_2 is not None
+    assert final_response.content.number_3 is not None
+
+
 def test_parallel_tool_calls():
     """Test parallel tool calls with the responses API."""
     agent = Agent(
