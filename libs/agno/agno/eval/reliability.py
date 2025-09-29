@@ -1,9 +1,9 @@
 from dataclasses import asdict, dataclass, field
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -63,7 +63,7 @@ class ReliabilityEval:
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
     # The database to store Evaluation results
-    db: Optional[BaseDb] = None
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
     # Telemetry settings
     # telemetry=True logs minimal telemetry for analytics
@@ -71,6 +71,9 @@ class ReliabilityEval:
     telemetry: bool = True
 
     def run(self, *, print_results: bool = False) -> Optional[ReliabilityResult]:
+        if isinstance(self.db, AsyncBaseDb):
+            raise ValueError("run() is not supported with an async DB. Please use arun() instead.")
+
         if self.agent_response is None and self.team_response is None:
             raise ValueError("You need to provide 'agent_response' or 'team_response' to run the evaluation.")
 

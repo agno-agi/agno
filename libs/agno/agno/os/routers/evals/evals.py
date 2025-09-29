@@ -1,11 +1,11 @@
 import logging
 from copy import deepcopy
-from typing import List, Optional
+from typing import List, Optional, Union, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agno.agent.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.models.utils import get_model
 from agno.os.auth import get_authentication_dependency
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_eval_router(
-    dbs: dict[str, BaseDb],
+    dbs: dict[str, Union[BaseDb, AsyncBaseDb]],
     agents: Optional[List[Agent]] = None,
     teams: Optional[List[Team]] = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -55,7 +55,10 @@ def get_eval_router(
 
 
 def attach_routes(
-    router: APIRouter, dbs: dict[str, BaseDb], agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None
+    router: APIRouter,
+    dbs: dict[str, Union[BaseDb, AsyncBaseDb]],
+    agents: Optional[List[Agent]] = None,
+    teams: Optional[List[Team]] = None,
 ) -> APIRouter:
     @router.get(
         "/eval-runs",
@@ -114,19 +117,36 @@ def attach_routes(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> PaginatedResponse[EvalSchema]:
         db = get_db(dbs, db_id)
-        eval_runs, total_count = db.get_eval_runs(
-            limit=limit,
-            page=page,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            agent_id=agent_id,
-            team_id=team_id,
-            workflow_id=workflow_id,
-            model_id=model_id,
-            eval_type=eval_types,
-            filter_type=filter_type,
-            deserialize=False,
-        )
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            eval_runs, total_count = await db.get_eval_runs(
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                model_id=model_id,
+                eval_type=eval_types,
+                filter_type=filter_type,
+                deserialize=False,
+            )
+        else:
+            eval_runs, total_count = db.get_eval_runs(  # type: ignore
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                model_id=model_id,
+                eval_type=eval_types,
+                filter_type=filter_type,
+                deserialize=False,
+            )
 
         return PaginatedResponse(
             data=[EvalSchema.from_dict(eval_run) for eval_run in eval_runs],  # type: ignore
@@ -180,7 +200,11 @@ def attach_routes(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> EvalSchema:
         db = get_db(dbs, db_id)
-        eval_run = db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            eval_run = await db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
+        else:
+            eval_run = db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
         if not eval_run:
             raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
 
@@ -203,7 +227,11 @@ def attach_routes(
     ) -> None:
         try:
             db = get_db(dbs, db_id)
-            db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
+            if isinstance(db, AsyncBaseDb):
+                db = cast(AsyncBaseDb, db)
+                await db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
+            else:
+                db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
@@ -252,7 +280,11 @@ def attach_routes(
     ) -> EvalSchema:
         try:
             db = get_db(dbs, db_id)
-            eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
+            if isinstance(db, AsyncBaseDb):
+                db = cast(AsyncBaseDb, db)
+                eval_run = await db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
+            else:
+                eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
 
