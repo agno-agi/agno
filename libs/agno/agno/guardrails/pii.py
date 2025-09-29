@@ -1,4 +1,5 @@
 from typing import Dict, Optional, Union
+from re import Pattern
 
 from agno.exceptions import CheckTrigger, InputCheckError
 from agno.guardrails.base import BaseGuardrail
@@ -14,7 +15,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
         pii_patterns: A dictionary of PII patterns to detect. If not provided, a default set of patterns will be used.
     """
 
-    def __init__(self, mask_pii: bool = False, pii_patterns: Optional[Dict[str, str]] = None):
+    def __init__(self, mask_pii: bool = False, pii_patterns: Optional[Dict[str, Pattern[str]]] = None):
         import re
 
         self.mask_pii = mask_pii

@@ -96,7 +96,9 @@ async def main():
             input="What do you see in this image?", images=[unsafe_image]
         )
     except InputCheckError as e:
+        import json
         print(f"✅ Violence blocked: {e.message[:100]}...")
+        print(f"   {json.dumps(e.additional_data, indent=2)}")
         print(f"   Trigger: {e.check_trigger}")
 
 
