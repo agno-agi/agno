@@ -22,9 +22,12 @@ def normalize_hooks(
                 # Check if the hook is async and used within sync methods
                 if not async_mode:
                     import asyncio
+
                     if asyncio.iscoroutinefunction(hook):
-                        raise ValueError(f"Cannot use {hook.__name__} (an async hook) with `run()`. Use `arun()` instead.")
-                
+                        raise ValueError(
+                            f"Cannot use {hook.__name__} (an async hook) with `run()`. Use `arun()` instead."
+                        )
+
                 result_hooks.append(hook)
     return result_hooks if result_hooks else None
 

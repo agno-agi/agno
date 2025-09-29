@@ -16,6 +16,7 @@ class PromptInjectionGuardrail(BaseGuardrail):
     def __init__(self, injection_patterns: Optional[List[str]] = None):
         self.injection_patterns = injection_patterns or [
             "ignore previous instructions",
+            "ignore your instructions",
             "you are now a",
             "forget everything above",
             "developer mode",
