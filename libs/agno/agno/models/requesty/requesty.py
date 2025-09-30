@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -25,7 +25,7 @@ class Requesty(OpenAILike):
     name: str = "Requesty"
     provider: str = "Requesty"
 
-    api_key: Optional[str] = getenv("REQUESTY_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("REQUESTY_API_KEY"))
     base_url: str = "https://router.requesty.ai/v1"
     max_tokens: int = 1024
 
