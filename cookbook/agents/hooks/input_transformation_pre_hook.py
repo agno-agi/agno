@@ -1,10 +1,4 @@
-"""
-Example demonstrating how to use pre_hook and post_hook with Agno Agent.
-
-This example shows how to:
-1. Pre-hook: Comprehensive input validation using an AI agent
-2. Post-hook: Enhanced output formatting and structure
-"""
+"""Example demonstrating how to use a pre_hook to transform the input of your Agno Agent."""
 
 from typing import Optional
 

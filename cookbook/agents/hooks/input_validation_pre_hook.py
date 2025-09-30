@@ -1,7 +1,5 @@
 """
-Example demonstrating how to use pre_hook and post_hook with Agno Agent.
-
-This example shows how to do comprehensive input validation using an AI agent.
+Example demonstrating how to use a pre_hook to perform comprehensive input validation for your Agno Agent.
 
 Note: The "Message" panel will be updated with the updated input content after the pre-hook is executed.
 """
