@@ -19,6 +19,7 @@ from agno.db.singlestore.utils import (
     is_table_available,
     is_valid_table,
 )
+from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -461,17 +462,16 @@ class SingleStoreDb(BaseDb):
                 if result is None:
                     return None
 
-                session = dict(result._mapping)
-
-            if not deserialize:
-                return session
+                session_raw = deserialize_session_json_fields(dict(result._mapping))
+                if not session_raw or not deserialize:
+                    return session_raw
 
             if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
+                return AgentSession.from_dict(session_raw)
             elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
+                return TeamSession.from_dict(session_raw)
             elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
+                return WorkflowSession.from_dict(session_raw)
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 
@@ -567,16 +567,16 @@ class SingleStoreDb(BaseDb):
                 if records is None:
                     return [] if deserialize else ([], 0)
 
-                session = [dict(record._mapping) for record in records]
-                if not deserialize:
-                    return session, total_count
+                sessions_raw = [deserialize_session_json_fields(dict(record._mapping)) for record in records]
+                if not sessions_raw or not deserialize:
+                    return sessions_raw, total_count
 
             if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(record) for record in session]  # type: ignore
+                return [AgentSession.from_dict(record) for record in sessions_raw]  # type: ignore
             elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(record) for record in session]  # type: ignore
+                return [TeamSession.from_dict(record) for record in sessions_raw]  # type: ignore
             elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(record) for record in session]  # type: ignore
+                return [WorkflowSession.from_dict(record) for record in sessions_raw]  # type: ignore
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 
@@ -626,19 +626,18 @@ class SingleStoreDb(BaseDb):
                 if not row:
                     return None
 
-            session = dict(row._mapping)
+            session_raw = deserialize_session_json_fields(dict(row._mapping))
 
             log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
-
-            if not deserialize:
-                return session
+            if not session_raw or not deserialize:
+                return session_raw
 
             if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
+                return AgentSession.from_dict(session_raw)
             elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
+                return TeamSession.from_dict(session_raw)
             elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
+                return WorkflowSession.from_dict(session_raw)
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 
@@ -667,22 +666,22 @@ class SingleStoreDb(BaseDb):
             if table is None:
                 return None
 
-            session_dict = session.to_dict()
+            serialized_session = serialize_session_json_fields(session.to_dict())
 
             if isinstance(session, AgentSession):
                 with self.Session() as sess, sess.begin():
                     stmt = mysql.insert(table).values(
-                        session_id=session_dict.get("session_id"),
+                        session_id=serialized_session.get("session_id"),
                         session_type=SessionType.AGENT.value,
-                        agent_id=session_dict.get("agent_id"),
-                        user_id=session_dict.get("user_id"),
-                        runs=session_dict.get("runs"),
-                        agent_data=session_dict.get("agent_data"),
-                        session_data=session_dict.get("session_data"),
-                        summary=session_dict.get("summary"),
-                        metadata=session_dict.get("metadata"),
-                        created_at=session_dict.get("created_at"),
-                        updated_at=session_dict.get("created_at"),
+                        agent_id=serialized_session.get("agent_id"),
+                        user_id=serialized_session.get("user_id"),
+                        runs=serialized_session.get("runs"),
+                        agent_data=serialized_session.get("agent_data"),
+                        session_data=serialized_session.get("session_data"),
+                        summary=serialized_session.get("summary"),
+                        metadata=serialized_session.get("metadata"),
+                        created_at=serialized_session.get("created_at"),
+                        updated_at=serialized_session.get("created_at"),
                     )
                     stmt = stmt.on_duplicate_key_update(
                         agent_id=stmt.inserted.agent_id,
@@ -705,25 +704,26 @@ class SingleStoreDb(BaseDb):
                     if row is None:
                         return None
 
-                    if not deserialize:
-                        return row._mapping
+                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
+                    if session_raw is None or not deserialize:
+                        return session_raw
 
-                    return AgentSession.from_dict(row._mapping)
+                    return AgentSession.from_dict(session_raw)
 
             elif isinstance(session, TeamSession):
                 with self.Session() as sess, sess.begin():
                     stmt = mysql.insert(table).values(
-                        session_id=session_dict.get("session_id"),
+                        session_id=serialized_session.get("session_id"),
                         session_type=SessionType.TEAM.value,
-                        team_id=session_dict.get("team_id"),
-                        user_id=session_dict.get("user_id"),
-                        runs=session_dict.get("runs"),
-                        team_data=session_dict.get("team_data"),
-                        session_data=session_dict.get("session_data"),
-                        summary=session_dict.get("summary"),
-                        metadata=session_dict.get("metadata"),
-                        created_at=session_dict.get("created_at"),
-                        updated_at=session_dict.get("created_at"),
+                        team_id=serialized_session.get("team_id"),
+                        user_id=serialized_session.get("user_id"),
+                        runs=serialized_session.get("runs"),
+                        team_data=serialized_session.get("team_data"),
+                        session_data=serialized_session.get("session_data"),
+                        summary=serialized_session.get("summary"),
+                        metadata=serialized_session.get("metadata"),
+                        created_at=serialized_session.get("created_at"),
+                        updated_at=serialized_session.get("created_at"),
                     )
                     stmt = stmt.on_duplicate_key_update(
                         team_id=stmt.inserted.team_id,
@@ -746,25 +746,25 @@ class SingleStoreDb(BaseDb):
                     if row is None:
                         return None
 
-                    if not deserialize:
-                        return row._mapping
-
-                    return TeamSession.from_dict(row._mapping)
+                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
+                    if session_raw is None or not deserialize:
+                        return session_raw
+                    return TeamSession.from_dict(session_raw)
 
             else:
                 with self.Session() as sess, sess.begin():
                     stmt = mysql.insert(table).values(
-                        session_id=session_dict.get("session_id"),
+                        session_id=serialized_session.get("session_id"),
                         session_type=SessionType.WORKFLOW.value,
-                        workflow_id=session_dict.get("workflow_id"),
-                        user_id=session_dict.get("user_id"),
-                        runs=session_dict.get("runs"),
-                        workflow_data=session_dict.get("workflow_data"),
-                        session_data=session_dict.get("session_data"),
-                        summary=session_dict.get("summary"),
-                        metadata=session_dict.get("metadata"),
-                        created_at=session_dict.get("created_at"),
-                        updated_at=session_dict.get("created_at"),
+                        workflow_id=serialized_session.get("workflow_id"),
+                        user_id=serialized_session.get("user_id"),
+                        runs=serialized_session.get("runs"),
+                        workflow_data=serialized_session.get("workflow_data"),
+                        session_data=serialized_session.get("session_data"),
+                        summary=serialized_session.get("summary"),
+                        metadata=serialized_session.get("metadata"),
+                        created_at=serialized_session.get("created_at"),
+                        updated_at=serialized_session.get("created_at"),
                     )
                     stmt = stmt.on_duplicate_key_update(
                         workflow_id=stmt.inserted.workflow_id,
@@ -787,10 +787,10 @@ class SingleStoreDb(BaseDb):
                     if row is None:
                         return None
 
-                    if not deserialize:
-                        return row._mapping
-
-                    return WorkflowSession.from_dict(row._mapping)
+                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
+                    if session_raw is None or not deserialize:
+                        return session_raw
+                    return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
             log_error(f"Error upserting into sessions table: {e}")
@@ -840,20 +840,20 @@ class SingleStoreDb(BaseDb):
                 if agent_sessions:
                     agent_data = []
                     for session in agent_sessions:
-                        session_dict = session.to_dict()
+                        serialized_session = serialize_session_json_fields(session.to_dict())
                         agent_data.append(
                             {
-                                "session_id": session_dict.get("session_id"),
+                                "session_id": serialized_session.get("session_id"),
                                 "session_type": SessionType.AGENT.value,
-                                "agent_id": session_dict.get("agent_id"),
-                                "user_id": session_dict.get("user_id"),
-                                "runs": session_dict.get("runs"),
-                                "agent_data": session_dict.get("agent_data"),
-                                "session_data": session_dict.get("session_data"),
-                                "summary": session_dict.get("summary"),
-                                "metadata": session_dict.get("metadata"),
-                                "created_at": session_dict.get("created_at"),
-                                "updated_at": session_dict.get("created_at"),
+                                "agent_id": serialized_session.get("agent_id"),
+                                "user_id": serialized_session.get("user_id"),
+                                "runs": serialized_session.get("runs"),
+                                "agent_data": serialized_session.get("agent_data"),
+                                "session_data": serialized_session.get("session_data"),
+                                "summary": serialized_session.get("summary"),
+                                "metadata": serialized_session.get("metadata"),
+                                "created_at": serialized_session.get("created_at"),
+                                "updated_at": serialized_session.get("created_at"),
                             }
                         )
 
@@ -878,31 +878,33 @@ class SingleStoreDb(BaseDb):
 
                         for row in result:
                             if deserialize:
-                                deserialized_session = AgentSession.from_dict(session_dict)
-                                if deserialized_session is None:
-                                    continue
-                                results.append(deserialized_session)
-                            else:
-                                results.append(dict(row._mapping))
+                                session_raw = deserialize_session_json_fields(dict(row._mapping))
+                                if deserialize:
+                                    deserialized_agent_session = AgentSession.from_dict(session_raw)
+                                    if deserialized_agent_session is None:
+                                        continue
+                                    results.append(deserialized_agent_session)
+                                else:
+                                    results.append(session_raw)
 
                 # Bulk upsert team sessions
                 if team_sessions:
                     team_data = []
                     for session in team_sessions:
-                        session_dict = session.to_dict()
+                        serialized_session = serialize_session_json_fields(session.to_dict())
                         team_data.append(
                             {
-                                "session_id": session_dict.get("session_id"),
+                                "session_id": serialized_session.get("session_id"),
                                 "session_type": SessionType.TEAM.value,
-                                "team_id": session_dict.get("team_id"),
-                                "user_id": session_dict.get("user_id"),
-                                "runs": session_dict.get("runs"),
-                                "team_data": session_dict.get("team_data"),
-                                "session_data": session_dict.get("session_data"),
-                                "summary": session_dict.get("summary"),
-                                "metadata": session_dict.get("metadata"),
-                                "created_at": session_dict.get("created_at"),
-                                "updated_at": session_dict.get("created_at"),
+                                "team_id": serialized_session.get("team_id"),
+                                "user_id": serialized_session.get("user_id"),
+                                "runs": serialized_session.get("runs"),
+                                "team_data": serialized_session.get("team_data"),
+                                "session_data": serialized_session.get("session_data"),
+                                "summary": serialized_session.get("summary"),
+                                "metadata": serialized_session.get("metadata"),
+                                "created_at": serialized_session.get("created_at"),
+                                "updated_at": serialized_session.get("created_at"),
                             }
                         )
 
@@ -926,32 +928,33 @@ class SingleStoreDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
+                            session_raw = deserialize_session_json_fields(dict(row._mapping))
                             if deserialize:
-                                deserialized_team_session = TeamSession.from_dict(session_dict)
+                                deserialized_team_session = TeamSession.from_dict(session_raw)
                                 if deserialized_team_session is None:
                                     continue
                                 results.append(deserialized_team_session)
                             else:
-                                results.append(dict(row._mapping))
+                                results.append(session_raw)
 
                 # Bulk upsert workflow sessions
                 if workflow_sessions:
                     workflow_data = []
                     for session in workflow_sessions:
-                        session_dict = session.to_dict()
+                        serialized_session = serialize_session_json_fields(session.to_dict())
                         workflow_data.append(
                             {
-                                "session_id": session_dict.get("session_id"),
+                                "session_id": serialized_session.get("session_id"),
                                 "session_type": SessionType.WORKFLOW.value,
-                                "workflow_id": session_dict.get("workflow_id"),
-                                "user_id": session_dict.get("user_id"),
-                                "runs": session_dict.get("runs"),
-                                "workflow_data": session_dict.get("workflow_data"),
-                                "session_data": session_dict.get("session_data"),
-                                "summary": session_dict.get("summary"),
-                                "metadata": session_dict.get("metadata"),
-                                "created_at": session_dict.get("created_at"),
-                                "updated_at": session_dict.get("created_at"),
+                                "workflow_id": serialized_session.get("workflow_id"),
+                                "user_id": serialized_session.get("user_id"),
+                                "runs": serialized_session.get("runs"),
+                                "workflow_data": serialized_session.get("workflow_data"),
+                                "session_data": serialized_session.get("session_data"),
+                                "summary": serialized_session.get("summary"),
+                                "metadata": serialized_session.get("metadata"),
+                                "created_at": serialized_session.get("created_at"),
+                                "updated_at": serialized_session.get("created_at"),
                             }
                         )
 
@@ -975,13 +978,14 @@ class SingleStoreDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
+                            session_raw = deserialize_session_json_fields(dict(row._mapping))
                             if deserialize:
-                                deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                                deserialized_workflow_session = WorkflowSession.from_dict(session_raw)
                                 if deserialized_workflow_session is None:
                                     continue
                                 results.append(deserialized_workflow_session)
                             else:
-                                results.append(dict(row._mapping))
+                                results.append(session_raw)
 
             return results
 
