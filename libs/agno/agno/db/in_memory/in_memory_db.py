@@ -1,8 +1,8 @@
 import time
+from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
-from copy import deepcopy
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.in_memory.utils import (
@@ -109,7 +109,7 @@ class InMemoryDb(BaseDb):
                         continue
 
                     session_data_copy = deepcopy(session_data)
-                    
+
                     if not deserialize:
                         return session_data_copy
 
