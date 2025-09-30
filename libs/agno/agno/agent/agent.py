@@ -942,7 +942,11 @@ class Agent:
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 yield from self._handle_agent_run_paused_stream(
-                    run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
+                    yield_run_response=yield_run_response,
                 )
                 return
 
@@ -1581,7 +1585,11 @@ class Agent:
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 for item in self._handle_agent_run_paused_stream(
-                    run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
+                    yield_run_response=yield_run_response,
                 ):
                     yield item
                 return
@@ -2286,7 +2294,11 @@ class Agent:
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             yield from self._handle_agent_run_paused_stream(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                run_response=run_response,
+                run_messages=run_messages,
+                session=session,
+                user_id=user_id,
+                yield_run_response=False,
             )
             return
 
@@ -2677,7 +2689,11 @@ class Agent:
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             for item in self._handle_agent_run_paused_stream(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                run_response=run_response,
+                run_messages=run_messages,
+                session=session,
+                user_id=user_id,
+                yield_run_response=False,
             ):
                 yield item
             return
@@ -2752,7 +2768,8 @@ class Agent:
         run_messages: RunMessages,
         session: AgentSession,
         user_id: Optional[str] = None,
-    ) -> Iterator[RunOutputEvent]:
+        yield_run_response: bool = False,
+    ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
         # Set the run response to paused
 
         run_response.status = RunStatus.paused
@@ -2777,6 +2794,11 @@ class Agent:
         self.save_session(session=session)
 
         yield pause_event
+
+        # If the caller requested the run_response, yield it even when paused
+        # This is important for teams that need the run_id for tracking member runs
+        if yield_run_response:
+            yield run_response
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
