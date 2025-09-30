@@ -4866,7 +4866,6 @@ class Team:
             additional_information.append(f"Your name is: {self.name}.")
 
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            # valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
             valid_filters, invalid_keys = self.knowledge.validate_filters(self.knowledge_filters)
             if invalid_keys:
                 log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")

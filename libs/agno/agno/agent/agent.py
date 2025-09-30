@@ -5244,7 +5244,6 @@ class Agent:
 
         # 3.2.5 Add information about agentic filters if enabled
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            # valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
             valid_filters, invalid_keys = self.knowledge.validate_filters(self.knowledge_filters)
             if invalid_keys:
                 log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
