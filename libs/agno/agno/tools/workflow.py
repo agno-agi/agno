@@ -2,7 +2,7 @@ import json
 from textwrap import dedent
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
@@ -10,8 +10,8 @@ from agno.workflow.workflow import Workflow, WorkflowRunOutput
 
 
 class RunWorkflowInput(BaseModel):
-    input_data: str
-    additional_data: Optional[Dict[str, Any]] = None
+    input_data: str = Field(..., description="The input data for the workflow.")
+    additional_data: Optional[Dict[str, Any]] = Field(default=None, description="The additional data for the workflow.")
 
 
 class WorkflowTools(Toolkit):
@@ -131,8 +131,7 @@ class WorkflowTools(Toolkit):
         """Use this tool to execute the workflow with the specified inputs and parameters.
         After thinking through the requirements, use this tool to run the workflow with appropriate inputs.
         Args:
-            input_data: The input data for the workflow (use a `str` for a simple input)
-            additional_data: The additional data for the workflow. This is a dictionary of key-value pairs that will be passed to the workflow. E.g. {"topic": "food", "style": "Humour"}
+            input_data: The input data for the workflow.
         """
         try:
             log_debug(f"Running workflow with input: {input.input_data}")
