@@ -10,7 +10,7 @@ from agno.knowledge.reader.csv_reader import CSVReader
 from agno.models.anthropic.claude import Claude
 from agno.models.google.gemini import Gemini
 from agno.models.openai.chat import OpenAIChat
-from agno.vectordb.lancedb import LanceDb 
+from agno.vectordb.lancedb import LanceDb
 
 # Sample CSV data to use in tests
 EMPLOYEE_CSV_DATA = """id,name,department,salary,years_experience
@@ -41,6 +41,7 @@ Q2,asia,Laptop,155000,100,sales
 
 class CSVDataOutput(BaseModel):
     """Output schema for CSV data analysis."""
+
     data_type: str
     region: str
     summary: str  # More flexible field instead of specific quarter/year/currency
@@ -114,12 +115,12 @@ async def test_agentic_filtering_openai(knowledge_base):
 async def test_agentic_filtering_openai_with_output_schema(knowledge_base):
     """Test agentic filtering with structured output schema - this was the original issue."""
     agent = Agent(
-        model=OpenAIChat("gpt-4o-mini"), 
-        knowledge=knowledge_base, 
+        model=OpenAIChat("gpt-4o-mini"),
+        knowledge=knowledge_base,
         enable_agentic_knowledge_filters=True,
-        output_schema=CSVDataOutput 
+        output_schema=CSVDataOutput,
     )
-    
+
     response = await agent.arun(
         "Tell me about revenue performance and top selling products in the region north_america and data_type sales",
         markdown=True,
@@ -134,10 +135,10 @@ async def test_agentic_filtering_openai_with_output_schema(knowledge_base):
             found_tool = True
             break
     assert found_tool, "search_knowledge_base_with_agentic_filters tool was not called"
-    
+
     assert response.content is not None, "Response content should not be None"
     assert isinstance(response.content, CSVDataOutput), f"Expected CSVDataOutput, got {type(response.content)}"
-    
+
     assert response.content.data_type == "sales"
     assert "north" in response.content.region.lower() or "america" in response.content.region.lower()
     assert response.content.summary is not None
@@ -159,6 +160,7 @@ async def test_agentic_filtering_gemini(knowledge_base):
             found_tool = True
             break
     assert found_tool
+
 
 async def test_agentic_filtering_claude(knowledge_base):
     agent = Agent(model=Claude("claude-sonnet-4-0"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
