@@ -108,15 +108,17 @@ class InMemoryDb(BaseDb):
                     if session_data.get("session_type") != session_type_value:
                         continue
 
+                    session_data_copy = deepcopy(session_data)
+                    
                     if not deserialize:
-                        return session_data
+                        return session_data_copy
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session_data)
+                        return AgentSession.from_dict(session_data_copy)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session_data)
+                        return TeamSession.from_dict(session_data_copy)
                     else:
-                        return WorkflowSession.from_dict(session_data)
+                        return WorkflowSession.from_dict(session_data_copy)
 
             return None
 
@@ -189,7 +191,7 @@ class InMemoryDb(BaseDb):
                 if session_data.get("session_type") != session_type_value:
                     continue
 
-                filtered_sessions.append(session_data)
+                filtered_sessions.append(deepcopy(session_data))
 
             total_count = len(filtered_sessions)
 
