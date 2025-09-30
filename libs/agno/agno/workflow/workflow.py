@@ -2172,7 +2172,7 @@ class Workflow:
 
         # Execute workflow agent if configured
         if self.agent is not None:
-            logger.info("🤖 Workflow agent enabled - analyzing user input")
+            logger.info(" Workflow agent enabled - analyzing user input")
             log_debug(f"User input: {str(input)}")
             
             agent_result = self._execute_workflow_agent(
@@ -2230,11 +2230,10 @@ class Workflow:
                 return workflow_run_response
             else:
                 logger.info("=" * 80)
-                logger.info("🔧 WORKFLOW AGENT: Called run_workflow tool")
+                logger.info(" WORKFLOW AGENT: Called run_workflow tool")
                 logger.info("    ➜ Workflow was executed, retrieving results...")
                 logger.info("=" * 80)
                 
-                # IMPORTANT: Reload the session from database to get the newly created workflow run
                 log_debug(" Reloading session from database to get the latest workflow run...")
                 reloaded_session = self.get_session(session_id=workflow_session.session_id)
                 
