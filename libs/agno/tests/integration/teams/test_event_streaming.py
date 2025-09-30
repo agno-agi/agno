@@ -84,22 +84,6 @@ def test_basic_intermediate_steps_events():
     assert team_completed_event.metrics.total_tokens > 0
 
 
-def test_basic_intermediate_steps_events_with_parent_run_id():
-    team = Team(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        members=[],
-        telemetry=False,
-    )
-
-    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
-    one_event_found = False
-    for run_response_delta in response_generator:
-        assert run_response_delta.parent_run_id is not None
-        one_event_found = True
-
-    assert one_event_found
-
-
 def test_basic_intermediate_steps_events_persisted(shared_db):
     """Test that the agent streams events."""
     team = Team(
@@ -552,7 +536,11 @@ def test_intermediate_steps_with_member_agents():
     assert len(events[TeamRunEvent.run_completed]) == 1
     # Two member agents
     assert len(events[RunEvent.run_started]) == 2
+    assert events[RunEvent.run_started][0].parent_run_id == events[TeamRunEvent.run_started][0].run_id
+    assert events[RunEvent.run_started][1].parent_run_id == events[TeamRunEvent.run_started][0].run_id
     assert len(events[RunEvent.run_completed]) == 2
+    assert events[RunEvent.run_completed][0].parent_run_id == events[TeamRunEvent.run_completed][0].run_id
+    assert events[RunEvent.run_completed][1].parent_run_id == events[TeamRunEvent.run_completed][0].run_id
     # Lots of member tool calls
     assert len(events[RunEvent.tool_call_started]) > 1
     assert len(events[RunEvent.tool_call_completed]) > 1
