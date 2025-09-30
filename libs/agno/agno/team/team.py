@@ -161,6 +161,11 @@ class Team:
     # If True, cache the current Team session in memory for faster access
     cache_session: bool = False
 
+    # If True, allow searching through previous sessions
+    search_session_history: Optional[bool] = False
+    # Number of past sessions to include in the search
+    num_history_sessions: Optional[int] = None
+
     # If True, resolve the session_state, dependencies, and metadata in the user and system messages
     resolve_in_context: bool = True
 
@@ -369,6 +374,8 @@ class Team:
         overwrite_db_session_state: bool = False,
         resolve_in_context: bool = True,
         cache_session: bool = False,
+        search_session_history: Optional[bool] = False,
+        num_history_sessions: Optional[int] = None,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
@@ -459,6 +466,9 @@ class Team:
         self.overwrite_db_session_state = overwrite_db_session_state
         self.resolve_in_context = resolve_in_context
         self.cache_session = cache_session
+
+        self.search_session_history = search_session_history
+        self.num_history_sessions = num_history_sessions
 
         self.description = description
         self.instructions = instructions
@@ -4079,6 +4089,13 @@ class Team:
         if self.enable_agentic_state:
             _tools.append(self.update_session_state)
 
+        if self.search_session_history:
+            _tools.append(
+                self._get_previous_sessions_messages_function(
+                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                )
+            )
+
         if self.knowledge is not None or self.knowledge_retriever is not None:
             # Check if knowledge retriever is an async function but used in sync mode
             from inspect import iscoroutinefunction
@@ -5196,6 +5213,72 @@ class Team:
 
         return f"Updated session state: {session_state}"
 
+    def _get_previous_sessions_messages_function(
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+    ) -> Callable:
+        """Factory function to create a get_previous_session_messages function.
+
+        Args:
+            num_history_sessions: The last n sessions to be taken from db
+            user_id: The user ID to filter sessions by
+
+        Returns:
+            Callable: A function that retrieves messages from previous sessions
+        """
+
+        def get_previous_session_messages() -> str:
+            """Use this function to retrieve messages from previous chat sessions.
+            USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+
+            Returns:
+                str: JSON formatted list of message pairs from previous sessions
+            """
+            import json
+
+            if self.db is None:
+                return "Previous session messages not available"
+
+            selected_sessions = self.db.get_sessions(
+                session_type=SessionType.TEAM,
+                limit=num_history_sessions,
+                user_id=user_id,
+                sort_by="created_at",
+                sort_order="desc",
+            )
+
+            all_messages = []
+            seen_message_pairs = set()
+
+            for session in selected_sessions:
+                if isinstance(session, TeamSession) and session.runs:
+                    message_count = 0
+                    for run in session.runs:
+                        messages = run.messages
+                        if messages is not None:
+                            for i in range(0, len(messages) - 1, 2):
+                                if i + 1 < len(messages):
+                                    try:
+                                        user_msg = messages[i]
+                                        assistant_msg = messages[i + 1]
+                                        user_content = user_msg.content
+                                        assistant_content = assistant_msg.content
+                                        if user_content is None or assistant_content is None:
+                                            continue  # Skip this pair if either message has no content
+
+                                        msg_pair_id = f"{user_content}:{assistant_content}"
+                                        if msg_pair_id not in seen_message_pairs:
+                                            seen_message_pairs.add(msg_pair_id)
+                                            all_messages.append(Message.model_validate(user_msg))
+                                            all_messages.append(Message.model_validate(assistant_msg))
+                                            message_count += 1
+                                    except Exception as e:
+                                        log_warning(f"Error processing message pair: {e}")
+                                        continue
+
+            return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
+
+        return get_previous_session_messages
+
     def _get_history_for_member_agent(self, session: TeamSession, member_agent: Union[Agent, "Team"]) -> List[Message]:
         from copy import deepcopy
 
@@ -6280,7 +6363,7 @@ class Team:
 
         if session is None:
             raise Exception("Session not found")
-        
+
         return session.get_chat_history()
 
     def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:

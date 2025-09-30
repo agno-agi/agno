@@ -97,8 +97,7 @@ class SessionSummaryManager:
             - Summary (str): Provide a concise summary of the session, focusing on important information that would be helpful for future interactions.
             - Topics (Optional[List[str]]): List the topics discussed in the session.
             Keep the summary concise and to the point. Only include relevant information.
-            """
-            )
+            """)
         conversation_messages = []
         system_prompt += "<conversation>"
         for message in conversation:
