@@ -114,7 +114,6 @@ async def main():
         print(f"✅ PII blocked: {e.message}")
         print(f"   Trigger: {e.check_trigger}")
 
-
     # Create an team with PII detection which masks the PII in the input
     team = Team(
         name="Privacy-Protected Team",
@@ -131,6 +130,7 @@ async def main():
     team.print_response(
         input="Hi, my Social Security Number is 123-45-6789. Can you help me with my account?",
     )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

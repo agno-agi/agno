@@ -11,11 +11,11 @@ This example shows how to:
 
 import asyncio
 
-from agno.team import Team
 from agno.exceptions import InputCheckError
 from agno.guardrails import OpenAIModerationGuardrail
 from agno.media import Image
 from agno.models.openai import OpenAIChat
+from agno.team import Team
 
 
 async def main():
