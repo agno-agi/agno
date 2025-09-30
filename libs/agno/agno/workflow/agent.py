@@ -83,12 +83,6 @@ class WorkflowAgent(Agent):
             db=None,  # No separate DB for workflow agent
             **filtered_kwargs,
         )
-        
-        # Store reference to workflow for tool creation
-        self._workflow = None
-        self._workflow_session = None
-        self._workflow_session_state = None
-        self._workflow_execution_input = None
     
     def create_workflow_tool(
         self,
@@ -117,12 +111,6 @@ class WorkflowAgent(Agent):
         from uuid import uuid4
         from agno.run.workflow import WorkflowRunOutput
         from agno.workflow.types import WorkflowExecutionInput
-        
-        # Store references for the tool
-        self._workflow = workflow
-        self._workflow_session = session
-        self._workflow_session_state = session_state
-        self._workflow_execution_input = execution_input
         
         def run_workflow(query: str) -> str:
             """
