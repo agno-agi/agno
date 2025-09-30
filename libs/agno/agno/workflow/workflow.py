@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
+from types import FunctionType
 from typing import (
     Any,
     AsyncIterator,
@@ -22,7 +23,6 @@ from uuid import uuid4
 
 from fastapi import WebSocket
 from pydantic import BaseModel
-from types import FunctionType
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, SessionType
@@ -1906,12 +1906,12 @@ class Workflow:
         """Build context string from previous workflow runs for the workflow agent"""
         if not session.runs or len(session.runs) == 0:
             return "No previous workflow runs in this session."
-        
+
         context_parts = ["<workflow_history_context>"]
-        
+
         for idx, run in enumerate(session.runs, 1):
             context_parts.append(f"[run-{idx}]")
-            
+
             # Add input
             if run.input:
                 if isinstance(run.input, str):
@@ -1920,7 +1920,7 @@ class Workflow:
                     context_parts.append(f"input: {run.input.model_dump_json(exclude_none=True)}")
                 else:
                     context_parts.append(f"input: {str(run.input)}")
-            
+
             # Add response/content
             if run.content:
                 if isinstance(run.content, str):
@@ -1933,26 +1933,25 @@ class Workflow:
                     content_str = str(run.content)
                     content_str = content_str[:500] + "..." if len(content_str) > 500 else content_str
                     context_parts.append(f"response: {content_str}")
-            
+
             context_parts.append("")  # Empty line between runs
-        
+
         context_parts.append("</workflow_history_context>")
-        
+
         return "\n".join(context_parts)
-    
-    
+
     def _initialize_workflow_agent(
-        self, 
+        self,
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
     ) -> None:
         """Initialize the workflow agent with tools and context"""
         from agno.tools.function import Function
-        
+
         # Build workflow history context
         history_context = self._build_workflow_history_context(session)
-        
+
         # Create the workflow execution tool using WorkflowAgent's method
         workflow_tool_func = self.agent.create_workflow_tool(  # type: ignore
             workflow=self,
@@ -1961,10 +1960,10 @@ class Workflow:
             session_state=session_state,
         )
         workflow_tool = Function.from_callable(workflow_tool_func)
-        
+
         # Set the agent's tools
         self.agent.tools = [workflow_tool]  # type: ignore
-        
+
         # Build instructions with workflow context
         base_instructions = """You are a workflow orchestration agent. Your job is to help users by either:
             1. **Answering directly** from the workflow history context if the question can be answered from previous runs
@@ -1977,24 +1976,24 @@ class Workflow:
             - Keep your responses concise and helpful
             - When calling the workflow, pass a clear and concise query
         """
-        
+
         # Add workflow description if available
         if self.description:
             base_instructions += f"\nWorkflow Description: {self.description}\n"
-        
+
         # Add workflow history
         base_instructions += f"\n{history_context}\n"
-        
+
         # Set instructions
         self.agent.instructions = base_instructions
-        
+
         # CRITICAL: Don't create separate session - agent operates without its own session
         # The workflow execution tool will use the workflow's session directly
         self.agent.session_id = None  # type: ignore
         self.agent.db = None  # type: ignore
-        
+
         log_debug(" Workflow agent initialized with run_workflow tool and history context")
-    
+
     def _execute_workflow_agent(
         self,
         user_input: Union[str, Dict[str, Any], List[Any], BaseModel],
@@ -2004,7 +2003,7 @@ class Workflow:
     ) -> Dict[str, Any]:
         """
         Execute the workflow agent and return its decision.
-        
+
         Returns:
             Dict with keys:
             - 'agent_response': The RunOutput from the agent
@@ -2013,7 +2012,7 @@ class Workflow:
         """
         # Initialize the agent
         self._initialize_workflow_agent(session, execution_input, session_state)
-        
+
         # Convert input to string for the agent
         if isinstance(user_input, str):
             agent_input = user_input
@@ -2021,12 +2020,12 @@ class Workflow:
             agent_input = user_input.model_dump_json(exclude_none=True)
         else:
             agent_input = str(user_input)
-        
+
         log_debug(f"Executing workflow agent with input: {agent_input}")
-        
+
         # Run the agent
         agent_response: RunOutput = self.agent.run(input=agent_input)  # type: ignore
-        
+
         # Check if the agent called the workflow tool
         # We can detect this by checking if there are any tool calls in the messages
         workflow_executed = False
@@ -2036,15 +2035,15 @@ class Workflow:
                     # Agent called tools (likely the workflow tool)
                     workflow_executed = True
                     break
-        
+
         result = {
             "agent_response": agent_response,
             "workflow_executed": workflow_executed,
             "final_content": agent_response.content,
         }
-        
+
         log_debug(f"Workflow agent execution complete. Workflow executed: {workflow_executed}")
-        
+
         return result
 
     def cancel_run(self, run_id: str) -> bool:
@@ -2174,27 +2173,29 @@ class Workflow:
         if self.agent is not None:
             logger.info(" Workflow agent enabled - analyzing user input")
             log_debug(f"User input: {str(input)}")
-            
+
             agent_result = self._execute_workflow_agent(
                 user_input=input,
                 session=workflow_session,
                 execution_input=inputs,
                 session_state=session_state,
             )
-            
+
             # Store the agent response in the session
             agent_response_data = {
                 "input": str(input),
                 "agent_response": agent_result["agent_response"].content if agent_result["agent_response"] else None,
                 "workflow_executed": agent_result["workflow_executed"],
                 "timestamp": int(datetime.now().timestamp()),
-            } # TODO: make a proper type for this like WorkflowAgentResponse
-            
+            }  # TODO: make a proper type for this like WorkflowAgentResponse
+
             if workflow_session.workflow_agent_responses is None:
                 workflow_session.workflow_agent_responses = []
             workflow_session.workflow_agent_responses.append(agent_response_data)
-            log_debug(f" Stored agent decision in session (total decisions: {len(workflow_session.workflow_agent_responses)})")
-            
+            log_debug(
+                f" Stored agent decision in session (total decisions: {len(workflow_session.workflow_agent_responses)})"
+            )
+
             # If workflow was NOT executed by the agent (answered directly from history)
             if not agent_result["workflow_executed"]:
                 logger.info("=" * 80)
@@ -2203,10 +2204,11 @@ class Workflow:
                 logger.info("=" * 80)
                 from rich.console import Console
                 from rich.markdown import Markdown
+
                 from agno.utils.response import create_panel
 
                 log_debug(f"Agent response: {str(agent_result['final_content'])[:200]}...")
-                
+
                 workflow_run_response.content = agent_result["final_content"]
                 workflow_run_response.status = RunStatus.completed
 
@@ -2218,34 +2220,36 @@ class Workflow:
                     border_style="blue",
                 )
                 console.print(agent_response_panel)
-                
+
                 # Save session with agent response
                 self.save_session(session=workflow_session)
-                
+
                 # Log workflow_agent_responses count
                 if workflow_session.workflow_agent_responses:
-                    log_debug(f" Total workflow agent responses in session: {len(workflow_session.workflow_agent_responses)}")
+                    log_debug(
+                        f" Total workflow agent responses in session: {len(workflow_session.workflow_agent_responses)}"
+                    )
                     log_debug(f" Latest agent decision: workflow_executed={agent_response_data['workflow_executed']}")
-                
+
                 return workflow_run_response
             else:
                 logger.info("=" * 80)
                 logger.info(" WORKFLOW AGENT: Called run_workflow tool")
                 logger.info("    ➜ Workflow was executed, retrieving results...")
                 logger.info("=" * 80)
-                
+
                 log_debug(" Reloading session from database to get the latest workflow run...")
                 reloaded_session = self.get_session(session_id=workflow_session.session_id)
-                
+
                 if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
                     # Update the in-memory session with the reloaded data
                     workflow_session.runs = reloaded_session.runs
-                    
+
                     # Get the last run (which is the one just created by the tool)
                     last_run = workflow_session.runs[-1]
                     log_debug(f" Retrieved latest workflow run: {last_run.run_id}")
                     log_debug(f" Total workflow runs in session: {len(workflow_session.runs)}")
-                    
+
                     # Update the workflow_run_response to reflect what was executed
                     workflow_run_response.content = last_run.content
                     workflow_run_response.status = last_run.status
@@ -2259,19 +2263,21 @@ class Workflow:
                     workflow_run_response.videos = last_run.videos
                     workflow_run_response.audio = last_run.audio
 
-                    workflow_run_response.workflow_agent_response = agent_response_data 
+                    workflow_run_response.workflow_agent_response = agent_response_data
                 else:
                     log_warning(" Could not reload session or no runs found after workflow execution")
-                
+
                 workflow_session.upsert_run(run=workflow_run_response)
                 # Save session
                 self.save_session(session=workflow_session)
-                
+
                 # Log workflow_agent_responses count
                 if workflow_session.workflow_agent_responses:
-                    log_debug(f" Total workflow agent responses in session: {len(workflow_session.workflow_agent_responses)}")
+                    log_debug(
+                        f" Total workflow agent responses in session: {len(workflow_session.workflow_agent_responses)}"
+                    )
                     log_debug(f" Latest agent decision: workflow_executed={agent_response_data['workflow_executed']}")
-                
+
                 return workflow_run_response
 
         if stream:

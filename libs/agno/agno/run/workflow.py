@@ -486,7 +486,7 @@ class WorkflowRunOutput:
     step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
 
     # Workflow agent response - stores agent decision and response when workflow agent is used
-    workflow_agent_response: Optional[Dict[str, Any]] = None # TODO: make a type for this like WorkflowAgentResponse
+    workflow_agent_response: Optional[Dict[str, Any]] = None  # TODO: make a type for this like WorkflowAgentResponse
 
     # Store events from workflow execution
     events: Optional[List[WorkflowRunOutputEvent]] = None

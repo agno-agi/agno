@@ -1,3 +1,5 @@
+from doctest import debug
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
@@ -29,11 +31,7 @@ def add_references(step_input: StepInput):
 
 
 # Create a WorkflowAgent that will decide when to run the workflow
-workflow_agent = WorkflowAgent(
-    model=OpenAIChat(id="gpt-4o-mini"),
-    name="Story Workflow Agent",
-    description="Agent that decides when to run the story generation workflow",
-)
+workflow_agent = WorkflowAgent(model=OpenAIChat(id="gpt-4o-mini"))
 
 # Create workflow with the WorkflowAgent
 workflow = Workflow(
@@ -47,27 +45,27 @@ workflow = Workflow(
 )
 
 # First call - will run the workflow
-print("\n" + "="*80)
+print("\n" + "=" * 80)
 print("FIRST CALL: Tell me a story about a husky named Max")
-print("="*80)
+print("=" * 80)
 workflow.print_response("Tell me a story about a husky named Max")
 
 # Second call - should answer from history without re-running workflow
-print("\n" + "="*80)
+print("\n" + "=" * 80)
 print("SECOND CALL: What was Max like?")
-print("="*80)
+print("=" * 80)
 workflow.print_response("What was Max like?")
 
 # Third call - new topic, should run workflow again
-print("\n" + "="*80)
+print("\n" + "=" * 80)
 print("THIRD CALL: Now tell me about a cat named Luna")
-print("="*80)
+print("=" * 80)
 workflow.print_response("Now tell me about a cat named Luna")
 
 # Fourth call - should answer from history
-print("\n" + "="*80)
+print("\n" + "=" * 80)
 print("FOURTH CALL: Compare Max and Luna")
-print("="*80)
+print("=" * 80)
 workflow.print_response("Compare Max and Luna")
 
 # workflow.cli_app()
