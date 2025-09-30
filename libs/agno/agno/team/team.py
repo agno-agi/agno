@@ -5464,6 +5464,9 @@ class Team:
                     check_if_run_cancelled(member_agent_run_output_event)
 
                     # Yield the member event directly
+                    member_agent_run_output_event.parent_run_id = (
+                        member_agent_run_output_event.parent_run_id or run_response.run_id
+                    )
                     yield member_agent_run_output_event
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
@@ -5589,6 +5592,9 @@ class Team:
                     check_if_run_cancelled(member_agent_run_response_event)
 
                     # Yield the member event directly
+                    member_agent_run_response_event.parent_run_id = (
+                        member_agent_run_response_event.parent_run_id or run_response.run_id
+                    )
                     yield member_agent_run_response_event
             else:
                 member_agent_run_response = await member_agent.arun(  # type: ignore
@@ -5704,6 +5710,9 @@ class Team:
                         check_if_run_cancelled(member_agent_run_response_chunk)
 
                         # Yield the member event directly
+                        member_agent_run_response_chunk.parent_run_id = (
+                            member_agent_run_response_chunk.parent_run_id or run_response.run_id
+                        )
                         yield member_agent_run_response_chunk
 
                 else:
@@ -5815,6 +5824,9 @@ class Team:
                                 member_agent_run_response = member_agent_run_output_event  # type: ignore
                                 break
                             check_if_run_cancelled(member_agent_run_output_event)
+                            member_agent_run_output_event.parent_run_id = (
+                                member_agent_run_output_event.parent_run_id or run_response.run_id
+                            )
                             await queue.put(member_agent_run_output_event)
                     finally:
                         _process_delegate_task_to_member(

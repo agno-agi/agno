@@ -284,7 +284,12 @@ class InMemoryDb(BaseDb):
             if not deserialize:
                 return session_dict
 
-            return session
+            if session_dict["session_type"] == SessionType.AGENT:
+                return AgentSession.from_dict(session_dict)
+            elif session_dict["session_type"] == SessionType.TEAM:
+                return TeamSession.from_dict(session_dict)
+            else:
+                return WorkflowSession.from_dict(session_dict)
 
         except Exception as e:
             log_error(f"Exception upserting session: {e}")
@@ -501,6 +506,7 @@ class InMemoryDb(BaseDb):
 
             if not deserialize:
                 return memory_dict
+
             return UserMemory.from_dict(memory_dict)
 
         except Exception as e:
