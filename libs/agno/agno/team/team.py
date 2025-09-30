@@ -625,7 +625,6 @@ class Team:
                     f"This is an architectural limitation: teams cannot handle external execution for delegated member agents. "
                     f"\n  Recommended: Add these tools to the Team itself instead: team = Team(tools=[...], members=[...])"
                     f"\n  Alternative: Use a single Agent or Workflow if external execution is required."
-                    f"\n  See: https://docs.agno.com/agents/teams#external-execution-tools"
                 )
 
     @property
