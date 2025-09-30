@@ -9,7 +9,6 @@ This example shows how to:
 
 import asyncio
 
-from agno.agent import agent
 from agno.exceptions import InputCheckError
 from agno.guardrails import PIIDetectionGuardrail
 from agno.models.openai import OpenAIChat
