@@ -5971,6 +5971,7 @@ class Team:
 
     def _upsert_session(self, session: TeamSession) -> Optional[TeamSession]:
         """Upsert a Session into the database."""
+
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
@@ -6278,7 +6279,7 @@ class Team:
         session = self.get_session(session_id=session_id)  # type: ignore
 
         if session is None:
-            raise Exception(f"Session {session_id} not found")
+            raise Exception("Session not found")
         
         return session.get_chat_history()
 
