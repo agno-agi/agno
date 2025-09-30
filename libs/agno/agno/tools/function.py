@@ -426,26 +426,29 @@ class Function(BaseModel):
 
     def process_schema_for_strict(self):
         """Process the schema to make it strict mode compliant."""
+
         def make_nested_strict(schema):
             """Recursively ensure all object schemas have additionalProperties: false"""
             if not isinstance(schema, dict):
                 return schema
-            
+
             # Make a copy to avoid modifying the original
             result = schema.copy()
-            
+
             # If this is an object schema, ensure additionalProperties: false
-            if (result.get("type") == "object" or "properties" in result):
+            if result.get("type") == "object" or "properties" in result:
                 result["additionalProperties"] = False
-            
+
             # If schema has no type but has other schema properties, give it a type
             if "type" not in result:
                 if "properties" in result:
                     result["type"] = "object"
                     result["additionalProperties"] = False
-                elif result.get("title") and not any(key in result for key in ["properties", "items", "anyOf", "oneOf", "allOf", "enum"]):
+                elif result.get("title") and not any(
+                    key in result for key in ["properties", "items", "anyOf", "oneOf", "allOf", "enum"]
+                ):
                     result["type"] = "string"
-            
+
             # Recursively process nested schemas
             for key, value in result.items():
                 if key == "properties" and isinstance(value, dict):
@@ -455,12 +458,12 @@ class Function(BaseModel):
                     result[key] = make_nested_strict(value)
                 elif isinstance(value, dict):
                     result[key] = make_nested_strict(value)
-            
+
             return result
-        
+
         # Apply strict mode to the entire schema
         self.parameters = make_nested_strict(self.parameters)
-        
+
         self.parameters["required"] = [
             name
             for name in self.parameters["properties"]

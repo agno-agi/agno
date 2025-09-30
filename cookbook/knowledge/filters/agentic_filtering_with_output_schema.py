@@ -1,12 +1,12 @@
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
-from pydantic import BaseModel
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
 from agno.vectordb.lancedb import LanceDb
+from pydantic import BaseModel
 
 # Download all sample sales files and get their paths
 downloaded_csv_paths = download_knowledge_filters_sample_data(
@@ -20,12 +20,14 @@ vector_db = LanceDb(
     uri="tmp/lancedb",  # You can change this path to store data elsewhere
 )
 
+
 class CSVDataOutput(BaseModel):
     data_type: str
     quarter: str
     year: int
     region: str
     currency: str
+
 
 # Step 1: Initialize knowledge base with documents and metadata
 # ------------------------------------------------------------------------------
@@ -90,7 +92,6 @@ agent = Agent(
     enable_agentic_knowledge_filters=True,
     debug_mode=True,
     output_schema=CSVDataOutput,
-
 )
 
 agent.print_response(

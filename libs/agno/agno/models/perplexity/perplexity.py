@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, Optional, Type, Union
 
 from pydantic import BaseModel
 
