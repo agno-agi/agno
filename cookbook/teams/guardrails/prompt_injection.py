@@ -1,5 +1,5 @@
 """
-Example demonstrating how to use checks with Agno Agent to implement guardrails.
+Example demonstrating how to use checks with Agno Team to implement guardrails.
 
 This example shows how to:
 1. An input validation check that checks for prompt injection
@@ -16,13 +16,13 @@ def main():
     print("🚀 Prompt Injection Guardrails Demo")
     print("=" * 50)
 
-    # Create an agent with prompt injection protection
+    # Create an team with prompt injection protection
     team = Team(
-        name="Guardrails Demo Agent",
+        name="Guardrails Demo Team",
         model=OpenAIChat(id="gpt-4o-mini"),
         pre_hooks=[PromptInjectionGuardrail()],
         members=[],
-        description="An agent that tells jokes and provides helpful information.",
+        description="A team that tells jokes and provides helpful information.",
         instructions="You are a friendly assistant that tells jokes and provides helpful information. Always maintain a positive and helpful tone.",
     )
 

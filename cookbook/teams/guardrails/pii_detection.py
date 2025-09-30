@@ -1,5 +1,5 @@
 """
-Example demonstrating how to use PII detection guardrails with Agno Agent.
+Example demonstrating how to use PII detection guardrails with Agno Team.
 
 This example shows how to:
 1. Detect and block personally identifiable information (PII) in input
@@ -9,6 +9,7 @@ This example shows how to:
 
 import asyncio
 
+from agno.agent import agent
 from agno.exceptions import InputCheckError
 from agno.guardrails import PIIDetectionGuardrail
 from agno.models.openai import OpenAIChat
@@ -20,13 +21,13 @@ async def main():
     print("🛡️ PII Detection Guardrails Demo")
     print("=" * 50)
 
-    # Create an agent with PII detection protection
+    # Create an team with PII detection protection
     team = Team(
         name="Privacy-Protected Team",
         members=[],
         model=OpenAIChat(id="gpt-4o-mini"),
         pre_hooks=[PIIDetectionGuardrail()],
-        description="An agent that helps with customer service while protecting privacy.",
+        description="A team that helps with customer service while protecting privacy.",
         instructions="You are a helpful customer service assistant. Always protect user privacy and handle sensitive information appropriately.",
     )
 
@@ -113,10 +114,23 @@ async def main():
         print(f"✅ PII blocked: {e.message}")
         print(f"   Trigger: {e.check_trigger}")
 
-    print("\n" + "=" * 50)
-    print("🎯 PII Detection Demo Complete")
-    print("All sensitive information was successfully blocked!")
 
+    # Create an team with PII detection which masks the PII in the input
+    team = Team(
+        name="Privacy-Protected Team",
+        members=[],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        pre_hooks=[PIIDetectionGuardrail(mask_pii=True)],
+        description="A team that helps with customer service while protecting privacy.",
+        instructions="You are a helpful customer service assistant. Always protect user privacy and handle sensitive information appropriately.",
+    )
+
+    # Test 8: Request with SSN (should be masked)
+    print("\n🔴 Test 8: Input containing SSN")
+    print("-" * 30)
+    team.print_response(
+        input="Hi, my Social Security Number is 123-45-6789. Can you help me with my account?",
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
