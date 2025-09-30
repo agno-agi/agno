@@ -12,12 +12,13 @@ embeddings = MistralEmbedder().get_embedding(
 print(f"Embeddings: {embeddings[:5]}")
 print(f"Dimensions: {len(embeddings)}")
 
-# Example usage:
+# Example usage with batch embedding enabled:
 knowledge = Knowledge(
     vector_db=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         table_name="mistral_embeddings",
         embedder=MistralEmbedder(),
+        use_batch=True,  # Enable batch embedding to reduce API calls
     ),
     max_results=2,
 )
