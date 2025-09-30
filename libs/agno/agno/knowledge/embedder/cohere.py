@@ -24,7 +24,7 @@ class CohereEmbedder(Embedder):
     cohere_client: Optional[CohereClient] = None
     async_client: Optional[AsyncCohereClient] = None
     batch_size: int = 100  # Number of texts to process in each API call
-    enable_backoff: bool = False  # Enable exponential backoff on rate limits
+    exponential_backoff: bool = False  # Enable exponential backoff on rate limits
 
     @property
     def client(self) -> CohereClient:
@@ -172,7 +172,7 @@ class CohereEmbedder(Embedder):
 
             except Exception as e:
                 if self._is_rate_limit_error(e):
-                    if not self.enable_backoff:
+                    if not self.exponential_backoff:
                         log_warning(
                             "Rate limit detected. To enable automatic backoff retry, set enable_backoff=True when creating the embedder."
                         )
@@ -226,7 +226,7 @@ class CohereEmbedder(Embedder):
 
             except Exception as e:
                 if self._is_rate_limit_error(e):
-                    if not self.enable_backoff:
+                    if not self.exponential_backoff:
                         log_warning(
                             "Rate limit detected. To enable automatic backoff retry, set enable_backoff=True when creating the embedder."
                         )
@@ -305,7 +305,7 @@ class CohereEmbedder(Embedder):
                 log_warning(f"Batch embedding failed after retries: {e}")
 
                 # Check if this is a rate limit error and backoff is disabled
-                if self._is_rate_limit_error(e) and not self.enable_backoff:
+                if self._is_rate_limit_error(e) and not self.exponential_backoff:
                     log_warning("Rate limit hit and backoff is disabled. Failing immediately.")
                     raise e
 
@@ -430,7 +430,7 @@ class CohereEmbedder(Embedder):
                 log_warning(f"Async batch embedding failed after retries: {e}")
 
                 # Check if this is a rate limit error and backoff is disabled
-                if self._is_rate_limit_error(e) and not self.enable_backoff:
+                if self._is_rate_limit_error(e) and not self.exponential_backoff:
                     log_warning("Rate limit hit and backoff is disabled. Failing immediately.")
                     raise e
 

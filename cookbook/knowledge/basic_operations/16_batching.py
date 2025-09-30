@@ -22,7 +22,7 @@ vector_db = PgVector(
     embedder=CohereEmbedder(
         batch_size=100,
         dimensions=1024,
-        enable_backoff=True,
+        exponential_backoff=True,
     ),
 )
 vector_db.drop()
