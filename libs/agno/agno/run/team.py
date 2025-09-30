@@ -585,7 +585,7 @@ class TeamRunOutput:
 
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
-
+        
         return cls(
             messages=messages,
             metrics=metrics,

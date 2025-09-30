@@ -4694,11 +4694,11 @@ class Team:
             skip_role = (
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
-
+            
             history = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
                 skip_role=skip_role,
-                team_id=self.id,
+                team_id=self.id if self.parent_team_id is not None else None,
             )
 
             if len(history) > 0:
@@ -5282,7 +5282,7 @@ class Team:
     def _get_history_for_member_agent(self, session: TeamSession, member_agent: Union[Agent, "Team"]) -> List[Message]:
         from copy import deepcopy
 
-        log_info(f"Adding messages from history for {member_agent.name}")
+        log_debug(f"Adding messages from history for {member_agent.name}")
 
         member_agent_id = member_agent.id if isinstance(member_agent, Agent) else None
         member_team_id = member_agent.id if isinstance(member_agent, Team) else None
