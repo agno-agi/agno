@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 from agno.agent import Agent
 from agno.models.base import Model
-from agno.utils.log import log_debug, logger
+from agno.utils.log import logger
 
 if TYPE_CHECKING:
     from agno.session.workflow import WorkflowSession
@@ -90,7 +90,7 @@ class WorkflowAgent(Agent):
             """
             logger.info("=" * 80)
             logger.info(" TOOL EXECUTION: run_workflow")
-            logger.info(f"    ➜ Query: {query[:100]}{'...' if len(query) > 100 else ''}")
+            logger.info("    ➜ Query: {query[:100]}{'...' if len(query) > 100 else ''}")
             logger.info("=" * 80)
 
             # Create a new run ID for this execution
@@ -127,7 +127,7 @@ class WorkflowAgent(Agent):
             )
 
             logger.info("=" * 80)
-            logger.info(f" TOOL EXECUTION COMPLETE: run_workflow")
+            logger.info(" TOOL EXECUTION COMPLETE: run_workflow")
             logger.info(f"    ➜ Run ID: {result.run_id}")
             logger.info(f"    ➜ Result length: {len(str(result.content)) if result.content else 0} chars")
             logger.info("=" * 80)
