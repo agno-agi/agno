@@ -393,7 +393,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
-            return False
+            raise e
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete all given sessions from the database.
@@ -418,6 +418,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
+            raise e
 
     def get_session(
         self,
@@ -476,7 +477,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from session table: {e}")
-            return None
+            raise e
 
     def get_sessions(
         self,
@@ -580,8 +581,8 @@ class SingleStoreDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_debug(f"Exception reading from session table: {e}")
-            return []
+            log_error(f"Exception reading from session table: {e}")
+            raise e
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -643,7 +644,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error renaming session: {e}")
-            return None
+            raise e
 
     def upsert_session(self, session: Session, deserialize: Optional[bool] = True) -> Optional[Session]:
         """
@@ -793,7 +794,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting into sessions table: {e}")
-            return None
+            raise e
 
     def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True
@@ -1018,6 +1019,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting memory: {e}")
+            raise e
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from the database.
@@ -1041,6 +1043,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting memories: {e}")
+            raise e
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
@@ -1068,7 +1071,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            return []
+            raise e
 
     def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
         """Get a memory from the database.
@@ -1104,7 +1107,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            return None
+            raise e
 
     def get_user_memories(
         self,
@@ -1188,7 +1191,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            return []
+            raise e
 
     def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None
@@ -1255,7 +1258,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting user memory stats: {e}")
-            return [], 0
+            raise e
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -1319,7 +1322,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting user memory: {e}")
-            return None
+            raise e
 
     def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True
@@ -1412,7 +1415,8 @@ class SingleStoreDb(BaseDb):
                 sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all memories: {e}")
+            log_error(f"Exception deleting all memories: {e}")
+            raise e
 
     # -- Metrics methods --
     def _get_all_sessions_for_metrics_calculation(
@@ -1554,7 +1558,7 @@ class SingleStoreDb(BaseDb):
             return metrics_records
 
         except Exception as e:
-            log_error(f"Error refreshing metrics: {e}")
+            log_error(f"Error calculating metrics: {e}")
             raise e
 
     def get_metrics(
@@ -1597,7 +1601,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting metrics: {e}")
-            return [], None
+            raise e
 
     # -- Knowledge methods --
 
@@ -1607,15 +1611,19 @@ class SingleStoreDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
         """
-        table = self._get_table(table_type="knowledge")
-        if table is None:
-            return
+        try:
+            table = self._get_table(table_type="knowledge")
+            if table is None:
+                return
 
-        with self.Session() as sess, sess.begin():
-            stmt = table.delete().where(table.c.id == id)
-            sess.execute(stmt)
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.id == id)
+                sess.execute(stmt)
 
-        log_debug(f"Deleted knowledge content with id '{id}'")
+            log_debug(f"Deleted knowledge content with id '{id}'")
+        except Exception as e:
+            log_error(f"Error deleting knowledge content: {e}")
+            raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -1626,16 +1634,20 @@ class SingleStoreDb(BaseDb):
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
-        table = self._get_table(table_type="knowledge")
-        if table is None:
-            return None
-
-        with self.Session() as sess, sess.begin():
-            stmt = select(table).where(table.c.id == id)
-            result = sess.execute(stmt).fetchone()
-            if result is None:
+        try:
+            table = self._get_table(table_type="knowledge")
+            if table is None:
                 return None
-            return KnowledgeRow.model_validate(result._mapping)
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+                return KnowledgeRow.model_validate(result._mapping)
+        except Exception as e:
+            log_error(f"Error getting knowledge content: {e}")
+            raise e
 
     def get_knowledge_contents(
         self,
@@ -1688,7 +1700,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge contents: {e}")
-            return [], 0
+            raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
@@ -1733,7 +1745,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge row: {e}")
-            return None
+            raise e
 
     # -- Eval methods --
 
@@ -1767,7 +1779,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error creating eval run: {e}")
-            return None
+            raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
         """Delete an eval run from the database.
@@ -1790,7 +1802,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting eval run {eval_run_id}: {e}")
-            raise
+            raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the database.
@@ -1813,7 +1825,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
-            raise
+            raise e
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -1851,7 +1863,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_runs(
         self,
@@ -1946,7 +1958,7 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -1985,4 +1997,4 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {e}")
-            raise
+            raise e

@@ -1,5 +1,6 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
 
 from pydantic import BaseModel
@@ -10,6 +11,7 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
+from agno.utils.reasoning import extract_thinking_content
 
 try:
     from ollama import AsyncClient as AsyncOllamaClient
@@ -43,6 +45,7 @@ class Ollama(Model):
     # Client parameters
     host: Optional[str] = None
     timeout: Optional[Any] = None
+    api_key: Optional[str] = field(default_factory=lambda: getenv("OLLAMA_API_KEY"))
     client_params: Optional[Dict[str, Any]] = None
 
     # Ollama clients
@@ -50,10 +53,23 @@ class Ollama(Model):
     async_client: Optional[AsyncOllamaClient] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
+        host = self.host
+        headers = {}
+
+        if self.api_key:
+            if not host:
+                host = "https://ollama.com"
+            headers["authorization"] = f"Bearer {self.api_key}"
+            log_debug(f"Using Ollama cloud endpoint: {host}")
+
         base_params = {
-            "host": self.host,
+            "host": host,
             "timeout": self.timeout,
         }
+
+        if headers:
+            base_params["headers"] = headers
+
         # Create client_params dict with non-None values
         client_params = {k: v for k, v in base_params.items() if v is not None}
         # Add additional client params if provided
@@ -331,6 +347,16 @@ class Ollama(Model):
 
         if response_message.get("content") is not None:
             model_response.content = response_message.get("content")
+
+        # Extract thinking content between <think> tags if present
+        if model_response.content and model_response.content.find("<think>") != -1:
+            reasoning_content, clean_content = extract_thinking_content(model_response.content)
+
+            if reasoning_content:
+                # Store extracted thinking content separately
+                model_response.reasoning_content = reasoning_content
+                # Update main content with clean version
+                model_response.content = clean_content
 
         if response_message.get("tool_calls") is not None:
             if model_response.tool_calls is None:

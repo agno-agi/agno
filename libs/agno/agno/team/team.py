@@ -156,6 +156,8 @@ class Team:
     add_session_state_to_context: bool = False
     # Set to True to give the team tools to update the session_state dynamically
     enable_agentic_state: bool = False
+    # Set to True to overwrite the stored session_state with the session_state provided in the run
+    overwrite_db_session_state: bool = False
     # If True, cache the current Team session in memory for faster access
     cache_session: bool = False
 
@@ -364,6 +366,7 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         add_session_state_to_context: bool = False,
         enable_agentic_state: bool = False,
+        overwrite_db_session_state: bool = False,
         resolve_in_context: bool = True,
         cache_session: bool = False,
         description: Optional[str] = None,
@@ -453,6 +456,7 @@ class Team:
         self.session_state = session_state
         self.add_session_state_to_context = add_session_state_to_context
         self.enable_agentic_state = enable_agentic_state
+        self.overwrite_db_session_state = overwrite_db_session_state
         self.resolve_in_context = resolve_in_context
         self.cache_session = cache_session
 
@@ -1156,7 +1160,7 @@ class Team:
         self._update_metadata(session=team_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=team_session, session_state=session_state)
+        session_state = self._load_session_state(session=team_session, session_state=session_state)
 
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -1780,7 +1784,7 @@ class Team:
         self._update_metadata(session=team_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=team_session, session_state=session_state)
+        session_state = self._load_session_state(session=team_session, session_state=session_state)
 
         # Determine run dependencies (runtime override takes priority)
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -2037,9 +2041,6 @@ class Team:
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
 
-        # Update the run_response created_at with the model response created_at
-        run_response.created_at = model_response.created_at
-
         # Build a list of messages that should be added to the RunOutput
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
 
@@ -2099,7 +2100,6 @@ class Team:
             )
 
         # 3. Update TeamRunOutput
-        run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
         if full_model_response.reasoning_content is not None:
@@ -2189,7 +2189,6 @@ class Team:
             run_response.content = full_model_response.parsed
 
         # Update TeamRunOutput
-        run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
         if full_model_response.reasoning_content is not None:
@@ -2851,7 +2850,6 @@ class Team:
 
         # Update the TeamRunResponse content
         run_response.content = model_response.content
-        run_response.created_at = model_response.created_at
 
         if stream_intermediate_steps:
             yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
@@ -2909,7 +2907,6 @@ class Team:
 
         # Update the TeamRunResponse content
         run_response.content = model_response.content
-        run_response.created_at = model_response.created_at
 
         if stream_intermediate_steps:
             yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
@@ -4277,7 +4274,7 @@ class Team:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
-                if member.tools is not None and self.add_member_tools_to_context:
+                if member.tools and self.add_member_tools_to_context:
                     system_message_content += f"{indent * ' '}   - Member tools:\n"
                     for _tool in member.tools:
                         if isinstance(_tool, Toolkit):
@@ -5467,6 +5464,9 @@ class Team:
                     check_if_run_cancelled(member_agent_run_output_event)
 
                     # Yield the member event directly
+                    member_agent_run_output_event.parent_run_id = (
+                        member_agent_run_output_event.parent_run_id or run_response.run_id
+                    )
                     yield member_agent_run_output_event
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
@@ -5592,6 +5592,9 @@ class Team:
                     check_if_run_cancelled(member_agent_run_response_event)
 
                     # Yield the member event directly
+                    member_agent_run_response_event.parent_run_id = (
+                        member_agent_run_response_event.parent_run_id or run_response.run_id
+                    )
                     yield member_agent_run_response_event
             else:
                 member_agent_run_response = await member_agent.arun(  # type: ignore
@@ -5707,6 +5710,9 @@ class Team:
                         check_if_run_cancelled(member_agent_run_response_chunk)
 
                         # Yield the member event directly
+                        member_agent_run_response_chunk.parent_run_id = (
+                            member_agent_run_response_chunk.parent_run_id or run_response.run_id
+                        )
                         yield member_agent_run_response_chunk
 
                 else:
@@ -5818,6 +5824,9 @@ class Team:
                                 member_agent_run_response = member_agent_run_output_event  # type: ignore
                                 break
                             check_if_run_cancelled(member_agent_run_output_event)
+                            member_agent_run_output_event.parent_run_id = (
+                                member_agent_run_output_event.parent_run_id or run_response.run_id
+                            )
                             await queue.put(member_agent_run_output_event)
                     finally:
                         _process_delegate_task_to_member(
@@ -6111,8 +6120,8 @@ class Team:
             self._upsert_session(session=session)
             log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
-    def _update_session_state(self, session: TeamSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
-        """Load the existing Agent from an AgentSession (from the database)"""
+    def _load_session_state(self, session: TeamSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
+        """Load and return the stored session_state from the database, optionally merging it with the given one"""
 
         from agno.utils.merge_dict import merge_dictionaries
 
@@ -6125,6 +6134,7 @@ class Team:
                 session_state_from_db is not None
                 and isinstance(session_state_from_db, dict)
                 and len(session_state_from_db) > 0
+                and not self.overwrite_db_session_state
             ):
                 # This preserves precedence: run_params > db_state > agent_defaults
                 merged_state = session_state_from_db.copy()

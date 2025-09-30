@@ -57,7 +57,7 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
     if is_workflow_run:
         step_executor_runs = run_dict.get("step_executor_runs", [])
         if step_executor_runs:
-            for message in step_executor_runs[0].get("messages", []):
+            for message in reversed(step_executor_runs[0].get("messages", [])):
                 if message.get("role") == "user":
                     return message.get("content", "")
 
@@ -70,7 +70,7 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
                 return str(input_value)
 
     if run_dict.get("messages") is not None:
-        for message in run_dict["messages"]:
+        for message in reversed(run_dict["messages"]):
             if message.get("role") == "user":
                 return message.get("content", "")
 
@@ -303,3 +303,101 @@ def update_cors_middleware(app: FastAPI, new_origins: list):
         allow_headers=["*"],
         expose_headers=["*"],
     )
+
+
+def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
+    """Recursively collect MCP tools from a team and its members."""
+    # Check the team tools
+    if team.tools:
+        for tool in team.tools:
+            type_name = type(tool).__name__
+            if type_name in ("MCPTools", "MultiMCPTools"):
+                if tool not in mcp_tools:
+                    mcp_tools.append(tool)
+
+    # Recursively check team members
+    if team.members:
+        for member in team.members:
+            if isinstance(member, Agent):
+                if member.tools:
+                    for tool in member.tools:
+                        type_name = type(tool).__name__
+                        if type_name in ("MCPTools", "MultiMCPTools"):
+                            if tool not in mcp_tools:
+                                mcp_tools.append(tool)
+
+            elif isinstance(member, Team):
+                # Recursively check nested team
+                collect_mcp_tools_from_team(member, mcp_tools)
+
+
+def collect_mcp_tools_from_workflow(workflow: Workflow, mcp_tools: List[Any]) -> None:
+    """Recursively collect MCP tools from a workflow and its steps."""
+    from agno.workflow.steps import Steps
+
+    # Recursively check workflow steps
+    if workflow.steps:
+        if isinstance(workflow.steps, list):
+            # Handle list of steps
+            for step in workflow.steps:
+                collect_mcp_tools_from_workflow_step(step, mcp_tools)
+
+        elif isinstance(workflow.steps, Steps):
+            # Handle Steps container
+            if steps := workflow.steps.steps:
+                for step in steps:
+                    collect_mcp_tools_from_workflow_step(step, mcp_tools)
+
+        elif callable(workflow.steps):
+            pass
+
+
+def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> None:
+    """Collect MCP tools from a single workflow step."""
+    from agno.workflow.condition import Condition
+    from agno.workflow.loop import Loop
+    from agno.workflow.parallel import Parallel
+    from agno.workflow.router import Router
+    from agno.workflow.step import Step
+    from agno.workflow.steps import Steps
+
+    if isinstance(step, Step):
+        # Check step's agent
+        if step.agent:
+            if step.agent.tools:
+                for tool in step.agent.tools:
+                    type_name = type(tool).__name__
+                    if type_name in ("MCPTools", "MultiMCPTools"):
+                        if tool not in mcp_tools:
+                            mcp_tools.append(tool)
+        # Check step's team
+        if step.team:
+            collect_mcp_tools_from_team(step.team, mcp_tools)
+
+    elif isinstance(step, Steps):
+        if steps := step.steps:
+            for step in steps:
+                collect_mcp_tools_from_workflow_step(step, mcp_tools)
+
+    elif isinstance(step, (Parallel, Loop, Condition, Router)):
+        # These contain other steps - recursively check them
+        if hasattr(step, "steps") and step.steps:
+            for sub_step in step.steps:
+                collect_mcp_tools_from_workflow_step(sub_step, mcp_tools)
+
+    elif isinstance(step, Agent):
+        # Direct agent in workflow steps
+        if step.tools:
+            for tool in step.tools:
+                type_name = type(tool).__name__
+                if type_name in ("MCPTools", "MultiMCPTools"):
+                    if tool not in mcp_tools:
+                        mcp_tools.append(tool)
+
+    elif isinstance(step, Team):
+        # Direct team in workflow steps
+        collect_mcp_tools_from_team(step, mcp_tools)
+
+    elif isinstance(step, Workflow):
+        # Nested workflow
+        collect_mcp_tools_from_workflow(step, mcp_tools)

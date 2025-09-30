@@ -13,7 +13,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel
 
-db = SqliteDb(db_file="tmp/data.db")
+db = SqliteDb(db_file="tmp/data.db", session_table="new_sessions_five")
 
 
 class Article(BaseModel):
