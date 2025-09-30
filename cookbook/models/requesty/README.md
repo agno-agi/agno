@@ -2,6 +2,8 @@
 
 > Note: Fork and clone this repository if needed
 
+Requesty AI is an LLM gateway with AI governance. See their [website](https://www.requesty.ai) for more information.
+
 ### 1. Create and activate a virtual environment
 
 ```shell
@@ -47,10 +49,4 @@ python cookbook/models/requesty/tool_use.py
 
 ```shell
 python cookbook/models/requesty/structured_output.py
-```
-
-### 7. Run Agent with extra body
-
-```shell
-python cookbook/models/requesty/extra_body.py
 ```

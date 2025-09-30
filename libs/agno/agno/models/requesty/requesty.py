@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Optional, Dict, Any
+from typing import Any, Dict, List, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.models.openai.like import OpenAILike
 from agno.run.agent import RunOutput
@@ -27,19 +29,21 @@ class Requesty(OpenAILike):
     base_url: str = "https://router.requesty.ai/v1"
     max_tokens: int = 1024
 
-    def _enrich_request_params(
-        self, request_params: Dict[str, Any], run_response: Optional[RunOutput] = None
+    def get_request_params(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
-        if not run_response:
-            return request_params
+        params = super().get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice)
 
-        requesty_extra_body = {
-            "requesty": {
-                "user_id": run_response.user_id,
-                "trace_id": run_response.session_id,
-            }
-        }
+        if "extra_body" not in params:
+            params["extra_body"] = {}
+        params["extra_body"]["requesty"] = {}
+        if run_response and run_response.user_id:
+            params["extra_body"]["requesty"]["user_id"] = run_response.user_id
+        if run_response and run_response.session_id:
+            params["extra_body"]["requesty"]["trace_id"] = run_response.session_id
 
-        request_params["extra_body"] = requesty_extra_body
-
-        return request_params
+        return params

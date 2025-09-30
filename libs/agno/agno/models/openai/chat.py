@@ -159,11 +159,6 @@ class OpenAIChat(Model):
             )
         return AsyncOpenAIClient(**client_params)
 
-    def _enrich_request_params(
-        self, request_params: Dict[str, Any], run_response: Optional[RunOutput] = None
-    ) -> Dict[str, Any]:
-        return request_params
-
     def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -244,9 +239,6 @@ class OpenAIChat(Model):
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
-
-        if run_response:
-            request_params = self._enrich_request_params(request_params, run_response)
 
         if request_params:
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)

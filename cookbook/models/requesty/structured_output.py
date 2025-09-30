@@ -1,9 +1,8 @@
 from typing import List
 
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent
 from agno.models.requesty import Requesty
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
 
 
 class MovieScript(BaseModel):
@@ -25,27 +24,11 @@ class MovieScript(BaseModel):
     )
 
 
-# Agent that uses JSON mode
-json_mode_agent = Agent(
+# Agent that uses structured outputs
+structured_output_agent = Agent(
     model=Requesty(id="openai/gpt-4o"),
     description="You write movie scripts.",
     output_schema=MovieScript,
-    use_json_mode=True,
 )
 
-# Agent that uses structured outputs
-structured_output_agent = Agent(
-    model=Requesty(id="gpt-4o-2024-08-06"),
-    description="You write movie scripts.",
-    output_schema=MovieScript,
-)
-
-
-# Get the response in a variable
-# json_mode_response: RunOutput = json_mode_agent.run("New York")
-# pprint(json_mode_response.content)
-# structured_output_response: RunOutput = structured_output_agent.run("New York")
-# pprint(structured_output_response.content)
-
-json_mode_agent.print_response("New York")
 structured_output_agent.print_response("New York")
