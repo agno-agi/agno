@@ -57,13 +57,6 @@ def field_labeled_reader():
 
 
 @pytest.fixture
-def field_labeled_reader_with_chunking():
-    from agno.knowledge.chunking.fixed import FixedSizeChunking
-
-    return FieldLabeledCSVReader(chunking_strategy=FixedSizeChunking(chunk_size=100))
-
-
-@pytest.fixture
 def field_labeled_reader_with_config():
     return FieldLabeledCSVReader(
         chunk_title="📄 Entry",
@@ -531,33 +524,10 @@ Naïve,Résumé"""
     assert documents[0].content == expected_content
 
 
-def test_with_chunking_strategy(field_labeled_reader_with_chunking, csv_file):
-    """Test reading with a chunking strategy applied."""
-    documents = field_labeled_reader_with_chunking.read(csv_file)
-
-    # Should be more than 3 documents due to chunking
-    assert len(documents) > 3
-
-    # Check that chunking was applied (documents should have chunking metadata)
-    first_doc = documents[0]
-    assert "chunk" in first_doc.meta_data
-
-
 def test_get_supported_chunking_strategies():
-    """Test that the reader reports supported chunking strategies."""
+    """Test that chunking is not supported (each row is already a logical unit)."""
     strategies = FieldLabeledCSVReader.get_supported_chunking_strategies()
-
-    from agno.knowledge.chunking.strategy import ChunkingStrategyType
-
-    expected_strategies = [
-        ChunkingStrategyType.ROW_CHUNKER,
-        ChunkingStrategyType.FIXED_SIZE_CHUNKER,
-        ChunkingStrategyType.AGENTIC_CHUNKER,
-        ChunkingStrategyType.DOCUMENT_CHUNKER,
-        ChunkingStrategyType.RECURSIVE_CHUNKER,
-    ]
-
-    assert strategies == expected_strategies
+    assert strategies == []
 
 
 def test_reader_factory_integration():

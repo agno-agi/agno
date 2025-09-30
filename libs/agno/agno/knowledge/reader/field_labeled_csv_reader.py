@@ -9,7 +9,7 @@ try:
 except ImportError:
     raise ImportError("`aiofiles` not installed. Please install it with `pip install aiofiles`")
 
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
@@ -25,10 +25,9 @@ class FieldLabeledCSVReader(Reader):
         field_names: Optional[List[str]] = None,
         format_headers: bool = True,
         skip_empty_fields: bool = True,
-        chunking_strategy: Optional[ChunkingStrategy] = None,
         **kwargs,
     ):
-        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+        super().__init__(chunk=False, chunking_strategy=None, **kwargs)
         self.chunk_title = chunk_title
         self.field_names = field_names or []
         self.format_headers = format_headers
@@ -38,14 +37,8 @@ class FieldLabeledCSVReader(Reader):
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
-        """Get the list of supported chunking strategies for field-labeled CSV readers."""
-        return [
-            ChunkingStrategyType.ROW_CHUNKER,
-            ChunkingStrategyType.FIXED_SIZE_CHUNKER,
-            ChunkingStrategyType.AGENTIC_CHUNKER,
-            ChunkingStrategyType.DOCUMENT_CHUNKER,
-            ChunkingStrategyType.RECURSIVE_CHUNKER,
-        ]
+        """Chunking is not supported - each row is already a logical document unit."""
+        return []
 
     @classmethod
     def get_supported_content_types(cls) -> List[ContentType]:
@@ -175,13 +168,6 @@ class FieldLabeledCSVReader(Reader):
                         logger.debug(f"Created document for row {row_index + 1}: {len(labeled_text)} chars")
 
             logger.info(f"Successfully created {len(documents)} labeled documents from CSV")
-
-            # Apply chunking strategy if enabled
-            if self.chunk:
-                chunked_documents = []
-                for document in documents:
-                    chunked_documents.extend(self.chunk_document(document))
-                return chunked_documents
             return documents
 
         except Exception as e:
@@ -299,11 +285,6 @@ class FieldLabeledCSVReader(Reader):
                 documents = [doc for page_docs in page_results for doc in page_docs]
 
             logger.info(f"Successfully created {len(documents)} labeled documents from CSV")
-
-            # Apply chunking strategy if enabled
-            if self.chunk:
-                documents = await self.chunk_documents_async(documents)
-
             return documents
 
         except Exception as e:
