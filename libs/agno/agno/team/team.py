@@ -579,6 +579,55 @@ class Team:
 
         self._rebuild_tools = True
 
+        # Validate member configuration
+        self._validate_member_tools()
+
+    def _validate_member_tools(self) -> None:
+        """Validate that member agents don't have problematic tool configurations.
+
+        Warns if a member agent has external_execution tools, as this creates
+        an architectural issue where the team cannot resume paused member agents
+        if those tools are called during delegation.
+        """
+        from agno.agent import Agent
+        from agno.utils.log import log_warning
+
+        for member in self.members:
+            # Only check Agent members (not nested Teams)
+            if not isinstance(member, Agent):
+                continue
+
+            # Check if member has tools
+            if not member.tools:
+                continue
+
+            # Check if ANY tools have external_execution
+            external_execution_tools = []
+
+            for tool in member.tools:
+                # Get the Function objects from the tool
+                if hasattr(tool, 'functions'):
+                    # It's a Toolkit
+                    for func in tool.functions.values():
+                        if getattr(func, 'external_execution', False):
+                            external_execution_tools.append(func.name)
+                elif hasattr(tool, 'external_execution'):
+                    # It's a Function
+                    if getattr(tool, 'external_execution', False):
+                        external_execution_tools.append(tool.name)
+
+            # Warn if agent has ANY external execution tools
+            if external_execution_tools:
+                member_name = member.name or member.id or "Unknown"
+                log_warning(
+                    f"Team member '{member_name}' has external_execution tools: {external_execution_tools}. "
+                    f"If these tools are called during delegation, the team will be unable to resume the paused agent. "
+                    f"This is an architectural limitation: teams cannot handle external execution for delegated member agents. "
+                    f"\n  Recommended: Add these tools to the Team itself instead: team = Team(tools=[...], members=[...])"
+                    f"\n  Alternative: Use a single Agent or Workflow if external execution is required."
+                    f"\n  See: https://docs.agno.com/agents/teams#external-execution-tools"
+                )
+
     @property
     def should_parse_structured_output(self) -> bool:
         return self.output_schema is not None and self.parse_response and self.parser_model is None
@@ -5364,7 +5413,7 @@ class Team:
                 member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
             # Update the top-level team run_response tool call to have the run_id of the member run
-            if run_response.tools is not None:
+            if run_response.tools is not None and member_agent_run_response is not None:
                 for tool in run_response.tools:
                     if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
                         tool.child_run_id = member_agent_run_response.run_id  # type: ignore
