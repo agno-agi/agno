@@ -697,8 +697,8 @@ class SingleStoreDb(BaseDb):
 
                     # Fetch the result
                     select_stmt = select(table).where(
-                        (table.c.session_id == session_dict.get("session_id"))
-                        & (table.c.agent_id == session_dict.get("agent_id"))
+                        (table.c.session_id == serialized_session.get("session_id"))
+                        & (table.c.agent_id == serialized_session.get("agent_id"))
                     )
                     row = sess.execute(select_stmt).fetchone()
                     if row is None:
@@ -739,8 +739,8 @@ class SingleStoreDb(BaseDb):
 
                     # Fetch the result
                     select_stmt = select(table).where(
-                        (table.c.session_id == session_dict.get("session_id"))
-                        & (table.c.team_id == session_dict.get("team_id"))
+                        (table.c.session_id == serialized_session.get("session_id"))
+                        & (table.c.team_id == serialized_session.get("team_id"))
                     )
                     row = sess.execute(select_stmt).fetchone()
                     if row is None:
@@ -780,8 +780,8 @@ class SingleStoreDb(BaseDb):
 
                     # Fetch the result
                     select_stmt = select(table).where(
-                        (table.c.session_id == session_dict.get("session_id"))
-                        & (table.c.workflow_id == session_dict.get("workflow_id"))
+                        (table.c.session_id == serialized_session.get("session_id"))
+                        & (table.c.workflow_id == serialized_session.get("workflow_id"))
                     )
                     row = sess.execute(select_stmt).fetchone()
                     if row is None:
@@ -877,15 +877,14 @@ class SingleStoreDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
+                            session_raw = deserialize_session_json_fields(dict(row._mapping))
                             if deserialize:
-                                session_raw = deserialize_session_json_fields(dict(row._mapping))
-                                if deserialize:
-                                    deserialized_agent_session = AgentSession.from_dict(session_raw)
-                                    if deserialized_agent_session is None:
-                                        continue
-                                    results.append(deserialized_agent_session)
-                                else:
-                                    results.append(session_raw)
+                                deserialized_agent_session = AgentSession.from_dict(session_raw)
+                                if deserialized_agent_session is None:
+                                    continue
+                                results.append(deserialized_agent_session)
+                            else:
+                                results.append(session_raw)
 
                 # Bulk upsert team sessions
                 if team_sessions:
