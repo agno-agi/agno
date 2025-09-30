@@ -11,7 +11,7 @@ chat_agent = Agent(
     markdown=True,
 )
 
-# Setup our AgentOS app
+# Setup your AgentOS app
 agent_os = AgentOS(
     agents=[chat_agent],
     interfaces=[AGUI(agent=chat_agent)],
@@ -20,10 +20,10 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    """Run our AgentOS.
+    """Run your AgentOS.
 
     You can see the configuration and available apps at:
-    http://localhost:7777/config
+    http://localhost:9001/config
 
     """
-    agent_os.serve(app="basic:app", reload=True)
+    agent_os.serve(app="basic:app", reload=True, port=9001)

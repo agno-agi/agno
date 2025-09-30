@@ -16,9 +16,8 @@ from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.utils.gemini import convert_schema, format_function_definitions, format_image_for_message
+from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
     from google import genai
@@ -191,12 +190,9 @@ class Gemini(Model):
 
         if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             config["response_mime_type"] = "application/json"  # type: ignore
-            # Convert Pydantic model to JSON schema, then normalize for Gemini, then convert to Gemini schema format
-
-            # Get the normalized schema for Gemini
-            normalized_schema = get_response_schema_for_provider(response_format, "gemini")
-            gemini_schema = convert_schema(normalized_schema)
-            config["response_schema"] = gemini_schema
+            # Convert Pydantic model using our hybrid approach
+            # This will handle complex schemas with nested models, dicts, and circular refs
+            config["response_schema"] = prepare_response_schema(response_format)
 
         # Add thinking configuration
         thinking_config_params = {}
@@ -1055,9 +1051,9 @@ class Gemini(Model):
 
         metrics.input_tokens = response_usage.prompt_token_count or 0
         metrics.output_tokens = response_usage.candidates_token_count or 0
-        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
         if response_usage.thoughts_token_count is not None:
             metrics.output_tokens += response_usage.thoughts_token_count or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0
 

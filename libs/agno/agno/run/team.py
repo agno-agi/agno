@@ -51,6 +51,7 @@ class BaseTeamRunEvent(BaseRunOutputEvent):
     team_id: str = ""
     team_name: str = ""
     run_id: Optional[str] = None
+    parent_run_id: Optional[str] = None
     session_id: Optional[str] = None
 
     workflow_id: Optional[str] = None
@@ -98,6 +99,7 @@ class RunContentEvent(BaseTeamRunEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: Optional[str] = None
+    model_provider_data: Optional[Dict[str, Any]] = None
     citations: Optional[Citations] = None
     response_audio: Optional[Audio] = None  # Model audio response
     image: Optional[Image] = None  # Image attached to the response
@@ -121,6 +123,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
+    model_provider_data: Optional[Dict[str, Any]] = None
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
@@ -321,6 +324,8 @@ class TeamRunInput:
             result["videos"] = [vid.to_dict() for vid in self.videos]
         if self.audios:
             result["audios"] = [aud.to_dict() for aud in self.audios]
+        if self.files:
+            result["files"] = [file.to_dict() for file in self.files]
 
         return result
 
@@ -370,6 +375,7 @@ class TeamRunOutput:
     images: Optional[List[Image]] = None  # Images from member runs
     videos: Optional[List[Video]] = None  # Videos from member runs
     audio: Optional[List[Audio]] = None  # Audio from member runs
+    files: Optional[List[File]] = None  # Files from member runs
 
     response_audio: Optional[Audio] = None  # Model audio response
 
@@ -379,7 +385,7 @@ class TeamRunOutput:
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None
-
+    model_provider_data: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
 
     references: Optional[List[MessageReferences]] = None
@@ -419,6 +425,7 @@ class TeamRunOutput:
                 "images",
                 "videos",
                 "audio",
+                "files",
                 "response_audio",
                 "citations",
                 "events",
@@ -460,6 +467,9 @@ class TeamRunOutput:
 
         if self.audio is not None:
             _dict["audio"] = [aud.to_dict() for aud in self.audio]
+
+        if self.files is not None:
+            _dict["files"] = [file.to_dict() for file in self.files]
 
         if self.response_audio is not None:
             _dict["response_audio"] = self.response_audio.to_dict()
@@ -519,7 +529,7 @@ class TeamRunOutput:
         events = final_events
 
         messages = data.pop("messages", None)
-        messages = [Message.model_validate(message) for message in messages] if messages else None
+        messages = [Message.from_dict(message) for message in messages] if messages else None
 
         member_responses = data.pop("member_responses", [])
         parsed_member_responses: List[Union["TeamRunOutput", RunOutput]] = []
@@ -532,7 +542,7 @@ class TeamRunOutput:
 
         additional_input = data.pop("additional_input", None)
         if additional_input is not None:
-            additional_input = [Message.model_validate(message) for message in additional_input]
+            additional_input = [Message.from_dict(message) for message in additional_input]
 
         reasoning_steps = data.pop("reasoning_steps", None)
         if reasoning_steps is not None:
@@ -540,7 +550,7 @@ class TeamRunOutput:
 
         reasoning_messages = data.pop("reasoning_messages", None)
         if reasoning_messages is not None:
-            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
+            reasoning_messages = [Message.from_dict(message) for message in reasoning_messages]
 
         references = data.pop("references", None)
         if references is not None:
@@ -554,6 +564,9 @@ class TeamRunOutput:
 
         audio = data.pop("audio", [])
         audio = [Audio.model_validate(audio) for audio in audio] if audio else None
+
+        files = data.pop("files", [])
+        files = [File.model_validate(file) for file in files] if files else None
 
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
@@ -584,6 +597,7 @@ class TeamRunOutput:
             images=images,
             videos=videos,
             audio=audio,
+            files=files,
             response_audio=response_audio,
             input=input_obj,
             citations=citations,
@@ -618,3 +632,7 @@ class TeamRunOutput:
             if self.audio is None:
                 self.audio = []
             self.audio.extend(run_response.audio)
+        if run_response.files is not None:
+            if self.files is None:
+                self.files = []
+            self.files.extend(run_response.files)

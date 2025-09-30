@@ -1,7 +1,7 @@
 import logging
 from typing import List, Optional, Union
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
 from agno.db.base import BaseDb, SessionType
 from agno.os.auth import get_authentication_dependency
@@ -86,6 +86,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         },
     )
     async def get_sessions(
+        request: Request,
         session_type: SessionType = Query(
             default=SessionType.AGENT,
             alias="type",
@@ -103,6 +104,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="Database ID to query sessions from"),
     ) -> PaginatedResponse[SessionSchema]:
         db = get_db(dbs, db_id)
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
         sessions, total_count = db.get_sessions(
             session_type=session_type,
             component_id=component_id,
@@ -213,16 +218,24 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         },
     )
     async def get_session_by_id(
+        request: Request,
         session_id: str = Path(description="Session ID to retrieve"),
         session_type: SessionType = Query(
             default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
         ),
+        user_id: Optional[str] = Query(default=None, description="User ID to query session from"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query session from"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db = get_db(dbs, db_id)
-        session = db.get_session(session_id=session_id, session_type=session_type)
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
         if not session:
-            raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"{session_type.value.title()} Session with id '{session_id}' not found"
+            )
 
         if session_type == SessionType.AGENT:
             return AgentSessionDetailSchema.from_session(session)  # type: ignore
@@ -233,7 +246,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
 
     @router.get(
         "/sessions/{session_id}/runs",
-        response_model=Union[List[RunSchema], List[TeamRunSchema], List[WorkflowRunSchema]],
+        response_model=List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
         status_code=200,
         operation_id="get_session_runs",
         summary="Get Session Runs",
@@ -251,7 +264,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                                 "summary": "Example completed run",
                                 "value": {
                                     "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                    "agent_session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                    "parent_run_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                    "agent_id": "basic-agent",
                                     "user_id": "",
                                     "run_input": "Which tools do you have access to?",
                                     "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
@@ -346,14 +360,20 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         },
     )
     async def get_session_runs(
+        request: Request,
         session_id: str = Path(description="Session ID to get runs from"),
         session_type: SessionType = Query(
             default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
         ),
+        user_id: Optional[str] = Query(default=None, description="User ID to query runs from"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
-    ) -> Union[List[RunSchema], List[TeamRunSchema], List[WorkflowRunSchema]]:
+    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
         db = get_db(dbs, db_id)
-        session = db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
@@ -365,13 +385,26 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             return [RunSchema.from_dict(run) for run in runs]
 
         elif session_type == SessionType.TEAM:
-            return [TeamRunSchema.from_dict(run) for run in runs]
+            run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
+            for run in runs:
+                if run.get("agent_id") is not None:
+                    run_responses.append(RunSchema.from_dict(run))
+                elif run.get("team_id") is not None:
+                    run_responses.append(TeamRunSchema.from_dict(run))
+            return run_responses
 
         elif session_type == SessionType.WORKFLOW:
-            return [WorkflowRunSchema.from_dict(run) for run in runs]
-
+            run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []  # type: ignore
+            for run in runs:
+                if run.get("workflow_id") is not None:
+                    run_responses.append(WorkflowRunSchema.from_dict(run))
+                elif run.get("team_id") is not None:
+                    run_responses.append(TeamRunSchema.from_dict(run))
+                else:
+                    run_responses.append(RunSchema.from_dict(run))
+            return run_responses
         else:
-            return [RunSchema.from_dict(run) for run in runs]
+            raise HTTPException(status_code=400, detail=f"Invalid session type: {session_type}")
 
     @router.delete(
         "/sessions/{session_id}",

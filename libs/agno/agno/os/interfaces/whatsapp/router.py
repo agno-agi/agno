@@ -19,6 +19,9 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")
 
+    # Create WhatsApp tools instance once for reuse
+    whatsapp_tools = WhatsAppTools(async_mode=True)
+
     @router.get("/status")
     async def status():
         return {"status": "available"}
@@ -120,6 +123,7 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
                 response = await agent.arun(
                     message_text,
                     user_id=phone_number,
+                    session_id=f"wa:{phone_number}",
                     images=[Image(content=await get_media_async(message_image))] if message_image else None,
                     files=[File(content=await get_media_async(message_doc))] if message_doc else None,
                     videos=[Video(content=await get_media_async(message_video))] if message_video else None,
@@ -129,6 +133,7 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
                 response = await team.arun(  # type: ignore
                     message_text,
                     user_id=phone_number,
+                    session_id=f"wa:{phone_number}",
                     files=[File(content=await get_media_async(message_doc))] if message_doc else None,
                     images=[Image(content=await get_media_async(message_image))] if message_image else None,
                     videos=[Video(content=await get_media_async(message_video))] if message_video else None,
@@ -185,9 +190,9 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
             if italics:
                 # Handle multi-line messages by making each line italic
                 formatted_message = "\n".join([f"_{line}_" for line in message.split("\n")])
-                await WhatsAppTools().send_text_message_async(recipient=recipient, text=formatted_message)
+                await whatsapp_tools.send_text_message_async(recipient=recipient, text=formatted_message)
             else:
-                await WhatsAppTools().send_text_message_async(recipient=recipient, text=message)
+                await whatsapp_tools.send_text_message_async(recipient=recipient, text=message)
             return
 
         # Split message into batches of 4000 characters (WhatsApp message limit is 4096)
@@ -199,8 +204,8 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
             if italics:
                 # Handle multi-line messages by making each line italic
                 formatted_batch = "\n".join([f"_{line}_" for line in batch_message.split("\n")])
-                await WhatsAppTools().send_text_message_async(recipient=recipient, text=formatted_batch)
+                await whatsapp_tools.send_text_message_async(recipient=recipient, text=formatted_batch)
             else:
-                await WhatsAppTools().send_text_message_async(recipient=recipient, text=batch_message)
+                await whatsapp_tools.send_text_message_async(recipient=recipient, text=batch_message)
 
     return router

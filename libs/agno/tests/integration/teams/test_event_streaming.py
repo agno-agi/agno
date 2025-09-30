@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from agno.agent import RunEvent
 from agno.agent.agent import Agent
+from agno.db.in_memory.in_memory_db import InMemoryDb
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team, TeamRunEvent
 from agno.tools.calculator import CalculatorTools
@@ -535,7 +536,11 @@ def test_intermediate_steps_with_member_agents():
     assert len(events[TeamRunEvent.run_completed]) == 1
     # Two member agents
     assert len(events[RunEvent.run_started]) == 2
+    assert events[RunEvent.run_started][0].parent_run_id == events[TeamRunEvent.run_started][0].run_id
+    assert events[RunEvent.run_started][1].parent_run_id == events[TeamRunEvent.run_started][0].run_id
     assert len(events[RunEvent.run_completed]) == 2
+    assert events[RunEvent.run_completed][0].parent_run_id == events[TeamRunEvent.run_completed][0].run_id
+    assert events[RunEvent.run_completed][1].parent_run_id == events[TeamRunEvent.run_completed][0].run_id
     # Lots of member tool calls
     assert len(events[RunEvent.tool_call_started]) > 1
     assert len(events[RunEvent.tool_call_completed]) > 1
@@ -681,7 +686,6 @@ def test_create_team_run_completed_event_function():
     assert completed_event.team_id == "test_team"
 
 
-# @pytest.mark.skip(reason="This test is flaky")
 def test_intermediate_steps_with_member_agents_delegate_to_all_members():
     def get_news_from_hackernews(query: str):
         return "The best way to learn to code is to use the Hackernews API."
@@ -740,3 +744,50 @@ def test_intermediate_steps_with_member_agents_delegate_to_all_members():
     assert len(events[RunEvent.run_started]) == 2
     assert len(events[RunEvent.run_completed]) == 2
     assert len(events[RunEvent.run_content]) > 1
+
+
+def test_tool_parent_run_id():
+    agent_1 = Agent(
+        name="Big questions agent",
+        model=OpenAIChat(id="gpt-5-mini"),
+        instructions="You answer big questions.",
+    )
+    team = Team(
+        model=OpenAIChat(id="gpt-5-mini"),
+        members=[agent_1],
+        db=InMemoryDb(),
+        instructions="Delegate to your member agents to answer the question.",
+    )
+
+    response_generator = team.run(
+        input="What is the meaning of life?",
+        session_id="test_session",
+        stream=True,
+        stream_intermediate_steps=True,
+    )
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+
+    assert len(events[TeamRunEvent.tool_call_started]) == 1
+    assert len(events[TeamRunEvent.tool_call_completed]) == 1
+
+    team_session = team.get_session(session_id="test_session")
+    assert team_session is not None
+    team_run = team_session.get_run(run_id=events[TeamRunEvent.run_started][0].run_id)
+    assert team_run is not None
+    member_run = team_session.get_run(run_id=events[RunEvent.run_started][0].run_id)
+    assert member_run is not None
+    assert member_run.parent_run_id == team_run.run_id
+
+    # Assert expected tool call events
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "delegate_task_to_member"
+    assert events[TeamRunEvent.tool_call_started][0].run_id == member_run.parent_run_id
+    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "delegate_task_to_member"
+    assert events[TeamRunEvent.tool_call_completed][0].run_id == member_run.parent_run_id

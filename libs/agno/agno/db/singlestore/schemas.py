@@ -106,7 +106,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
-        "knowledge_contents": KNOWLEDGE_TABLE_SCHEMA,
+        "knowledge": KNOWLEDGE_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 

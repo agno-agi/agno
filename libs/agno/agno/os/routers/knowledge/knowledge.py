@@ -2,7 +2,6 @@ import json
 import logging
 import math
 from typing import Dict, List, Optional
-from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, UploadFile
 
@@ -34,6 +33,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.utils.log import log_debug, log_info
+from agno.utils.string import generate_id
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +102,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
     ):
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
-        content_id = str(uuid4())
-        log_info(f"Adding content: {name}, {description}, {url}, {metadata} with ID: {content_id}")
+        log_info(f"Adding content: {name}, {description}, {url}, {metadata}")
 
         parsed_metadata = None
         if metadata:
@@ -166,10 +165,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             file_data=file_data,
             size=file.size if file else None if text_content else None,
         )
-        background_tasks.add_task(process_content, knowledge, content_id, content, reader_id, chunker)
+        content_hash = knowledge._build_content_hash(content)
+        content.content_hash = content_hash
+        content.id = generate_id(content_hash)
+
+        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker)
 
         response = ContentResponseSchema(
-            id=content_id,
+            id=content.id,
             name=name,
             description=description,
             metadata=parsed_metadata,
@@ -802,15 +805,13 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
 
 async def process_content(
     knowledge: Knowledge,
-    content_id: str,
     content: Content,
     reader_id: Optional[str] = None,
     chunker: Optional[str] = None,
 ):
     """Background task to process the content"""
-    log_info(f"Processing content {content_id}")
+
     try:
-        content.id = content_id
         if reader_id:
             reader = None
             if knowledge.readers and reader_id in knowledge.readers:
@@ -834,16 +835,15 @@ async def process_content(
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
         await knowledge._load_content(content, upsert=False, skip_if_exists=True)
-        log_info(f"Content {content_id} processed successfully")
+        log_info(f"Content {content.id} processed successfully")
     except Exception as e:
-        log_info(f"Error processing content {content_id}: {e}")
+        log_info(f"Error processing content: {e}")
         # Mark content as failed in the contents DB
         try:
             from agno.knowledge.content import ContentStatus as KnowledgeContentStatus
 
             content.status = KnowledgeContentStatus.FAILED
             content.status_message = str(e)
-            content.id = content_id
             knowledge.patch_content(content)
         except Exception:
             # Swallow any secondary errors to avoid crashing the background task

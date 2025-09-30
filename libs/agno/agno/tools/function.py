@@ -124,6 +124,8 @@ class Function(BaseModel):
     _team: Optional[Any] = None
     # The session state that the function is associated with
     _session_state: Optional[Dict[str, Any]] = None
+    # The dependencies that the function is associated with
+    _dependencies: Optional[Dict[str, Any]] = None
 
     # Media context that the function is associated with
     _images: Optional[Sequence[Image]] = None
@@ -165,6 +167,8 @@ class Function(BaseModel):
                 del type_hints["audios"]
             if "files" in sig.parameters and "files" in type_hints:
                 del type_hints["files"]
+            if "dependencies" in sig.parameters and "dependencies" in type_hints:
+                del type_hints["dependencies"]
             # log_info(f"Type hints for {function_name}: {type_hints}")
 
             # Filter out return type and only process parameters
@@ -172,7 +176,8 @@ class Function(BaseModel):
                 name: type_hints.get(name)
                 for name in sig.parameters
                 if name != "return"
-                and name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
+                and name
+                not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files", "dependencies"]
             }
 
             # Parse docstring for parameters
@@ -201,7 +206,18 @@ class Function(BaseModel):
                 parameters["required"] = [
                     name
                     for name in parameters["properties"]
-                    if name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
+                    if name
+                    not in [
+                        "agent",
+                        "team",
+                        "session_state",
+                        "self",
+                        "images",
+                        "videos",
+                        "audios",
+                        "files",
+                        "dependencies",
+                    ]
                 ]
             else:
                 # Mark a field as required if it has no default value (this would include optional fields)
@@ -209,7 +225,18 @@ class Function(BaseModel):
                     name
                     for name, param in sig.parameters.items()
                     if param.default == param.empty
-                    and name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
+                    and name
+                    not in [
+                        "agent",
+                        "team",
+                        "session_state",
+                        "self",
+                        "images",
+                        "videos",
+                        "audios",
+                        "files",
+                        "dependencies",
+                    ]
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
@@ -268,6 +295,8 @@ class Function(BaseModel):
                 del type_hints["audios"]
             if "files" in sig.parameters and "files" in type_hints:
                 del type_hints["files"]
+            if "dependencies" in sig.parameters and "dependencies" in type_hints:
+                del type_hints["dependencies"]
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
@@ -281,6 +310,7 @@ class Function(BaseModel):
                 "videos",
                 "audios",
                 "files",
+                "dependencies",
             ]
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
@@ -359,6 +389,9 @@ class Function(BaseModel):
         if not params_set_by_user:
             self.parameters = parameters
 
+        if strict:
+            self.process_schema_for_strict()
+
         try:
             self.entrypoint = self._wrap_callable(self.entrypoint)
         except Exception as e:
@@ -392,11 +425,47 @@ class Function(BaseModel):
             return wrapped
 
     def process_schema_for_strict(self):
-        self.parameters["additionalProperties"] = False
+        """Process the schema to make it strict mode compliant."""
+        def make_nested_strict(schema):
+            """Recursively ensure all object schemas have additionalProperties: false"""
+            if not isinstance(schema, dict):
+                return schema
+            
+            # Make a copy to avoid modifying the original
+            result = schema.copy()
+            
+            # If this is an object schema, ensure additionalProperties: false
+            if (result.get("type") == "object" or "properties" in result):
+                result["additionalProperties"] = False
+            
+            # If schema has no type but has other schema properties, give it a type
+            if "type" not in result:
+                if "properties" in result:
+                    result["type"] = "object"
+                    result["additionalProperties"] = False
+                elif result.get("title") and not any(key in result for key in ["properties", "items", "anyOf", "oneOf", "allOf", "enum"]):
+                    result["type"] = "string"
+            
+            # Recursively process nested schemas
+            for key, value in result.items():
+                if key == "properties" and isinstance(value, dict):
+                    result[key] = {k: make_nested_strict(v) for k, v in value.items()}
+                elif key == "items" and isinstance(value, dict):
+                    # This handles array items like List[KnowledgeFilter]
+                    result[key] = make_nested_strict(value)
+                elif isinstance(value, dict):
+                    result[key] = make_nested_strict(value)
+            
+            return result
+        
+        # Apply strict mode to the entire schema
+        self.parameters = make_nested_strict(self.parameters)
+        
         self.parameters["required"] = [
             name
             for name in self.parameters["properties"]
-            if name not in ["agent", "team", "session_state", "images", "videos", "audios", "files", "self"]
+            if name
+            not in ["agent", "team", "session_state", "images", "videos", "audios", "files", "self", "dependencies"]
         ]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
@@ -419,6 +488,8 @@ class Function(BaseModel):
             del copy_entrypoint_args["audios"]
         if "files" in copy_entrypoint_args:
             del copy_entrypoint_args["files"]
+        if "dependencies" in copy_entrypoint_args:
+            del copy_entrypoint_args["dependencies"]
         args_str = str(copy_entrypoint_args)
 
         kwargs_str = str(sorted((call_args or {}).items()))
@@ -485,6 +556,7 @@ class FunctionExecutionResult(BaseModel):
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
     audios: Optional[List[Audio]] = None
+    files: Optional[List[File]] = None
 
 
 class FunctionCall(BaseModel):
@@ -598,6 +670,9 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an session_state argument
         if "session_state" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["session_state"] = self.function._session_state
+        # Check if the entrypoint has an dependencies argument
+        if "dependencies" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["dependencies"] = self.function._dependencies
         # Check if the entrypoint has an fc argument
         if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["fc"] = self
@@ -628,6 +703,9 @@ class FunctionCall(BaseModel):
         # Check if the hook has an session_state argument
         if "session_state" in signature(hook).parameters:
             hook_args["session_state"] = self.function._session_state
+        # Check if the hook has an dependencies argument
+        if "dependencies" in signature(hook).parameters:
+            hook_args["dependencies"] = self.function._dependencies
 
         if "name" in signature(hook).parameters:
             hook_args["name"] = name
@@ -965,3 +1043,4 @@ class ToolResult(BaseModel):
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
     audios: Optional[List[Audio]] = None
+    files: Optional[List[File]] = None
