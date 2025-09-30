@@ -53,6 +53,7 @@ class BaseAgentRunEvent(BaseRunOutputEvent):
     agent_id: str = ""
     agent_name: str = ""
     run_id: Optional[str] = None
+    parent_run_id: Optional[str] = None
     session_id: Optional[str] = None
 
     # Step context for workflow execution
