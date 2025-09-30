@@ -1591,9 +1591,9 @@ class Model(ABC):
                 non_async_generator_results.append(result)
 
         # Process async generators with real-time event streaming using asyncio.Queue
-        async_generator_outputs = {}
+        async_generator_outputs: Dict[int, Tuple[Any, str, Optional[BaseException]]] = {}
         event_queue: asyncio.Queue = asyncio.Queue()
-        active_generators_count = len(async_generator_results)
+        active_generators_count: int = len(async_generator_results)
 
         # Create background tasks for each async generator
         async def process_async_generator(result, generator_id):
