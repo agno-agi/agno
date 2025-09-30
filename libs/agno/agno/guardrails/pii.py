@@ -41,10 +41,10 @@ class PIIDetectionGuardrail(BaseGuardrail):
             self.pii_patterns["Email"] = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
         if enable_phone_check:
             self.pii_patterns["Phone"] = re.compile(r"\b\d{3}[\s.-]?\d{3}[\s.-]?\d{4}\b")
-        
+
         if custom_patterns:
             self.pii_patterns.update(custom_patterns)
-        
+
     def check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
         """Check for PII patterns in the input."""
         content = run_input.input_content_string()

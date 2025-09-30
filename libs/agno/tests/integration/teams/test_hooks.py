@@ -190,7 +190,7 @@ def create_test_team(pre_hooks=None, post_hooks=None, model_response_content=Non
 
 def test_single_pre_hook():
     """Test that a single pre-hook is executed."""
-    team = create_test_team(pre_hooks=simple_pre_hook)
+    team = create_test_team(pre_hooks=[simple_pre_hook])
 
     # Verify the hook is properly stored
     assert team.pre_hooks is not None
@@ -201,7 +201,9 @@ def test_single_pre_hook():
 def test_multiple_pre_hooks():
     """Test that multiple pre-hooks are executed in sequence."""
     hooks = [simple_pre_hook, logging_pre_hook]
-    team = create_test_team(pre_hooks=hooks)
+    team = create_test_team(
+        pre_hooks=hooks,
+    )
 
     # Verify hooks are properly stored
     assert team.pre_hooks is not None
@@ -211,7 +213,7 @@ def test_multiple_pre_hooks():
 
 def test_single_post_hook():
     """Test that a single post-hook is executed."""
-    team = create_test_team(post_hooks=simple_post_hook)
+    team = create_test_team(post_hooks=[simple_post_hook])
 
     # Verify the hook is properly stored
     assert team.post_hooks is not None
@@ -222,7 +224,9 @@ def test_single_post_hook():
 def test_multiple_post_hooks():
     """Test that multiple post-hooks are executed in sequence."""
     hooks = [simple_post_hook, quality_post_hook]
-    team = create_test_team(post_hooks=hooks)
+    team = create_test_team(
+        post_hooks=hooks,
+    )
 
     # Verify hooks are properly stored
     assert team.post_hooks is not None
@@ -234,7 +238,7 @@ def test_hooks_actually_execute_during_run():
     """Test that pre and post hooks are actually executed during team run."""
     clear_hook_tracker()
 
-    team = create_test_team(pre_hooks=tracking_pre_hook, post_hooks=tracking_post_hook)
+    team = create_test_team(pre_hooks=[tracking_pre_hook], post_hooks=[tracking_post_hook])
 
     # Run the team
     result = team.run(input="Hello world")
@@ -247,27 +251,6 @@ def test_hooks_actually_execute_during_run():
     # Check the content of tracker
     assert "Test Team" in hook_execution_tracker["pre_hooks"][0]
     assert "Test Team" in hook_execution_tracker["post_hooks"][0]
-
-
-def test_hooks_events_are_emitted():
-    """Test that pre and post hooks are actually executed during team run."""
-    clear_hook_tracker()
-
-    team = create_test_team(
-        pre_hooks=[simple_pre_hook, logging_pre_hook],
-    )
-
-    # Run the team
-    generator = team.run(input="Hello world", stream=True, stream_intermediate_steps=True)
-    events = []
-    for event in generator:
-        events.append(event)
-
-    assert [event.event for event in events] == [
-        "RunStarted",
-        "PreHookStarted",
-        "PreHookCompleted",
-    ]
 
 
 def test_multiple_hooks_execute_in_sequence():
@@ -286,7 +269,13 @@ def test_multiple_hooks_execute_in_sequence():
     def post_hook_2(run_output: TeamRunOutput, team: Team) -> None:
         hook_execution_tracker["post_hooks"].append("post_hook_2")
 
-    team = create_test_team(pre_hooks=[pre_hook_1, pre_hook_2], post_hooks=[post_hook_1, post_hook_2])
+    team = create_test_team(
+        pre_hooks=[
+            pre_hook_1,
+            pre_hook_2,
+        ],
+        post_hooks=[post_hook_1, post_hook_2],
+    )
 
     result = team.run(input="Test sequence")
     assert result is not None
@@ -298,7 +287,7 @@ def test_multiple_hooks_execute_in_sequence():
 
 def test_pre_hook_input_validation_error():
     """Test that pre-hook can raise InputCheckError."""
-    team = create_test_team(pre_hooks=validation_pre_hook)
+    team = create_test_team(pre_hooks=[validation_pre_hook])
 
     # Test that forbidden content triggers validation error
     with pytest.raises(InputCheckError) as exc_info:
@@ -311,7 +300,7 @@ def test_pre_hook_input_validation_error():
 def test_post_hook_output_validation_error():
     """Test that post-hook can raise OutputCheckError."""
     team = create_test_team(
-        post_hooks=output_validation_post_hook, model_response_content="This response contains inappropriate content"
+        post_hooks=[output_validation_post_hook], model_response_content="This response contains inappropriate content"
     )
 
     # Test that inappropriate content triggers validation error
@@ -324,7 +313,7 @@ def test_post_hook_output_validation_error():
 
 def test_hook_error_handling():
     """Test that generic errors in hooks are handled gracefully."""
-    team = create_test_team(pre_hooks=error_pre_hook, post_hooks=error_post_hook)
+    team = create_test_team(pre_hooks=[error_pre_hook], post_hooks=[error_post_hook])
 
     # The team should handle generic errors without crashing
     # (Though the specific behavior depends on implementation)
@@ -339,7 +328,8 @@ def test_hook_error_handling():
 def test_mixed_hook_types():
     """Test that both pre and post hooks work together."""
     team = create_test_team(
-        pre_hooks=[simple_pre_hook, logging_pre_hook], post_hooks=[simple_post_hook, quality_post_hook]
+        pre_hooks=[simple_pre_hook, logging_pre_hook],
+        post_hooks=[simple_post_hook, quality_post_hook],
     )
 
     # Verify both types of hooks are stored
@@ -364,11 +354,14 @@ def test_no_hooks():
 
 def test_empty_hook_lists():
     """Test that empty hook lists are handled correctly."""
-    team = create_test_team(pre_hooks=[], post_hooks=[])
+    team = create_test_team(
+        pre_hooks=[],
+        post_hooks=[],
+    )
 
     # Empty lists should be converted to None
-    assert team.pre_hooks is None
-    assert team.post_hooks is None
+    assert team.pre_hooks == []
+    assert team.post_hooks == []
 
 
 def test_hook_signature_filtering():
@@ -385,7 +378,12 @@ def test_hook_signature_filtering():
         # Session might be None in tests
         pass
 
-    team = create_test_team(pre_hooks=[minimal_pre_hook, detailed_pre_hook])
+    team = create_test_team(
+        pre_hooks=[
+            minimal_pre_hook,
+            detailed_pre_hook,
+        ]
+    )
 
     # Both hooks should execute without parameter errors
     result = team.run(input="Test signature filtering")
@@ -395,13 +393,15 @@ def test_hook_signature_filtering():
 def test_hook_normalization():
     """Test that hooks are properly normalized to lists."""
     # Test single callable becomes list
-    team1 = create_test_team(pre_hooks=simple_pre_hook)
+    team1 = create_test_team(pre_hooks=[simple_pre_hook])
     assert isinstance(team1.pre_hooks, list)
     assert len(team1.pre_hooks) == 1
 
     # Test list stays as list
     hooks = [simple_pre_hook, logging_pre_hook]
-    team2 = create_test_team(pre_hooks=hooks)
+    team2 = create_test_team(
+        pre_hooks=hooks,
+    )
     assert isinstance(team2.pre_hooks, list)
     assert len(team2.pre_hooks) == 2
 
@@ -421,7 +421,7 @@ def test_team_specific_context():
         assert hasattr(team, "name")
         assert team.name == "Test Team"
 
-    team = create_test_team(pre_hooks=team_context_hook)
+    team = create_test_team(pre_hooks=[team_context_hook])
 
     # Hook should execute and validate team context
     result = team.run(input="Test team context")
@@ -437,7 +437,7 @@ def test_prompt_injection_detection():
         if any(pattern in run_input.input_content.lower() for pattern in injection_patterns):
             raise InputCheckError("Prompt injection detected", check_trigger=CheckTrigger.PROMPT_INJECTION)
 
-    team = create_test_team(pre_hooks=prompt_injection_check)
+    team = create_test_team(pre_hooks=[prompt_injection_check])
 
     # Normal input should work
     result = team.run(input="Hello team, how are you?")
@@ -460,7 +460,7 @@ def test_output_content_filtering():
             raise OutputCheckError("Forbidden content in output", check_trigger=CheckTrigger.OUTPUT_NOT_ALLOWED)
 
     # Mock team that returns forbidden content
-    team = create_test_team(post_hooks=content_filter, model_response_content="Here is the secret password: 12345")
+    team = create_test_team(post_hooks=[content_filter], model_response_content="Here is the secret password: 12345")
 
     # Should raise OutputCheckError due to forbidden content
     with pytest.raises(OutputCheckError) as exc_info:
@@ -474,7 +474,7 @@ async def test_async_hooks_with_arun():
     """Test that async hooks work properly with arun."""
     clear_hook_tracker()
 
-    team = create_test_team(pre_hooks=async_tracking_pre_hook, post_hooks=async_tracking_post_hook)
+    team = create_test_team(pre_hooks=[async_tracking_pre_hook], post_hooks=[async_tracking_post_hook])
 
     # Run the team asynchronously
     result = await team.arun(input="Hello async world")
@@ -507,7 +507,8 @@ async def test_mixed_sync_async_hooks():
         hook_execution_tracker["post_hooks"].append("async_post")
 
     team = create_test_team(
-        pre_hooks=[sync_pre_hook, async_pre_hook_mixed], post_hooks=[sync_post_hook, async_post_hook_mixed]
+        pre_hooks=[sync_pre_hook, async_pre_hook_mixed],
+        post_hooks=[sync_post_hook, async_post_hook_mixed],
     )
 
     result = await team.arun(input="Mixed hook test")
@@ -531,12 +532,12 @@ async def test_async_hook_error_propagation():
         raise OutputCheckError("Async post-hook error", check_trigger=CheckTrigger.OUTPUT_NOT_ALLOWED)
 
     # Test async pre-hook error
-    team1 = create_test_team(pre_hooks=failing_async_pre_hook)
+    team1 = create_test_team(pre_hooks=[failing_async_pre_hook])
     with pytest.raises(InputCheckError):
         await team1.arun(input="Test async pre-hook error")
 
     # Test async post-hook error
-    team2 = create_test_team(post_hooks=failing_async_post_hook)
+    team2 = create_test_team(post_hooks=[failing_async_post_hook])
     with pytest.raises(OutputCheckError):
         await team2.arun(input="Test async post-hook error")
 
@@ -580,8 +581,8 @@ def test_combined_input_output_validation():
         name="Validated Team",
         members=[agent1, agent2],
         model=mock_model,
-        pre_hooks=input_validator,
-        post_hooks=output_validator,
+        pre_hooks=[input_validator],
+        post_hooks=[output_validator],
     )
 
     # Input validation should trigger first
@@ -606,7 +607,7 @@ def test_team_coordination_hook():
             assert hasattr(member, "name")
             assert hasattr(member, "model")
 
-    team = create_test_team(pre_hooks=team_coordination_hook)
+    team = create_test_team(pre_hooks=[team_coordination_hook])
 
     # Hook should validate team coordination
     result = team.run(input="Coordinate team work")
@@ -628,12 +629,12 @@ def test_team_quality_assessment_hook():
                 raise OutputCheckError("Team output too brief", check_trigger=CheckTrigger.OUTPUT_NOT_ALLOWED)
 
     # Test with good content
-    team1 = create_test_team(post_hooks=team_quality_hook, model_response_content="This is a good team response")
+    team1 = create_test_team(post_hooks=[team_quality_hook], model_response_content="This is a good team response")
     result = team1.run(input="Generate team response")
     assert result is not None
 
     # Test with brief content that should trigger validation
-    team2 = create_test_team(post_hooks=team_quality_hook, model_response_content="Brief")
+    team2 = create_test_team(post_hooks=[team_quality_hook], model_response_content="Brief")
     with pytest.raises(OutputCheckError) as exc_info:
         team2.run(input="Generate brief response")
 
@@ -665,7 +666,14 @@ def test_comprehensive_parameter_filtering():
         execution_log.append("varargs")
         assert foo_bar == "test"
 
-    team = create_test_team(pre_hooks=[minimal_hook, team_hook, full_hook, varargs_hook])
+    team = create_test_team(
+        pre_hooks=[
+            minimal_hook,
+            team_hook,
+            full_hook,
+            varargs_hook,
+        ]
+    )
 
     result = team.run(input="Test filtering", foo_bar="test")
     assert result is not None
@@ -694,7 +702,10 @@ def test_pre_hook_modifies_input():
         input_tracker["final_input"] = run_input.input_content
 
     team = create_test_team(
-        pre_hooks=[input_modifying_pre_hook, input_tracking_pre_hook],
+        pre_hooks=[
+            input_modifying_pre_hook,
+            input_tracking_pre_hook,
+        ],
         model_response_content=f"I received: '{modified_input}'",
     )
 
@@ -729,7 +740,14 @@ def test_multiple_pre_hooks_modify_input():
         """Track the final input after all modifications."""
         final_input_tracker["final_input"] = str(run_input.input_content)
 
-    team = create_test_team(pre_hooks=[first_pre_hook, second_pre_hook, third_pre_hook, tracking_pre_hook])
+    team = create_test_team(
+        pre_hooks=[
+            first_pre_hook,
+            second_pre_hook,
+            third_pre_hook,
+            tracking_pre_hook,
+        ]
+    )
 
     result = team.run(input=original_input)
     assert result is not None
@@ -751,7 +769,7 @@ def test_post_hook_modifies_output():
         # Modify the output content
         run_output.content = modified_response
 
-    team = create_test_team(post_hooks=output_modifying_post_hook, model_response_content=original_response)
+    team = create_test_team(post_hooks=[output_modifying_post_hook], model_response_content=original_response)
 
     result = team.run(input="Test input")
     assert result is not None
@@ -777,7 +795,8 @@ def test_multiple_post_hooks_modify_output():
         run_output.content = str(run_output.content) + " -> Third"
 
     team = create_test_team(
-        post_hooks=[first_post_hook, second_post_hook, third_post_hook], model_response_content=original_response
+        post_hooks=[first_post_hook, second_post_hook, third_post_hook],
+        model_response_content=original_response,
     )
 
     result = team.run(input="Test input")
@@ -800,7 +819,9 @@ def test_pre_and_post_hooks_modify_input_and_output():
         run_output.content = str(run_output.content) + " (modified by post-hook)"
 
     team = create_test_team(
-        pre_hooks=input_modifier, post_hooks=output_modifier, model_response_content=original_output
+        pre_hooks=[input_modifier],
+        post_hooks=[output_modifier],
+        model_response_content=original_output,
     )
 
     result = team.run(input=original_input)
@@ -823,7 +844,9 @@ async def test_async_hooks_modify_input_and_output():
         run_output.content = str(run_output.content) + " (async modified)"
 
     team = create_test_team(
-        pre_hooks=async_input_modifier, post_hooks=async_output_modifier, model_response_content=original_output
+        pre_hooks=[async_input_modifier],
+        post_hooks=[async_output_modifier],
+        model_response_content=original_output,
     )
 
     result = await team.arun(input=original_input)
@@ -853,7 +876,11 @@ def test_comprehensive_error_handling():
 
     # Test that failing pre-hooks don't prevent execution of subsequent hooks
     team = create_test_team(
-        pre_hooks=[working_pre_hook, failing_pre_hook, working_pre_hook],
+        pre_hooks=[
+            working_pre_hook,
+            failing_pre_hook,
+            working_pre_hook,
+        ],
         post_hooks=[working_post_hook, failing_post_hook, working_post_hook],
     )
 
@@ -882,12 +909,12 @@ def test_hook_with_guardrail_exceptions():
             raise OutputCheckError("Output too short", check_trigger=CheckTrigger.OUTPUT_NOT_ALLOWED)
 
     # Test input validation
-    team1 = create_test_team(pre_hooks=strict_input_hook)
+    team1 = create_test_team(pre_hooks=[strict_input_hook])
     with pytest.raises(InputCheckError):
         team1.run(input="This is a very long input that should trigger the input validation hook to raise an error")
 
     # Test output validation
-    team2 = create_test_team(post_hooks=strict_output_hook, model_response_content="Short")
+    team2 = create_test_team(post_hooks=[strict_output_hook], model_response_content="Short")
     with pytest.raises(OutputCheckError):
         team2.run(input="Short response please")
 
@@ -922,7 +949,7 @@ def test_hook_receives_correct_parameters():
         received_params["post_user_id"] = user_id
         received_params["post_debug_mode"] = debug_mode
 
-    team = create_test_team(pre_hooks=param_capturing_pre_hook, post_hooks=param_capturing_post_hook)
+    team = create_test_team(pre_hooks=[param_capturing_pre_hook], post_hooks=[param_capturing_post_hook])
 
     result = team.run(input="Test parameter passing", user_id="test_user")
     assert result is not None

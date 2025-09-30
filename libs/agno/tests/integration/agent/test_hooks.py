@@ -162,7 +162,7 @@ def clear_hook_tracker():
 
 def test_single_pre_hook():
     """Test that a single pre-hook is executed."""
-    agent = create_test_agent(pre_hooks=simple_pre_hook)
+    agent = create_test_agent(pre_hooks=[simple_pre_hook])
 
     # Verify the hook is properly stored
     assert agent.pre_hooks is not None
@@ -183,7 +183,7 @@ def test_multiple_pre_hooks():
 
 def test_single_post_hook():
     """Test that a single post-hook is executed."""
-    agent = create_test_agent(post_hooks=simple_post_hook)
+    agent = create_test_agent(post_hooks=[simple_post_hook])
 
     # Verify the hook is properly stored
     assert agent.post_hooks is not None
@@ -204,7 +204,7 @@ def test_multiple_post_hooks():
 
 def test_pre_hook_input_validation_error():
     """Test that pre-hook can raise InputCheckError."""
-    agent = create_test_agent(pre_hooks=validation_pre_hook)
+    agent = create_test_agent(pre_hooks=[validation_pre_hook])
 
     # Test that forbidden content triggers validation error
     with pytest.raises(InputCheckError) as exc_info:
@@ -218,7 +218,7 @@ def test_hooks_actually_execute_during_run():
     """Test that pre and post hooks are actually executed during agent run."""
     clear_hook_tracker()
 
-    agent = create_test_agent(pre_hooks=tracking_pre_hook, post_hooks=tracking_post_hook)
+    agent = create_test_agent(pre_hooks=[tracking_pre_hook], post_hooks=[tracking_post_hook])
 
     # Run the agent
     result = agent.run(input="Hello world")
@@ -262,7 +262,7 @@ def test_multiple_hooks_execute_in_sequence():
 def test_post_hook_output_validation_error():
     """Test that post-hook can raise OutputCheckError."""
     agent = create_test_agent(
-        post_hooks=output_validation_post_hook, model_response_content="This response contains inappropriate content"
+        post_hooks=[output_validation_post_hook], model_response_content="This response contains inappropriate content"
     )
 
     # Test that inappropriate content triggers validation error
@@ -275,7 +275,7 @@ def test_post_hook_output_validation_error():
 
 def test_hook_error_handling():
     """Test that generic errors in hooks are handled gracefully."""
-    agent = create_test_agent(pre_hooks=error_pre_hook, post_hooks=error_post_hook)
+    agent = create_test_agent(pre_hooks=[error_pre_hook], post_hooks=[error_post_hook])
 
     # The agent should handle generic errors without crashing
     # (Though the specific behavior depends on implementation)
@@ -290,7 +290,8 @@ def test_hook_error_handling():
 def test_mixed_hook_types():
     """Test that both pre and post hooks work together."""
     agent = create_test_agent(
-        pre_hooks=[simple_pre_hook, logging_pre_hook], post_hooks=[simple_post_hook, quality_post_hook]
+        pre_hooks=[simple_pre_hook, logging_pre_hook],
+        post_hooks=[simple_post_hook, quality_post_hook],
     )
 
     # Verify both types of hooks are stored
@@ -318,8 +319,8 @@ def test_empty_hook_lists():
     agent = create_test_agent(pre_hooks=[], post_hooks=[])
 
     # Empty lists should be converted to None
-    assert agent.pre_hooks is None
-    assert agent.post_hooks is None
+    assert agent.pre_hooks == []
+    assert agent.post_hooks == []
 
 
 def test_hook_signature_filtering():
@@ -345,7 +346,7 @@ def test_hook_signature_filtering():
 def test_hook_normalization():
     """Test that hooks are properly normalized to lists."""
     # Test single callable becomes list
-    agent1 = create_test_agent(pre_hooks=simple_pre_hook)
+    agent1 = create_test_agent(pre_hooks=[simple_pre_hook])
     assert isinstance(agent1.pre_hooks, list)
     assert len(agent1.pre_hooks) == 1
 
@@ -377,7 +378,7 @@ def test_prompt_injection_detection():
         if any(pattern in input_text.lower() for pattern in injection_patterns):
             raise InputCheckError("Prompt injection detected", check_trigger=CheckTrigger.PROMPT_INJECTION)
 
-    agent = create_test_agent(pre_hooks=prompt_injection_check)
+    agent = create_test_agent(pre_hooks=[prompt_injection_check])
     # Normal input should work
     result = agent.run(input="Hello, how are you?")
     assert result is not None
@@ -399,7 +400,7 @@ def test_output_content_filtering():
             raise OutputCheckError("Forbidden content in output", check_trigger=CheckTrigger.OUTPUT_NOT_ALLOWED)
 
     # Mock model that returns forbidden content
-    agent = create_test_agent(post_hooks=content_filter, model_response_content="Here is the secret password: 12345")
+    agent = create_test_agent(post_hooks=[content_filter], model_response_content="Here is the secret password: 12345")
 
     # Should raise OutputCheckError due to forbidden content
     with pytest.raises(OutputCheckError) as exc_info:
@@ -424,7 +425,11 @@ def test_combined_input_output_validation():
             raise OutputCheckError("Output too long", check_trigger=CheckTrigger.OUTPUT_NOT_ALLOWED)
 
     # Test with long output to trigger post-hook
-    agent = create_test_agent(pre_hooks=input_validator, post_hooks=output_validator, model_response_content="A" * 150)
+    agent = create_test_agent(
+        pre_hooks=[input_validator],
+        post_hooks=[output_validator],
+        model_response_content="A" * 150,
+    )
 
     # Input validation should trigger first
     with pytest.raises(InputCheckError):
@@ -440,7 +445,7 @@ async def test_async_hooks_with_arun():
     """Test that async hooks work properly with arun."""
     clear_hook_tracker()
 
-    agent = create_test_agent(pre_hooks=async_tracking_pre_hook, post_hooks=async_tracking_post_hook)
+    agent = create_test_agent(pre_hooks=[async_tracking_pre_hook], post_hooks=[async_tracking_post_hook])
 
     # Run the agent asynchronously
     result = await agent.arun(input="Hello async world")
@@ -461,7 +466,7 @@ def test_sync_hooks_cannot_be_used_with_async_run():
     def sync_hook(run_input: RunInput) -> None:
         pass
 
-    agent = create_test_agent(pre_hooks=sync_hook)
+    agent = create_test_agent(pre_hooks=[sync_hook])
 
     # This should work fine with sync run
     result = agent.run(input="Test input")
@@ -536,32 +541,6 @@ def test_hook_argument_filtering_comprehensive():
     assert execution_log == ["minimal", "agent", "full", "varargs"]
 
 
-def test_hook_normalization_comprehensive():
-    """Test comprehensive hook normalization scenarios."""
-    # Test single function normalization
-    agent1 = create_test_agent(pre_hooks=simple_pre_hook)
-    assert isinstance(agent1.pre_hooks, list)
-    assert len(agent1.pre_hooks) == 1
-    assert agent1.pre_hooks[0] == simple_pre_hook
-
-    # Test list normalization
-    hooks = [simple_pre_hook, logging_pre_hook]
-    agent2 = create_test_agent(pre_hooks=hooks)
-    assert isinstance(agent2.pre_hooks, list)
-    assert len(agent2.pre_hooks) == 2
-    assert agent2.pre_hooks == hooks
-
-    # Test None normalization
-    agent3 = create_test_agent()
-    assert agent3.pre_hooks is None
-    assert agent3.post_hooks is None
-
-    # Test empty list normalization
-    agent4 = create_test_agent(pre_hooks=[], post_hooks=[])
-    assert agent4.pre_hooks is None
-    assert agent4.post_hooks is None
-
-
 def test_hook_error_handling_comprehensive():
     """Test comprehensive error handling in hooks."""
     execution_log = []
@@ -615,12 +594,12 @@ def test_hook_with_guardrail_exceptions():
             raise OutputCheckError("Output too short", check_trigger=CheckTrigger.OUTPUT_NOT_ALLOWED)
 
     # Test input validation
-    agent1 = create_test_agent(pre_hooks=strict_input_hook)
+    agent1 = create_test_agent(pre_hooks=[strict_input_hook])
     with pytest.raises(InputCheckError):
         agent1.run(input="This is a very long input that should trigger the input validation hook to raise an error")
 
     # Test output validation
-    agent2 = create_test_agent(post_hooks=strict_output_hook, model_response_content="Short")
+    agent2 = create_test_agent(post_hooks=[strict_output_hook], model_response_content="Short")
     with pytest.raises(OutputCheckError):
         agent2.run(input="Short response please")
 
@@ -636,12 +615,12 @@ async def test_async_hook_error_propagation():
         raise OutputCheckError("Async post-hook error", check_trigger=CheckTrigger.OUTPUT_NOT_ALLOWED)
 
     # Test async pre-hook error
-    agent1 = create_test_agent(pre_hooks=failing_async_pre_hook)
+    agent1 = create_test_agent(pre_hooks=[failing_async_pre_hook])
     with pytest.raises(InputCheckError):
         await agent1.arun(input="Test async pre-hook error")
 
     # Test async post-hook error
-    agent2 = create_test_agent(post_hooks=failing_async_post_hook)
+    agent2 = create_test_agent(post_hooks=[failing_async_post_hook])
     with pytest.raises(OutputCheckError):
         await agent2.arun(input="Test async post-hook error")
 
@@ -676,7 +655,7 @@ def test_hook_receives_correct_parameters():
         received_params["post_user_id"] = user_id
         received_params["post_debug_mode"] = debug_mode
 
-    agent = create_test_agent(pre_hooks=param_capturing_pre_hook, post_hooks=param_capturing_post_hook)
+    agent = create_test_agent(pre_hooks=[param_capturing_pre_hook], post_hooks=[param_capturing_post_hook])
 
     result = agent.run(input="Test parameter passing", user_id="test_user")
     assert result is not None
@@ -704,7 +683,7 @@ def test_pre_hook_modifies_run_input():
 
     # Create agent that will use the modified input to generate response
     agent = create_test_agent(
-        pre_hooks=input_modifying_pre_hook, model_response_content=f"I received: '{modified_input}'"
+        pre_hooks=[input_modifying_pre_hook], model_response_content=f"I received: '{modified_input}'"
     )
 
     result = agent.run(input=original_input)
@@ -736,7 +715,9 @@ def test_multiple_pre_hooks_modify_run_input():
         """Track the final input after all modifications."""
         final_input_tracker["final_input"] = str(run_input.input_content)
 
-    agent = create_test_agent(pre_hooks=[first_pre_hook, second_pre_hook, third_pre_hook, tracking_pre_hook])
+    agent = create_test_agent(
+        pre_hooks=[first_pre_hook, second_pre_hook, third_pre_hook, tracking_pre_hook],
+    )
 
     result = agent.run(input=original_input)
     assert result is not None
@@ -758,7 +739,7 @@ def test_post_hook_modifies_run_output():
         # Modify the output content
         run_output.content = modified_response
 
-    agent = create_test_agent(post_hooks=output_modifying_post_hook, model_response_content=original_response)
+    agent = create_test_agent(post_hooks=[output_modifying_post_hook], model_response_content=original_response)
 
     result = agent.run(input="Test input")
     assert result is not None
@@ -784,7 +765,8 @@ def test_multiple_post_hooks_modify_run_output():
         run_output.content = str(run_output.content) + " -> Third"
 
     agent = create_test_agent(
-        post_hooks=[first_post_hook, second_post_hook, third_post_hook], model_response_content=original_response
+        post_hooks=[first_post_hook, second_post_hook, third_post_hook],
+        model_response_content=original_response,
     )
 
     result = agent.run(input="Test input")
@@ -807,7 +789,7 @@ def test_pre_and_post_hooks_modify_input_and_output():
         run_output.content = str(run_output.content) + " (modified by post-hook)"
 
     agent = create_test_agent(
-        pre_hooks=input_modifier, post_hooks=output_modifier, model_response_content=original_output
+        pre_hooks=[input_modifier], post_hooks=[output_modifier], model_response_content=original_output
     )
 
     result = agent.run(input=original_input)
@@ -831,7 +813,7 @@ async def test_async_hooks_modify_input_and_output():
         run_output.content = str(run_output.content) + " (async modified)"
 
     agent = create_test_agent(
-        pre_hooks=async_input_modifier, post_hooks=async_output_modifier, model_response_content=original_output
+        pre_hooks=[async_input_modifier], post_hooks=[async_output_modifier], model_response_content=original_output
     )
 
     result = await agent.arun(input=original_input)

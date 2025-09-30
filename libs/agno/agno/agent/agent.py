@@ -814,8 +814,6 @@ class Agent:
             )
             # Consume the generator without yielding
             deque(pre_hook_iterator, maxlen=0)
-            # Grab updated run input
-            run_response.input = run_input
 
         self._determine_tools_for_model(
             model=self.model,
@@ -997,9 +995,6 @@ class Agent:
             )
             for event in pre_hook_iterator:
                 yield event
-
-            # Grab updated run input
-            run_response.input = run_input
 
         self._determine_tools_for_model(
             model=self.model,
@@ -1516,8 +1511,6 @@ class Agent:
             # Consume the async iterator without yielding
             async for _ in pre_hook_iterator:
                 pass
-            # Grab updated run input
-            run_response.input = run_input
 
         self._determine_tools_for_model(
             model=self.model,
@@ -1698,8 +1691,6 @@ class Agent:
             )
             async for event in pre_hook_iterator:
                 yield event
-            # Grab updated run input
-            run_response.input = run_input
 
         self._determine_tools_for_model(
             model=self.model,
@@ -3016,6 +3007,9 @@ class Agent:
                 # Reset global log mode incase an agent in the pre-hook changed it
                 self._set_debug(debug_mode=debug_mode)
 
+        # Update the input on the run_response
+        run_response.input = run_input
+
     async def _aexecute_pre_hooks(
         self,
         hooks: Optional[List[Callable[..., Any]]],
@@ -3072,6 +3066,9 @@ class Agent:
             finally:
                 # Reset global log mode incase an agent in the pre-hook changed it
                 self._set_debug(debug_mode=debug_mode)
+
+        # Update the input on the run_response
+        run_response.input = run_input
 
     def _execute_post_hooks(
         self,

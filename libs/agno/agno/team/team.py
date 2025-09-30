@@ -883,6 +883,12 @@ class Team:
             except Exception as e:
                 log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
                 log_exception(e)
+            finally:
+                # Reset global log mode incase an agent in the pre-hook changed it
+                self._set_debug(debug_mode=debug_mode)
+
+        # Update the input on the run_response
+        run_response.input = run_input
 
     async def _aexecute_pre_hooks(
         self,
@@ -937,6 +943,12 @@ class Team:
             except Exception as e:
                 log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
                 log_exception(e)
+            finally:
+                # Reset global log mode incase an agent in the pre-hook changed it
+                self._set_debug(debug_mode=debug_mode)
+
+        # Update the input on the run_response
+        run_response.input = run_input
 
     def _execute_post_hooks(
         self,
@@ -1063,8 +1075,6 @@ class Team:
             )
             # Consume the generator without yielding
             deque(pre_hook_iterator, maxlen=0)
-            # Grab updated run input
-            run_response.input = run_input
 
         # Initialize team run context
         team_run_context: Dict[str, Any] = {}
@@ -1248,8 +1258,6 @@ class Team:
             )
             for pre_hook_event in pre_hook_iterator:
                 yield pre_hook_event
-            # Grab updated run input
-            run_response.input = run_input
 
         # Initialize team run context
         team_run_context: Dict[str, Any] = {}
@@ -1795,8 +1803,6 @@ class Team:
             # Consume the async iterator without yielding
             async for _ in pre_hook_iterator:
                 pass
-            # Grab updated run input
-            run_response.input = run_input
 
         # Initialize the team run context
         team_run_context: Dict[str, Any] = {}
@@ -1983,8 +1989,6 @@ class Team:
             )
             async for pre_hook_event in pre_hook_iterator:
                 yield pre_hook_event
-            # Grab updated run input
-            run_response.input = run_input
 
         # Initialize the team run context
         team_run_context: Dict[str, Any] = {}
