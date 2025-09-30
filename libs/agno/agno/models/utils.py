@@ -3,7 +3,7 @@ from typing import Union
 from agno.models.base import Model
 
 
-def create_model(model: Union[Model, str]) -> Model:
+def get_model_from_string(model: Union[Model, str]) -> Model:
     """Create a model instance from either a Model object or model string."""
     if isinstance(model, Model):
         return model
@@ -44,19 +44,11 @@ def create_model(model: Union[Model, str]) -> Model:
                 from agno.models.aws import AwsBedrock
 
                 return AwsBedrock(id=model_id)
-            elif provider == "aws-bedrock":
-                from agno.models.aws import AwsBedrock
-
-                return AwsBedrock(id=model_id)
             elif provider == "aws-claude":
-                from agno.models.aws import Claude
+                from agno.models.aws import Claude as AWSClaude
 
-                return Claude(id=model_id)
+                return AWSClaude(id=model_id)
             elif provider == "azure":
-                from agno.models.azure import AzureOpenAI
-
-                return AzureOpenAI(id=model_id)
-            elif provider == "azure-openai":
                 from agno.models.azure import AzureOpenAI
 
                 return AzureOpenAI(id=model_id)
@@ -88,10 +80,6 @@ def create_model(model: Union[Model, str]) -> Model:
                 from agno.models.openrouter import OpenRouter
 
                 return OpenRouter(id=model_id)
-            elif provider == "meta":
-                from agno.models.meta import Llama
-
-                return Llama(id=model_id)
             elif provider == "llama":
                 from agno.models.meta import Llama
 
@@ -178,80 +166,3 @@ def create_model(model: Union[Model, str]) -> Model:
             raise ImportError(f"Install dependencies for {provider}: {e}") from e
 
     raise TypeError(f"Model must be Model instance or string, got {type(model)}")
-
-
-def get_model_string(model: Model) -> str:
-    """Generate model string from model instance."""
-    class_name = model.__class__.__name__
-
-    # Map class names to provider keys (mirrors create_model logic)
-    if class_name == "OpenAIChat":
-        return f"openai:{model.id}"
-    elif class_name == "Claude":
-        return f"anthropic:{model.id}"
-    elif class_name == "Gemini":
-        return f"google:{model.id}"
-    elif class_name == "Groq":
-        return f"groq:{model.id}"
-    elif class_name == "Ollama":
-        return f"ollama:{model.id}"
-    elif class_name == "AwsBedrock":
-        return f"aws:{model.id}"
-    elif class_name == "AzureOpenAI":
-        return f"azure:{model.id}"
-    elif class_name == "MistralChat":
-        return f"mistral:{model.id}"
-    elif class_name == "Cohere":
-        return f"cohere:{model.id}"
-    elif class_name == "Together":
-        return f"together:{model.id}"
-    elif class_name == "Fireworks":
-        return f"fireworks:{model.id}"
-    elif class_name == "Perplexity":
-        return f"perplexity:{model.id}"
-    elif class_name == "OpenRouter":
-        return f"openrouter:{model.id}"
-    elif class_name == "Llama":
-        return f"llama:{model.id}"
-    elif class_name == "LlamaOpenAI":
-        return f"llama-openai:{model.id}"
-    elif class_name == "Cerebras":
-        return f"cerebras:{model.id}"
-    elif class_name == "xAI":
-        return f"xai:{model.id}"
-    elif class_name == "DeepSeek":
-        return f"deepseek:{model.id}"
-    elif class_name == "Nvidia":
-        return f"nvidia:{model.id}"
-    elif class_name == "Sambanova":
-        return f"sambanova:{model.id}"
-    elif class_name == "DeepInfra":
-        return f"deepinfra:{model.id}"
-    elif class_name == "Nebius":
-        return f"nebius:{model.id}"
-    elif class_name == "InternLM":
-        return f"internlm:{model.id}"
-    elif class_name == "DashScope":
-        return f"dashscope:{model.id}"
-    elif class_name == "HuggingFace":
-        return f"huggingface:{model.id}"
-    elif class_name == "WatsonX":
-        return f"ibm:{model.id}"
-    elif class_name == "LiteLLM":
-        return f"litellm:{model.id}"
-    elif class_name == "LMStudio":
-        return f"lmstudio:{model.id}"
-    elif class_name == "Portkey":
-        return f"portkey:{model.id}"
-    elif class_name == "VLLM":
-        return f"vllm:{model.id}"
-    elif class_name == "V0":
-        return f"vercel:{model.id}"
-    elif class_name == "LangDB":
-        return f"langdb:{model.id}"
-    elif class_name == "AIMLAPI":
-        return f"aimlapi:{model.id}"
-    else:
-        # Fallback for custom models
-        provider = getattr(model, "provider", class_name.lower())
-        return f"{provider}:{model.id}"

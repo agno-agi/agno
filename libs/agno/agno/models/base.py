@@ -145,19 +145,6 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
-    @property
-    def model_string(self) -> str:
-        """
-        Returns the model string representation in format 'provider:model_id'.
-        """
-        try:
-            from agno.models.utils import get_model_string
-
-            return get_model_string(self)
-        except ImportError:
-            provider = getattr(self, "provider", self.__class__.__name__.lower())
-            return f"{provider}:{self.id}"
-
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
         pass

@@ -12,7 +12,6 @@ from textwrap import dedent
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.openai import OpenAIChat
 from pydantic import BaseModel, Field
 
 
@@ -45,7 +44,7 @@ class MovieScript(BaseModel):
 
 # Agent that uses JSON mode
 json_mode_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model="openai:gpt-4o",
     description=dedent("""\
         You are an acclaimed Hollywood screenwriter known for creating unforgettable blockbusters! 🎬
         With the combined storytelling prowess of Christopher Nolan, Aaron Sorkin, and Quentin Tarantino,
@@ -84,7 +83,7 @@ json_mode_agent = Agent(
 
 # Agent that uses structured outputs
 structured_output_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model="openai:gpt-4o",
     description=dedent("""\
         You are an acclaimed Hollywood screenwriter known for creating unforgettable blockbusters! 🎬
         With the combined storytelling prowess of Christopher Nolan, Aaron Sorkin, and Quentin Tarantino,
