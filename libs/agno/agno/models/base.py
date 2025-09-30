@@ -1228,8 +1228,14 @@ class Model(ABC):
 
                         if function_call.function.show_result:
                             yield ModelResponse(content=item.content)
-
-                        if isinstance(item, CustomEvent):
+                    elif isinstance(item, CustomEvent):
+                        # Capture custom event content
+                        if item.content is not None:
+                            if isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                function_call_output += str(item.content)
+                        else:
                             function_call_output += str(item)
 
                     # Yield the event itself to bubble it up
@@ -1636,8 +1642,14 @@ class Model(ABC):
                             if function_call.function.show_result:
                                 yield ModelResponse(content=item.content)
                                 continue
-
-                            if isinstance(item, CustomEvent):
+                        elif isinstance(item, CustomEvent):
+                            # Capture custom event content
+                            if item.content is not None:
+                                if isinstance(item.content, BaseModel):
+                                    function_call_output += item.content.model_dump_json()
+                                else:
+                                    function_call_output += str(item.content)
+                            else:
                                 function_call_output += str(item)
 
                         # Yield the event itself to bubble it up
