@@ -7,6 +7,7 @@ from uuid import UUID
 from agno.db.base import SessionType
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.utils.log import log_warning
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -32,7 +33,6 @@ class CustomJSONEncoder(json.JSONEncoder):
                 f"Callable object {obj.__class__.__name__} is not JSON serializable and won't be stored in the database."
             )
             return None
-
         try:
             return super().default(obj)
 
