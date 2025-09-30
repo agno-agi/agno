@@ -51,6 +51,7 @@ class BaseTeamRunEvent(BaseRunOutputEvent):
     team_id: str = ""
     team_name: str = ""
     run_id: Optional[str] = None
+    parent_run_id: Optional[str] = None
     session_id: Optional[str] = None
 
     workflow_id: Optional[str] = None
