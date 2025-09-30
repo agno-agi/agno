@@ -9,7 +9,6 @@ from agno.media import Audio, Image, Video
 from agno.run.agent import RunOutput
 from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.team import TeamRunOutput
-from agno.utils.log import log_error
 
 if TYPE_CHECKING:
     from agno.workflow.types import StepOutput, WorkflowMetrics
