@@ -784,9 +784,17 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
+<<<<<<< HEAD
                 elif model_response and model_response.extra is not None:
+=======
+                else:
+                    try:
+                        extra = model_response.extra or {}
+                    except (UnboundLocalError, AttributeError):
+                        extra = {}
+>>>>>>> dd65138ef7038ace7453cbb7820746f32c6bab4f
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                        messages=messages, function_call_results=function_call_results, **extra
                     )
                 else:
                     self.format_function_call_results(
@@ -888,7 +896,7 @@ class Model(ABC):
             model_response = ModelResponse()
             if stream_model_response:
                 # Generate response
-                async for response in self.aprocess_response_stream(
+                async for model_response in self.aprocess_response_stream(
                     messages=messages,
                     assistant_message=assistant_message,
                     stream_data=stream_data,
@@ -897,7 +905,7 @@ class Model(ABC):
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
                 ):
-                    yield response
+                    yield model_response
 
                 # Populate assistant message from stream data
                 if stream_data.response_content:
@@ -956,7 +964,7 @@ class Model(ABC):
                     )
                 elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                        messages=messages, function_call_results=function_call_results, **extra
                     )
                 else:
                     self.format_function_call_results(
