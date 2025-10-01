@@ -715,6 +715,7 @@ class Model(ABC):
             assistant_message = Message(role=self.assistant_message_role)
             # Create assistant message and stream data
             stream_data = MessageData()
+            model_response = ModelResponse()
             if stream_model_response:
                 # Generate response
                 yield from self.process_response_stream(
@@ -744,7 +745,6 @@ class Model(ABC):
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
             else:
-                model_response = ModelResponse()
                 self._process_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
@@ -784,9 +784,13 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
-                else:
+                elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                    )
+                else:
+                    self.format_function_call_results(
+                        messages=messages, function_call_results=function_call_results
                     )
 
                 # Handle function call media
@@ -881,6 +885,7 @@ class Model(ABC):
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
             stream_data = MessageData()
+            model_response = ModelResponse()
             if stream_model_response:
                 # Generate response
                 async for response in self.aprocess_response_stream(
@@ -909,7 +914,6 @@ class Model(ABC):
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
             else:
-                model_response = ModelResponse()
                 await self._aprocess_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
@@ -950,9 +954,13 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
-                else:
+                elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                    )
+                else:
+                    self.format_function_call_results(
+                        messages=messages, function_call_results=function_call_results
                     )
 
                 # Handle function call media

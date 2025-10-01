@@ -80,7 +80,7 @@ def test_tool_use_with_structured_output():
         telemetry=False,
     )
 
-    response = agent.run("Research Python programming language and provide a summary")
+    response = agent.run("Research the latest trends in machine learning on the internet and provide a summary")
 
     # Verify structured output format (this is what matters for the bug fix)
     assert response.content is not None
@@ -111,7 +111,7 @@ def test_tool_use_with_structured_output_stream():
     )
 
     response_stream = agent.run(
-        "Research machine learning basics and provide a summary", stream=True, stream_intermediate_steps=True
+        "Research the latest trends in machine learning on the internet and provide a summary", stream=True, stream_intermediate_steps=True
     )
 
     responses = []
