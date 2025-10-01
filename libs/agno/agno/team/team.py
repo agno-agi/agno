@@ -1114,10 +1114,10 @@ class Team:
         # 2. Prepare run messages
         run_messages: RunMessages = self._get_run_messages(
             run_response=run_response,
-            input=run_input.input_content,
             session=session,
             session_state=session_state,
             user_id=user_id,
+            input_message=run_input.input_content,
             audio=run_input.audios,
             images=run_input.images,
             videos=run_input.videos,
@@ -1294,13 +1294,14 @@ class Team:
             add_dependencies_to_context=add_dependencies_to_context,
             metadata=metadata,
         )
+
         # 2. Prepare run messages
         run_messages: RunMessages = self._get_run_messages(
             run_response=run_response,
-            input=run_input.input_content,
             session=session,
             session_state=session_state,
             user_id=user_id,
+            input_message=run_input.input_content,
             audio=run_input.audios,
             images=run_input.images,
             videos=run_input.videos,
@@ -1650,26 +1651,6 @@ class Team:
 
             # Run the team
             try:
-                run_messages = self._get_run_messages(
-                    run_response=run_response,
-                    session=team_session,
-                    session_state=session_state,
-                    user_id=user_id,
-                    input_message=run_input.input_content,
-                    audio=run_input.audios,
-                    images=run_input.images,
-                    videos=run_input.videos,
-                    files=run_input.files,
-                    knowledge_filters=effective_filters,
-                    add_history_to_context=add_history,
-                    dependencies=run_dependencies,
-                    add_dependencies_to_context=add_dependencies,
-                    add_session_state_to_context=add_session_state,
-                    **kwargs,
-                )
-                if len(run_messages.messages) == 0:
-                    log_error("No messages to be sent to the model.")
-
                 if stream:
                     response_iterator = self._run_stream(
                         run_response=run_response,

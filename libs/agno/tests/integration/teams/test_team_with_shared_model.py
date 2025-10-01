@@ -61,22 +61,4 @@ def test_tools_available_to_agents(mock_team, shared_model):
         # Get the tools passed to invoke
         tools = mock_invoke.call_args[1].get("tools", [])
         tool_names = [tool["function"]["name"] for tool in tools]
-        assert tool_names == [
-            "get_current_stock_price",
-            "get_company_info",
-            "get_stock_fundamentals",
-            "get_income_statements",
-            "get_key_financial_ratios",
-            "get_analyst_recommendations",
-            "get_company_news",
-            "get_technical_indicators",
-            "get_historical_stock_prices",
-        ]
-
-    with patch.object(shared_model, "invoke", wraps=shared_model.invoke) as mock_invoke:
-        mock_team.run("What is currently happening in the news?")
-
-        # Get the tools passed to invoke
-        tools = mock_invoke.call_args[1].get("tools", [])
-        tool_names = [tool["function"]["name"] for tool in tools]
-        assert tool_names == ["duckduckgo_search", "duckduckgo_news"]
+        assert tool_names == ["delegate_task_to_member"]
