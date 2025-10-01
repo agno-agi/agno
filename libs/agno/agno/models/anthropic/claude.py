@@ -98,18 +98,8 @@ class Claude(Model):
         # Add additional client parameters
         if self.client_params is not None:
             client_params.update(self.client_params)
-
-        # Add beta header for context management if enabled
-        headers = self.default_headers.copy() if self.default_headers else {}
-        if self.context_management is not None:
-            beta_headers = headers.get("anthropic-beta", "").split(",") if headers.get("anthropic-beta") else []
-            if "context-management-2025-06-27" not in beta_headers:
-                beta_headers.append("context-management-2025-06-27")
-            headers["anthropic-beta"] = ",".join(h.strip() for h in beta_headers if h.strip())
-
-        if headers:
-            client_params["default_headers"] = headers
-
+        if self.default_headers is not None:
+            client_params["default_headers"] = self.default_headers
         return client_params
 
     def get_client(self) -> AnthropicClient:
@@ -516,9 +506,10 @@ class Claude(Model):
             model_response.response_usage = self._get_metrics(response.usage)
 
         # Capture context management information if present
-        if hasattr(response, "context_management") and response.context_management is not None:
+        context_management = getattr(response, "context_management", None)
+        if context_management is not None:
             model_response.extra = model_response.extra or {}
-            model_response.extra["context_management"] = response.context_management
+            model_response.extra["context_management"] = context_management
 
         return model_response
 
