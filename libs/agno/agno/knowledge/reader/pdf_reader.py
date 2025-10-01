@@ -398,7 +398,11 @@ class PDFImageReader(BasePDFReader):
 
         doc_name = self._get_doc_name(pdf, name)
         log_info(f"Reading: {doc_name}")
-        pdf_reader = DocumentReader(pdf)
+        try:
+            pdf_reader = DocumentReader(pdf)
+        except PdfStreamError as e:
+            logger.error(f"Error reading PDF: {e}")
+            return []
 
         # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
@@ -415,7 +419,12 @@ class PDFImageReader(BasePDFReader):
 
         doc_name = self._get_doc_name(pdf, name)
         log_info(f"Reading: {doc_name}")
-        pdf_reader = DocumentReader(pdf)
+
+        try:
+            pdf_reader = DocumentReader(pdf)
+        except PdfStreamError as e:
+            logger.error(f"Error reading PDF: {e}")
+            return []
 
         # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
