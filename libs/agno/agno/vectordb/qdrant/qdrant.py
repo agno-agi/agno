@@ -131,7 +131,8 @@ class Qdrant(VectorDb):
                 if fastembed_kwargs:
                     default_kwargs.update(fastembed_kwargs)
 
-                self.sparse_encoder = SparseTextEmbedding(**default_kwargs)
+                # Type ignore for mypy as SparseTextEmbedding constructor accepts flexible kwargs
+                self.sparse_encoder = SparseTextEmbedding(**default_kwargs)  # type: ignore
 
             except ImportError as e:
                 raise ImportError(
@@ -192,10 +193,12 @@ class Qdrant(VectorDb):
             # Configure vectors based on search type
             if self.search_type == SearchType.vector:
                 # Maintain backward compatibility with unnamed vectors
-                vectors_config = models.VectorParams(size=self.dimensions, distance=_distance)
+                vectors_config = models.VectorParams(size=self.dimensions or 1536, distance=_distance)
             else:
                 # Use named vectors for hybrid search
-                vectors_config = {self.dense_vector_name: models.VectorParams(size=self.dimensions, distance=_distance)}  # type: ignore
+                vectors_config = {
+                    self.dense_vector_name: models.VectorParams(size=self.dimensions or 1536, distance=_distance)
+                }  # type: ignore
 
             self.client.create_collection(
                 collection_name=self.collection,
@@ -220,10 +223,12 @@ class Qdrant(VectorDb):
             # Configure vectors based on search type
             if self.search_type == SearchType.vector:
                 # Maintain backward compatibility with unnamed vectors
-                vectors_config = models.VectorParams(size=self.dimensions, distance=_distance)
+                vectors_config = models.VectorParams(size=self.dimensions or 1536, distance=_distance)
             else:
                 # Use named vectors for hybrid search
-                vectors_config = {self.dense_vector_name: models.VectorParams(size=self.dimensions, distance=_distance)}  # type: ignore
+                vectors_config = {
+                    self.dense_vector_name: models.VectorParams(size=self.dimensions or 1536, distance=_distance)
+                }  # type: ignore
 
             await self.async_client.create_collection(
                 collection_name=self.collection,
@@ -281,7 +286,7 @@ class Qdrant(VectorDb):
             return len(scroll_result[0]) > 0
         return False
 
-    async def async_name_exists(self, name: str) -> bool:
+    async def async_name_exists(self, name: str) -> bool:  # type: ignore[override]
         """
         Asynchronously validates if a document with the given name exists in the collection.
 
@@ -341,7 +346,9 @@ class Qdrant(VectorDb):
                     vector[self.dense_vector_name] = document.embedding
 
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]:
-                    vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
+                    vector[self.sparse_vector_name] = next(
+                        iter(self.sparse_encoder.embed([document.content]))
+                    ).as_object()  # type: ignore
 
             # Create payload with document properties
             payload = {
@@ -363,7 +370,7 @@ class Qdrant(VectorDb):
             points.append(
                 models.PointStruct(
                     id=doc_id,
-                    vector=vector,
+                    vector=vector,  # type: ignore
                     payload=payload,
                 )
             )
@@ -384,26 +391,69 @@ class Qdrant(VectorDb):
         """
         log_debug(f"Inserting {len(documents)} documents asynchronously")
 
+        # Apply batch embedding when needed for vector or hybrid search
+        if self.search_type in [SearchType.vector, SearchType.hybrid]:
+            if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+                # Use batch embedding when enabled and supported
+                try:
+                    # Extract content from all documents
+                    doc_contents = [doc.content for doc in documents]
+
+                    # Get batch embeddings and usage
+                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                    # Process documents with pre-computed embeddings
+                    for j, doc in enumerate(documents):
+                        try:
+                            if j < len(embeddings):
+                                doc.embedding = embeddings[j]
+                                doc.usage = usages[j] if j < len(usages) else None
+                        except Exception as e:
+                            log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
+                except Exception as e:
+                    # Check if this is a rate limit error - don't fall back as it would make things worse
+                    error_str = str(e).lower()
+                    is_rate_limit = any(
+                        phrase in error_str
+                        for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                    )
+
+                    if is_rate_limit:
+                        log_error(f"Rate limit detected during batch embedding. {e}")
+                        raise e
+                    else:
+                        log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                        # Fall back to individual embedding
+                        for doc in documents:
+                            if self.search_type in [SearchType.vector, SearchType.hybrid]:
+                                doc.embed(embedder=self.embedder)
+            else:
+                # Use individual embedding
+                for doc in documents:
+                    if self.search_type in [SearchType.vector, SearchType.hybrid]:
+                        doc.embed(embedder=self.embedder)
+
         async def process_document(document):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
 
             if self.search_type == SearchType.vector:
                 # For vector search, maintain backward compatibility with unnamed vectors
-                document.embed(embedder=self.embedder)
-                vector = document.embedding
+                vector = document.embedding  # Already embedded above
             else:
                 # For other search types, use named vectors
                 vector = {}
                 if self.search_type in [SearchType.hybrid]:
-                    document.embed(embedder=self.embedder)
-                    vector[self.dense_vector_name] = document.embedding
+                    vector[self.dense_vector_name] = document.embedding  # Already embedded above
 
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]:
-                    vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
+                    vector[self.sparse_vector_name] = next(
+                        iter(self.sparse_encoder.embed([document.content]))
+                    ).as_object()  # type: ignore
 
             if self.search_type in [SearchType.keyword, SearchType.hybrid]:
-                vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
+                vector[self.sparse_vector_name] = next(iter(self.sparse_encoder.embed([document.content]))).as_object()
 
             # Create payload with document properties
             payload = {
@@ -423,9 +473,9 @@ class Qdrant(VectorDb):
                 payload["meta_data"].update(filters)
 
             log_debug(f"Inserted document asynchronously: {document.name} ({document.meta_data})")
-            return models.PointStruct(
+            return models.PointStruct(  # type: ignore
                 id=doc_id,
-                vector=vector,
+                vector=vector,  # type: ignore
                 payload=payload,
             )
 
@@ -501,12 +551,12 @@ class Qdrant(VectorDb):
         filters: Optional[Dict[str, Any]],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
-        sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+        sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = self.client.query_points(
             collection_name=self.collection,
             prefetch=[
                 models.Prefetch(
-                    query=models.SparseVector(**sparse_embedding),
+                    query=models.SparseVector(**sparse_embedding),  # type: ignore  # type: ignore
                     limit=limit,
                     using=self.sparse_vector_name,
                 ),
@@ -557,10 +607,10 @@ class Qdrant(VectorDb):
         limit: int,
         filters: Optional[Dict[str, Any]],
     ) -> List[models.ScoredPoint]:
-        sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+        sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = self.client.query_points(
             collection_name=self.collection,
-            query=models.SparseVector(**sparse_embedding),
+            query=models.SparseVector(**sparse_embedding),  # type: ignore
             with_vectors=True,
             with_payload=True,
             limit=limit,
@@ -606,10 +656,10 @@ class Qdrant(VectorDb):
         limit: int,
         filters: Optional[Dict[str, Any]],
     ) -> List[models.ScoredPoint]:
-        sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+        sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = await self.async_client.query_points(
             collection_name=self.collection,
-            query=models.SparseVector(**sparse_embedding),
+            query=models.SparseVector(**sparse_embedding),  # type: ignore
             with_vectors=True,
             with_payload=True,
             limit=limit,
@@ -625,12 +675,12 @@ class Qdrant(VectorDb):
         filters: Optional[Dict[str, Any]],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
-        sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+        sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = await self.async_client.query_points(
             collection_name=self.collection,
             prefetch=[
                 models.Prefetch(
-                    query=models.SparseVector(**sparse_embedding),
+                    query=models.SparseVector(**sparse_embedding),  # type: ignore  # type: ignore
                     limit=limit,
                     using=self.sparse_vector_name,
                 ),
@@ -689,7 +739,7 @@ class Qdrant(VectorDb):
                     filter_conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=value)))
 
             if filter_conditions:
-                return models.Filter(must=filter_conditions)
+                return models.Filter(must=filter_conditions)  # type: ignore
 
         return None
 
@@ -807,7 +857,7 @@ class Qdrant(VectorDb):
                 )
 
             # Create a filter that requires ALL metadata conditions to match
-            filter_condition = models.Filter(must=filter_conditions)
+            filter_condition = models.Filter(must=filter_conditions)  # type: ignore
 
             # First, count how many points will be deleted
             count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)

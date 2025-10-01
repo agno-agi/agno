@@ -756,7 +756,7 @@ class PostgresDb(BaseDb):
                     )
 
                 with self.Session() as sess, sess.begin():
-                    stmt = postgresql.insert(table)
+                    stmt: Any = postgresql.insert(table)
                     update_columns = {
                         col.name: stmt.excluded[col.name]
                         for col in table.columns
@@ -1263,13 +1263,15 @@ class PostgresDb(BaseDb):
             results: List[Union[UserMemory, Dict[str, Any]]] = []
 
             with self.Session() as sess, sess.begin():
-                stmt = postgresql.insert(table)
+                insert_stmt = postgresql.insert(table)
                 update_columns = {
-                    col.name: stmt.excluded[col.name]
+                    col.name: insert_stmt.excluded[col.name]
                     for col in table.columns
                     if col.name not in ["memory_id"]  # Don't update primary key
                 }
-                stmt = stmt.on_conflict_do_update(index_elements=["memory_id"], set_=update_columns).returning(table)
+                stmt = insert_stmt.on_conflict_do_update(index_elements=["memory_id"], set_=update_columns).returning(
+                    table
+                )
 
                 result = sess.execute(stmt, memory_records)
                 for row in result.fetchall():
