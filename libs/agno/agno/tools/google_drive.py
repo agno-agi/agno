@@ -35,7 +35,7 @@ How to Get These Credentials:
 
 5. Add auth redirect URI:
    - Go to https://console.cloud.google.com/auth/clients
-   - Add `http://localhost:54718/` as a recognized redirect URI
+   - Add `http://localhost:5050` as a recognized redirect URI OR with http://localhost:{PORT_NUMBER}
 
 
 6. Set up environment variables:
@@ -44,7 +44,8 @@ How to Get These Credentials:
    export GOOGLE_CLIENT_ID=your_client_id_here
    export GOOGLE_CLIENT_SECRET=your_client_secret_here
    export GOOGLE_PROJECT_ID=your_project_id_here
-   export GOOGLE_REDIRECT_URI=http://localhost:54718/  # Default value
+   export GOOGLE_REDIRECT_URI=http://localhost/  # Default value
+   export GOOGLE_AUTHENTICATION_PORT=5050  # Port for OAuth redirect
    ``
 ---
 
@@ -89,7 +90,7 @@ class GoogleDriveTools(Toolkit):
     # Default scopes for Google Drive API access
     DEFAULT_SCOPES = ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive.readonly"]
 
-    def __init__(self, creds: Optional[Credentials] = None, scopes: Optional[List[str]] = None, **kwargs):
+    def __init__(self, auth_port: int,creds: Optional[Credentials] = None, scopes: Optional[List[str]] = None, **kwargs):
         self.creds: Optional[Credentials] = creds
         self.service: Optional[Resource] = None
         self.scopes = scopes or []
@@ -97,6 +98,7 @@ class GoogleDriveTools(Toolkit):
         tools: List[Any] = [
             self.list_files,
         ]
+        
         super().__init__(name="google_drive_tools", tools=tools, **kwargs)
         if not self.scopes:
             # Add read permission by default
@@ -120,6 +122,7 @@ class GoogleDriveTools(Toolkit):
         client_id = getenv("GOOGLE_CLIENT_ID")
         client_secret = getenv("GOOGLE_CLIENT_SECRET")
         redirect_uri = getenv("GOOGLE_REDIRECT_URI", "http://localhost")
+        auth_port = getenv("GOOGLE_AUTHENTICATION_PORT")
         if not client_id or not client_secret:
             raise ValueError(
                 "Google Drive authentication failed: Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your environment variables."
@@ -136,7 +139,8 @@ class GoogleDriveTools(Toolkit):
             },
             self.scopes,
         )
-        self.creds = flow.run_local_server(port=0)
+        # The Dynamic Port allocation is not 100% reliable, hence using fixed port from env variable or default 54718
+        self.creds = flow.run_local_server(port=auth_port,redirect_uri_trusted=True)
 
     @authenticate
     def list_files(self, query: Optional[str] = None, page_size: int = 10) -> List[dict]:
