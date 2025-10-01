@@ -1694,8 +1694,6 @@ class Model(ABC):
 
             updated_session_state = function_execution_result.updated_session_state
 
-            print(f"Updated session state: {updated_session_state}")
-
             # Handle AgentRunException
             if isinstance(function_call_success, AgentRunException):
                 a_exc = function_call_success

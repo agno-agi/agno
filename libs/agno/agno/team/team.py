@@ -4694,7 +4694,7 @@ class Team:
             skip_role = (
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
-            
+
             history = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
                 skip_role=skip_role,
