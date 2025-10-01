@@ -286,7 +286,11 @@ def update_cors_middleware(app: FastAPI, new_origins: list):
     for middleware in app.user_middleware:
         if middleware.cls == CORSMiddleware:
             if hasattr(middleware, "kwargs"):
-                existing_origins = middleware.kwargs.get("allow_origins", [])
+                origins_value = middleware.kwargs.get("allow_origins", [])
+                if isinstance(origins_value, list):
+                    existing_origins = origins_value
+                else:
+                    existing_origins = []
             break
     # Merge origins
     merged_origins = list(set(new_origins + existing_origins))

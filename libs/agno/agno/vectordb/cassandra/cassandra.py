@@ -119,12 +119,52 @@ class Cassandra(VectorDb):
         """Insert documents asynchronously by running in a thread."""
         log_info(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
 
-        for doc in documents:
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
             try:
-                embed_tasks = [doc.async_embed(embedder=self.embedder)]
-                await asyncio.gather(*embed_tasks, return_exceptions=True)
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in documents]
+
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(documents):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
             except Exception as e:
-                log_error(f"Error processing document '{doc.name}': {e}")
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    log_error(f"Rate limit detected during batch embedding. {e}")
+                    raise e
+                else:
+                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    # Fall back to individual embedding
+                    for doc in documents:
+                        try:
+                            embed_tasks = [doc.async_embed(embedder=self.embedder)]
+                            await asyncio.gather(*embed_tasks, return_exceptions=True)
+                        except Exception as e:
+                            log_error(f"Error processing document '{doc.name}': {e}")
+        else:
+            # Use individual embedding (original behavior)
+            for doc in documents:
+                try:
+                    embed_tasks = [doc.async_embed(embedder=self.embedder)]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                except Exception as e:
+                    log_error(f"Error processing document '{doc.name}': {e}")
 
         futures = []
         for doc in documents:
