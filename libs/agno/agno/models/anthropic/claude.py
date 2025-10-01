@@ -202,12 +202,12 @@ class Claude(Model):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            if self.mcp_servers is not None:
+            if self.mcp_servers is not None or self.context_management is not None:
                 assistant_message.metrics.start_timer()
                 provider_response = self.get_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
-                    **self.get_request_params(),
+                    **request_kwargs,
                 )
             else:
                 assistant_message.metrics.start_timer()
@@ -269,7 +269,7 @@ class Claude(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            if self.mcp_servers is not None:
+            if self.mcp_servers is not None or self.context_management is not None:
                 assistant_message.metrics.start_timer()
                 with self.get_client().beta.messages.stream(
                     model=self.id,
@@ -324,12 +324,12 @@ class Claude(Model):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            if self.mcp_servers is not None:
+            if self.mcp_servers is not None or self.context_management is not None:
                 assistant_message.metrics.start_timer()
                 provider_response = await self.get_async_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
-                    **self.get_request_params(),
+                    **request_kwargs,
                 )
             else:
                 assistant_message.metrics.start_timer()
@@ -388,7 +388,7 @@ class Claude(Model):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            if self.mcp_servers is not None:
+            if self.mcp_servers is not None or self.context_management is not None:
                 assistant_message.metrics.start_timer()
                 async with self.get_async_client().beta.messages.stream(
                     model=self.id,
@@ -506,10 +506,9 @@ class Claude(Model):
             model_response.response_usage = self._get_metrics(response.usage)
 
         # Capture context management information if present
-        context_management = getattr(response, "context_management", None)
-        if context_management is not None:
+        if response.context_management is not None:
             model_response.extra = model_response.extra or {}
-            model_response.extra["context_management"] = context_management
+            model_response.extra["context_management"] = response.context_management
 
         return model_response
 
