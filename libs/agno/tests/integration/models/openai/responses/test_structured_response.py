@@ -1,5 +1,5 @@
 import enum
-from typing import Dict, List
+from typing import Dict, List, Literal
 
 import pytest
 from pydantic import BaseModel, Field
@@ -68,7 +68,7 @@ class ResearchSummary(BaseModel):
     topic: str = Field(..., description="Main topic researched")
     key_findings: List[str] = Field(..., description="List of key findings from the research")
     summary: str = Field(..., description="Brief summary of the research")
-    confidence_level: str = Field(..., description="High/Medium/Low confidence in the findings")
+    confidence_level: Literal["High", "Medium", "Low"] = Field(..., description="High / Medium / Low confidence in the findings")
 
 
 def test_tool_use_with_structured_output():
