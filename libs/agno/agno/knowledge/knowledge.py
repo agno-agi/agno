@@ -1471,7 +1471,7 @@ class Knowledge:
             return False
 
         text_types = [
-            "text/",
+            "text",
             "application/json",
             "application/xml",
             "application/javascript",
@@ -1479,7 +1479,7 @@ class Knowledge:
             "application/sql",
         ]
 
-        return any(mime_type.startswith(t) for t in text_types)
+        return any(mime_type.lower().startswith(t) for t in text_types)
 
     def _should_include_file(self, file_path: str, include: Optional[List[str]], exclude: Optional[List[str]]) -> bool:
         """
