@@ -19,6 +19,7 @@ except ImportError:
 
 try:
     from boto3.session import Session
+    from botocore.credentials import RefreshableCredentials
 except ImportError:
     raise ImportError("`boto3` not installed. Please install using `pip install boto3`")
 
@@ -70,6 +71,35 @@ class Claude(AnthropicClaude):
     client: Optional[AnthropicBedrock] = None  # type: ignore
     async_client: Optional[AsyncAnthropicBedrock] = None  # type: ignore
 
+    def _are_credentials_expired(self) -> bool:
+        """
+        Check if the current AWS credentials are expired or need refresh.
+        
+        Returns:
+            bool: True if credentials are expired/need refresh, False otherwise.
+        """
+        if not self.session:
+            # If not using session-based credentials, can't check expiry
+            return False
+            
+        try:
+            credentials = self.session.get_credentials()
+            if not credentials:
+                return True
+                
+            # Check if credentials are RefreshableCredentials (temporary credentials)
+            # This includes IAM roles, EKS service accounts, etc.
+            if isinstance(credentials, RefreshableCredentials):
+                # Use boto3's built-in methods to check expiry
+                return credentials._is_expired() or credentials.refresh_needed()
+                
+        except Exception as e:
+            log_debug(f"Could not check credential expiry, assuming expired: {e}")
+            return True
+            
+        # If static credentials (not refreshable), assume they're still valid
+        return False
+
     def get_client(self):
         """
         Get the Bedrock client.
@@ -77,7 +107,9 @@ class Claude(AnthropicClaude):
         Returns:
             AnthropicBedrock: The Bedrock client.
         """
-        if self.client is not None and not self.client.is_closed():
+        # Check if existing client is valid and credentials haven't expired
+        if (self.client is not None and 
+            not self._are_credentials_expired()):
             return self.client
 
         if self.session:
@@ -114,7 +146,9 @@ class Claude(AnthropicClaude):
         Returns:
             AsyncAnthropicBedrock: The Bedrock async client.
         """
-        if self.async_client is not None:
+        # Check if existing async client is valid and credentials haven't expired
+        if (self.async_client is not None and 
+            not self._are_credentials_expired()):
             return self.async_client
 
         if self.session:
