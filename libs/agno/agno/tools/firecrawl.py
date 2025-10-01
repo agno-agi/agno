@@ -137,7 +137,6 @@ class FirecrawlTools(Toolkit):
             params.update(self.search_params)
 
         search_result = self.app.search(query, **params)
-        log_debug(search_result)
         if search_result.success:
             return json.dumps(search_result.data, cls=CustomJSONEncoder)
         else:
