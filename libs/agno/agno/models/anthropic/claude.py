@@ -72,6 +72,7 @@ class Claude(Model):
     top_k: Optional[int] = None
     cache_system_prompt: Optional[bool] = False
     extended_cache_time: Optional[bool] = False
+    context_management: Optional[Dict[str, Any]] = None
     request_params: Optional[Dict[str, Any]] = None
     mcp_servers: Optional[List[MCPServerConfiguration]] = None
 
@@ -97,8 +98,18 @@ class Claude(Model):
         # Add additional client parameters
         if self.client_params is not None:
             client_params.update(self.client_params)
-        if self.default_headers is not None:
-            client_params["default_headers"] = self.default_headers
+
+        # Add beta header for context management if enabled
+        headers = self.default_headers.copy() if self.default_headers else {}
+        if self.context_management is not None:
+            beta_headers = headers.get("anthropic-beta", "").split(",") if headers.get("anthropic-beta") else []
+            if "context-management-2025-06-27" not in beta_headers:
+                beta_headers.append("context-management-2025-06-27")
+            headers["anthropic-beta"] = ",".join(h.strip() for h in beta_headers if h.strip())
+
+        if headers:
+            client_params["default_headers"] = headers
+
         return client_params
 
     def get_client(self) -> AnthropicClient:
@@ -140,6 +151,8 @@ class Claude(Model):
             _request_params["top_p"] = self.top_p
         if self.top_k:
             _request_params["top_k"] = self.top_k
+        if self.context_management:
+            _request_params["context_management"] = self.context_management
         if self.mcp_servers:
             _request_params["mcp_servers"] = [
                 {k: v for k, v in asdict(server).items() if v is not None} for server in self.mcp_servers
@@ -501,6 +514,11 @@ class Claude(Model):
         # Add usage metrics
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
+
+        # Capture context management information if present
+        if hasattr(response, "context_management") and response.context_management is not None:
+            model_response.extra = model_response.extra or {}
+            model_response.extra["context_management"] = response.context_management
 
         return model_response
 
