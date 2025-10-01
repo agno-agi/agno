@@ -77,9 +77,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
-    ],
+    tools=[YFinanceTools()],
     instructions="Use tables to display data",
     markdown=True,
 )

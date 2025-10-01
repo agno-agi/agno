@@ -29,7 +29,7 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
     from agno.run.agent import RunOutput
 
     try:
-        reasoning_agent_response: RunOutput = reasoning_agent.run(messages=messages)
+        reasoning_agent_response: RunOutput = reasoning_agent.run(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
@@ -60,7 +60,7 @@ async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunOutput = await reasoning_agent.arun(messages=messages)
+        reasoning_agent_response: RunOutput = await reasoning_agent.arun(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None

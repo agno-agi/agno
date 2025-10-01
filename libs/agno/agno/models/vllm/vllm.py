@@ -57,6 +57,7 @@ class VLLM(OpenAILike):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         request_kwargs = super().get_request_params(
             response_format=response_format, tools=tools, tool_choice=tool_choice

@@ -16,7 +16,7 @@ class WhatsAppTools(Toolkit):
         self,
         access_token: Optional[str] = None,
         phone_number_id: Optional[str] = None,
-        version: str = "v22.0",
+        version: Optional[str] = None,
         recipient_waid: Optional[str] = None,
         async_mode: bool = False,
     ):

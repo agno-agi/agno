@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool
 
 try:
@@ -338,12 +338,13 @@ class MCPTools(Toolkit):
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
-                    logger.error(f"Failed to register tool {tool.name}: {e}")
+                    log_error(f"Failed to register tool {tool.name}: {e}")
 
             log_debug(f"{self.name} initialized with {len(filtered_tools)} tools")
             self._initialized = True
+
         except Exception as e:
-            logger.error(f"Failed to get MCP tools: {e}")
+            log_error(f"Failed to get MCP tools: {e}")
             raise
 
 
@@ -372,6 +373,7 @@ class MultiMCPTools(Toolkit):
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
+        allow_partial_failure: bool = False,
         **kwargs,
     ):
         """
@@ -387,6 +389,7 @@ class MultiMCPTools(Toolkit):
             timeout_seconds: Timeout in seconds for managing timeouts for Client Session if Agent or Tool doesn't respond.
             include_tools: Optional list of tool names to include (if None, includes all).
             exclude_tools: Optional list of tool names to exclude (if None, excludes none).
+            allow_partial_failure: If True, allows toolkit to initialize even if some MCP servers fail to connect. If False, any failure will raise an exception.
         """
         super().__init__(name="MultiMCPTools", **kwargs)
 
@@ -445,12 +448,16 @@ class MultiMCPTools(Toolkit):
                     self.server_params_list.append(StreamableHTTPClientParams(url=url))
 
         self._async_exit_stack = AsyncExitStack()
+        self._successful_connections = 0
+
         self._initialized = False
         self._connection_task = None
         self._active_contexts: list[Any] = []
         self._used_as_context_manager = False
 
         self._client = client
+        self._initialized = False
+        self.allow_partial_failure = allow_partial_failure
 
         def cleanup():
             """Cancel active connections"""
@@ -511,39 +518,53 @@ class MultiMCPTools(Toolkit):
         if self._initialized:
             return
 
-        for server_params in self.server_params_list:
-            # Handle stdio connections
-            if isinstance(server_params, StdioServerParameters):
-                stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
-                self._active_contexts.append(stdio_transport)
-                read, write = stdio_transport
-                session = await self._async_exit_stack.enter_async_context(
-                    ClientSession(read, write, read_timeout_seconds=timedelta(seconds=self.timeout_seconds))
-                )
-                self._active_contexts.append(session)
-                await self.initialize(session)
-            # Handle SSE connections
-            elif isinstance(server_params, SSEClientParams):
-                client_connection = await self._async_exit_stack.enter_async_context(
-                    sse_client(**asdict(server_params))
-                )
-                self._active_contexts.append(client_connection)
-                read, write = client_connection
-                session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
-                self._active_contexts.append(session)
-                await self.initialize(session)
-            # Handle Streamable HTTP connections
-            elif isinstance(server_params, StreamableHTTPClientParams):
-                client_connection = await self._async_exit_stack.enter_async_context(
-                    streamablehttp_client(**asdict(server_params))
-                )
-                self._active_contexts.append(client_connection)
-                read, write = client_connection[0:2]
-                session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
-                self._active_contexts.append(session)
-                await self.initialize(session)
+        server_connection_errors = []
 
-        self._initialized = True
+        for server_params in self.server_params_list:
+            try:
+                # Handle stdio connections
+                if isinstance(server_params, StdioServerParameters):
+                    stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
+                    read, write = stdio_transport
+                    session = await self._async_exit_stack.enter_async_context(
+                        ClientSession(read, write, read_timeout_seconds=timedelta(seconds=self.timeout_seconds))
+                    )
+                    await self.initialize(session)
+                    self._successful_connections += 1
+
+                # Handle SSE connections
+                elif isinstance(server_params, SSEClientParams):
+                    client_connection = await self._async_exit_stack.enter_async_context(
+                        sse_client(**asdict(server_params))
+                    )
+                    read, write = client_connection
+                    session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+                    await self.initialize(session)
+                    self._successful_connections += 1
+
+                # Handle Streamable HTTP connections
+                elif isinstance(server_params, StreamableHTTPClientParams):
+                    client_connection = await self._async_exit_stack.enter_async_context(
+                        streamablehttp_client(**asdict(server_params))
+                    )
+                    read, write = client_connection[0:2]
+                    session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+                    await self.initialize(session)
+                    self._successful_connections += 1
+
+            except Exception as e:
+                if not self.allow_partial_failure:
+                    raise ValueError(f"MCP connection failed: {e}")
+
+                log_error(f"Failed to initialize MCP server with params {server_params}: {e}")
+                server_connection_errors.append(str(e))
+                continue
+
+        if self._successful_connections == 0 and server_connection_errors:
+            raise ValueError(f"All MCP connections failed: {server_connection_errors}")
+
+        if not self._initialized and self._successful_connections > 0:
+            self._initialized = True
 
     async def close(self) -> None:
         """Close the MCP connections and clean up resources"""
@@ -563,6 +584,8 @@ class MultiMCPTools(Toolkit):
     ):
         """Exit the async context manager."""
         await self._async_exit_stack.aclose()
+        self._initialized = False
+        self._successful_connections = 0
 
     async def initialize(self, session: ClientSession) -> None:
         """Initialize the MCP toolkit by getting available tools from the MCP server"""
@@ -602,10 +625,10 @@ class MultiMCPTools(Toolkit):
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
-                    logger.error(f"Failed to register tool {tool.name}: {e}")
+                    log_error(f"Failed to register tool {tool.name}: {e}")
 
-            log_debug(f"{self.name} initialized with {len(filtered_tools)} tools")
+            log_debug(f"{self.name} initialized with {len(filtered_tools)} tools from one MCP server")
             self._initialized = True
         except Exception as e:
-            logger.error(f"Failed to get MCP tools: {e}")
+            log_error(f"Failed to get MCP tools: {e}")
             raise

@@ -1,6 +1,6 @@
 import pytest
 
-from agno.agent import Agent
+from agno.agent import Agent, ToolCallCompletedEvent, ToolCallStartedEvent
 from agno.models.huggingface import HuggingFace
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
@@ -9,7 +9,7 @@ from agno.tools.yfinance import YFinanceTools
 
 def test_tool_use():
     agent = Agent(
-        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
+        model=HuggingFace(id="openai/gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -25,7 +25,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
+        model=HuggingFace(id="openai/gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -35,21 +35,24 @@ def test_tool_use_stream():
 
     responses = []
     tool_call_seen = False
+    tool_call_completed = False
 
     for chunk in response_stream:
         responses.append(chunk)
-        if chunk.content:
-            if "TSLA" in chunk.content:
-                tool_call_seen = True
+        if isinstance(chunk, ToolCallStartedEvent):
+            tool_call_seen = True
+        if isinstance(chunk, ToolCallCompletedEvent):
+            tool_call_completed = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
+    assert tool_call_completed, "No tool calls completed in stream"
 
 
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
-        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
+        model=HuggingFace(id="openai/gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -66,27 +69,32 @@ async def test_async_tool_use():
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
-        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
+        model=HuggingFace(id="openai/gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )
+
+    tool_call_seen = False
+    tool_call_completed = False
 
     async for response in agent.arun(
         "What is the current price of TSLA?",
         stream=True,
         stream_intermediate_steps=True,
     ):
-        if response.content:
-            if "TSLA" in response.content:
-                tool_call_seen = True
+        if isinstance(response, ToolCallStartedEvent):
+            tool_call_seen = True
+        if isinstance(response, ToolCallCompletedEvent):
+            tool_call_completed = True
 
     assert tool_call_seen, "No tool calls observed in stream"
+    assert tool_call_completed, "No tool calls completed in stream"
 
 
 def test_parallel_tool_calls():
     agent = Agent(
-        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
+        model=HuggingFace(id="openai/gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -102,7 +110,7 @@ def test_parallel_tool_calls():
 
 def test_multiple_tool_calls():
     agent = Agent(
-        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
+        model=HuggingFace(id="openai/gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -121,7 +129,7 @@ def test_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
+        model=HuggingFace(id="openai/gpt-oss-120b"),
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
@@ -136,7 +144,7 @@ def test_tool_call_custom_tool_no_parameters():
 
 def test_tool_call_list_parameters():
     agent = Agent(
-        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
+        model=HuggingFace(id="openai/gpt-oss-120b"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
         markdown=True,

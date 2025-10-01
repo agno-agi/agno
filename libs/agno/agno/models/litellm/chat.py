@@ -38,6 +38,10 @@ class LiteLLM(Model):
     max_tokens: Optional[int] = None
     temperature: float = 0.7
     top_p: float = 1.0
+    metadata: Optional[Dict[str, Any]] = None
+    extra_headers: Optional[Dict[str, Any]] = None
+    extra_query: Optional[Dict[str, Any]] = None
+    extra_body: Optional[Dict[str, Any]] = None
     request_params: Optional[Dict[str, Any]] = None
 
     client: Optional[Any] = None
@@ -148,9 +152,22 @@ class LiteLLM(Model):
             base_params["api_key"] = self.api_key
         if self.api_base:
             base_params["api_base"] = self.api_base
+        if self.extra_headers:
+            base_params["extra_headers"] = self.extra_headers
+        if self.extra_query:
+            base_params["extra_query"] = self.extra_query
         if tools:
             base_params["tools"] = tools
             base_params["tool_choice"] = "auto"
+
+        # Handle metadata via extra_body as per LiteLLM docs
+        if self.metadata:
+            if self.extra_body:
+                base_params["extra_body"] = {**self.extra_body, "metadata": self.metadata}
+            else:
+                base_params["extra_body"] = {"metadata": self.metadata}
+        elif self.extra_body:
+            base_params["extra_body"] = self.extra_body
 
         # Add additional request params if provided
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}

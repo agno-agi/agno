@@ -156,6 +156,8 @@ class Team:
     add_session_state_to_context: bool = False
     # Set to True to give the team tools to update the session_state dynamically
     enable_agentic_state: bool = False
+    # Set to True to overwrite the stored session_state with the session_state provided in the run
+    overwrite_db_session_state: bool = False
     # If True, cache the current Team session in memory for faster access
     cache_session: bool = False
 
@@ -364,6 +366,7 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         add_session_state_to_context: bool = False,
         enable_agentic_state: bool = False,
+        overwrite_db_session_state: bool = False,
         resolve_in_context: bool = True,
         cache_session: bool = False,
         description: Optional[str] = None,
@@ -453,6 +456,7 @@ class Team:
         self.session_state = session_state
         self.add_session_state_to_context = add_session_state_to_context
         self.enable_agentic_state = enable_agentic_state
+        self.overwrite_db_session_state = overwrite_db_session_state
         self.resolve_in_context = resolve_in_context
         self.cache_session = cache_session
 
@@ -733,9 +737,19 @@ class Team:
         if user_id is None:
             user_id = self.user_id
 
-        # Determine the session_state
+        # Determine the session_state with proper precedence
         if session_state is None:
             session_state = self.session_state or {}
+        else:
+            # If run session_state is provided, merge agent defaults under it
+            # This ensures run state takes precedence over agent defaults
+            if self.session_state:
+                from agno.utils.merge_dict import merge_dictionaries
+
+                base_state = self.session_state.copy()
+                merge_dictionaries(base_state, session_state)
+                session_state.clear()
+                session_state.update(base_state)
 
         if user_id is not None:
             session_state["current_user_id"] = user_id
@@ -1146,7 +1160,7 @@ class Team:
         self._update_metadata(session=team_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=team_session, session_state=session_state)
+        session_state = self._load_session_state(session=team_session, session_state=session_state)
 
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -1770,7 +1784,7 @@ class Team:
         self._update_metadata(session=team_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=team_session, session_state=session_state)
+        session_state = self._load_session_state(session=team_session, session_state=session_state)
 
         # Determine run dependencies (runtime override takes priority)
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -2027,9 +2041,6 @@ class Team:
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
 
-        # Update the run_response created_at with the model response created_at
-        run_response.created_at = model_response.created_at
-
         # Build a list of messages that should be added to the RunOutput
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
 
@@ -2089,7 +2100,6 @@ class Team:
             )
 
         # 3. Update TeamRunOutput
-        run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
         if full_model_response.reasoning_content is not None:
@@ -2179,7 +2189,6 @@ class Team:
             run_response.content = full_model_response.parsed
 
         # Update TeamRunOutput
-        run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
         if full_model_response.reasoning_content is not None:
@@ -2250,7 +2259,7 @@ class Team:
                 content_type = "str"
 
                 should_yield = False
-                # Process content and thinking
+                # Process content
                 if model_response_event.content is not None:
                     if parse_structured_output:
                         full_model_response.content = model_response_event.content
@@ -2266,7 +2275,31 @@ class Team:
                         full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     should_yield = True
 
-                # Process thinking
+                # Process reasoning content
+                if model_response_event.reasoning_content is not None:
+                    full_model_response.reasoning_content = (
+                        full_model_response.reasoning_content or ""
+                    ) + model_response_event.reasoning_content
+                    run_response.reasoning_content = full_model_response.reasoning_content
+                    should_yield = True
+
+                if model_response_event.redacted_reasoning_content is not None:
+                    if not full_model_response.reasoning_content:
+                        full_model_response.reasoning_content = model_response_event.redacted_reasoning_content
+                    else:
+                        full_model_response.reasoning_content += model_response_event.redacted_reasoning_content
+                    run_response.reasoning_content = full_model_response.reasoning_content
+                    should_yield = True
+
+                # Handle provider data (one chunk)
+                if model_response_event.provider_data is not None:
+                    run_response.model_provider_data = model_response_event.provider_data
+
+                # Handle citations (one chunk)
+                if model_response_event.citations is not None:
+                    run_response.citations = model_response_event.citations
+
+                # Process audio
                 if model_response_event.audio is not None:
                     if full_model_response.audio is None:
                         full_model_response.audio = Audio(id=str(uuid4()), content=b"", transcript="")
@@ -2817,7 +2850,6 @@ class Team:
 
         # Update the TeamRunResponse content
         run_response.content = model_response.content
-        run_response.created_at = model_response.created_at
 
         if stream_intermediate_steps:
             yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
@@ -2875,7 +2907,6 @@ class Team:
 
         # Update the TeamRunResponse content
         run_response.content = model_response.content
-        run_response.created_at = model_response.created_at
 
         if stream_intermediate_steps:
             yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
@@ -4076,50 +4107,51 @@ class Team:
         if self.knowledge is not None and self.update_knowledge:
             _tools.append(self.add_to_knowledge)
 
-        # Get the user message if we are using the input directly
-        user_message = None
-        if self.determine_input_for_members is False:
-            user_message = self._get_user_message(
+        if self.members:
+            # Get the user message if we are using the input directly
+            user_message = None
+            if self.determine_input_for_members is False:
+                user_message = self._get_user_message(
+                    run_response=run_response,
+                    session_state=session_state,
+                    input_message=input_message,
+                    user_id=user_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    metadata=metadata,
+                )
+
+            delegate_task_func = self._get_delegate_task_function(
                 run_response=run_response,
+                session=session,
                 session_state=session_state,
-                input_message=input_message,
+                team_run_context=team_run_context,
+                input=user_message,
                 user_id=user_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
+                stream=self.stream or False,
+                stream_intermediate_steps=self.stream_intermediate_steps,
+                async_mode=async_mode,
+                images=images,  # type: ignore
+                videos=videos,  # type: ignore
+                audio=audio,  # type: ignore
+                files=files,  # type: ignore
+                knowledge_filters=knowledge_filters,
+                add_history_to_context=add_history_to_context,
+                workflow_context=workflow_context,
                 dependencies=dependencies,
                 add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
                 metadata=metadata,
+                debug_mode=debug_mode,
             )
 
-        delegate_task_func = self._get_delegate_task_function(
-            run_response=run_response,
-            session=session,
-            session_state=session_state,
-            team_run_context=team_run_context,
-            input=user_message,
-            user_id=user_id,
-            stream=self.stream or False,
-            stream_intermediate_steps=self.stream_intermediate_steps,
-            async_mode=async_mode,
-            images=images,  # type: ignore
-            videos=videos,  # type: ignore
-            audio=audio,  # type: ignore
-            files=files,  # type: ignore
-            knowledge_filters=knowledge_filters,
-            add_history_to_context=add_history_to_context,
-            workflow_context=workflow_context,
-            dependencies=dependencies,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            metadata=metadata,
-            debug_mode=debug_mode,
-        )
-
-        _tools.append(delegate_task_func)
-        if self.get_member_information_tool:
-            _tools.append(self.get_member_information)
+            _tools.append(delegate_task_func)
+            if self.get_member_information_tool:
+                _tools.append(self.get_member_information)
 
         self._functions_for_model = {}
         self._tools_for_model = []
@@ -4242,7 +4274,7 @@ class Team:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
-                if member.tools is not None and self.add_member_tools_to_context:
+                if member.tools and self.add_member_tools_to_context:
                     system_message_content += f"{indent * ' '}   - Member tools:\n"
                     for _tool in member.tools:
                         if isinstance(_tool, Toolkit):
@@ -4386,42 +4418,43 @@ class Team:
 
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
-        system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
-        system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
+        if self.members is not None and len(self.members) > 0:
+            system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
+            system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
 
-        system_message_content += "\nHere are the members in your team:\n"
-        system_message_content += "<team_members>\n"
-        system_message_content += self.get_members_system_message_content()
-        if self.get_member_information_tool:
-            system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
-        system_message_content += "</team_members>\n"
+            system_message_content += "\nHere are the members in your team:\n"
+            system_message_content += "<team_members>\n"
+            system_message_content += self.get_members_system_message_content()
+            if self.get_member_information_tool:
+                system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
+            system_message_content += "</team_members>\n"
 
-        system_message_content += "\n<how_to_respond>\n"
+            system_message_content += "\n<how_to_respond>\n"
 
-        if self.delegate_task_to_all_members:
-            system_message_content += (
-                "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
-                "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
-                "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
-                "- If you feel the task has been completed, you can stop and respond to the user.\n"
-            )
-        else:
-            system_message_content += (
-                "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
-                "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
-                "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
-                "- When you delegate a task to another member, make sure to include:\n"
-                "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
-                "  - task_description (str): A clear description of the task.\n"
-                "  - expected_output (str): The expected output.\n"
-                "- You can delegate tasks to multiple members at once.\n"
-                "- You must always analyze the responses from members before responding to the user.\n"
-                "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
-                "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
-                "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
-                "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
-            )
-        system_message_content += "</how_to_respond>\n\n"
+            if self.delegate_task_to_all_members:
+                system_message_content += (
+                    "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
+                    "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
+                    "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
+                    "- If you feel the task has been completed, you can stop and respond to the user.\n"
+                )
+            else:
+                system_message_content += (
+                    "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                    "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
+                    "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
+                    "- When you delegate a task to another member, make sure to include:\n"
+                    "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
+                    "  - task_description (str): A clear description of the task.\n"
+                    "  - expected_output (str): The expected output.\n"
+                    "- You can delegate tasks to multiple members at once.\n"
+                    "- You must always analyze the responses from members before responding to the user.\n"
+                    "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
+                    "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
+                    "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
+                    "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
+                )
+            system_message_content += "</how_to_respond>\n\n"
 
         # Attached media
         if audio is not None or images is not None or videos is not None or files is not None:
@@ -4731,6 +4764,9 @@ class Team:
                 if len(input_message) > 0 and isinstance(input_message[0], dict) and "type" in input_message[0]:
                     # This is multimodal content (text + images/audio/video), preserve the structure
                     input_content = input_message
+                elif len(input_message) > 0 and isinstance(input_message[0], Message):
+                    # This is a list of Message objects, extract text content from them
+                    input_content = get_text_from_message(input_message)
                 elif all(isinstance(item, str) for item in input_message):
                     input_content = "\n".join([str(item) for item in input_message])
                 else:
@@ -5428,6 +5464,9 @@ class Team:
                     check_if_run_cancelled(member_agent_run_output_event)
 
                     # Yield the member event directly
+                    member_agent_run_output_event.parent_run_id = (
+                        member_agent_run_output_event.parent_run_id or run_response.run_id
+                    )
                     yield member_agent_run_output_event
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
@@ -5553,6 +5592,9 @@ class Team:
                     check_if_run_cancelled(member_agent_run_response_event)
 
                     # Yield the member event directly
+                    member_agent_run_response_event.parent_run_id = (
+                        member_agent_run_response_event.parent_run_id or run_response.run_id
+                    )
                     yield member_agent_run_response_event
             else:
                 member_agent_run_response = await member_agent.arun(  # type: ignore
@@ -5668,6 +5710,9 @@ class Team:
                         check_if_run_cancelled(member_agent_run_response_chunk)
 
                         # Yield the member event directly
+                        member_agent_run_response_chunk.parent_run_id = (
+                            member_agent_run_response_chunk.parent_run_id or run_response.run_id
+                        )
                         yield member_agent_run_response_chunk
 
                 else:
@@ -5779,11 +5824,15 @@ class Team:
                                 member_agent_run_response = member_agent_run_output_event  # type: ignore
                                 break
                             check_if_run_cancelled(member_agent_run_output_event)
+                            member_agent_run_output_event.parent_run_id = (
+                                member_agent_run_output_event.parent_run_id or run_response.run_id
+                            )
                             await queue.put(member_agent_run_output_event)
                     finally:
                         _process_delegate_task_to_member(
                             member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
                         )
+                    await queue.put(done_marker)
 
                 # Initialize and launch all members
                 tasks: List[asyncio.Task[None]] = []
@@ -5811,7 +5860,6 @@ class Team:
                     for t in tasks:
                         with contextlib.suppress(Exception):
                             await t
-
             else:
                 # Non-streaming concurrent run of members; collect results when done
                 tasks = []
@@ -6072,12 +6120,13 @@ class Team:
             self._upsert_session(session=session)
             log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
-    def _update_session_state(self, session: TeamSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
-        """Load the existing Agent from an AgentSession (from the database)"""
+    def _load_session_state(self, session: TeamSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
+        """Load and return the stored session_state from the database, optionally merging it with the given one"""
 
         from agno.utils.merge_dict import merge_dictionaries
 
-        # Get the session_state from the database and update the current session_state
+        # Get the session_state from the database and merge with proper precedence
+        # At this point session_state contains: agent_defaults + run_params
         if session.session_data is not None and "session_state" in session.session_data:
             session_state_from_db = session.session_data.get("session_state")
 
@@ -6085,8 +6134,13 @@ class Team:
                 session_state_from_db is not None
                 and isinstance(session_state_from_db, dict)
                 and len(session_state_from_db) > 0
+                and not self.overwrite_db_session_state
             ):
-                merge_dictionaries(session_state, session_state_from_db)
+                # This preserves precedence: run_params > db_state > agent_defaults
+                merged_state = session_state_from_db.copy()
+                merge_dictionaries(merged_state, session_state)
+                session_state.clear()
+                session_state.update(merged_state)
 
         # Update the session_state in the session
         if session.session_data is not None:

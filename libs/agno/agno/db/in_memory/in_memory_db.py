@@ -2,6 +2,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
+from copy import deepcopy
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.in_memory.utils import (
@@ -56,7 +57,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
-            return False
+            raise e
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from in-memory storage.
@@ -73,6 +74,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
+            raise e
 
     def get_session(
         self,
@@ -106,15 +108,17 @@ class InMemoryDb(BaseDb):
                     if session_data.get("session_type") != session_type_value:
                         continue
 
+                    session_data_copy = deepcopy(session_data)
+                    
                     if not deserialize:
-                        return session_data
+                        return session_data_copy
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session_data)
+                        return AgentSession.from_dict(session_data_copy)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session_data)
+                        return TeamSession.from_dict(session_data_copy)
                     else:
-                        return WorkflowSession.from_dict(session_data)
+                        return WorkflowSession.from_dict(session_data_copy)
 
             return None
 
@@ -123,7 +127,7 @@ class InMemoryDb(BaseDb):
 
             traceback.print_exc()
             log_error(f"Exception reading session: {e}")
-            return None
+            raise e
 
     def get_sessions(
         self,
@@ -187,7 +191,7 @@ class InMemoryDb(BaseDb):
                 if session_data.get("session_type") != session_type_value:
                     continue
 
-                filtered_sessions.append(session_data)
+                filtered_sessions.append(deepcopy(session_data))
 
             total_count = len(filtered_sessions)
 
@@ -215,7 +219,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading sessions: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -232,21 +236,22 @@ class InMemoryDb(BaseDb):
 
                     log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
+                    session_copy = deepcopy(session)
                     if not deserialize:
-                        return session
+                        return session_copy
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session)
+                        return AgentSession.from_dict(session_copy)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session)
+                        return TeamSession.from_dict(session_copy)
                     else:
-                        return WorkflowSession.from_dict(session)
+                        return WorkflowSession.from_dict(session_copy)
 
             return None
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
-            return None
+            raise e
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -268,26 +273,30 @@ class InMemoryDb(BaseDb):
                 if existing_session.get("session_id") == session_dict.get("session_id") and self._matches_session_key(
                     existing_session, session
                 ):
-                    # Update existing session
                     session_dict["updated_at"] = int(time.time())
-                    self._sessions[i] = session_dict
+                    self._sessions[i] = deepcopy(session_dict)
                     session_updated = True
                     break
 
             if not session_updated:
-                # Add new session
                 session_dict["created_at"] = session_dict.get("created_at", int(time.time()))
                 session_dict["updated_at"] = session_dict.get("created_at")
-                self._sessions.append(session_dict)
+                self._sessions.append(deepcopy(session_dict))
 
+            session_dict_copy = deepcopy(session_dict)
             if not deserialize:
-                return session_dict
+                return session_dict_copy
 
-            return session
+            if session_dict_copy["session_type"] == SessionType.AGENT:
+                return AgentSession.from_dict(session_dict_copy)
+            elif session_dict_copy["session_type"] == SessionType.TEAM:
+                return TeamSession.from_dict(session_dict_copy)
+            else:
+                return WorkflowSession.from_dict(session_dict_copy)
 
         except Exception as e:
             log_error(f"Exception upserting session: {e}")
-            return None
+            raise e
 
     def _matches_session_key(self, existing_session: Dict[str, Any], session: Session) -> bool:
         """Check if existing session matches the key for the session type."""
@@ -298,6 +307,40 @@ class InMemoryDb(BaseDb):
         elif isinstance(session, WorkflowSession):
             return existing_session.get("workflow_id") == session.workflow_id
         return False
+
+    def upsert_sessions(
+        self, sessions: List[Session], deserialize: Optional[bool] = True
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple sessions for improved performance on large datasets.
+
+        Args:
+            sessions (List[Session]): List of sessions to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+
+        Returns:
+            List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not sessions:
+            return []
+
+        try:
+            log_info(f"In-memory database: processing {len(sessions)} sessions with individual upsert operations")
+
+            results = []
+            for session in sessions:
+                if session is not None:
+                    result = self.upsert_session(session, deserialize=deserialize)
+                    if result is not None:
+                        results.append(result)
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk session upsert: {e}")
+            return []
 
     # -- Memory methods --
     def delete_user_memory(self, memory_id: str):
@@ -312,6 +355,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting memory: {e}")
+            raise e
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete multiple user memories from in-memory storage."""
@@ -321,6 +365,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting memories: {e}")
+            raise e
 
     def get_all_memory_topics(self) -> List[str]:
         try:
@@ -333,7 +378,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory storage: {e}")
-            return []
+            raise e
 
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True
@@ -341,15 +386,16 @@ class InMemoryDb(BaseDb):
         try:
             for memory_data in self._memories:
                 if memory_data.get("memory_id") == memory_id:
+                    memory_data_copy = deepcopy(memory_data)
                     if not deserialize:
-                        return memory_data
-                    return UserMemory.from_dict(memory_data)
+                        return memory_data_copy
+                    return UserMemory.from_dict(memory_data_copy)
 
             return None
 
         except Exception as e:
             log_error(f"Exception reading from memory storage: {e}")
-            return None
+            raise e
 
     def get_user_memories(
         self,
@@ -383,7 +429,7 @@ class InMemoryDb(BaseDb):
                     if search_content.lower() not in memory_content.lower():
                         continue
 
-                filtered_memories.append(memory_data)
+                filtered_memories.append(deepcopy(memory_data))
 
             total_count = len(filtered_memories)
 
@@ -404,7 +450,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory storage: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None
@@ -439,7 +485,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting user memory stats: {e}")
-            return [], 0
+            raise e
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -462,13 +508,50 @@ class InMemoryDb(BaseDb):
             if not memory_updated:
                 self._memories.append(memory_dict)
 
+            memory_dict_copy = deepcopy(memory_dict)
             if not deserialize:
-                return memory_dict
-            return UserMemory.from_dict(memory_dict)
+                return memory_dict_copy
+
+            return UserMemory.from_dict(memory_dict_copy)
 
         except Exception as e:
             log_warning(f"Exception upserting user memory: {e}")
-            return None
+            raise e
+
+    def upsert_memories(
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple user memories for improved performance on large datasets.
+
+        Args:
+            memories (List[UserMemory]): List of memories to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+
+        Returns:
+            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not memories:
+            return []
+
+        try:
+            log_info(f"In-memory database: processing {len(memories)} memories with individual upsert operations")
+            # For in-memory database, individual upserts are actually efficient
+            # since we're just manipulating Python lists and dictionaries
+            results = []
+            for memory in memories:
+                if memory is not None:
+                    result = self.upsert_user_memory(memory, deserialize=deserialize)
+                    if result is not None:
+                        results.append(result)
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk memory upsert: {e}")
+            return []
 
     def clear_memories(self) -> None:
         """Delete all memories.
@@ -481,6 +564,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception deleting all memories: {e}")
+            raise e
 
     # -- Metrics methods --
     def calculate_metrics(self) -> Optional[list[dict]]:
@@ -544,7 +628,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception refreshing metrics: {e}")
-            return None
+            raise e
 
     def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
@@ -584,8 +668,8 @@ class InMemoryDb(BaseDb):
                 # Only include necessary fields for metrics
                 filtered_session = {
                     "user_id": session.get("user_id"),
-                    "session_data": session.get("session_data"),
-                    "runs": session.get("runs"),
+                    "session_data": deepcopy(session.get("session_data")),
+                    "runs": deepcopy(session.get("runs")),
                     "created_at": session.get("created_at"),
                     "session_type": session.get("session_type"),
                 }
@@ -595,7 +679,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading sessions for metrics: {e}")
-            return []
+            raise e
 
     def get_metrics(
         self,
@@ -615,7 +699,7 @@ class InMemoryDb(BaseDb):
                 if ending_date and metric_date > ending_date:
                     continue
 
-                filtered_metrics.append(metric)
+                filtered_metrics.append(deepcopy(metric))
 
                 updated_at = metric.get("updated_at")
                 if updated_at and (latest_updated_at is None or updated_at > latest_updated_at):
@@ -625,7 +709,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting metrics: {e}")
-            return [], None
+            raise e
 
     # -- Knowledge methods --
 
@@ -643,6 +727,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {e}")
+            raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from in-memory storage.
@@ -665,7 +750,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge content: {e}")
-            return None
+            raise e
 
     def get_knowledge_contents(
         self,
@@ -689,7 +774,7 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            knowledge_items = self._knowledge.copy()
+            knowledge_items = [deepcopy(item) for item in self._knowledge]
 
             total_count = len(knowledge_items)
 
@@ -707,7 +792,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge contents: {e}")
-            return [], 0
+            raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content.
@@ -739,7 +824,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge row: {e}")
-            return None
+            raise e
 
     # -- Eval methods --
 
@@ -759,7 +844,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error creating eval run: {e}")
-            return None
+            raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from in-memory storage."""
@@ -775,6 +860,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            raise e
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -783,15 +869,16 @@ class InMemoryDb(BaseDb):
         try:
             for run_data in self._eval_runs:
                 if run_data.get("run_id") == eval_run_id:
+                    run_data_copy = deepcopy(run_data)
                     if not deserialize:
-                        return run_data
-                    return EvalRunRecord.model_validate(run_data)
+                        return run_data_copy
+                    return EvalRunRecord.model_validate(run_data_copy)
 
             return None
 
         except Exception as e:
             log_error(f"Exception getting eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_runs(
         self,
@@ -831,7 +918,7 @@ class InMemoryDb(BaseDb):
                     elif filter_type == EvalFilterType.WORKFLOW and run_data.get("workflow_id") is None:
                         continue
 
-                filtered_runs.append(run_data)
+                filtered_runs.append(deepcopy(run_data))
 
             total_count = len(filtered_runs)
 
@@ -855,7 +942,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -870,13 +957,14 @@ class InMemoryDb(BaseDb):
 
                     log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
 
+                    run_data_copy = deepcopy(run_data)
                     if not deserialize:
-                        return run_data
+                        return run_data_copy
 
-                    return EvalRunRecord.model_validate(run_data)
+                    return EvalRunRecord.model_validate(run_data_copy)
 
             return None
 
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {e}")
-            return None
+            raise e

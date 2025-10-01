@@ -1,7 +1,9 @@
 """
-AgentOS middleware example - Rate Limiting & Request Logging.
+This example demonstrates how to add custom middleware to your AgentOS application.
 
-This shows how to add custom middleware to your AgentOS.
+We add two middleware:
+- Rate Limiting: Limits requests per IP address
+- Request/Response Logging: Logs requests and responses
 """
 
 import time
@@ -157,10 +159,11 @@ if __name__ == "__main__":
     Test commands:
     
     1. Basic request:
-       curl http://localhost:7777/test
+       curl http://localhost:7777/config
     
     2. Test rate limiting:
-       for i in {1..15}; do curl http://localhost:7777/config; done
+       Run in a terminal:
+       bash -c 'for i in {1..15}; do curl http://localhost:7777/config; done'
     
     3. Check rate limit headers:
        curl -v http://localhost:7777/config
@@ -173,7 +176,7 @@ if __name__ == "__main__":
     """
 
     agent_os.serve(
-        app="fastapi_app_with_custom_middleware:app",
+        app="agent_os_with_custom_middleware:app",
         host="localhost",
         port=7777,
         reload=True,

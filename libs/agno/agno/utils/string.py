@@ -158,6 +158,15 @@ def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Opti
 def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Optional[BaseModel]:
     structured_output = None
 
+    # Extract thinking content first to prevent <think> tags from corrupting JSON
+    from agno.utils.reasoning import extract_thinking_content
+
+    # handle thinking content b/w <think> tags
+    if "</think>" in content:
+        reasoning_content, output_content = extract_thinking_content(content)
+        if reasoning_content:
+            content = output_content
+
     # Clean content first to simplify all parsing attempts
     cleaned_content = _clean_json_content(content)
 

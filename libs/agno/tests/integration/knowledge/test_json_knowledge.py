@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from agno.agent import Agent
+from agno.db.json.json_db import JsonDb
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.chroma import ChromaDb
 
@@ -41,10 +42,12 @@ def prepare_knowledge_base(setup_vector_db):
 
 
 def test_json_knowledge_base():
-    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
+    contents_db = JsonDb(db_path="tmp/json_db")
+    vector_db = ChromaDb(collection="vectors_1", path="tmp/chromadb", persistent_client=True)
 
     knowledge_base = Knowledge(
         vector_db=vector_db,
+        contents_db=contents_db,
     )
 
     knowledge_base.add_content(
@@ -54,7 +57,7 @@ def test_json_knowledge_base():
     assert vector_db.exists()
 
     # We have 2 JSON files with 3 and 2 documents respectively
-    expected_docs = 10
+    expected_docs = 5
     assert vector_db.get_count() == expected_docs
 
     # Create and use the agent
@@ -86,8 +89,8 @@ def test_json_knowledge_base_single_file():
 
     assert vector_db.exists()
 
-    # The recipes.json file contains 10 documents
-    expected_docs = 10
+    # The recipes.json file contains 3 documents
+    expected_docs = 3
     assert vector_db.get_count() == expected_docs
 
     # Clean up
@@ -110,7 +113,7 @@ async def test_json_knowledge_base_async():
     assert await vector_db.async_exists()
 
     # We have 2 JSON files with 3 and 2 documents respectively
-    expected_docs = 10
+    expected_docs = 5
     assert vector_db.get_count() == expected_docs
 
     # Create and use the agent

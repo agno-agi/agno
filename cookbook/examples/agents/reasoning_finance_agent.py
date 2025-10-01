@@ -7,12 +7,7 @@ agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),
     tools=[
         ReasoningTools(add_instructions=True),
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
+        YFinanceTools(),
     ],
     instructions=[
         "Use tables to display data.",

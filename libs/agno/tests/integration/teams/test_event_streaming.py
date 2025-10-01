@@ -536,7 +536,11 @@ def test_intermediate_steps_with_member_agents():
     assert len(events[TeamRunEvent.run_completed]) == 1
     # Two member agents
     assert len(events[RunEvent.run_started]) == 2
+    assert events[RunEvent.run_started][0].parent_run_id == events[TeamRunEvent.run_started][0].run_id
+    assert events[RunEvent.run_started][1].parent_run_id == events[TeamRunEvent.run_started][0].run_id
     assert len(events[RunEvent.run_completed]) == 2
+    assert events[RunEvent.run_completed][0].parent_run_id == events[TeamRunEvent.run_completed][0].run_id
+    assert events[RunEvent.run_completed][1].parent_run_id == events[TeamRunEvent.run_completed][0].run_id
     # Lots of member tool calls
     assert len(events[RunEvent.tool_call_started]) > 1
     assert len(events[RunEvent.tool_call_completed]) > 1

@@ -389,6 +389,9 @@ class Function(BaseModel):
         if not params_set_by_user:
             self.parameters = parameters
 
+        if strict:
+            self.process_schema_for_strict()
+
         try:
             self.entrypoint = self._wrap_callable(self.entrypoint)
         except Exception as e:
@@ -422,7 +425,45 @@ class Function(BaseModel):
             return wrapped
 
     def process_schema_for_strict(self):
-        self.parameters["additionalProperties"] = False
+        """Process the schema to make it strict mode compliant."""
+
+        def make_nested_strict(schema):
+            """Recursively ensure all object schemas have additionalProperties: false"""
+            if not isinstance(schema, dict):
+                return schema
+
+            # Make a copy to avoid modifying the original
+            result = schema.copy()
+
+            # If this is an object schema, ensure additionalProperties: false
+            if result.get("type") == "object" or "properties" in result:
+                result["additionalProperties"] = False
+
+            # If schema has no type but has other schema properties, give it a type
+            if "type" not in result:
+                if "properties" in result:
+                    result["type"] = "object"
+                    result["additionalProperties"] = False
+                elif result.get("title") and not any(
+                    key in result for key in ["properties", "items", "anyOf", "oneOf", "allOf", "enum"]
+                ):
+                    result["type"] = "string"
+
+            # Recursively process nested schemas
+            for key, value in result.items():
+                if key == "properties" and isinstance(value, dict):
+                    result[key] = {k: make_nested_strict(v) for k, v in value.items()}
+                elif key == "items" and isinstance(value, dict):
+                    # This handles array items like List[KnowledgeFilter]
+                    result[key] = make_nested_strict(value)
+                elif isinstance(value, dict):
+                    result[key] = make_nested_strict(value)
+
+            return result
+
+        # Apply strict mode to the entire schema
+        self.parameters = make_nested_strict(self.parameters)
+
         self.parameters["required"] = [
             name
             for name in self.parameters["properties"]
@@ -648,7 +689,6 @@ class FunctionCall(BaseModel):
             entrypoint_args["audios"] = self.function._audios
         if "files" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["files"] = self.function._files
-
         return entrypoint_args
 
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:

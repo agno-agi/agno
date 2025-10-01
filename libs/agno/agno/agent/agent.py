@@ -135,6 +135,8 @@ class Agent:
     add_session_state_to_context: bool = False
     # Set to True to give the agent tools to update the session_state dynamically
     enable_agentic_state: bool = False
+    # Set to True to overwrite the stored session_state with the session_state provided in the run. Default behaviour merges the current session state with the session state in the db
+    overwrite_db_session_state: bool = False
     # If True, cache the current Agent session in memory for faster access
     cache_session: bool = False
 
@@ -348,6 +350,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         add_session_state_to_context: bool = False,
+        overwrite_db_session_state: bool = False,
         enable_agentic_state: bool = False,
         cache_session: bool = False,
         search_session_history: Optional[bool] = False,
@@ -432,6 +435,7 @@ class Agent:
 
         self.session_id = session_id
         self.session_state = session_state
+        self.overwrite_db_session_state = overwrite_db_session_state
         self.enable_agentic_state = enable_agentic_state
         self.cache_session = cache_session
 
@@ -717,6 +721,14 @@ class Agent:
         # Determine the session_state
         if session_state is None:
             session_state = self.session_state or {}
+        else:
+            # If run session_state is provided, merge agent defaults under it
+            # This ensures run state takes precedence over agent defaults
+            if self.session_state:
+                base_state = self.session_state.copy()
+                merge_dictionaries(base_state, session_state)
+                session_state.clear()
+                session_state.update(base_state)
 
         if user_id is not None:
             session_state["current_user_id"] = user_id
@@ -1105,7 +1117,7 @@ class Agent:
         self._update_metadata(session=agent_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=agent_session, session_state=session_state)
+        session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -1166,6 +1178,7 @@ class Agent:
             run_id=run_id,
             session_id=session_id,
             agent_id=self.id,
+            user_id=user_id,
             agent_name=self.name,
             metadata=metadata,
             input=run_input,
@@ -1744,7 +1757,7 @@ class Agent:
         self._update_metadata(session=agent_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=agent_session, session_state=session_state)
+        session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
         # Determine run dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -1799,6 +1812,7 @@ class Agent:
             run_id=run_id,
             session_id=session_id,
             agent_id=self.id,
+            user_id=user_id,
             agent_name=self.name,
             metadata=metadata,
             input=run_input,
@@ -2011,7 +2025,7 @@ class Agent:
         self._update_metadata(session=agent_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=agent_session, session_state=session_state)
+        session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
@@ -2395,7 +2409,7 @@ class Agent:
         self._update_metadata(session=agent_session)
 
         # Update session state from DB
-        session_state = self._update_session_state(session=agent_session, session_state=session_state)
+        session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
@@ -3353,6 +3367,7 @@ class Agent:
                         run_response.content = model_response.content
                         run_response.content_type = "str"
 
+                # Process reasoning content
                 if model_response_event.reasoning_content is not None:
                     model_response.reasoning_content = (
                         model_response.reasoning_content or ""
@@ -3366,12 +3381,12 @@ class Agent:
                         model_response.reasoning_content += model_response_event.redacted_reasoning_content
                     run_response.reasoning_content = model_response.reasoning_content
 
+                # Handle provider data (one chunk)
                 if model_response_event.provider_data is not None:
-                    # We get citations in one chunk
-                    run_response.model_provider_data = model_response.provider_data
+                    run_response.model_provider_data = model_response_event.provider_data
 
+                # Handle citations (one chunk)
                 if model_response_event.citations is not None:
-                    # We get citations in one chunk
                     run_response.citations = model_response_event.citations
 
                 # Only yield if we have content to show
@@ -4243,10 +4258,11 @@ class Agent:
             log_warning(f"Error upserting session into db: {e}")
             return None
 
-    def _update_session_state(self, session: AgentSession, session_state: Dict[str, Any]):
-        """Load the existing Agent from an AgentSession (from the database)"""
+    def _load_session_state(self, session: AgentSession, session_state: Dict[str, Any]):
+        """Load and return the stored session_state from the database, optionally merging it with the given one"""
 
-        # Get the session_state from the database and update the current session_state
+        # Get the session_state from the database and merge with proper precedence
+        # At this point session_state contains: agent_defaults + run_params
         if session.session_data is not None and "session_state" in session.session_data:
             session_state_from_db = session.session_data.get("session_state")
 
@@ -4254,8 +4270,13 @@ class Agent:
                 session_state_from_db is not None
                 and isinstance(session_state_from_db, dict)
                 and len(session_state_from_db) > 0
+                and not self.overwrite_db_session_state
             ):
-                merge_dictionaries(session_state, session_state_from_db)
+                # This preserves precedence: run_params > db_state > agent_defaults
+                merged_state = session_state_from_db.copy()
+                merge_dictionaries(merged_state, session_state)
+                session_state.clear()
+                session_state.update(merged_state)
 
         # Update the session_state in the session
         if session.session_data is not None:
@@ -7392,8 +7413,8 @@ class Agent:
             "parser_model": self.parser_model.to_dict() if self.parser_model else None,
             "output_model": self.output_model.to_dict() if self.output_model else None,
             "has_tools": self.tools is not None,
-            "has_memory": self.enable_user_memories is not None,
-            "has_reasoning": self.reasoning is not None,
+            "has_memory": self.enable_user_memories is True,
+            "has_reasoning": self.reasoning is True,
             "has_knowledge": self.knowledge is not None,
             "has_input_schema": self.input_schema is not None,
             "has_output_schema": self.output_schema is not None,

@@ -16,19 +16,15 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
+from agno.utils.reasoning import extract_thinking_content
 
 try:
     from openai import APIConnectionError, APIStatusError, RateLimitError
     from openai import AsyncOpenAI as AsyncOpenAIClient
     from openai import OpenAI as OpenAIClient
     from openai.types import CompletionUsage
-    from openai.types.chat import ChatCompletionAudio
-    from openai.types.chat.chat_completion import ChatCompletion
-    from openai.types.chat.chat_completion_chunk import (
-        ChatCompletionChunk,
-        ChoiceDelta,
-        ChoiceDeltaToolCall,
-    )
+    from openai.types.chat import ChatCompletion, ChatCompletionAudio, ChatCompletionChunk
+    from openai.types.chat.chat_completion_chunk import ChoiceDelta, ChoiceDeltaToolCall
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
@@ -164,6 +160,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -374,7 +371,9 @@ class OpenAIChat(Model):
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
-                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(
+                    response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+                ),
             )
             assistant_message.metrics.stop_timer()
 
@@ -451,7 +450,9 @@ class OpenAIChat(Model):
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
-                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(
+                    response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+                ),
             )
             assistant_message.metrics.stop_timer()
 
@@ -528,7 +529,9 @@ class OpenAIChat(Model):
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(
+                    response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+                ),
             ):
                 yield self._parse_provider_response_delta(chunk)
 
@@ -602,7 +605,9 @@ class OpenAIChat(Model):
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(
+                    response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+                ),
             )
 
             async for chunk in async_stream:
@@ -716,6 +721,12 @@ class OpenAIChat(Model):
         if response_message.content is not None:
             model_response.content = response_message.content
 
+            # Extract thinking content before any structured parsing
+            if model_response.content:
+                reasoning_content, output_content = extract_thinking_content(model_response.content)
+                if reasoning_content:
+                    model_response.reasoning_content = reasoning_content
+                    model_response.content = output_content
         # Add tool calls
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
             try:

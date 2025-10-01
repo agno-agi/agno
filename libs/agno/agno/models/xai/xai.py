@@ -44,6 +44,7 @@ class xAI(OpenAILike):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests, including search parameters.

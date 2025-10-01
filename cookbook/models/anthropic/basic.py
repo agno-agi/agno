@@ -1,7 +1,7 @@
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.anthropic import Claude
 
-agent = Agent(model=Claude(id="claude-sonnet-4-20250514"), markdown=True)
+agent = Agent(model=Claude(id="claude-sonnet-4-5-20250929"), markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")

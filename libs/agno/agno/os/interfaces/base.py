@@ -5,6 +5,7 @@ from fastapi import APIRouter
 
 from agno.agent import Agent
 from agno.team import Team
+from agno.workflow.workflow import Workflow
 
 
 class BaseInterface(ABC):
@@ -13,6 +14,7 @@ class BaseInterface(ABC):
     router_prefix: str = ""
     agent: Optional[Agent] = None
     team: Optional[Team] = None
+    workflow: Optional[Workflow] = None
 
     router: APIRouter
 

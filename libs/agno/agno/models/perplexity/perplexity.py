@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -53,8 +53,7 @@ class Perplexity(OpenAILike):
     def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.

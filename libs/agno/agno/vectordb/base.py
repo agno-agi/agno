@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from agno.knowledge.document import Document
-
 
 class VectorDb(ABC):
     """Base class for Vector Databases"""
+
+    from agno.knowledge.document import Document
 
     @abstractmethod
     def create(self) -> None:

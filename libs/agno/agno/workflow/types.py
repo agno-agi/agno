@@ -57,6 +57,7 @@ class WorkflowExecutionInput:
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
+            "files": [file.to_dict() for file in self.files] if self.files else None,
         }
 
 
