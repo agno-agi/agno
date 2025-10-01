@@ -109,7 +109,7 @@ class InMemoryDb(BaseDb):
                         continue
 
                     session_data_copy = deepcopy(session_data)
-                    
+
                     if not deserialize:
                         return session_data_copy
 
