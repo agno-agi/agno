@@ -15,6 +15,15 @@ from agno.utils.log import logger
 
 
 @dataclass
+class RunContext:
+    run_id: str
+    session_id: str
+    user_id: Optional[str] = None
+    session_state: Optional[Dict[str, Any]] = None
+    dependencies: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class RunInput:
     """Container for the raw input data passed to Agent.run().
 
