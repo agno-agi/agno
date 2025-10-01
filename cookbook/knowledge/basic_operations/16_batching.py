@@ -6,25 +6,24 @@ import asyncio
 
 from agno.agent import Agent  # noqa
 from agno.db.postgres.postgres import PostgresDb
-from agno.knowledge.embedder.cohere import CohereEmbedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.pgvector import PgVector
+from agno.vectordb.lancedb import LanceDb
 
+vector_db = LanceDb(
+    uri="tmp/lancedb",  # You can change this path to store data elsewhere
+    table_name="vectors",
+    embedder=OpenAIEmbedder(
+        batch_size=1000,
+        dimensions=1536,
+        enable_batch=True,
+    ),
+)
 contents_db = PostgresDb(
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     knowledge_table="knowledge_contents",
 )
 
-vector_db = PgVector(
-    table_name="vectors",
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    embedder=CohereEmbedder(
-        batch_size=100,
-        dimensions=1024,
-        exponential_backoff=True,
-    ),
-)
-vector_db.drop()
 
 # Create Knowledge Instance
 knowledge = Knowledge(
@@ -34,14 +33,14 @@ knowledge = Knowledge(
     contents_db=contents_db,
 )
 
+
 asyncio.run(
     knowledge.add_content_async(
         name="CV",
-        path="cookbook/knowledge/testing_resources/manual.pdf",
+        path="cookbook/knowledge/testing_resources/cv_1.pdf",
         metadata={"user_tag": "Engineering Candidates"},
     )
 )
-
 
 agent = Agent(
     name="My Agent",
