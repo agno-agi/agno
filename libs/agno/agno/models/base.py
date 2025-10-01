@@ -1408,6 +1408,7 @@ class Model(ABC):
         function_call_timer = Timer()
         function_call_timer.start()
         success: Union[bool, AgentRunException] = False
+        result = None
 
         try:
             if (
@@ -1692,7 +1693,7 @@ class Model(ABC):
                                 break
                             async_gen_index += 1
 
-            updated_session_state = function_execution_result.updated_session_state
+            updated_session_state = getattr(function_execution_result, "updated_session_state", None)
 
             print(f"Updated session state: {updated_session_state}")
 
@@ -1738,20 +1739,30 @@ class Model(ABC):
             else:
                 from agno.tools.function import ToolResult
 
-                if isinstance(function_execution_result.result, ToolResult):
-                    tool_result = function_execution_result.result
-                    function_call_output = tool_result.content
+                images = getattr(function_execution_result, "images", None)
+                videos = getattr(function_execution_result, "videos", None)
+                audios = getattr(function_execution_result, "audios", None)
+                files = getattr(function_execution_result, "files", None)
 
-                    if tool_result.images:
-                        function_execution_result.images = tool_result.images
-                    if tool_result.videos:
-                        function_execution_result.videos = tool_result.videos
-                    if tool_result.audios:
-                        function_execution_result.audios = tool_result.audios
-                    if tool_result.files:
-                        function_execution_result.files = tool_result.files
+                if (
+                    function_execution_result is not None
+                    and hasattr(function_execution_result, "result")
+                    and isinstance(function_execution_result.result, ToolResult)
+                ):
+                    tool_result = function_execution_result.result
+                    function_call_output = getattr(tool_result, "content", "")
+                    if getattr(tool_result, "images", None):
+                        images = tool_result.images
+                    if getattr(tool_result, "videos", None):
+                        videos = tool_result.videos
+                    if getattr(tool_result, "audios", None):
+                        audios = tool_result.audios
+                    if getattr(tool_result, "files", None):
+                        files = tool_result.files
                 else:
-                    function_call_output = str(function_call.result)
+                    function_call_output = (
+                        str(function_call.result) if getattr(function_call, "result", None) is not None else ""
+                    )
 
                 if function_call.function.show_result:
                     yield ModelResponse(content=function_call_output)
@@ -1779,10 +1790,10 @@ class Model(ABC):
                 ],
                 event=ModelResponseEvent.tool_call_completed.value,
                 updated_session_state=updated_session_state,
-                images=function_execution_result.images,
-                videos=function_execution_result.videos,
-                audios=function_execution_result.audios,
-                files=function_execution_result.files,
+                images=images,
+                videos=videos,
+                audios=audios,
+                files=files,
             )
 
             # Add function call result to function call results
