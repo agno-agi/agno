@@ -785,7 +785,9 @@ class Model(ABC):
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
                 else:
-                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                    self.format_function_call_results(
+                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                    )
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
@@ -949,7 +951,9 @@ class Model(ABC):
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
                 else:
-                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                    self.format_function_call_results(
+                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                    )
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio for msg in function_call_results):

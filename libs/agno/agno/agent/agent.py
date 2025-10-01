@@ -6948,7 +6948,6 @@ class Agent:
 
         if self.output_schema is not None:
             markdown = False
-            markdown = False
 
         if stream is None:
             stream = self.stream or False
