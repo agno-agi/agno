@@ -785,8 +785,12 @@ class Model(ABC):
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
                 else:
+                    try:
+                        extra = model_response.extra or {}
+                    except (UnboundLocalError, AttributeError):
+                        extra = {}
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                        messages=messages, function_call_results=function_call_results, **extra
                     )
 
                 # Handle function call media
@@ -883,7 +887,7 @@ class Model(ABC):
             stream_data = MessageData()
             if stream_model_response:
                 # Generate response
-                async for response in self.aprocess_response_stream(
+                async for model_response in self.aprocess_response_stream(
                     messages=messages,
                     assistant_message=assistant_message,
                     stream_data=stream_data,
@@ -892,7 +896,7 @@ class Model(ABC):
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
                 ):
-                    yield response
+                    yield model_response
 
                 # Populate assistant message from stream data
                 if stream_data.response_content:
@@ -951,8 +955,12 @@ class Model(ABC):
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
                 else:
+                    try:
+                        extra = model_response.extra or {}
+                    except (UnboundLocalError, AttributeError):
+                        extra = {}
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                        messages=messages, function_call_results=function_call_results, **extra
                     )
 
                 # Handle function call media
