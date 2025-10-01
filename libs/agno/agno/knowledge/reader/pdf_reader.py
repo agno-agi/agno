@@ -117,6 +117,10 @@ def _clean_page_numbers(
     page_numbers = [find_page_number(content) for content in page_content_list]
     if all(x is None or x > 5 for x in page_numbers):
         # This approach won't work reliably for higher page numbers.
+        page_content_list = [
+            f"\n{page_content_list[i]}\n{extra_content[i]}" if extra_content else page_content_list[i]
+            for i in range(len(page_content_list))
+        ]
         return page_content_list, None
 
     # Possible range shifts to detect page numbering
