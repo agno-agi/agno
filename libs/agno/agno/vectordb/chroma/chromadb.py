@@ -709,7 +709,6 @@ class ChromaDb(VectorDb):
 
         try:
             collection: Collection = self.client.get_collection(name=self.collection_name)
-            print("COLLECTION_----------", collection)
             # Try to get the document by ID
             result = collection.get(ids=[id])
             found_ids = result.get("ids", [])
