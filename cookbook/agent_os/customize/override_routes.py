@@ -1,15 +1,15 @@
 """
 Example AgentOS app with a custom FastAPI app with conflicting routes.
 
-This example demonstrates the `replace_routes=False` functionality which allows your
+This example demonstrates the `on_route_conflict="preserve_base_app"` functionality which allows your
 custom routes to take precedence over conflicting AgentOS routes.
 
-When `replace_routes=False`:
+When `on_route_conflict="preserve_base_app"`:
 - Your custom routes (/, /health) will be preserved
 - Conflicting AgentOS routes will be skipped
 - Non-conflicting AgentOS routes will still be added
 
-When `replace_routes=True` (default):
+When `on_route_conflict="preserve_agentos"` (default):
 - AgentOS routes will override your custom routes
 - Warnings will be logged about the conflicts
 """
@@ -48,7 +48,7 @@ app: FastAPI = FastAPI(
 async def get_custom_home():
     return {
         "message": "Custom FastAPI App",
-        "note": "Using replace_routes=True to preserve custom routes",
+        "note": 'Using on_route_conflict="preserve_base_app" to preserve custom routes',
     }
 
 
@@ -58,13 +58,13 @@ async def get_custom_health():
     return {"status": "custom_ok", "note": "This is your custom health endpoint"}
 
 
-# Setup our AgentOS app by passing your FastAPI app
-# Use replace_routes=False to preserve your custom routes over AgentOS routes
+# Setup our AgentOS app by passing your FastAPI app in the app_config parameter
+# Use on_route_conflict="preserve_base_app" to preserve your custom routes over AgentOS routes
 agent_os = AgentOS(
     description="Example app with route replacement",
     agents=[web_research_agent],
-    fastapi_app=app,
-    replace_routes=False,  # Skip conflicting AgentOS routes, keep your custom routes
+    base_app=app,
+    on_route_conflict="preserve_base_app",  # Skip conflicting AgentOS routes, keep your custom routes
 )
 
 app = agent_os.get_app()
@@ -72,12 +72,12 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """Run your AgentOS.
 
-    With replace_routes=True:
+    With on_route_conflict="preserve_base_app":
     - Your custom routes are preserved: http://localhost:7777/ and http://localhost:7777/health
     - AgentOS routes are available at other paths: http://localhost:7777/sessions, etc.
     - Conflicting AgentOS routes (GET / and GET /health) are skipped
     - API docs: http://localhost:7777/docs
 
-    Try changing replace_routes=False to see AgentOS routes override your custom ones.
+    Try changing on_route_conflict="preserve_agentos" to see AgentOS routes override your custom ones. This is the default behavior.
     """
     agent_os.serve(app="override_routes:app", reload=True)

@@ -34,7 +34,7 @@ main_agent = Agent(
 
 agent_os = AgentOS(
     description="Example app for basic agent with knowledge capabilities",
-    os_id="knowledge-demo",
+    id="knowledge-demo",
     agents=[main_agent],
 )
 app = agent_os.get_app()

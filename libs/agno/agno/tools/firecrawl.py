@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_error
 
 try:
     from firecrawl import FirecrawlApp  # type: ignore[attr-defined]
