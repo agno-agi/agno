@@ -82,7 +82,7 @@ At Agno, we're obsessed with performance. Why? because even simple AI workflows 
 - Agent instantiation: ~3μs on average
 - Memory footprint: ~6.5Kib on average
 
-> Tested on an Apple M4 Mackbook Pro.
+> Tested on an Apple M4 MacBook Pro.
 
 While an Agent's run-time is bottlenecked by inference, we must do everything possible to minimize execution time, reduce memory usage, and parallelize tool calls. These numbers may seem trivial at first, but our experience shows that they add up even at a reasonably small scale.
 
@@ -106,7 +106,7 @@ python evals/performance/instantiation_with_tool.py
 python evals/performance/other/langgraph_instantiation.py
 ```
 
-> The following evaluation is run on an Apple M4 Mackbook Pro. It also runs as a Github action on this repo.
+> The following evaluation is run on an Apple M4 MacBook Pro. It also runs as a Github action on this repo.
 
 LangGraph is on the right, **let's start it first and give it a head start**.
 

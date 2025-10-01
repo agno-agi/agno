@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, SessionType
-from agno.exceptions import RunCancelledException
+from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
@@ -54,6 +54,7 @@ from agno.team.team import Team
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.log import (
     log_debug,
+    log_error,
     log_warning,
     logger,
     set_log_level_to_debug,
@@ -1000,8 +1001,14 @@ class Workflow:
                 workflow_run_response.audio = output_audio
                 workflow_run_response.status = RunStatus.completed
 
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                # Store error response
+                workflow_run_response.status = RunStatus.error
+                workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
+
+                raise e
             except RunCancelledException as e:
-                # Handle run cancellation
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.content = str(e)
@@ -1013,6 +1020,7 @@ class Workflow:
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
+                raise e
 
             finally:
                 self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
@@ -1199,6 +1207,24 @@ class Workflow:
                 workflow_run_response.audio = output_audio
                 workflow_run_response.status = RunStatus.completed
 
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+
+                from agno.run.workflow import WorkflowErrorEvent
+
+                error_event = WorkflowErrorEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session.session_id,
+                    error=str(e),
+                )
+
+                yield error_event
+
+                # Update workflow_run_response with error
+                workflow_run_response.content = error_event.error
+                workflow_run_response.status = RunStatus.error
             except RunCancelledException as e:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
@@ -1230,6 +1256,7 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
+                raise e
 
         # Yield workflow completed event
         workflow_completed_event = WorkflowCompletedEvent(
@@ -1436,6 +1463,13 @@ class Workflow:
                 workflow_run_response.audio = output_audio
                 workflow_run_response.status = RunStatus.completed
 
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                # Store error response
+                workflow_run_response.status = RunStatus.error
+                workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
+
+                raise e
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
@@ -1444,6 +1478,7 @@ class Workflow:
                 logger.error(f"Workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
+                raise e
 
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
@@ -1471,6 +1506,7 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
+
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
@@ -1633,6 +1669,24 @@ class Workflow:
                 workflow_run_response.audio = output_audio
                 workflow_run_response.status = RunStatus.completed
 
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+
+                from agno.run.workflow import WorkflowErrorEvent
+
+                error_event = WorkflowErrorEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session.session_id,
+                    error=str(e),
+                )
+
+                yield error_event
+
+                # Update workflow_run_response with error
+                workflow_run_response.content = error_event.error
+                workflow_run_response.status = RunStatus.error
             except RunCancelledException as e:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
@@ -1668,6 +1722,7 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
+                raise e
 
         # Yield workflow completed event
         workflow_completed_event = WorkflowCompletedEvent(

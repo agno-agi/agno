@@ -44,7 +44,7 @@ class SerperTools(Toolkit):
 
         tools: List[Any] = []
         if all or enable_search:
-            tools.append(self.search)
+            tools.append(self.search_web)
         if all or enable_search_news:
             tools.append(self.search_news)
         if all or enable_search_scholar:
@@ -97,7 +97,7 @@ class SerperTools(Toolkit):
             log_error(f"Serper API error: {str(e)}")
             return {"success": False, "error": str(e)}
 
-    def search(
+    def search_web(
         self,
         query: str,
         num_results: Optional[int] = None,

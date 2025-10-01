@@ -1,3 +1,5 @@
+import asyncio
+
 from agno.knowledge.embedder.azure_openai import AzureOpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
@@ -18,4 +20,10 @@ knowledge = Knowledge(
         embedder=AzureOpenAIEmbedder(),
     ),
     max_results=2,
+)
+
+asyncio.run(
+    knowledge.add_content_async(
+        path="cookbook/knowledge/testing_resources/cv_1.pdf",
+    )
 )

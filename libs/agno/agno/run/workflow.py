@@ -9,7 +9,6 @@ from agno.media import Audio, Image, Video
 from agno.run.agent import RunOutput
 from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.team import TeamRunOutput
-from agno.utils.log import log_error
 
 if TYPE_CHECKING:
     from agno.workflow.types import StepOutput, WorkflowMetrics
@@ -95,20 +94,6 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
 
         return _dict
 
-    def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
-        import json
-
-        try:
-            _dict = self.to_dict()
-        except Exception:
-            log_error("Failed to convert response to json", exc_info=True)
-            raise
-
-        if indent is None:
-            return json.dumps(_dict, separators=separators)
-        else:
-            return json.dumps(_dict, indent=indent, separators=separators)
-
     @property
     def is_cancelled(self):
         return False
@@ -154,6 +139,11 @@ class WorkflowErrorEvent(BaseWorkflowRunOutputEvent):
 
     event: str = WorkflowRunEvent.workflow_error.value
     error: Optional[str] = None
+
+    # From exceptions
+    error_type: Optional[str] = None
+    error_id: Optional[str] = None
+    additional_data: Optional[Dict[str, Any]] = None
 
 
 @dataclass
