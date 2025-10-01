@@ -1408,7 +1408,7 @@ class Model(ABC):
         function_call_timer = Timer()
         function_call_timer.start()
         success: Union[bool, AgentRunException] = False
-        result = None
+        result: FunctionExecutionResult
 
         try:
             if (
@@ -1430,9 +1430,29 @@ class Model(ABC):
                 success = result.status == "success"
         except AgentRunException as e:
             success = e
+            result = FunctionExecutionResult(
+                status="failure",
+                error=str(e),
+                updated_session_state=None,
+                result=None,
+                images=None,
+                videos=None,
+                audios=None,
+                files=None,
+            )
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {e}")
             success = False
+            result = FunctionExecutionResult(
+                status="failure",
+                error=str(e),
+                updated_session_state=None,
+                result=None,
+                images=None,
+                videos=None,
+                audios=None,
+                files=None,
+            )
             raise e
 
         function_call_timer.stop()
