@@ -29,6 +29,7 @@ surrealdb = SurrealDb(
 )
 
 
+
 async def async_demo():
     """Demonstrate asynchronous usage of SurrealDb"""
 

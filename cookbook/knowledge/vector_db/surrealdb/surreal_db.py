@@ -52,3 +52,4 @@ if __name__ == "__main__":
     # Run synchronous demo
     print("Running synchronous demo...")
     sync_demo()
+
