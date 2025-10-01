@@ -4,7 +4,7 @@ from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
     model=OpenAIChat(id="o3-mini", reasoning_effort="high"),
-    tools=[YFinanceTools(enable_all=True)],
+    tools=[YFinanceTools()],
     markdown=True,
 )
 
