@@ -30,7 +30,6 @@ class JinaEmbedder(Embedder):
     headers: Optional[Dict[str, str]] = None
     request_params: Optional[Dict[str, Any]] = None
     timeout: Optional[float] = None
-    batch_size: int = 100  # Number of texts to process in each API call
 
     def _get_headers(self) -> Dict[str, str]:
         if not self.api_key:

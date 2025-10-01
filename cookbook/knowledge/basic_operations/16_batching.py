@@ -1,4 +1,4 @@
-"""This cookbook shows how to add content from a local file to the knowledge base.
+"""This cookbook shows how to use batch embeddings with Cohere.
 1. Run: `python cookbook/agent_concepts/knowledge/01_from_path.py` to run the cookbook
 """
 
@@ -18,7 +18,6 @@ contents_db = PostgresDb(
 vector_db = PgVector(
     table_name="vectors",
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    enable_batch_embeddings=True,
     embedder=CohereEmbedder(
         batch_size=100,
         dimensions=1024,

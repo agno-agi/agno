@@ -34,7 +34,6 @@ class AzureOpenAIEmbedder(Embedder):
     client_params: Optional[Dict[str, Any]] = None
     openai_client: Optional[AzureOpenAIClient] = None
     async_client: Optional[AsyncAzureOpenAIClient] = None
-    batch_size: int = 100  # Number of texts to process in each API call (max ~2048)
 
     @property
     def client(self) -> AzureOpenAIClient:

@@ -24,7 +24,6 @@ class VoyageAIEmbedder(Embedder):
     client_params: Optional[Dict[str, Any]] = None
     voyage_client: Optional[VoyageClient] = None
     async_client: Optional[AsyncVoyageClient] = None
-    batch_size: int = 100  # Number of texts to process in each API call
 
     @property
     def client(self) -> VoyageClient:

@@ -11,4 +11,3 @@ class NebiusEmbedder(OpenAIEmbedder):
     dimensions: int = 1024
     api_key: Optional[str] = getenv("NEBIUS_API_KEY")
     base_url: str = "https://api.studio.nebius.com/v1/"
-    batch_size: int = 100  # Number of texts to process in each API call

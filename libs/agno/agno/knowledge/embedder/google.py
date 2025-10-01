@@ -27,7 +27,6 @@ class GeminiEmbedder(Embedder):
     vertexai: bool = False
     project_id: Optional[str] = None
     location: Optional[str] = None
-    batch_size: int = 100  # Number of texts to process in each API call
 
     @property
     def client(self):

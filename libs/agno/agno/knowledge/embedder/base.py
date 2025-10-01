@@ -8,6 +8,7 @@ class Embedder:
 
     dimensions: Optional[int] = 1536
     enable_batch: bool = False
+    batch_size: int = 100  # Number of texts to process in each API call
 
     def get_embedding(self, text: str) -> List[float]:
         raise NotImplementedError

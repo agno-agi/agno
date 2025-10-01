@@ -27,7 +27,6 @@ class OpenAIEmbedder(Embedder):
     client_params: Optional[Dict[str, Any]] = None
     openai_client: Optional[OpenAIClient] = None
     async_client: Optional[AsyncOpenAI] = None
-    batch_size: int = 100  # Number of texts to process in each API call (max ~2048)
 
     def __post_init__(self):
         if self.dimensions is None:

@@ -27,7 +27,6 @@ class MistralEmbedder(Embedder):
     client_params: Optional[Dict[str, Any]] = None
     # -*- Provide the Mistral Client manually
     mistral_client: Optional[Mistral] = None
-    batch_size: int = 100  # Number of texts to process in each API call
 
     @property
     def client(self) -> Mistral:
