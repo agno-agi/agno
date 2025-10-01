@@ -7,12 +7,12 @@ from uuid import uuid4
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from fastmcp.server.http import StarletteWithLifespan
 from rich import box
 from rich.panel import Panel
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
+from agno.db.base import BaseDb
 from agno.os.config import (
     AgentOSConfig,
     DatabaseConfig,
@@ -37,7 +37,13 @@ from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.session import get_session_router
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import find_conflicting_routes, load_yaml_config, update_cors_middleware
+from agno.os.utils import (
+    collect_mcp_tools_from_team,
+    collect_mcp_tools_from_workflow,
+    find_conflicting_routes,
+    load_yaml_config,
+    update_cors_middleware,
+)
 from agno.team.team import Team
 from agno.utils.log import logger
 from agno.utils.string import generate_id, generate_id_from_name
@@ -73,7 +79,8 @@ class AgentOS:
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
-        enable_mcp: bool = False,
+        enable_mcp: bool = False,  # Deprecated
+        enable_mcp_server: bool = False,
         fastapi_app: Optional[FastAPI] = None,  # Deprecated
         base_app: Optional[FastAPI] = None,
         replace_routes: Optional[bool] = None,  # Deprecated
@@ -94,7 +101,7 @@ class AgentOS:
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
             lifespan: Optional lifespan context manager for the FastAPI app
-            enable_mcp: Whether to enable MCP (Model Context Protocol)
+            enable_mcp_server: Whether to enable MCP (Model Context Protocol)
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             telemetry: Whether to enable telemetry
@@ -142,12 +149,12 @@ class AgentOS:
 
         self.telemetry = telemetry
 
-        self.enable_mcp = enable_mcp
+        self.enable_mcp_server = enable_mcp or enable_mcp_server
         self.lifespan = lifespan
 
         # List of all MCP tools used inside the AgentOS
-        self.mcp_tools = []
-        self._mcp_app: Optional[StarletteWithLifespan] = None
+        self.mcp_tools: List[Any] = []
+        self._mcp_app: Optional[Any] = None
 
         if self.agents:
             for agent in self.agents:
@@ -157,7 +164,8 @@ class AgentOS:
                         # Checking if the tool is a MCPTools or MultiMCPTools instance
                         type_name = type(tool).__name__
                         if type_name in ("MCPTools", "MultiMCPTools"):
-                            self.mcp_tools.append(tool)
+                            if tool not in self.mcp_tools:
+                                self.mcp_tools.append(tool)
 
                 agent.initialize_agent()
 
@@ -166,13 +174,8 @@ class AgentOS:
 
         if self.teams:
             for team in self.teams:
-                # Track all MCP tools to later handle their connection
-                if team.tools:
-                    for tool in team.tools:
-                        # Checking if the tool is a MCPTools or MultiMCPTools instance
-                        type_name = type(tool).__name__
-                        if type_name in ("MCPTools", "MultiMCPTools"):
-                            self.mcp_tools.append(tool)
+                # Track all MCP tools recursively
+                collect_mcp_tools_from_team(team, self.mcp_tools)
 
                 team.initialize_team()
 
@@ -188,7 +191,8 @@ class AgentOS:
 
         if self.workflows:
             for workflow in self.workflows:
-                # TODO: track MCP tools in workflow members
+                # Track MCP tools recursively in workflow members
+                collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
                 if not workflow.id:
                     workflow.id = generate_id_from_name(workflow.name)
 
@@ -230,7 +234,7 @@ class AgentOS:
         if self.base_app:
             fastapi_app = self.base_app
         else:
-            if self.enable_mcp:
+            if self.enable_mcp_server:
                 from contextlib import asynccontextmanager
 
                 from agno.os.mcp import get_mcp_server
@@ -253,10 +257,11 @@ class AgentOS:
             else:
                 fastapi_app = self._make_app(lifespan=self.lifespan)
 
-        # Add routes with conflict detection
+        # Add routes
         self._add_router(fastapi_app, get_base_router(self, settings=self.settings))
         self._add_router(fastapi_app, get_websocket_router(self, settings=self.settings))
         self._add_router(fastapi_app, get_health_router())
+        self._add_router(fastapi_app, get_home_router(self))
 
         for interface in self.interfaces:
             interface_router = interface.get_router()
@@ -277,13 +282,12 @@ class AgentOS:
             self._add_router(fastapi_app, router)
 
         # Mount MCP if needed
-        if self.enable_mcp and self._mcp_app:
+        if self.enable_mcp_server and self._mcp_app:
             fastapi_app.mount("/", self._mcp_app)
         else:
             # Add the home router
             self._add_router(fastapi_app, get_home_router(self))
 
-        # Add middleware (only if app is not set)
         if not self._app_set:
 
             @fastapi_app.exception_handler(HTTPException)
@@ -386,39 +390,84 @@ class AgentOS:
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover the databases used by all contextual agents, teams and workflows."""
-        dbs = {}
-        knowledge_dbs = {}  # Track databases specifically used for knowledge
+        from agno.db.base import BaseDb
+
+        dbs: Dict[str, BaseDb] = {}
+        knowledge_dbs: Dict[str, BaseDb] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
             if agent.db:
-                dbs[agent.db.id] = agent.db
+                self._register_db_with_validation(dbs, agent.db)
             if agent.knowledge and agent.knowledge.contents_db:
-                knowledge_dbs[agent.knowledge.contents_db.id] = agent.knowledge.contents_db
+                self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
                 # Also add to general dbs if it's used for both purposes
                 if agent.knowledge.contents_db.id not in dbs:
-                    dbs[agent.knowledge.contents_db.id] = agent.knowledge.contents_db
+                    self._register_db_with_validation(dbs, agent.knowledge.contents_db)
 
         for team in self.teams or []:
             if team.db:
-                dbs[team.db.id] = team.db
+                self._register_db_with_validation(dbs, team.db)
             if team.knowledge and team.knowledge.contents_db:
-                knowledge_dbs[team.knowledge.contents_db.id] = team.knowledge.contents_db
+                self._register_db_with_validation(knowledge_dbs, team.knowledge.contents_db)
                 # Also add to general dbs if it's used for both purposes
                 if team.knowledge.contents_db.id not in dbs:
-                    dbs[team.knowledge.contents_db.id] = team.knowledge.contents_db
+                    self._register_db_with_validation(dbs, team.knowledge.contents_db)
 
         for workflow in self.workflows or []:
             if workflow.db:
-                dbs[workflow.db.id] = workflow.db
+                self._register_db_with_validation(dbs, workflow.db)
 
         for interface in self.interfaces or []:
             if interface.agent and interface.agent.db:
-                dbs[interface.agent.db.id] = interface.agent.db
+                self._register_db_with_validation(dbs, interface.agent.db)
             elif interface.team and interface.team.db:
-                dbs[interface.team.db.id] = interface.team.db
+                self._register_db_with_validation(dbs, interface.team.db)
 
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
+
+    def _register_db_with_validation(self, registered_dbs: Dict[str, Any], db: BaseDb) -> None:
+        """Register a database in the contextual OS after validating it is not conflicting with registered databases"""
+        if db.id in registered_dbs:
+            existing_db = registered_dbs[db.id]
+            if not self._are_db_instances_compatible(existing_db, db):
+                raise ValueError(
+                    f"Database ID conflict detected: Two different database instances have the same ID '{db.id}'. "
+                    f"Database instances with the same ID must point to the same database with identical configuration."
+                )
+        registered_dbs[db.id] = db
+
+    def _are_db_instances_compatible(self, db1: BaseDb, db2: BaseDb) -> bool:
+        """
+        Return True if the two given database objects are compatible
+        Two database objects are compatible if they point to the same database with identical configuration.
+        """
+        # If they're the same object reference, they're compatible
+        if db1 is db2:
+            return True
+
+        if type(db1) is not type(db2):
+            return False
+
+        if hasattr(db1, "db_url") and hasattr(db2, "db_url"):
+            if db1.db_url != db2.db_url:  # type: ignore
+                return False
+
+        if hasattr(db1, "db_file") and hasattr(db2, "db_file"):
+            if db1.db_file != db2.db_file:  # type: ignore
+                return False
+
+        # If table names are different, they're not compatible
+        if (
+            db1.session_table_name != db2.session_table_name
+            or db1.memory_table_name != db2.memory_table_name
+            or db1.metrics_table_name != db2.metrics_table_name
+            or db1.eval_table_name != db2.eval_table_name
+            or db1.knowledge_table_name != db2.knowledge_table_name
+        ):
+            return False
+
+        return True
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""

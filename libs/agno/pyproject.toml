@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.0.9"
+version = "2.0.11"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -48,7 +48,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
 
-os = ["fastapi", "uvicorn"]
+os = ["fastapi", "uvicorn", "PyJWT"]
 
 # Models integration test dependencies
 integration-tests = [
@@ -393,6 +393,7 @@ module = [
   "imghdr.*",
   "infinity_client.*",
   "jira.*",
+  "jwt.*",
   "kubernetes.*",
   "lancedb.*",
   "langchain_core.*",
