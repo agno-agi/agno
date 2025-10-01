@@ -41,7 +41,7 @@ def test_searxng_search(searxng_instance):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        result = searxng_instance.search("test query", max_results=2)
+        result = searxng_instance.search_web("test query", max_results=2)
 
         # Parse the JSON result since the method returns JSON string
         result_data = json.loads(result)
@@ -63,7 +63,7 @@ def test_searxng_search_with_engines(searxng_with_engines):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        searxng_with_engines.search("test query")
+        searxng_with_engines.search_web("test query")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20query&engines=google,bing"
         mock_get.assert_called_once_with(expected_url)
@@ -80,7 +80,7 @@ def test_searxng_search_with_fixed_max_results(searxng_with_fixed_results):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        result = searxng_with_fixed_results.search("test query", max_results=10)
+        result = searxng_with_fixed_results.search_web("test query", max_results=10)
         result_data = json.loads(result)
 
         # Should respect fixed_max_results (3) instead of max_results (10)
@@ -128,7 +128,7 @@ def test_searxng_search_error_handling(searxng_instance):
     with patch("httpx.get") as mock_get:
         mock_get.side_effect = Exception("Network error")
 
-        result = searxng_instance.search("test query")
+        result = searxng_instance.search_web("test query")
 
         assert "Error fetching results from searxng: Network error" in result
 
@@ -142,7 +142,7 @@ def test_searxng_query_encoding(searxng_instance):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        searxng_instance.search("test query with spaces & symbols")
+        searxng_instance.search_web("test query with spaces & symbols")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20query%20with%20spaces%20%26%20symbols"
         mock_get.assert_called_once_with(expected_url)

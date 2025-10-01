@@ -37,7 +37,7 @@ agent = Agent(
 # Create AgentOS app
 agent_os = AgentOS(
     description="My first AgentOS app",
-    os_id="my-app",
+    id="my-app",
     agents=[agent],
 )
 

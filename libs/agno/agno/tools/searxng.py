@@ -21,7 +21,7 @@ class Searxng(Toolkit):
         self.fixed_max_results = fixed_max_results
 
         tools: List[Any] = [
-            self.search,
+            self.search_web,
             self.image_search,
             self.it_search,
             self.map_search,
@@ -33,7 +33,7 @@ class Searxng(Toolkit):
 
         super().__init__(name="searxng", tools=tools, **kwargs)
 
-    def search(self, query: str, max_results: int = 5) -> str:
+    def search_web(self, query: str, max_results: int = 5) -> str:
         """Use this function to search the web.
 
         Args:

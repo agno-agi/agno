@@ -84,7 +84,7 @@ research_team = Team(
 
 # Create the AgentOS
 agent_os = AgentOS(
-    os_id="agentos-demo",
+    id="agentos-demo",
     agents=[agno_agent],
     teams=[research_team],
 )

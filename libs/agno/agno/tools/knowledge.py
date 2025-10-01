@@ -43,15 +43,15 @@ class KnowledgeTools(Toolkit):
         if enable_think or all:
             tools.append(self.think)
         if enable_search or all:
-            tools.append(self.search)
+            tools.append(self.search_knowledge)
         if enable_analyze or all:
             tools.append(self.analyze)
 
         super().__init__(
             name="knowledge_tools",
+            tools=tools,
             instructions=self.instructions,
             add_instructions=add_instructions,
-            tools=tools,
             **kwargs,
         )
 
@@ -89,7 +89,7 @@ class KnowledgeTools(Toolkit):
             log_error(f"Error recording thought: {e}")
             return f"Error recording thought: {e}"
 
-    def search(self, session_state: Dict[str, Any], query: str) -> str:
+    def search_knowledge(self, session_state: Dict[str, Any], query: str) -> str:
         """Use this tool to search the knowledge base for relevant information.
         After thinking through the question, use this tool as many times as needed to search for relevant information.
 
