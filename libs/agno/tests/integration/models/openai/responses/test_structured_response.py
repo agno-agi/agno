@@ -111,7 +111,9 @@ def test_tool_use_with_structured_output_stream():
     )
 
     response_stream = agent.run(
-        "Research the latest trends in machine learning on the internet and provide a summary", stream=True, stream_intermediate_steps=True
+        "Research the latest trends in machine learning on the internet and provide a summary",
+        stream=True,
+        stream_intermediate_steps=True,
     )
 
     responses = []

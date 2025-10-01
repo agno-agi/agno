@@ -331,7 +331,9 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools, tool_choice=tool_choice)
+        request_kwargs = self.get_request_params(
+            system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
         try:
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
@@ -372,7 +374,9 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools, tool_choice=tool_choice)
+        request_kwargs = self.get_request_params(
+            system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
 
         try:
             if run_response and run_response.metrics:
@@ -416,7 +420,9 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools, tool_choice=tool_choice)
+        request_kwargs = self.get_request_params(
+            system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
 
         try:
             if run_response and run_response.metrics:
