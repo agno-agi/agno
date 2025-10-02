@@ -1,4 +1,4 @@
-name: "Close Stale Issues"
+name: "Mark Stale Issues"
 
 on:
   schedule:
@@ -14,19 +14,14 @@ jobs:
     steps:
       - uses: actions/stale@v9
         with:
-          # Message to comment on stale issues
           stale-issue-message: >
-            This issue has been automatically marked as stale due to 14 days of inactivity
-            and will now be closed.
+            This issue has been automatically marked as stale due to 30 days of inactivity.
 
-          # Mark issues as stale after 14 days
-          days-before-issue-stale: 14
+          # Mark issues as stale after 30 days
+          days-before-issue-stale: 30
 
-          # Close issues immediately after marking as stale
-          days-before-issue-close: 0
+          # Effectively never close issues
+          days-before-issue-close: 99999
 
-          # Label to apply when marking issues as stale
           stale-issue-label: "stale"
-
-          # Remove stale label if an update is made
           remove-stale-when-updated: true

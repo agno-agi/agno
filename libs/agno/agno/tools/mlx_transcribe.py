@@ -32,7 +32,7 @@ class MLXTranscribeTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
-        read_files_in_base_dir: bool = True,
+        enable_read_files_in_base_dir: bool = True,
         path_or_hf_repo: str = "mlx-community/whisper-large-v3-turbo",
         verbose: Optional[bool] = None,
         temperature: Optional[Union[float, Tuple[float, ...]]] = None,
@@ -47,10 +47,9 @@ class MLXTranscribeTools(Toolkit):
         clip_timestamps: Optional[Union[str, List[float]]] = None,
         hallucination_silence_threshold: Optional[float] = None,
         decode_options: Optional[dict] = None,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="mlx_transcribe", **kwargs)
-
         self.base_dir: Path = base_dir or Path.cwd()
         self.path_or_hf_repo: str = path_or_hf_repo
         self.verbose: Optional[bool] = verbose
@@ -67,9 +66,11 @@ class MLXTranscribeTools(Toolkit):
         self.hallucination_silence_threshold: Optional[float] = hallucination_silence_threshold
         self.decode_options: Optional[dict] = decode_options
 
-        self.register(self.transcribe)
-        if read_files_in_base_dir:
-            self.register(self.read_files)
+        tools: List[Any] = [self.transcribe]
+        if enable_read_files_in_base_dir or all:
+            tools.append(self.read_files)
+
+        super().__init__(name="mlx_transcribe", tools=tools, **kwargs)
 
     def transcribe(self, file_name: str) -> str:
         """

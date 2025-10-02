@@ -11,8 +11,7 @@
 CURR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "${CURR_DIR}")"
 AGNO_DIR="${REPO_ROOT}/libs/agno"
-AGNO_DOCKER_DIR="${REPO_ROOT}/libs/infra/agno_docker"
-AGNO_AWS_DIR="${REPO_ROOT}/libs/infra/agno_aws"
+AGNO_INFRA_DIR="${REPO_ROOT}/libs/agno_infra"
 source "${CURR_DIR}/_utils.sh"
 
 VENV_DIR="${REPO_ROOT}/.venv"
@@ -33,23 +32,24 @@ print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DIR}/requirements.t
 VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DIR}/requirements.txt
 
 print_heading "Installing agno in editable mode with tests dependencies"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_DIR}[tests]
+VIRTUAL_ENV=${VENV_DIR} uv pip install -U -e ${AGNO_DIR}[tests]
 VIRTUAL_ENV=${VENV_DIR} uv pip install yfinance
 
-print_heading "Installing agno-docker"
-print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DOCKER_DIR}/requirements.txt"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DOCKER_DIR}/requirements.txt
-VIRTUAL_ENV=${VENV_DIR} uv pip install yfinance
+VIRTUAL_ENV=${VENV_DIR} uv pip install google-genai==1.17.0
+VIRTUAL_ENV=${VENV_DIR} uv pip install mcp==1.9.2
+VIRTUAL_ENV=${VENV_DIR} uv pip install crawl4ai==0.6.3
+VIRTUAL_ENV=${VENV_DIR} uv pip install firecrawl-py==3.4.0
+VIRTUAL_ENV=${VENV_DIR} uv pip install chonkie[st] chonkie
+VIRTUAL_ENV=${VENV_DIR} uv pip install pylance
+VIRTUAL_ENV=${VENV_DIR} uv pip install psycopg-binary psycopg psycopg2
 
-print_heading "Installing agno-docker in editable mode with dev dependencies"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_DOCKER_DIR}[dev]
 
-print_heading "Installing agno-aws"
-print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_AWS_DIR}/requirements.txt"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_AWS_DIR}/requirements.txt
+print_heading "Installing agno-os"
+print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt"
+VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt
 
-print_heading "Installing agno-aws in editable mode with dev dependencies"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_AWS_DIR}[dev]
+print_heading "Installing agno-os in editable mode with dev dependencies"
+VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_INFRA_DIR}[dev]
 
 print_heading "uv pip list"
 VIRTUAL_ENV=${VENV_DIR} uv pip list

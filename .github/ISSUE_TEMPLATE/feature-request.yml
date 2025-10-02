@@ -1,0 +1,52 @@
+name: Feature Request
+description: Suggest a feature or enhancement to make Agno even better.
+title: "[Feature Request] "
+labels: ["enhancement"]
+assignees:
+  - ""
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an idea! Please describe your feature request in detail.
+  - type: textarea
+    id: problem-description
+    attributes:
+      label: Problem Description
+      description: Provide a clear and concise explanation of the problem or limitation you're facing. Why is this feature needed?
+      placeholder: "Example: I often find it frustrating when [...] because [...]"
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Solution
+      description: Explain your ideal solution. How should this feature work? Be as detailed as possible.
+      placeholder: Describe how the feature should function, potential UI changes, API design, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives-considered
+    attributes:
+      label: Alternatives Considered
+      description: Have you found any workarounds or alternative solutions? Share other approaches you've tried or thought about.
+    validations:
+      required: false
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Include any extra information that might be helpful (screenshots, examples of similar features elsewhere, relevant links).
+    validations:
+      required: false
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Would you like to work on this?
+      description: We welcome contributions! Let us know if you’d like to help implement this feature.
+      options:
+        - label: Yes, I’d love to work on it!
+        - label: I’m open to collaborating but need guidance.
+        - label: No, I’m just sharing the idea.
+    validations:
+      required: false

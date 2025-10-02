@@ -1,30 +1,54 @@
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
-from agno.models.message import Citations, DocumentCitation, Message
+from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
-from agno.utils.models.claude import format_messages
+from agno.run.agent import RunOutput
+from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.claude import MCPServerConfiguration, format_messages, format_tools_for_model
 
 try:
     from anthropic import Anthropic as AnthropicClient
-    from anthropic import APIConnectionError, APIStatusError, RateLimitError
-    from anthropic import AsyncAnthropic as AsyncAnthropicClient
+    from anthropic import (
+        APIConnectionError,
+        APIStatusError,
+        RateLimitError,
+    )
+    from anthropic import (
+        AsyncAnthropic as AsyncAnthropicClient,
+    )
     from anthropic.types import (
+        CitationPageLocation,
+        CitationsWebSearchResultLocation,
         ContentBlockDeltaEvent,
         ContentBlockStartEvent,
         ContentBlockStopEvent,
-        MessageDeltaEvent,
+        MessageDeltaUsage,
+        # MessageDeltaEvent,  # Currently broken
         MessageStopEvent,
+        Usage,
     )
-    from anthropic.types import Message as AnthropicMessage
-except (ModuleNotFoundError, ImportError):
-    raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
+    from anthropic.types import (
+        Message as AnthropicMessage,
+    )
+except ImportError as e:
+    raise ImportError("`anthropic` not installed. Please install it with `pip install anthropic`") from e
+
+# Import Beta types
+try:
+    from anthropic.types.beta import BetaRawContentBlockDeltaEvent, BetaTextDelta
+except ImportError as e:
+    raise ImportError(
+        "`anthropic` not installed or missing beta components. Please install with `pip install anthropic`"
+    ) from e
 
 
 @dataclass
@@ -46,10 +70,14 @@ class Claude(Model):
     stop_sequences: Optional[List[str]] = None
     top_p: Optional[float] = None
     top_k: Optional[int] = None
+    cache_system_prompt: Optional[bool] = False
+    extended_cache_time: Optional[bool] = False
     request_params: Optional[Dict[str, Any]] = None
+    mcp_servers: Optional[List[MCPServerConfiguration]] = None
 
     # Client parameters
     api_key: Optional[str] = None
+    default_headers: Optional[Dict[str, Any]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # Anthropic clients
@@ -65,16 +93,19 @@ class Claude(Model):
 
         # Add API key to client parameters
         client_params["api_key"] = self.api_key
+
         # Add additional client parameters
         if self.client_params is not None:
             client_params.update(self.client_params)
+        if self.default_headers is not None:
+            client_params["default_headers"] = self.default_headers
         return client_params
 
     def get_client(self) -> AnthropicClient:
         """
         Returns an instance of the Anthropic client.
         """
-        if self.client:
+        if self.client and not self.client.is_closed():
             return self.client
 
         _client_params = self._get_client_params()
@@ -92,8 +123,7 @@ class Claude(Model):
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_params(self) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
         """
@@ -110,11 +140,18 @@ class Claude(Model):
             _request_params["top_p"] = self.top_p
         if self.top_k:
             _request_params["top_k"] = self.top_k
+        if self.mcp_servers:
+            _request_params["mcp_servers"] = [
+                {k: v for k, v in asdict(server).items() if v is not None} for server in self.mcp_servers
+            ]
         if self.request_params:
             _request_params.update(self.request_params)
+
         return _request_params
 
-    def _prepare_request_kwargs(self, system_message: str) -> Dict[str, Any]:
+    def _prepare_request_kwargs(
+        self, system_message: str, tools: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
         """
         Prepare the request keyword arguments for the API call.
 
@@ -124,82 +161,66 @@ class Claude(Model):
         Returns:
             Dict[str, Any]: The request keyword arguments.
         """
-        request_kwargs = self.request_kwargs.copy()
-        request_kwargs["system"] = system_message
+        request_kwargs = self.get_request_params().copy()
+        if system_message:
+            if self.cache_system_prompt:
+                cache_control = (
+                    {"type": "ephemeral", "ttl": "1h"}
+                    if self.extended_cache_time is not None and self.extended_cache_time is True
+                    else {"type": "ephemeral"}
+                )
+                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
+            else:
+                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
 
-        if self._tools:
-            request_kwargs["tools"] = self._format_tools_for_model()
+        if tools:
+            request_kwargs["tools"] = format_tools_for_model(tools)
+
+        if request_kwargs:
+            log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
         return request_kwargs
 
-    def _format_tools_for_model(self) -> Optional[List[Dict[str, Any]]]:
-        """
-        Transforms function definitions into a format accepted by the Anthropic API.
-
-        Returns:
-            Optional[List[Dict[str, Any]]]: A list of tools formatted for the API, or None if no functions are defined.
-        """
-        if not self._functions:
-            return None
-
-        tools: List[Dict[str, Any]] = []
-        for func_name, func_def in self._functions.items():
-            parameters: Dict[str, Any] = func_def.parameters or {}
-            properties: Dict[str, Any] = parameters.get("properties", {})
-            required_params: List[str] = []
-
-            for param_name, param_info in properties.items():
-                param_type = param_info.get("type", "")
-                param_type_list: List[str] = [param_type] if isinstance(param_type, str) else param_type or []
-
-                if "null" not in param_type_list:
-                    required_params.append(param_name)
-
-            input_properties: Dict[str, Dict[str, Union[str, List[str]]]] = {}
-            for param_name, param_info in properties.items():
-                input_properties[param_name] = {
-                    "description": param_info.get("description", ""),
-                }
-                if "type" not in param_info and "anyOf" in param_info:
-                    input_properties[param_name]["anyOf"] = param_info["anyOf"]
-                else:
-                    input_properties[param_name]["type"] = param_info.get("type", "")
-
-            tool = {
-                "name": func_name,
-                "description": func_def.description or "",
-                "input_schema": {
-                    "type": parameters.get("type", "object"),
-                    "properties": input_properties,
-                    "required": required_params,
-                },
-            }
-            tools.append(tool)
-        return tools
-
-    def invoke(self, messages: List[Message]) -> AnthropicMessage:
+    def invoke(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+    ) -> ModelResponse:
         """
         Send a request to the Anthropic API to generate a response.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            AnthropicMessage: The response from the model.
-
-        Raises:
-            APIConnectionError: If there are network connectivity issues
-            RateLimitError: If the API rate limit is exceeded
-            APIStatusError: For other API-related errors
         """
         try:
-            chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message)
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
 
-            return self.get_client().messages.create(
-                model=self.id,
-                messages=chat_messages,  # type: ignore
-                **request_kwargs,
-            )
+            chat_messages, system_message = format_messages(messages)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools)
+
+            if self.mcp_servers is not None:
+                assistant_message.metrics.start_timer()
+                provider_response = self.get_client().beta.messages.create(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **self.get_request_params(),
+                )
+            else:
+                assistant_message.metrics.start_timer()
+                provider_response = self.get_client().messages.create(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                )
+
+            assistant_message.metrics.stop_timer()
+
+            # Parse the response into an Agno ModelResponse object
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
+
+            return model_response
+
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -215,7 +236,15 @@ class Claude(Model):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Any:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+    ) -> Any:
         """
         Stream a response from the Anthropic API.
 
@@ -224,59 +253,40 @@ class Claude(Model):
 
         Returns:
             Any: The streamed response from the model.
-        """
-        chat_messages, system_message = format_messages(messages)
-        request_kwargs = self._prepare_request_kwargs(system_message)
-
-        try:
-            return (
-                self.get_client()
-                .messages.stream(
-                    model=self.id,
-                    messages=chat_messages,  # type: ignore
-                    **request_kwargs,
-                )
-                .__enter__()
-            )
-        except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
-            ) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-
-    async def ainvoke(self, messages: List[Message]) -> AnthropicMessage:
-        """
-        Send an asynchronous request to the Anthropic API to generate a response.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            AnthropicMessage: The response from the model.
 
         Raises:
             APIConnectionError: If there are network connectivity issues
             RateLimitError: If the API rate limit is exceeded
             APIStatusError: For other API-related errors
         """
-        try:
-            chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message)
+        chat_messages, system_message = format_messages(messages)
+        request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            return await self.get_async_client().messages.create(
-                model=self.id,
-                messages=chat_messages,  # type: ignore
-                **request_kwargs,
-            )
+        try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            if self.mcp_servers is not None:
+                assistant_message.metrics.start_timer()
+                with self.get_client().beta.messages.stream(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                ) as stream:
+                    for chunk in stream:
+                        yield self._parse_provider_response_delta(chunk)  # type: ignore
+            else:
+                assistant_message.metrics.start_timer()
+                with self.get_client().messages.stream(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                ) as stream:
+                    for chunk in stream:  # type: ignore
+                        yield self._parse_provider_response_delta(chunk)  # type: ignore
+
+            assistant_message.metrics.stop_timer()
+
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -292,26 +302,110 @@ class Claude(Model):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+    ) -> ModelResponse:
         """
-        Stream an asynchronous response from the Anthropic API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Any: The streamed response from the model.
+        Send an asynchronous request to the Anthropic API to generate a response.
         """
         try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message)
-            async with self.get_async_client().messages.stream(
-                model=self.id,
-                messages=chat_messages,  # type: ignore
-                **request_kwargs,
-            ) as stream:
-                async for chunk in stream:
-                    yield chunk
+            request_kwargs = self._prepare_request_kwargs(system_message, tools)
+
+            if self.mcp_servers is not None:
+                assistant_message.metrics.start_timer()
+                provider_response = await self.get_async_client().beta.messages.create(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **self.get_request_params(),
+                )
+            else:
+                assistant_message.metrics.start_timer()
+                provider_response = await self.get_async_client().messages.create(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                )
+
+            assistant_message.metrics.stop_timer()
+
+            # Parse the response into an Agno ModelResponse object
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
+
+            return model_response
+
+        except APIConnectionError as e:
+            log_error(f"Connection error while calling Claude API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except RateLimitError as e:
+            log_warning(f"Rate limit exceeded: {str(e)}")
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except APIStatusError as e:
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Claude API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+    ) -> AsyncIterator[ModelResponse]:
+        """
+        Stream an asynchronous response from the Anthropic API.
+        Args:
+            messages (List[Message]): A list of messages to send to the model.
+        Returns:
+            AsyncIterator[ModelResponse]: An async iterator of processed model responses.
+        Raises:
+            APIConnectionError: If there are network connectivity issues
+            RateLimitError: If the API rate limit is exceeded
+            APIStatusError: For other API-related errors
+        """
+        try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            chat_messages, system_message = format_messages(messages)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools)
+
+            if self.mcp_servers is not None:
+                assistant_message.metrics.start_timer()
+                async with self.get_async_client().beta.messages.stream(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                ) as stream:
+                    async for chunk in stream:
+                        yield self._parse_provider_response_delta(chunk)  # type: ignore
+            else:
+                assistant_message.metrics.start_timer()
+                async with self.get_async_client().messages.stream(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                ) as stream:
+                    async for chunk in stream:  # type: ignore
+                        yield self._parse_provider_response_delta(chunk)  # type: ignore
+
+            assistant_message.metrics.stop_timer()
+
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -353,10 +447,13 @@ class Claude(Model):
     def get_system_message_for_model(self) -> Optional[str]:
         if self._functions is not None and len(self._functions) > 0:
             tool_call_prompt = "Do not reflect on the quality of the returned search results in your response"
+    def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
+        if tools is not None and len(tools) > 0:
+            tool_call_prompt = "Do not reflect on the quality of the returned search results in your response\n\n"
             return tool_call_prompt
         return None
 
-    def parse_provider_response(self, response: AnthropicMessage) -> ModelResponse:
+    def _parse_provider_response(self, response: AnthropicMessage, **kwargs) -> ModelResponse:
         """
         Parse the Claude response into a ModelResponse.
 
@@ -379,21 +476,34 @@ class Claude(Model):
                     else:
                         model_response.content += block.text
 
-                    if block.citations:
-                        model_response.citations = Citations(raw=block.citations, documents=[])
+                    # Capture citations from the response
+                    if block.citations is not None:
+                        if model_response.citations is None:
+                            model_response.citations = Citations(raw=[], urls=[], documents=[])
                         for citation in block.citations:
-                            model_response.citations.documents.append(  # type: ignore
-                                DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
-                            )
+                            model_response.citations.raw.append(citation.model_dump())  # type: ignore
+                            # Web search citations
+                            if isinstance(citation, CitationsWebSearchResultLocation):
+                                model_response.citations.urls.append(  # type: ignore
+                                    UrlCitation(url=citation.url, title=citation.cited_text)
+                                )
+                            # Document citations
+                            elif isinstance(citation, CitationPageLocation):
+                                model_response.citations.documents.append(  # type: ignore
+                                    DocumentCitation(
+                                        document_title=citation.document_title,
+                                        cited_text=citation.cited_text,
+                                    )
+                                )
                 elif block.type == "thinking":
-                    model_response.thinking = block.thinking
+                    model_response.reasoning_content = block.thinking
                     model_response.provider_data = {
                         "signature": block.signature,
                     }
                 elif block.type == "redacted_thinking":
-                    model_response.redacted_thinking = block.data
+                    model_response.redacted_reasoning_content = block.data
 
-        # -*- Extract tool calls from the response
+        # Extract tool calls from the response
         if response.stop_reason == "tool_use":
             for block in response.content:
                 if block.type == "tool_use":
@@ -405,7 +515,7 @@ class Claude(Model):
                         function_def["arguments"] = json.dumps(tool_input)
 
                     model_response.extra = model_response.extra or {}
-                    model_response.extra.setdefault("tool_ids", []).append(block.id)
+
                     model_response.tool_calls.append(
                         {
                             "id": block.id,
@@ -416,12 +526,19 @@ class Claude(Model):
 
         # Add usage metrics
         if response.usage is not None:
-            model_response.response_usage = response.usage
+            model_response.response_usage = self._get_metrics(response.usage)
 
         return model_response
 
-    def parse_provider_response_delta(
-        self, response: Union[ContentBlockDeltaEvent, ContentBlockStopEvent, MessageDeltaEvent]
+    def _parse_provider_response_delta(
+        self,
+        response: Union[
+            ContentBlockStartEvent,
+            ContentBlockDeltaEvent,
+            ContentBlockStopEvent,
+            MessageStopEvent,
+            BetaRawContentBlockDeltaEvent,
+        ],
     ) -> ModelResponse:
         """
         Parse the Claude streaming response into ModelProviderResponse objects.
@@ -435,29 +552,22 @@ class Claude(Model):
         model_response = ModelResponse()
 
         if isinstance(response, ContentBlockStartEvent):
-            if response.content_block.type == "redacted_thinking":
-                model_response.redacted_thinking = response.content_block.data
+            if response.content_block.type == "redacted_reasoning_content":
+                model_response.redacted_reasoning_content = response.content_block.data
 
         if isinstance(response, ContentBlockDeltaEvent):
             # Handle text content
             if response.delta.type == "text_delta":
                 model_response.content = response.delta.text
-            elif response.delta.type == "citation_delta":
-                citation = response.delta.citation
-                model_response.citations = Citations(raw=citation)
-                model_response.citations.documents.append(  # type: ignore
-                    DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
-                )
             # Handle thinking content
             elif response.delta.type == "thinking_delta":
-                model_response.thinking = response.delta.thinking
+                model_response.reasoning_content = response.delta.thinking
             elif response.delta.type == "signature_delta":
                 model_response.provider_data = {
                     "signature": response.delta.signature,
                 }
 
         elif isinstance(response, ContentBlockStopEvent):
-            # Handle tool calls
             if response.content_block.type == "tool_use":  # type: ignore
                 tool_use = response.content_block  # type: ignore
                 tool_name = tool_use.name
@@ -468,7 +578,6 @@ class Claude(Model):
                     function_def["arguments"] = json.dumps(tool_input)
 
                 model_response.extra = model_response.extra or {}
-                model_response.extra.setdefault("tool_ids", []).append(tool_use.id)
 
                 model_response.tool_calls = [
                     {
@@ -478,9 +587,65 @@ class Claude(Model):
                     }
                 ]
 
-        # Handle message completion and usage metrics
+        # Capture citations from the final response
         elif isinstance(response, MessageStopEvent):
-            if response.message.usage is not None:
-                model_response.response_usage = response.message.usage
+            model_response.content = ""
+            model_response.citations = Citations(raw=[], urls=[], documents=[])
+            for block in response.message.content:  # type: ignore
+                citations = getattr(block, "citations", None)
+                if not citations:
+                    continue
+                for citation in citations:
+                    model_response.citations.raw.append(citation.model_dump())  # type: ignore
+                    # Web search citations
+                    if isinstance(citation, CitationsWebSearchResultLocation):
+                        model_response.citations.urls.append(UrlCitation(url=citation.url, title=citation.cited_text))  # type: ignore
+                    # Document citations
+                    elif isinstance(citation, CitationPageLocation):
+                        model_response.citations.documents.append(  # type: ignore
+                            DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
+                        )
+
+        if hasattr(response, "message") and hasattr(response.message, "usage") and response.message.usage is not None:  # type: ignore
+            model_response.response_usage = self._get_metrics(response.message.usage)  # type: ignore
+
+        # Capture the Beta response
+        try:
+            if (
+                isinstance(response, BetaRawContentBlockDeltaEvent)
+                and isinstance(response.delta, BetaTextDelta)
+                and response.delta.text is not None
+            ):
+                model_response.content = response.delta.text
+        except Exception as e:
+            log_error(f"Error parsing Beta response: {e}")
 
         return model_response
+
+    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage]) -> Metrics:
+        """
+        Parse the given Anthropic-specific usage into an Agno Metrics object.
+
+        Args:
+            response_usage: Usage data from Anthropic
+
+        Returns:
+            Metrics: Parsed metrics data
+        """
+        metrics = Metrics()
+
+        metrics.input_tokens = response_usage.input_tokens or 0
+        metrics.output_tokens = response_usage.output_tokens or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+        metrics.cache_read_tokens = response_usage.cache_read_input_tokens or 0
+        metrics.cache_write_tokens = response_usage.cache_creation_input_tokens or 0
+
+        # Anthropic-specific additional fields
+        if response_usage.server_tool_use:
+            metrics.provider_metrics = {"server_tool_use": response_usage.server_tool_use}
+        if isinstance(response_usage, Usage):
+            if response_usage.service_tier:
+                metrics.provider_metrics = metrics.provider_metrics or {}
+                metrics.provider_metrics["service_tier"] = response_usage.service_tier
+
+        return metrics

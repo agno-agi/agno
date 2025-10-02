@@ -63,6 +63,15 @@ def test_parse_direct_json():
     assert result.value == "123"
 
 
+def test_parse_already_escaped_string():
+    """Test parsing a clean JSON string directly"""
+    content = '{"name": "test", "value": "Already escaped "quote""}'
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == 'Already escaped "quote"'
+
+
 def test_parse_json_with_markdown_block():
     """Test parsing JSON from a markdown code block"""
     content = """Some text before
@@ -224,3 +233,116 @@ def test_parse_nested_json():
     assert result.steps[0].description == "Step 1 description"
     assert result.steps[1].step == "2"
     assert result.steps[1].description == "Step 2 description"
+
+
+def test_parse_concatenated_reasoning_steps():
+    """Test concatenated JSON objects."""
+
+    from agno.reasoning.step import ReasoningSteps
+
+    content = (
+        '{"reasoning_steps":[{"title":"Step A","confidence":1.0}]}'
+        '{"reasoning_steps":[{"title":"Step B","confidence":0.9}]}'
+    )
+
+    result = parse_response_model_str(content, ReasoningSteps)
+
+    assert result is not None
+    assert len(result.reasoning_steps) == 2
+    assert result.reasoning_steps[0].title == "Step A"
+    assert result.reasoning_steps[1].title == "Step B"
+
+
+def test_parse_json_with_prefix_suffix_noise():
+    """Test JSON with trailing characters."""
+
+    from agno.reasoning.step import ReasoningSteps
+
+    content = 'Here is my reasoning: {"reasoning_steps":[{"title":"Only Step","confidence":0.8}]} -- end of reasoning'
+
+    result = parse_response_model_str(content, ReasoningSteps)
+
+    assert result is not None
+    assert len(result.reasoning_steps) == 1
+    assert result.reasoning_steps[0].title == "Only Step"
+
+
+def test_parse_preserves_field_name_case():
+    """Test that field names with mixed case are preserved correctly"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+        camelCase: str
+        UPPER_CASE: str
+
+    content = '{"Supplier_name": "test supplier", "newData": "some data", "camelCase": "camel value", "UPPER_CASE": "upper value"}'
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == "test supplier"
+    assert result.newData == "some data"
+    assert result.camelCase == "camel value"
+    assert result.UPPER_CASE == "upper value"
+
+
+def test_parse_preserves_field_name_case_with_cleanup_path():
+    """Test that field names with mixed case are preserved when going through the cleanup path"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+
+    content = '{"Supplier_name": "test \\"quoted\\" supplier", "newData": "some \\"quoted\\" data"}'
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == 'test "quoted" supplier'
+    assert result.newData == 'some "quoted" data'
+
+
+def test_parse_preserves_field_name_case_with_markdown():
+    """Test that field names with mixed case are preserved when parsing from markdown blocks with special formatting"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+
+    content = """```json
+    {
+        "Supplier_name": "test "quoted" supplier",
+        "newData": "some "quoted" data"
+    }
+    ```"""
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == 'test "quoted" supplier'
+    assert result.newData == 'some "quoted" data'
+
+
+def test_parse_json_with_python_code_in_value():
+    """Test parsing JSON with valid Python code containing # and * characters as a value"""
+
+    class CodeModel(BaseModel):
+        function_name: str
+        code: str
+        description: str
+
+    content = """```json
+    {
+        "function_name": "calculate_factorial",
+        "code": "def factorial(n):\n    # Calculate factorial of n\n    if n <= 1:\n        return 1\n    return n * factorial(n - 1)",
+        "description": "A recursive factorial function with comments and multiplication"
+    }
+    ```"""
+
+    result = parse_response_model_str(content, CodeModel)
+
+    assert result is not None
+    assert result.function_name == "calculate_factorial"
+    assert (
+        result.code
+        == "def factorial(n):     # Calculate factorial of n     if n <= 1:         return 1     return n * factorial(n - 1)"
+    )
+    assert result.description == "A recursive factorial function with comments and multiplication"

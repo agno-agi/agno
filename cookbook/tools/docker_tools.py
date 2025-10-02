@@ -5,22 +5,58 @@ from agno.agent import Agent
 try:
     from agno.tools.docker import DockerTools
 
-    docker_tools = DockerTools(
-        enable_container_management=True,
-        enable_image_management=True,
-        enable_volume_management=True,
-        enable_network_management=True,
+    # Example 1: Include specific Docker functions for container management
+    container_tools = DockerTools(
+        include_tools=[
+            "list_containers",
+            "start_container",
+            "stop_container",
+            "get_container_logs",
+            "inspect_container",
+        ]
     )
 
-    # Create an agent with Docker tools
-    docker_agent = Agent(
-        name="Docker Agent",
+    # Example 2: Exclude dangerous functions (like remove operations)
+    safe_docker_tools = DockerTools(
+        exclude_tools=[
+            "remove_container",
+            "remove_image",
+            "remove_volume",
+            "remove_network",
+        ]
+    )
+
+    # Example 3: Include all functions (default behavior)
+    full_docker_tools = DockerTools()
+
+    # Create agents with different tool configurations
+    container_agent = Agent(
+        name="Docker Container Agent",
         instructions=[
-            "You are a Docker management assistant that can perform various Docker operations.",
+            "You are a Docker container management assistant.",
+            "You can list, start, stop, and inspect containers.",
+        ],
+        tools=[container_tools],
+        markdown=True,
+    )
+
+    safe_agent = Agent(
+        name="Safe Docker Agent",
+        instructions=[
+            "You are a Docker management assistant with safe operations only.",
+            "You can view and manage Docker resources but cannot delete them.",
+        ],
+        tools=[safe_docker_tools],
+        markdown=True,
+    )
+
+    docker_agent = Agent(
+        name="Full Docker Agent",
+        instructions=[
+            "You are a comprehensive Docker management assistant.",
             "You can manage containers, images, volumes, and networks.",
         ],
-        tools=[docker_tools],
-        show_tool_calls=True,
+        tools=[full_docker_tools],
         markdown=True,
     )
 

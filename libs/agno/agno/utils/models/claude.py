@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.media import File, Image
@@ -10,8 +11,24 @@ try:
         TextBlock,
         ToolUseBlock,
     )
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
+
+
+@dataclass
+class MCPToolConfiguration:
+    enabled: bool = True
+    allowed_tools: List[str] = field(default_factory=list)
+
+
+@dataclass
+class MCPServerConfiguration:
+    type: str
+    url: str
+    name: str
+    tool_configuration: Optional[MCPToolConfiguration] = None
+    authorization_token: Optional[str] = None
+
 
 ROLE_MAP = {
     "system": "system",
@@ -33,12 +50,12 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     # 'filetype' used as a fallback
     try:
         import imghdr
-    except (ModuleNotFoundError, ImportError):
+    except ImportError:
         try:
             import filetype
 
             using_filetype = True
-        except (ModuleNotFoundError, ImportError):
+        except ImportError:
             raise ImportError("`filetype` not installed. Please install using `pip install filetype`")
 
     type_mapping = {
@@ -50,9 +67,13 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     }
 
     try:
+        # Case 0: Image is an Anthropic uploaded file
+        if image.content is not None and hasattr(image.content, "id"):
+            content_bytes = image.content
+
         # Case 1: Image is a URL
         if image.url is not None:
-            return {"type": "image", "source": {"type": "url", "url": image.url}}
+            content_bytes = image.get_content_bytes()  # type: ignore
 
         # Case 2: Image is a local file path
         elif image.filepath is not None:
@@ -116,6 +137,16 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         "application/pdf": "base64",
         "text/plain": "text",
     }
+
+    # Case 0: File is an Anthropic uploaded file
+    if file.external is not None and hasattr(file.external, "id"):
+        return {
+            "type": "document",
+            "source": {
+                "type": "file",
+                "file_id": file.external.id,
+            },
+        }
 
     # Case 1: Document is a URL
     if file.url is not None:
@@ -215,23 +246,25 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
         elif message.role == "assistant":
             content = []
 
-            if message.thinking is not None and message.provider_data is not None:
+            if message.reasoning_content is not None and message.provider_data is not None:
                 from anthropic.types import RedactedThinkingBlock, ThinkingBlock
 
                 content.append(
                     ThinkingBlock(
-                        thinking=message.thinking,
+                        thinking=message.reasoning_content,
                         signature=message.provider_data.get("signature"),
                         type="thinking",
                     )
                 )
 
-            if message.redacted_thinking is not None:
+            if message.redacted_reasoning_content is not None:
                 from anthropic.types import RedactedThinkingBlock
 
-                content.append(RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking"))
+                content.append(
+                    RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_reasoning_content")
+                )
 
-            if isinstance(message.content, str) and message.content:
+            if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
 
             if message.tool_calls:
@@ -246,6 +279,61 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                             type="tool_use",
                         )
                     )
+        elif message.role == "tool":
+            content = []
+            content.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": message.tool_call_id,
+                    "content": str(message.content),
+                }
+            )
+
+        # Skip empty assistant responses
+        if message.role == "assistant" and not content:
+            continue
+
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
 
     return chat_messages, " ".join(system_messages)
+
+
+def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
+    """
+    Transforms function definitions into a format accepted by the Anthropic API.
+    """
+    if not tools:
+        return None
+
+    parsed_tools: List[Dict[str, Any]] = []
+    for tool_def in tools:
+        if tool_def.get("type", "") != "function":
+            parsed_tools.append(tool_def)
+            continue
+
+        func_def = tool_def.get("function", {})
+        parameters: Dict[str, Any] = func_def.get("parameters", {})
+        properties: Dict[str, Any] = parameters.get("properties", {})
+        required: List[str] = parameters.get("required", [])
+        required_params: List[str] = required
+
+        input_properties: Dict[str, Any] = {}
+        for param_name, param_info in properties.items():
+            # Preserve the complete schema structure for complex types
+            input_properties[param_name] = param_info.copy()
+
+            # Ensure description is present (default to empty if missing)
+            if "description" not in input_properties[param_name]:
+                input_properties[param_name]["description"] = ""
+
+        tool = {
+            "name": func_def.get("name") or "",
+            "description": func_def.get("description") or "",
+            "input_schema": {
+                "type": parameters.get("type", "object"),
+                "properties": input_properties,
+                "required": required_params,
+            },
+        }
+        parsed_tools.append(tool)
+    return parsed_tools

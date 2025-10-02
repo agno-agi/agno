@@ -6,7 +6,7 @@ Prerequisites:
   You can obtain the API key from the Google Cloud Console:
   https://console.cloud.google.com/projectselector2/google/maps-apis/credentials
 
-- You also need to activate the Address Validation API for your .
+- You also need to activate the Address Validation API for your project.
   https://console.developers.google.com/apis/api/addressvalidation.googleapis.com
 
 """
@@ -14,7 +14,7 @@ Prerequisites:
 import json
 from datetime import datetime
 from os import getenv
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 
@@ -29,18 +29,8 @@ class GoogleMapTools(Toolkit):
     def __init__(
         self,
         key: Optional[str] = None,
-        search_places: bool = True,
-        get_directions: bool = True,
-        validate_address: bool = True,
-        geocode_address: bool = True,
-        reverse_geocode: bool = True,
-        get_distance_matrix: bool = True,
-        get_elevation: bool = True,
-        get_timezone: bool = True,
         **kwargs,
     ):
-        super().__init__(name="google_maps", **kwargs)
-
         self.api_key = key or getenv("GOOGLE_MAPS_API_KEY")
         if not self.api_key:
             raise ValueError("GOOGLE_MAPS_API_KEY is not set in the environment variables.")
@@ -48,22 +38,18 @@ class GoogleMapTools(Toolkit):
 
         self.places_client = places_v1.PlacesClient()
 
-        if search_places:
-            self.register(self.search_places)
-        if get_directions:
-            self.register(self.get_directions)
-        if validate_address:
-            self.register(self.validate_address)
-        if geocode_address:
-            self.register(self.geocode_address)
-        if reverse_geocode:
-            self.register(self.reverse_geocode)
-        if get_distance_matrix:
-            self.register(self.get_distance_matrix)
-        if get_elevation:
-            self.register(self.get_elevation)
-        if get_timezone:
-            self.register(self.get_timezone)
+        tools: List[Any] = [
+            self.search_places,
+            self.get_directions,
+            self.validate_address,
+            self.geocode_address,
+            self.reverse_geocode,
+            self.get_distance_matrix,
+            self.get_elevation,
+            self.get_timezone,
+        ]
+
+        super().__init__(name="google_maps", tools=tools, **kwargs)
 
     def search_places(self, query: str) -> str:
         """

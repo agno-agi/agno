@@ -2,11 +2,11 @@ import json
 from base64 import b64encode
 from datetime import datetime, timedelta
 from os import getenv
-from typing import Optional
+from typing import Any, List, Optional
 
 import requests
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
 
 
@@ -27,8 +27,6 @@ class ZoomTools(Toolkit):
             client_secret (str): The client secret for authentication. If not provided, will use ZOOM_CLIENT_SECRET env var.
             name (str): The name of the tool. Defaults to "zoom_tool".
         """
-        super().__init__(name="zoom_tool", **kwargs)
-
         # Get credentials from env vars if not provided
         self.account_id = account_id or getenv("ZOOM_ACCOUNT_ID")
         self.client_id = client_id or getenv("ZOOM_CLIENT_ID")
@@ -41,13 +39,17 @@ class ZoomTools(Toolkit):
                 "ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, and ZOOM_CLIENT_SECRET must be set either through parameters or environment variables."
             )
 
-        # Register functions
-        self.register(self.schedule_meeting)
-        self.register(self.get_upcoming_meetings)
-        self.register(self.list_meetings)
-        self.register(self.get_meeting_recordings)
-        self.register(self.delete_meeting)
-        self.register(self.get_meeting)
+        tools: List[Any] = [
+            self.get_access_token,
+            self.schedule_meeting,
+            self.get_upcoming_meetings,
+            self.list_meetings,
+            self.get_meeting_recordings,
+            self.delete_meeting,
+            self.get_meeting,
+        ]
+
+        super().__init__(name="zoom_tool", tools=tools, **kwargs)
 
     def get_access_token(self) -> str:
         """

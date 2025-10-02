@@ -1,8 +1,8 @@
 import json
-import os
+from os import getenv
 from typing import Any, Dict, List, Optional
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import logger
 
 try:
@@ -16,22 +16,29 @@ class SlackTools(Toolkit):
     def __init__(
         self,
         token: Optional[str] = None,
-        send_message: bool = True,
-        list_channels: bool = True,
-        get_channel_history: bool = True,
+        enable_send_message: bool = True,
+        enable_send_message_thread: bool = True,
+        enable_list_channels: bool = True,
+        enable_get_channel_history: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="slack", **kwargs)
-        self.token: Optional[str] = token or os.getenv("SLACK_TOKEN")
+        self.token: Optional[str] = token or getenv("SLACK_TOKEN")
         if self.token is None or self.token == "":
             raise ValueError("SLACK_TOKEN is not set")
         self.client = WebClient(token=self.token)
-        if send_message:
-            self.register(self.send_message)
-        if list_channels:
-            self.register(self.list_channels)
-        if get_channel_history:
-            self.register(self.get_channel_history)
+
+        tools: List[Any] = []
+        if enable_send_message or all:
+            tools.append(self.send_message)
+        if enable_send_message_thread or all:
+            tools.append(self.send_message_thread)
+        if enable_list_channels or all:
+            tools.append(self.list_channels)
+        if enable_get_channel_history or all:
+            tools.append(self.get_channel_history)
+
+        super().__init__(name="slack", tools=tools, **kwargs)
 
     def send_message(self, channel: str, text: str) -> str:
         """
@@ -46,6 +53,25 @@ class SlackTools(Toolkit):
         """
         try:
             response = self.client.chat_postMessage(channel=channel, text=text)
+            return json.dumps(response.data)
+        except SlackApiError as e:
+            logger.error(f"Error sending message: {e}")
+            return json.dumps({"error": str(e)})
+
+    def send_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
+        """
+        Send a message to a Slack channel.
+
+        Args:
+            channel (str): The channel ID or name to send the message to.
+            text (str): The text of the message to send.
+            thread_ts (ts): The thread to reply to
+
+        Returns:
+            str: A JSON string containing the response from the Slack API.
+        """
+        try:
+            response = self.client.chat_postMessage(channel=channel, text=text, thread_ts=thread_ts)
             return json.dumps(response.data)
         except SlackApiError as e:
             logger.error(f"Error sending message: {e}")

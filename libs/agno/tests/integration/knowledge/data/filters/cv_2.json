@@ -1,0 +1,35 @@
+{
+  "name": "Taylor Brooks",
+  "position": "Software Engineer",
+  "summary": "Experienced full-stack developer with 4 years of experience building RESTful APIs and dynamic web applications.",
+  "experience": [
+    {
+      "title": "Software Engineer",
+      "company": "NeoCode Labs",
+      "location": "Austin, TX",
+      "period": "2021 – Present",
+      "responsibilities": [
+        "Led migration from monolith to microservices architecture",
+        "Implemented CI/CD pipelines reducing deployment time by 40%"
+      ]
+    },
+    {
+      "title": "Junior Developer",
+      "company": "Innovent Solutions",
+      "location": "Austin, TX",
+      "period": "2019 – 2021",
+      "responsibilities": [
+        "Contributed to Angular front-end development",
+        "Maintained PostgreSQL databases"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "BSc in Software Engineering",
+      "institution": "University of Texas at Austin",
+      "period": "2015 – 2019"
+    }
+  ],
+  "skills": ["Node.js", "Angular", "Docker", "PostgreSQL", "Kubernetes"]
+}

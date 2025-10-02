@@ -1,6 +1,6 @@
 import json
-import os
-from typing import Optional, cast
+from os import getenv
+from typing import Any, List, Optional, cast
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -18,14 +18,17 @@ class JiraTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
+        enable_get_issue: bool = True,
+        enable_create_issue: bool = True,
+        enable_search_issues: bool = True,
+        enable_add_comment: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="jira_tools", **kwargs)
-
-        self.server_url = server_url or os.getenv("JIRA_SERVER_URL")
-        self.username = username or os.getenv("JIRA_USERNAME")
-        self.password = password or os.getenv("JIRA_PASSWORD")
-        self.token = token or os.getenv("JIRA_TOKEN")
+        self.server_url = server_url or getenv("JIRA_SERVER_URL")
+        self.username = username or getenv("JIRA_USERNAME")
+        self.password = password or getenv("JIRA_PASSWORD")
+        self.token = token or getenv("JIRA_TOKEN")
 
         if not self.server_url:
             raise ValueError("JIRA server URL not provided.")
@@ -43,12 +46,17 @@ class JiraTools(Toolkit):
         else:
             self.jira = JIRA(server=self.server_url)
 
-        # Register methods
-        self.register(self.get_issue)
-        self.register(self.create_issue)
-        self.register(self.search_issues)
-        self.register(self.add_comment)
-        # You can register more methods here
+        tools: List[Any] = []
+        if enable_get_issue or all:
+            tools.append(self.get_issue)
+        if enable_create_issue or all:
+            tools.append(self.create_issue)
+        if enable_search_issues or all:
+            tools.append(self.search_issues)
+        if enable_add_comment or all:
+            tools.append(self.add_comment)
+
+        super().__init__(name="jira_tools", tools=tools, **kwargs)
 
     def get_issue(self, issue_key: str) -> str:
         """

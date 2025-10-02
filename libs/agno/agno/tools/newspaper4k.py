@@ -14,20 +14,27 @@ class Newspaper4kTools(Toolkit):
     """
     Newspaper4kTools is a toolkit for getting the text of an article from a URL.
     Args:
-        read_article (bool): Whether to read an article from a URL.
+        enable_read_article (bool): Whether to read an article from a URL.
         include_summary (bool): Whether to include the summary of an article.
         article_length (Optional[int]): The length of the article to read.
     """
 
     def __init__(
-        self, read_article: bool = True, include_summary: bool = False, article_length: Optional[int] = None, **kwargs
+        self,
+        include_summary: bool = False,
+        article_length: Optional[int] = None,
+        enable_read_article: bool = True,
+        all: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="newspaper4k_tools", **kwargs)
-
         self.include_summary: bool = include_summary
         self.article_length: Optional[int] = article_length
-        if read_article:
-            self.register(self.read_article)
+
+        tools = []
+        if all or enable_read_article:
+            tools.append(self.read_article)
+
+        super().__init__(name="newspaper4k_tools", tools=tools, **kwargs)
 
     def get_article_data(self, url: str) -> Optional[Dict[str, Any]]:
         """Read and get article data from a URL.

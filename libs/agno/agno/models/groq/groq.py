@@ -1,14 +1,18 @@
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 import httpx
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.run.agent import RunOutput
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import images_to_message
 
 try:
@@ -17,7 +21,8 @@ try:
     from groq import Groq as GroqClient
     from groq.types.chat import ChatCompletion
     from groq.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta, ChoiceDeltaToolCall
-except (ModuleNotFoundError, ImportError):
+    from groq.types.completion_usage import CompletionUsage
+except ImportError:
     raise ImportError("`groq` not installed. Please install using `pip install groq`")
 
 
@@ -39,7 +44,6 @@ class Groq(Model):
     logprobs: Optional[bool] = None
     max_tokens: Optional[int] = None
     presence_penalty: Optional[float] = None
-    response_format: Optional[Dict[str, Any]] = None
     seed: Optional[int] = None
     stop: Optional[Union[str, List[str]]] = None
     temperature: Optional[float] = None
@@ -94,7 +98,7 @@ class Groq(Model):
         Returns:
             GroqClient: An instance of the Groq client.
         """
-        if self.client:
+        if self.client and not self.client.is_closed():
             return self.client
 
         client_params: Dict[str, Any] = self._get_client_params()
@@ -124,8 +128,12 @@ class Groq(Model):
             )
         return AsyncGroqClient(**client_params)
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_params(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -139,7 +147,7 @@ class Groq(Model):
             "logprobs": self.logprobs,
             "max_tokens": self.max_tokens,
             "presence_penalty": self.presence_penalty,
-            "response_format": self.response_format,
+            "response_format": response_format,
             "seed": self.seed,
             "stop": self.stop,
             "temperature": self.temperature,
@@ -152,13 +160,16 @@ class Groq(Model):
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
         # Add tools
-        if self._tools is not None:
-            request_params["tools"] = self._tools
-            if self.tool_choice is not None:
-                request_params["tool_choice"] = self.tool_choice
+        if tools is not None:
+            request_params["tools"] = tools
+            if tool_choice is not None:
+                request_params["tool_choice"] = tool_choice
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -176,7 +187,6 @@ class Groq(Model):
                 "logprobs": self.logprobs,
                 "max_tokens": self.max_tokens,
                 "presence_penalty": self.presence_penalty,
-                "response_format": self.response_format,
                 "seed": self.seed,
                 "stop": self.stop,
                 "temperature": self.temperature,
@@ -187,16 +197,14 @@ class Groq(Model):
                 "extra_query": self.extra_query,
             }
         )
-        if self._tools is not None:
-            model_dict["tools"] = self._tools
-            if self.tool_choice is not None:
-                model_dict["tool_choice"] = self.tool_choice
-            else:
-                model_dict["tool_choice"] = "auto"
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
-    def format_message(self, message: Message) -> Dict[str, Any]:
+    def format_message(
+        self,
+        message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> Dict[str, Any]:
         """
         Format a message into the format expected by Groq.
 
@@ -218,8 +226,9 @@ class Groq(Model):
         if (
             message.role == "system"
             and isinstance(message.content, str)
-            and self.response_format is not None
-            and self.response_format.get("type") == "json_object"
+            and response_format is not None
+            and isinstance(response_format, dict)
+            and response_format.get("type") == "json_object"
         ):
             # This is required by Groq to ensure the model outputs in the correct format
             message.content += "\n\nYour output should be in JSON format."
@@ -242,22 +251,34 @@ class Groq(Model):
 
         return message_dict
 
-    def invoke(self, messages: List[Message]) -> ChatCompletion:
+    def invoke(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+    ) -> ModelResponse:
         """
         Send a chat completion request to the Groq API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            ChatCompletion: The chat completion response from the API.
         """
         try:
-            return self.get_client().chat.completions.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+            provider_response = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
-                **self.request_kwargs,
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
+            assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+
+            return model_response
+
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(
@@ -270,22 +291,34 @@ class Groq(Model):
             log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message]) -> ChatCompletion:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+    ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the Groq API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            ChatCompletion: The chat completion response from the API.
         """
         try:
-            return await self.get_async_client().chat.completions.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+            response = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
-                **self.request_kwargs,
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
+            assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(response, response_format=response_format)
+
+            return model_response
+
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(
@@ -298,23 +331,34 @@ class Groq(Model):
             log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+    ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the Groq API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Iterator[ChatCompletionChunk]: An iterator of chat completion chunks.
         """
         try:
-            return self.get_client().chat.completions.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
+            for chunk in self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
                 stream=True,
-                **self.request_kwargs,
-            )
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+            ):
+                yield self._parse_provider_response_delta(chunk)  # type: ignore
+
+            assistant_message.metrics.stop_timer()
+
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(
@@ -327,26 +371,36 @@ class Groq(Model):
             log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> Any:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+    ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Groq API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Any: An asynchronous iterator of chat completion chunks.
         """
 
         try:
-            stream = await self.get_async_client().chat.completions.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
+            async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
                 stream=True,
-                **self.request_kwargs,
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
-            async for chunk in stream:  # type: ignore
-                yield chunk
+            async for chunk in async_stream:  # type: ignore
+                yield self._parse_provider_response_delta(chunk)  # type: ignore
+
+            assistant_message.metrics.stop_timer()
+
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(
@@ -400,7 +454,7 @@ class Groq(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(self, response: ChatCompletion) -> ModelResponse:
+    def _parse_provider_response(self, response: ChatCompletion, **kwargs) -> ModelResponse:
         """
         Parse the Groq response into a ModelResponse.
 
@@ -432,20 +486,11 @@ class Groq(Model):
 
         # Add usage metrics if present
         if response.usage is not None:
-            model_response.response_usage = {
-                "input_tokens": response.usage.prompt_tokens,
-                "output_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-                "additional_metrics": {
-                    "completion_time": response.usage.completion_time,
-                    "prompt_time": response.usage.prompt_time,
-                    "queue_time": response.usage.queue_time,
-                    "total_time": response.usage.total_time,
-                },
-            }
+            model_response.response_usage = self._get_metrics(response.usage)
+
         return model_response
 
-    def parse_provider_response_delta(self, response: ChatCompletionChunk) -> ModelResponse:
+    def _parse_provider_response_delta(self, response: ChatCompletionChunk) -> ModelResponse:
         """
         Parse the Groq streaming response into ModelResponse objects.
 
@@ -458,28 +503,51 @@ class Groq(Model):
         model_response = ModelResponse()
 
         if len(response.choices) > 0:
-            delta: ChoiceDelta = response.choices[0].delta
+            choice_delta: ChoiceDelta = response.choices[0].delta
 
-            # Add content
-            if delta.content is not None:
-                model_response.content = delta.content
+            if choice_delta:
+                # Add content
+                if choice_delta.content is not None:
+                    model_response.content = choice_delta.content
 
-            # Add tool calls
-            if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls  # type: ignore
+                # Add tool calls
+                if choice_delta.tool_calls is not None:
+                    model_response.tool_calls = choice_delta.tool_calls  # type: ignore
 
         # Add usage metrics if present
         if response.x_groq is not None and response.x_groq.usage is not None:
-            model_response.response_usage = {
-                "input_tokens": response.x_groq.usage.prompt_tokens,
-                "output_tokens": response.x_groq.usage.completion_tokens,
-                "total_tokens": response.x_groq.usage.total_tokens,
-                "additional_metrics": {
-                    "completion_time": response.x_groq.usage.completion_time,
-                    "prompt_time": response.x_groq.usage.prompt_time,
-                    "queue_time": response.x_groq.usage.queue_time,
-                    "total_time": response.x_groq.usage.total_time,
-                },
-            }
+            model_response.response_usage = self._get_metrics(response.x_groq.usage)
 
         return model_response
+
+    def _get_metrics(self, response_usage: CompletionUsage) -> Metrics:
+        """
+        Parse the given Groq usage into an Agno Metrics object.
+
+        Args:
+            response_usage: Usage data from Groq
+
+        Returns:
+            Metrics: Parsed metrics data
+        """
+        metrics = Metrics()
+
+        metrics.input_tokens = response_usage.prompt_tokens or 0
+        metrics.output_tokens = response_usage.completion_tokens or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        # Additional time metrics offered by Groq
+        if completion_time := response_usage.completion_time:
+            metrics.provider_metrics = metrics.provider_metrics or {}
+            metrics.provider_metrics["completion_time"] = completion_time
+        if prompt_time := response_usage.prompt_time:
+            metrics.provider_metrics = metrics.provider_metrics or {}
+            metrics.provider_metrics["prompt_time"] = prompt_time
+        if queue_time := response_usage.queue_time:
+            metrics.provider_metrics = metrics.provider_metrics or {}
+            metrics.provider_metrics["queue_time"] = queue_time
+        if total_time := response_usage.total_time:
+            metrics.provider_metrics = metrics.provider_metrics or {}
+            metrics.provider_metrics["total_time"] = total_time
+
+        return metrics

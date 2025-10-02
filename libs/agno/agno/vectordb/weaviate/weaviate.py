@@ -1,8 +1,9 @@
+import asyncio
 import json
 import uuid
 from hashlib import md5
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from warnings import filterwarnings
@@ -17,9 +18,9 @@ try:
 except ImportError:
     raise ImportError("Weaviate is not installed. Install using 'pip install weaviate-client'.")
 
-from agno.document import Document
-from agno.embedder import Embedder
-from agno.reranker.base import Reranker
+from agno.knowledge.document import Document
+from agno.knowledge.embedder import Embedder
+from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
@@ -62,7 +63,7 @@ class Weaviate(VectorDb):
 
         # Embedder setup
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
@@ -72,6 +73,13 @@ class Weaviate(VectorDb):
         self.search_type: SearchType = search_type
         self.reranker: Optional[Reranker] = reranker
         self.hybrid_search_alpha = hybrid_search_alpha
+
+    @staticmethod
+    def _get_doc_uuid(document: Document) -> Tuple[uuid.UUID, str]:
+        cleaned_content = document.content.replace("\x00", "\ufffd")
+        content_hash = md5(cleaned_content.encode()).hexdigest()
+        doc_uuid = uuid.UUID(hex=content_hash[:32])
+        return doc_uuid, cleaned_content
 
     def get_client(self) -> weaviate.WeaviateClient:
         """Initialize and return a Weaviate client instance.
@@ -83,20 +91,22 @@ class Weaviate(VectorDb):
         Returns:
             weaviate.WeaviateClient: An initialized Weaviate client instance.
         """
-        if self.client is not None:
-            return self.client
+        if self.client is None:
+            if self.wcd_url and self.wcd_api_key and not self.local:
+                log_info("Initializing Weaviate Cloud client")
+                self.client = weaviate.connect_to_weaviate_cloud(
+                    cluster_url=self.wcd_url, auth_credentials=Auth.api_key(self.wcd_api_key)
+                )
+            else:
+                log_info("Initializing local Weaviate client")
+                self.client = weaviate.connect_to_local()
 
-        if self.wcd_url and self.wcd_api_key and not self.local:
-            log_info("Initializing Weaviate Cloud client")
-            self.client = weaviate.connect_to_weaviate_cloud(
-                cluster_url=self.wcd_url, auth_credentials=Auth.api_key(self.wcd_api_key)
-            )
-        else:
-            log_info("Initializing local Weaviate client")
-            self.client = weaviate.connect_to_local()
+        if not self.client.is_connected():  # type: ignore
+            self.client.connect()  # type: ignore
 
-        # Verify connection
-        self.client.is_ready()
+        if not self.client.is_ready():  # type: ignore
+            raise Exception("Weaviate client is not ready")
+
         return self.client
 
     async def get_async_client(self) -> WeaviateAsyncClient:
@@ -116,7 +126,7 @@ class Weaviate(VectorDb):
             await self.async_client.connect()  # type: ignore
 
         if not await self.async_client.is_ready():  # type: ignore
-            raise Exception("Weaviate async client is not ready")
+            raise ConnectionError("Weaviate async client is not ready")
 
         return self.async_client  # type: ignore
 
@@ -130,6 +140,8 @@ class Weaviate(VectorDb):
                     Property(name="name", data_type=DataType.TEXT),
                     Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
                     Property(name="meta_data", data_type=DataType.TEXT),
+                    Property(name="content_id", data_type=DataType.TEXT),
+                    Property(name="content_hash", data_type=DataType.TEXT),
                 ],
                 vectorizer_config=Configure.Vectorizer.none(),
                 vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
@@ -145,6 +157,8 @@ class Weaviate(VectorDb):
                     Property(name="name", data_type=DataType.TEXT),
                     Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
                     Property(name="meta_data", data_type=DataType.TEXT),
+                    Property(name="content_id", data_type=DataType.TEXT),
+                    Property(name="content_hash", data_type=DataType.TEXT),
                 ],
                 vectorizer_config=Configure.Vectorizer.none(),
                 vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
@@ -153,51 +167,14 @@ class Weaviate(VectorDb):
         finally:
             await client.close()
 
-    def doc_exists(self, document: Document) -> bool:
-        """
-        Validate if the document exists using consistent UUID generation.
-
-        Args:
-            document (Document): Document to validate
-
-        Returns:
-            bool: True if the document exists, False otherwise
-        """
-        if not document or not document.content:
-            logger.warning("Invalid document: Missing content.")
-            return False  # Early exit for invalid input
-
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        content_hash = md5(cleaned_content.encode()).hexdigest()
-        doc_uuid = uuid.UUID(hex=content_hash[:32])
-
+    def content_hash_exists(self, content_hash: str) -> bool:
+        """Check if a document with the given content hash exists in the collection."""
         collection = self.get_client().collections.get(self.collection)
-        return collection.data.exists(doc_uuid)
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """
-        Validate if the document exists using consistent UUID generation asynchronously.
-
-        Args:
-            document (Document): Document to validate
-
-        Returns:
-            bool: True if the document exists, False otherwise
-        """
-        if not document or not document.content:
-            logger.warning("Invalid document: Missing content.")
-            return False  # Early exit for invalid input
-
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        content_hash = md5(cleaned_content.encode()).hexdigest()
-        doc_uuid = uuid.UUID(hex=content_hash[:32])
-
-        client = await self.get_async_client()
-        try:
-            collection = client.collections.get(self.collection)
-            return await collection.data.exists(doc_uuid)
-        finally:
-            await client.close()
+        result = collection.query.fetch_objects(
+            limit=1,
+            filters=Filter.by_property("content_hash").equal(content_hash),
+        )
+        return len(result.objects) > 0
 
     def name_exists(self, name: str) -> bool:
         """
@@ -237,7 +214,7 @@ class Weaviate(VectorDb):
         finally:
             await client.close()
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Insert documents into Weaviate.
 
@@ -255,24 +232,33 @@ class Weaviate(VectorDb):
                 continue
 
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            content_hash = md5(cleaned_content.encode()).hexdigest()
-            doc_uuid = uuid.UUID(hex=content_hash[:32])
+            record_id = md5(cleaned_content.encode()).hexdigest()
+            doc_uuid = uuid.UUID(hex=record_id[:32])
+
+            # Merge filters with metadata
+            meta_data = document.meta_data or {}
+            if filters:
+                meta_data.update(filters)
 
             # Serialize meta_data to JSON string
-            meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
+            meta_data_str = json.dumps(meta_data) if meta_data else None
 
             collection.data.insert(
                 properties={
                     "name": document.name,
                     "content": cleaned_content,
                     "meta_data": meta_data_str,
+                    "content_id": document.content_id,
+                    "content_hash": content_hash,
                 },
                 vector=document.embedding,
                 uuid=doc_uuid,
             )
-            log_debug(f"Inserted document: {document.name} ({document.meta_data})")
+            log_debug(f"Inserted document: {document.name} ({meta_data})")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Insert documents into Weaviate asynchronously.
 
@@ -284,6 +270,46 @@ class Weaviate(VectorDb):
         if not documents:
             return
 
+        # Apply batch embedding logic
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in documents]
+
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(documents):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    raise e
+                else:
+                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+        else:
+            # Use individual embedding
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
@@ -291,16 +317,14 @@ class Weaviate(VectorDb):
             # Process documents first
             for document in documents:
                 try:
-                    # Embed document
-                    document.embed(embedder=self.embedder)
                     if document.embedding is None:
                         logger.error(f"Document embedding is None: {document.name}")
                         continue
 
                     # Clean content and generate UUID
                     cleaned_content = document.content.replace("\x00", "\ufffd")
-                    content_hash = md5(cleaned_content.encode()).hexdigest()
-                    doc_uuid = uuid.UUID(hex=content_hash[:32])
+                    record_id = md5(cleaned_content.encode()).hexdigest()
+                    doc_uuid = uuid.UUID(hex=record_id[:32])
 
                     # Serialize meta_data to JSON string
                     meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
@@ -310,6 +334,8 @@ class Weaviate(VectorDb):
                         "name": document.name,
                         "content": cleaned_content,
                         "meta_data": meta_data_str,
+                        "content_id": document.content_id,
+                        "content_hash": content_hash,
                     }
 
                     # Use the API correctly - properties, vector and uuid are separate parameters
@@ -322,7 +348,7 @@ class Weaviate(VectorDb):
         finally:
             await client.close()
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Upsert documents into Weaviate.
 
@@ -331,9 +357,13 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
-        self.insert(documents)
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters)
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Upsert documents into Weaviate asynchronously.
         When documents with the same ID already exist, they will be replaced.
@@ -343,39 +373,10 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        if not documents:
-            return
-
-        log_debug(f"Upserting {len(documents)} documents into Weaviate asynchronously.")
-
-        client = await self.get_async_client()
-        try:
-            collection = client.collections.get(self.collection)
-
-            for document in documents:
-                document.embed(embedder=self.embedder)
-                if document.embedding is None:
-                    logger.error(f"Document embedding is None: {document.name}")
-                    continue
-
-                cleaned_content = document.content.replace("\x00", "\ufffd")
-                content_hash = md5(cleaned_content.encode()).hexdigest()
-                doc_uuid = uuid.UUID(hex=content_hash[:32])
-
-                # Serialize meta_data to JSON string
-                meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
-
-                properties = {
-                    "name": document.name,
-                    "content": cleaned_content,
-                    "meta_data": meta_data_str,
-                }
-
-                await collection.data.replace(uuid=doc_uuid, properties=properties, vector=document.embedding)
-
-                log_debug(f"Upserted document asynchronously: {document.name}")
-        finally:
-            await client.close()
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
+        return
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
@@ -390,11 +391,11 @@ class Weaviate(VectorDb):
             List[Document]: List of matching documents.
         """
         if self.search_type == SearchType.vector:
-            return self.vector_search(query, limit)
+            return self.vector_search(query, limit, filters)
         elif self.search_type == SearchType.keyword:
-            return self.keyword_search(query, limit)
+            return self.keyword_search(query, limit, filters)
         elif self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit)
+            return self.hybrid_search(query, limit, filters)
         else:
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
@@ -414,48 +415,52 @@ class Weaviate(VectorDb):
             List[Document]: List of matching documents.
         """
         if self.search_type == SearchType.vector:
-            return await self.async_vector_search(query, limit)
+            return await self.async_vector_search(query, limit, filters)
         elif self.search_type == SearchType.keyword:
-            return await self.async_keyword_search(query, limit)
+            return await self.async_keyword_search(query, limit, filters)
         elif self.search_type == SearchType.hybrid:
-            return await self.async_hybrid_search(query, limit)
+            return await self.async_hybrid_search(query, limit, filters)
         else:
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
 
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
-        """
-        Perform a vector search in Weaviate.
+    def vector_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        try:
+            query_embedding = self.embedder.get_embedding(query)
+            if query_embedding is None:
+                logger.error(f"Error getting embedding for query: {query}")
+                return []
 
-        Args:
-            query (str): The search query.
-            limit (int): Maximum number of results to return.
+            collection = self.get_client().collections.get(self.collection)
+            filter_expr = self._build_filter_expression(filters)
 
-        Returns:
-            List[Document]: List of matching documents.
-        """
-        query_embedding = self.embedder.get_embedding(query)
-        if query_embedding is None:
-            logger.error(f"Error getting embedding for query: {query}")
+            response = collection.query.near_vector(
+                near_vector=query_embedding,
+                limit=limit,
+                return_properties=["name", "content", "meta_data", "content_id"],
+                include_vector=True,
+                filters=filter_expr,
+            )
+
+            search_results: List[Document] = self.get_search_results(response)
+
+            if self.reranker:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+
+            log_info(f"Found {len(search_results)} documents")
+
+            return search_results
+
+        except Exception as e:
+            logger.error(f"Error searching for documents: {e}")
             return []
 
-        collection = self.get_client().collections.get(self.collection)
-        response = collection.query.near_vector(
-            near_vector=query_embedding,
-            limit=limit,
-            return_properties=["name", "content", "meta_data"],
-            include_vector=True,
-        )
+        finally:
+            self.get_client().close()
 
-        search_results: List[Document] = self.get_search_results(response)
-
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
-
-        self.get_client().close()
-        return search_results
-
-    async def async_vector_search(self, query: str, limit: int = 5) -> List[Document]:
+    async def async_vector_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Perform a vector search in Weaviate asynchronously.
 
@@ -475,11 +480,14 @@ class Weaviate(VectorDb):
         client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
+            filter_expr = self._build_filter_expression(filters)
+
             response = await collection.query.near_vector(
                 near_vector=query_embedding,
                 limit=limit,
-                return_properties=["name", "content", "meta_data"],
+                return_properties=["name", "content", "meta_data", "content_id"],
                 include_vector=True,
+                filters=filter_expr,
             )
 
             search_results = self.get_search_results(response)
@@ -487,40 +495,48 @@ class Weaviate(VectorDb):
             if self.reranker:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
 
-        finally:
+            log_info(f"Found {len(search_results)} documents")
+
             await client.close()
+            return search_results
 
-        return search_results
+        except Exception as e:
+            logger.error(f"Error searching for documents: {e}")
+            return []
 
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
-        """
-        Perform a keyword search in Weaviate.
+    def keyword_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        try:
+            collection = self.get_client().collections.get(self.collection)
+            filter_expr = self._build_filter_expression(filters)
 
-        Args:
-            query (str): The search query.
-            limit (int): Maximum number of results to return.
+            response = collection.query.bm25(
+                query=query,
+                query_properties=["content"],
+                limit=limit,
+                return_properties=["name", "content", "meta_data", "content_id"],
+                include_vector=True,
+                filters=filter_expr,
+            )
 
-        Returns:
-            List[Document]: List of matching documents.
-        """
-        collection = self.get_client().collections.get(self.collection)
-        response = collection.query.bm25(
-            query=query,
-            query_properties=["content"],
-            limit=limit,
-            return_properties=["name", "content", "meta_data"],
-            include_vector=True,
-        )
+            search_results: List[Document] = self.get_search_results(response)
 
-        search_results: List[Document] = self.get_search_results(response)
+            if self.reranker:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
 
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
+            log_info(f"Found {len(search_results)} documents")
 
-        self.get_client().close()
-        return search_results
+            return search_results
 
-    async def async_keyword_search(self, query: str, limit: int = 5) -> List[Document]:
+        except Exception as e:
+            logger.error(f"Error searching for documents: {e}")
+            return []
+
+        finally:
+            self.get_client().close()
+
+    async def async_keyword_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Perform a keyword search in Weaviate asynchronously.
 
@@ -535,59 +551,71 @@ class Weaviate(VectorDb):
         client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
+
+            filter_expr = self._build_filter_expression(filters)
             response = await collection.query.bm25(
                 query=query,
                 query_properties=["content"],
                 limit=limit,
-                return_properties=["name", "content", "meta_data"],
+                return_properties=["name", "content", "meta_data", "content_id"],
                 include_vector=True,
+                filters=filter_expr,
             )
 
             search_results = self.get_search_results(response)
 
             if self.reranker:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
-        finally:
+
+            log_info(f"Found {len(search_results)} documents")
+
             await client.close()
+            return search_results
 
-        return search_results
-
-    def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
-        """
-        Perform a hybrid search combining vector and keyword search in Weaviate.
-
-        Args:
-            query (str): The keyword query.
-            limit (int): Maximum number of results to return.
-
-        Returns:
-            List[Document]: List of matching documents.
-        """
-        query_embedding = self.embedder.get_embedding(query)
-        if query_embedding is None:
-            logger.error(f"Error getting embedding for query: {query}")
+        except Exception as e:
+            logger.error(f"Error searching for documents: {e}")
             return []
 
-        collection = self.get_client().collections.get(self.collection)
-        response = collection.query.hybrid(
-            query=query,
-            vector=query_embedding,
-            limit=limit,
-            return_properties=["name", "content", "meta_data"],
-            include_vector=True,
-            query_properties=["content"],
-            alpha=self.hybrid_search_alpha,
-        )
+    def hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        try:
+            query_embedding = self.embedder.get_embedding(query)
+            if query_embedding is None:
+                logger.error(f"Error getting embedding for query: {query}")
+                return []
 
-        search_results: List[Document] = self.get_search_results(response)
+            collection = self.get_client().collections.get(self.collection)
+            filter_expr = self._build_filter_expression(filters)
 
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
+            response = collection.query.hybrid(
+                query=query,
+                vector=query_embedding,
+                limit=limit,
+                return_properties=["name", "content", "meta_data", "content_id"],
+                include_vector=True,
+                query_properties=["content"],
+                alpha=self.hybrid_search_alpha,
+                filters=filter_expr,
+            )
 
-        self.get_client().close()
-        return search_results
+            search_results: List[Document] = self.get_search_results(response)
 
-    async def async_hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
+            if self.reranker:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+
+            log_info(f"Found {len(search_results)} documents")
+
+            return search_results
+
+        except Exception as e:
+            logger.error(f"Error searching for documents: {e}")
+            return []
+
+        finally:
+            self.get_client().close()
+
+    async def async_hybrid_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Perform a hybrid search combining vector and keyword search in Weaviate asynchronously.
 
@@ -607,24 +635,32 @@ class Weaviate(VectorDb):
         client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
+
+            filter_expr = self._build_filter_expression(filters)
             response = await collection.query.hybrid(
                 query=query,
                 vector=query_embedding,
                 limit=limit,
-                return_properties=["name", "content", "meta_data"],
+                return_properties=["name", "content", "meta_data", "content_id"],
                 include_vector=True,
                 query_properties=["content"],
                 alpha=self.hybrid_search_alpha,
+                filters=filter_expr,
             )
 
             search_results = self.get_search_results(response)
 
             if self.reranker:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
-        finally:
-            await client.close()
 
-        return search_results
+            log_info(f"Found {len(search_results)} documents")
+
+            await client.close()
+            return search_results
+
+        except Exception as e:
+            logger.error(f"Error searching for documents: {e}")
+            return []
 
     def exists(self) -> bool:
         """Check if the collection exists in Weaviate."""
@@ -663,6 +699,86 @@ class Weaviate(VectorDb):
         self.drop()
         return True
 
+    def delete_by_id(self, id: str) -> bool:
+        """Delete document by ID."""
+        try:
+            try:
+                doc_uuid = uuid.UUID(hex=id[:32]) if len(id) == 32 else uuid.UUID(id)
+            except ValueError:
+                log_info(f"Invalid UUID format for ID '{id}' - treating as non-existent")
+                return True
+
+            collection = self.get_client().collections.get(self.collection)
+
+            if not collection.data.exists(doc_uuid):
+                log_info(f"Document with ID {id} does not exist")
+                return True
+
+            collection.data.delete_by_id(doc_uuid)
+            log_info(f"Deleted document with ID '{id}' from collection '{self.collection}'.")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting document by ID '{id}': {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """Delete content by name using direct filter deletion."""
+        try:
+            collection = self.get_client().collections.get(self.collection)
+
+            collection.data.delete_many(where=Filter.by_property("name").equal(name))
+
+            log_info(f"Deleted documents with name '{name}' from collection '{self.collection}'.")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error deleting documents by name '{name}': {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """Delete content by metadata using direct filter deletion."""
+        try:
+            collection = self.get_client().collections.get(self.collection)
+
+            # Build filter for metadata search
+            filter_expr = self._build_filter_expression(metadata)
+            if filter_expr is None:
+                log_info(f"No valid filter could be built for metadata: {metadata}")
+                return False
+
+            collection.data.delete_many(where=filter_expr)
+
+            log_info(f"Deleted documents with metadata '{metadata}' from collection '{self.collection}'.")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error deleting documents by metadata '{metadata}': {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """Delete content by content ID using direct filter deletion."""
+        try:
+            collection = self.get_client().collections.get(self.collection)
+
+            collection.data.delete_many(where=Filter.by_property("content_id").equal(content_id))
+
+            log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error deleting documents by content_id '{content_id}': {e}")
+            return False
+
+    def delete_by_content_hash(self, content_hash: str) -> bool:
+        """Delete content by content hash using direct filter deletion."""
+        try:
+            collection = self.get_client().collections.get(self.collection)
+            collection.data.delete_many(where=Filter.by_property("content_hash").equal(content_hash))
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
+            return False
+
     def get_vector_index_config(self, index_type: VectorIndex, distance_metric: Distance):
         """
         Returns the appropriate vector index configuration with the specified distance metric.
@@ -699,17 +815,17 @@ class Weaviate(VectorDb):
         search_results: List[Document] = []
         for obj in response.objects:
             properties = obj.properties
-            meta_data = json.loads(properties["meta_data"]) if properties.get("meta_data") else None
+            meta_data = json.loads(properties["meta_data"]) if properties.get("meta_data") else {}
             embedding = obj.vector["default"] if isinstance(obj.vector, dict) else obj.vector
 
             search_results.append(
                 Document(
-                    name=properties["name"],
-                    meta_data=meta_data if meta_data else {},
-                    content=properties["content"],
+                    name=properties.get("name"),
+                    meta_data=meta_data,
+                    content=properties.get("content", ""),
                     embedder=self.embedder,
                     embedding=embedding,
-                    usage=None,
+                    content_id=properties.get("content_id"),
                 )
             )
 
@@ -718,3 +834,137 @@ class Weaviate(VectorDb):
     def upsert_available(self) -> bool:
         """Indicate that upsert functionality is available."""
         return True
+
+    def _build_filter_expression(self, filters: Optional[Dict[str, Any]]):
+        """
+        Build a filter expression for Weaviate queries.
+
+        Args:
+            filters (Optional[Dict[str, Any]]): Dictionary of filters to apply.
+
+        Returns:
+            Optional[Filter]: The constructed filter expression, or None if no filters provided.
+        """
+        if not filters:
+            return None
+
+        try:
+            # Create a filter for each key-value pair
+            filter_conditions = []
+            for key, value in filters.items():
+                # Create a pattern to match in the JSON string
+                if isinstance(value, (list, tuple)):
+                    # For list values
+                    pattern = f'"{key}": {json.dumps(value)}'
+                else:
+                    # For single values
+                    pattern = f'"{key}": "{value}"'
+
+                # Add the filter condition using like operator
+                filter_conditions.append(Filter.by_property("meta_data").like(f"*{pattern}*"))
+
+            # If we have multiple conditions, combine them
+            if len(filter_conditions) > 1:
+                # Use the first condition as base and chain the rest
+                filter_expr = filter_conditions[0]
+                for condition in filter_conditions[1:]:
+                    filter_expr = filter_expr & condition
+                return filter_expr
+            elif filter_conditions:
+                return filter_conditions[0]
+
+        except Exception as e:
+            logger.error(f"Error building filter expression: {e}")
+            return None
+
+        return None
+
+    def id_exists(self, id: str) -> bool:
+        """Check if a document with the given ID exists in the collection.
+
+        Args:
+            id (str): The document ID to check.
+
+        Returns:
+            bool: True if the document exists, False otherwise.
+        """
+        try:
+            doc_uuid = uuid.UUID(hex=id[:32]) if len(id) == 32 else uuid.UUID(id)
+            collection = self.get_client().collections.get(self.collection)
+            return collection.data.exists(doc_uuid)
+        except ValueError:
+            log_info(f"Invalid UUID format for ID '{id}' - treating as non-existent")
+            return False
+        except Exception as e:
+            logger.error(f"Error checking if ID '{id}' exists: {e}")
+            return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            weaviate_client = self.get_client()
+            collection = weaviate_client.collections.get(self.collection)
+
+            # Query for objects with the given content_id
+            query_result = collection.query.fetch_objects(  # type: ignore
+                where=Filter.by_property("content_id").equal(content_id),
+                limit=1000,  # Get all matching objects
+            )
+
+            if not query_result.objects:
+                logger.debug(f"No documents found with content_id: {content_id}")
+                return
+
+            # Update each matching object
+            updated_count = 0
+            for obj in query_result.objects:
+                # Get current properties
+                current_properties = obj.properties or {}
+
+                # Merge existing metadata with new metadata
+                updated_properties = current_properties.copy()
+
+                # Handle nested metadata updates
+                if "meta_data" in updated_properties and isinstance(updated_properties["meta_data"], dict):
+                    updated_properties["meta_data"].update(metadata)
+                else:
+                    # If no existing meta_data or it's not a dict, set it directly
+                    updated_properties["meta_data"] = metadata
+
+                if "filters" in updated_properties and isinstance(updated_properties["filters"], dict):
+                    updated_properties["filters"].update(metadata)
+                else:
+                    updated_properties["filters"] = metadata
+
+                # Update the object
+                collection.data.update(uuid=obj.uuid, properties=updated_properties)
+                updated_count += 1
+
+            logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """Delete documents by content hash using direct filter deletion."""
+        try:
+            collection = self.get_client().collections.get(self.collection)
+
+            # Build filter for content_hash search
+            filter_expr = Filter.by_property("content_hash").equal(content_hash)
+
+            collection.data.delete_many(where=filter_expr)
+
+            log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
+            return False

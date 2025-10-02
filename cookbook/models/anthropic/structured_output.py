@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.anthropic import Claude
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -26,11 +26,11 @@ class MovieScript(BaseModel):
 
 
 movie_agent = Agent(
-    model=Claude(id="claude-3-5-sonnet-20240620"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     description="You help people write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Get the response in a variable
-run: RunResponse = movie_agent.run("New York")
+run: RunOutput = movie_agent.run("New York")
 pprint(run.content)

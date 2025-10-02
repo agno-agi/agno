@@ -1,0 +1,7 @@
+agno==2.0.0
+nest-asyncio
+streamlit
+python-chess
+anthropic
+groq
+google-genai

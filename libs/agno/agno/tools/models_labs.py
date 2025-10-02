@@ -1,14 +1,15 @@
 import json
 import time
 from os import getenv
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
+from agno.media import Audio, Image, Video
 from agno.models.response import FileType
 from agno.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_info, logger
 
 try:
@@ -40,8 +41,6 @@ class ModelsLabTools(Toolkit):
         file_type: FileType = FileType.MP4,
         **kwargs,
     ):
-        super().__init__(name="models_labs", **kwargs)
-
         file_type_str = file_type.value.upper()
         self.url = MODELS_LAB_URLS[file_type_str]
         self.fetch_url = MODELS_LAB_FETCH_URLS[file_type_str]
@@ -54,7 +53,10 @@ class ModelsLabTools(Toolkit):
         if not self.api_key:
             logger.error("MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable.")
 
-        self.register(self.generate_media)
+        tools: List[Any] = []
+        tools.append(self.generate_media)
+
+        super().__init__(name="models_labs", tools=tools, **kwargs)
 
     def _create_payload(self, prompt: str) -> Dict[str, Any]:
         """Create payload based on file type."""
@@ -85,16 +87,25 @@ class ModelsLabTools(Toolkit):
 
         return base_payload
 
-    def _add_media_artifact(
-        self, agent: Union[Agent, Team], media_id: str, media_url: str, eta: Optional[str] = None
-    ) -> None:
-        """Add appropriate media artifact based on file type."""
+    def _create_media_artifacts(self, media_id: str, media_url: str, eta: Optional[str] = None) -> Dict[str, List]:
+        """Create appropriate media artifacts based on file type."""
+        artifacts: Dict[str, List[Union[Image, Video, Audio]]] = {
+            "images": [],
+            "videos": [],
+            "audios": [],
+        }
+
         if self.file_type == FileType.MP4:
-            agent.add_video(VideoArtifact(id=str(media_id), url=media_url, eta=str(eta)))
+            video_artifact = Video(id=str(media_id), url=media_url, eta=str(eta))
+            artifacts["videos"].append(video_artifact)
         elif self.file_type == FileType.GIF:
-            agent.add_image(ImageArtifact(id=str(media_id), url=media_url))
+            image_artifact = Image(id=str(media_id), url=media_url)
+            artifacts["images"].append(image_artifact)
         elif self.file_type == FileType.MP3:
-            agent.add_audio(AudioArtifact(id=str(media_id), url=media_url))
+            audio_artifact = Audio(id=str(media_id), url=media_url)
+            artifacts["audios"].append(audio_artifact)
+
+        return artifacts
 
     def _wait_for_media(self, media_id: str, eta: int) -> bool:
         """Wait for media generation to complete."""
@@ -120,10 +131,10 @@ class ModelsLabTools(Toolkit):
 
         return False
 
-    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> str:
+    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
         """Generate media (video, image, or audio) given a prompt."""
         if not self.api_key:
-            return "Please set the MODELS_LAB_API_KEY"
+            return ToolResult(content="Please set the MODELS_LAB_API_KEY")
 
         try:
             payload = json.dumps(self._create_payload(prompt))
@@ -138,19 +149,27 @@ class ModelsLabTools(Toolkit):
             status = result.get("status")
             if status == "error":
                 logger.error(f"Error in response: {result.get('message')}")
-                return f"Error: {result.get('message')}"
+                return ToolResult(content=f"Error: {result.get('message')}")
 
             if "error" in result:
                 error_msg = f"Failed to generate {self.file_type.value}: {result['error']}"
                 logger.error(error_msg)
-                return f"Error: {result['error']}"
+                return ToolResult(content=f"Error: {result['error']}")
 
             eta = result.get("eta")
             url_links = result.get("future_links")
             media_id = str(uuid4())
 
+            # Collect all media artifacts
+            all_images = []
+            all_videos = []
+            all_audios = []
+
             for media_url in url_links:
-                self._add_media_artifact(agent, media_id, media_url, str(eta))
+                artifacts = self._create_media_artifacts(media_id, media_url, str(eta))
+                all_images.extend(artifacts["images"])
+                all_videos.extend(artifacts["videos"])
+                all_audios.extend(artifacts["audios"])
 
             if self.wait_for_completion and isinstance(eta, int):
                 if self._wait_for_media(media_id, eta):
@@ -158,13 +177,19 @@ class ModelsLabTools(Toolkit):
                 else:
                     logger.warning("Media generation timed out")
 
-            return f"{self.file_type.value.capitalize()} has been generated successfully and will be ready in {eta} seconds"
+            # Return ToolResult with appropriate media artifacts
+            return ToolResult(
+                content=f"{self.file_type.value.capitalize()} has been generated successfully and will be ready in {eta} seconds",
+                images=all_images if all_images else None,
+                videos=all_videos if all_videos else None,
+                audios=all_audios if all_audios else None,
+            )
 
         except RequestException as e:
             error_msg = f"Network error while generating {self.file_type.value}: {e}"
             logger.error(error_msg)
-            return f"Error: {error_msg}"
+            return ToolResult(content=f"Error: {error_msg}")
         except Exception as e:
             error_msg = f"Unexpected error while generating {self.file_type.value}: {e}"
             logger.error(error_msg)
-            return f"Error: {error_msg}"
+            return ToolResult(content=f"Error: {error_msg}")

@@ -11,7 +11,6 @@ def test_image_input():
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -29,10 +28,8 @@ def test_multimodal_with_tools():
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
         tools=[DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(

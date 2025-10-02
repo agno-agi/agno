@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.tools import Toolkit
@@ -17,33 +18,31 @@ class DuckDbTools(Toolkit):
         init_commands: Optional[List] = None,
         read_only: bool = False,
         config: Optional[dict] = None,
-        run_queries: bool = True,
-        inspect_queries: bool = False,
-        create_tables: bool = True,
-        summarize_tables: bool = True,
-        export_tables: bool = False,
         **kwargs,
     ):
-        super().__init__(name="duckdb_tools", **kwargs)
-
         self.db_path: Optional[str] = db_path
         self.read_only: bool = read_only
         self.config: Optional[dict] = config
         self._connection: Optional[duckdb.DuckDBPyConnection] = connection
         self.init_commands: Optional[List] = init_commands
 
-        self.register(self.show_tables)
-        self.register(self.describe_table)
-        if inspect_queries:
-            self.register(self.inspect_query)
-        if run_queries:
-            self.register(self.run_query)
-        if create_tables:
-            self.register(self.create_table_from_path)
-        if summarize_tables:
-            self.register(self.summarize_table)
-        if export_tables:
-            self.register(self.export_table_to_path)
+        tools: List[Any] = [
+            self.show_tables,
+            self.describe_table,
+            self.inspect_query,
+            self.run_query,
+            self.create_table_from_path,
+            self.summarize_table,
+            self.export_table_to_path,
+            self.load_local_path_to_table,
+            self.load_local_csv_to_table,
+            self.load_s3_path_to_table,
+            self.load_s3_csv_to_table,
+            self.create_fts_index,
+            self.full_text_search,
+        ]
+
+        super().__init__(name="duckdb_tools", tools=tools, **kwargs)
 
     @property
     def connection(self) -> duckdb.DuckDBPyConnection:
@@ -169,12 +168,10 @@ class DuckDbTools(Toolkit):
         :param path: Path to get the table name from
         :return: Table name
         """
-        import os
-
         # Get the file name from the path
-        file_name = path.split("/")[-1]
+        path_obj = Path(path)
         # Get the file name without extension from the path
-        table, extension = os.path.splitext(file_name)
+        table = path_obj.stem
         # If the table isn't a valid SQL identifier, we'll need to use something else
         table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
@@ -197,7 +194,12 @@ class DuckDbTools(Toolkit):
         if replace:
             create_statement = "CREATE OR REPLACE TABLE"
 
-        create_statement += f" '{table}' AS SELECT * FROM '{path}';"
+        # Check if the file is a CSV
+        if path.lower().endswith(".csv"):
+            create_statement += f" {table} AS SELECT * FROM read_csv('{path}', ignore_errors=false, auto_detect=true);"
+        else:
+            create_statement += f" {table} AS SELECT * FROM '{path}';"
+
         self.run_query(create_statement)
         log_debug(f"Created table {table} from {path}")
         return table
@@ -233,19 +235,17 @@ class DuckDbTools(Toolkit):
         :param table: Optional table name to use
         :return: Table name, SQL statement used to load the file
         """
-        import os
-
         log_debug(f"Loading {path} into duckdb")
 
         if table is None:
-            # Get the file name from the s3 path
-            file_name = path.split("/")[-1]
-            # Get the file name without extension from the s3 path
-            table, extension = os.path.splitext(file_name)
+            # Get the file name from the path
+            path_obj = Path(path)
+            # Get the file name without extension from the path
+            table = path_obj.stem
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
-        create_statement = f"CREATE OR REPLACE TABLE '{table}' AS SELECT * FROM '{path}';"
+        create_statement = f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM '{path}';"
         self.run_query(create_statement)
 
         log_debug(f"Loaded {path} into duckdb as {table}")
@@ -261,25 +261,23 @@ class DuckDbTools(Toolkit):
         :param delimiter: Optional delimiter to use
         :return: Table name, SQL statement used to load the file
         """
-        import os
-
         log_debug(f"Loading {path} into duckdb")
 
         if table is None:
-            # Get the file name from the s3 path
-            file_name = path.split("/")[-1]
-            # Get the file name without extension from the s3 path
-            table, extension = os.path.splitext(file_name)
+            # Get the file name from the path
+            path_obj = Path(path)
+            # Get the file name without extension from the path
+            table = path_obj.stem
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
-        select_statement = f"SELECT * FROM read_csv('{path}'"
+        select_statement = f"SELECT * FROM read_csv('{path}', ignore_errors=false, auto_detect=true"
         if delimiter is not None:
             select_statement += f", delim='{delimiter}')"
         else:
             select_statement += ")"
 
-        create_statement = f"CREATE OR REPLACE TABLE '{table}' AS {select_statement};"
+        create_statement = f"CREATE OR REPLACE TABLE {table} AS {select_statement};"
         self.run_query(create_statement)
 
         log_debug(f"Loaded CSV {path} into duckdb as {table}")
@@ -292,19 +290,17 @@ class DuckDbTools(Toolkit):
         :param table: Optional table name to use
         :return: Table name, SQL statement used to load the file
         """
-        import os
-
         log_debug(f"Loading {path} into duckdb")
 
         if table is None:
-            # Get the file name from the s3 path
-            file_name = path.split("/")[-1]
-            # Get the file name without extension from the s3 path
-            table, extension = os.path.splitext(file_name)
+            # Get the file name from the path
+            path_obj = Path(path)
+            # Get the file name without extension from the path
+            table = path_obj.stem
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
-        create_statement = f"CREATE OR REPLACE TABLE '{table}' AS SELECT * FROM '{path}';"
+        create_statement = f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM '{path}';"
         self.run_query(create_statement)
 
         log_debug(f"Loaded {path} into duckdb as {table}")
@@ -319,25 +315,23 @@ class DuckDbTools(Toolkit):
         :param table: Optional table name to use
         :return: Table name, SQL statement used to load the file
         """
-        import os
-
         log_debug(f"Loading {path} into duckdb")
 
         if table is None:
-            # Get the file name from the s3 path
-            file_name = path.split("/")[-1]
-            # Get the file name without extension from the s3 path
-            table, extension = os.path.splitext(file_name)
+            # Get the file name from the path
+            path_obj = Path(path)
+            # Get the file name without extension from the path
+            table = path_obj.stem
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
-        select_statement = f"SELECT * FROM read_csv('{path}'"
+        select_statement = f"SELECT * FROM read_csv('{path}', ignore_errors=false, auto_detect=true"
         if delimiter is not None:
             select_statement += f", delim='{delimiter}')"
         else:
             select_statement += ")"
 
-        create_statement = f"CREATE OR REPLACE TABLE '{table}' AS {select_statement};"
+        create_statement = f"CREATE OR REPLACE TABLE {table} AS {select_statement};"
         self.run_query(create_statement)
 
         log_debug(f"Loaded CSV {path} into duckdb as {table}")

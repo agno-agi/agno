@@ -9,7 +9,7 @@ from agno.models.openai.like import OpenAILike
 try:
     from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
     from openai import AzureOpenAI as AzureOpenAIClient
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
 
@@ -90,7 +90,7 @@ class AzureOpenAI(OpenAILike):
             AzureOpenAIClient: The OpenAI client.
 
         """
-        if self.client is not None:
+        if self.client is not None and not self.client.is_closed():
             return self.client
 
         _client_params: Dict[str, Any] = self._get_client_params()

@@ -1,12 +1,14 @@
 import logging
+from functools import lru_cache
 from os import getenv
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from rich.logging import RichHandler
 from rich.text import Text
 
 LOGGER_NAME = "agno"
 TEAM_LOGGER_NAME = f"{LOGGER_NAME}-team"
+WORKFLOW_LOGGER_NAME = f"{LOGGER_NAME}-workflow"
 
 # Define custom styles for different log sources
 LOG_STYLES = {
@@ -17,6 +19,10 @@ LOG_STYLES = {
     "team": {
         "debug": "magenta",
         "info": "steel_blue1",
+    },
+    "workflow": {
+        "debug": "sandy_brown",
+        "info": "orange3",
     },
 }
 
@@ -36,6 +42,10 @@ class ColoredRichHandler(RichHandler):
             if level_name in LOG_STYLES[self.source_type]:
                 color = LOG_STYLES[self.source_type][level_name]
                 return Text(record.levelname, style=color)
+        else:
+            if level_name in LOG_STYLES["agent"]:
+                color = LOG_STYLES["agent"][level_name]
+                return Text(record.levelname, style=color)
         return super().get_level_text(record)
 
 
@@ -43,18 +53,23 @@ class AgnoLogger(logging.Logger):
     def __init__(self, name: str, level: int = logging.NOTSET):
         super().__init__(name, level)
 
-    def debug(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):
+    def debug(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):  # type: ignore
         if center:
             msg = center_header(str(msg), symbol)
         super().debug(msg, *args, **kwargs)
 
-    def info(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):
+    def info(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):  # type: ignore
         if center:
             msg = center_header(str(msg), symbol)
         super().info(msg, *args, **kwargs)
 
 
 def build_logger(logger_name: str, source_type: Optional[str] = None) -> Any:
+    # If a logger with the name "agno.{source_type}" is already set, we want to use that one
+    _logger = logging.getLogger(f"agno.{logger_name}")
+    if _logger.handlers or _logger.level != logging.NOTSET:
+        return _logger
+
     # Set the custom logger class as the default for this logger
     logging.setLoggerClass(AgnoLogger)
 
@@ -88,24 +103,48 @@ def build_logger(logger_name: str, source_type: Optional[str] = None) -> Any:
 
 agent_logger: AgnoLogger = build_logger(LOGGER_NAME, source_type="agent")
 team_logger: AgnoLogger = build_logger(TEAM_LOGGER_NAME, source_type="team")
+workflow_logger: AgnoLogger = build_logger(WORKFLOW_LOGGER_NAME, source_type="workflow")
 
 # Set the default logger to the agent logger
 logger: AgnoLogger = agent_logger
 
 debug_on: bool = False
+debug_level: Literal[1, 2] = 1
 
 
-def set_log_level_to_debug(source_type: Optional[str] = None):
+def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 2] = 1):
+    if source_type is None:
+        use_agent_logger()
+
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
     _logger.setLevel(logging.DEBUG)
 
     global debug_on
     debug_on = True
 
+    global debug_level
+    debug_level = level
+
 
 def set_log_level_to_info(source_type: Optional[str] = None):
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
     _logger.setLevel(logging.INFO)
+
+    global debug_on
+    debug_on = False
+
+
+def set_log_level_to_warning(source_type: Optional[str] = None):
+    _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
+    _logger.setLevel(logging.WARNING)
+
+    global debug_on
+    debug_on = False
+
+
+def set_log_level_to_error(source_type: Optional[str] = None):
+    _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
+    _logger.setLevel(logging.ERROR)
 
     global debug_on
     debug_on = False
@@ -135,16 +174,37 @@ def use_agent_logger():
     logger = agent_logger
 
 
-def log_debug(msg, center: bool = False, symbol: str = "*", *args, **kwargs):
+def use_workflow_logger():
+    """Switch the default logger to use workflow_logger"""
+    global logger
+    logger = workflow_logger
+
+
+@lru_cache(maxsize=128)
+def _using_default_logger(logger_instance: Any) -> bool:
+    """Return True if the currently active logger is our default AgnoLogger"""
+    return isinstance(logger_instance, AgnoLogger)
+
+
+def log_debug(msg, center: bool = False, symbol: str = "*", log_level: Literal[1, 2] = 1, *args, **kwargs):
     global logger
     global debug_on
+    global debug_level
+
     if debug_on:
-        logger.debug(msg, center, symbol, *args, **kwargs)
+        if debug_level >= log_level:
+            if _using_default_logger(logger):
+                logger.debug(msg, center, symbol, *args, **kwargs)
+            else:
+                logger.debug(msg, *args, **kwargs)
 
 
 def log_info(msg, center: bool = False, symbol: str = "*", *args, **kwargs):
     global logger
-    logger.info(msg, center, symbol, *args, **kwargs)
+    if _using_default_logger(logger):
+        logger.info(msg, center, symbol, *args, **kwargs)
+    else:
+        logger.info(msg, *args, **kwargs)
 
 
 def log_warning(msg, *args, **kwargs):
@@ -160,3 +220,35 @@ def log_error(msg, *args, **kwargs):
 def log_exception(msg, *args, **kwargs):
     global logger
     logger.exception(msg, *args, **kwargs)
+
+
+def configure_agno_logging(
+    custom_default_logger: Optional[Any] = None,
+    custom_agent_logger: Optional[Any] = None,
+    custom_team_logger: Optional[Any] = None,
+    custom_workflow_logger: Optional[Any] = None,
+) -> None:
+    """
+    Util to set custom loggers. These will be used everywhere across the Agno library.
+
+    Args:
+        custom_default_logger: Default logger to use (overrides agent_logger for default)
+        custom_agent_logger: Custom logger for agent operations
+        custom_team_logger: Custom logger for team operations
+        custom_workflow_logger: Custom logger for workflow operations
+    """
+    if custom_default_logger is not None:
+        global logger
+        logger = custom_default_logger
+
+    if custom_agent_logger is not None:
+        global agent_logger
+        agent_logger = custom_agent_logger
+
+    if custom_team_logger is not None:
+        global team_logger
+        team_logger = custom_team_logger
+
+    if custom_workflow_logger is not None:
+        global workflow_logger
+        workflow_logger = custom_workflow_logger

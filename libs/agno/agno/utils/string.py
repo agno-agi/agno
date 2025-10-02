@@ -1,7 +1,9 @@
 import hashlib
 import json
 import re
+import uuid
 from typing import Optional, Type
+from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
@@ -62,54 +64,168 @@ def hash_string_sha256(input_string):
     return hex_digest
 
 
-def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
-    structured_output = None
-    try:
-        # First attempt: direct JSON validation
-        structured_output = response_model.model_validate_json(content)
-    except (ValidationError, json.JSONDecodeError):
-        # Second attempt: Extract JSON from markdown code blocks and clean
-        content = content
+def _extract_json_objects(text: str) -> list[str]:
+    objs: list[str] = []
+    brace_depth = 0
+    start_idx: Optional[int] = None
+    for idx, ch in enumerate(text):
+        if ch == "{" and brace_depth == 0:
+            start_idx = idx
+        if ch == "{":
+            brace_depth += 1
+        elif ch == "}":
+            brace_depth -= 1
+            if brace_depth == 0 and start_idx is not None:
+                objs.append(text[start_idx : idx + 1])
+                start_idx = None
+    return objs
 
-        # Handle code blocks
-        if "```json" in content:
-            content = content.split("```json")[-1].strip()
-            parts = content.split("```")
-            parts.pop(-1)
-            content = "".join(parts)
-        elif "```" in content:
-            content = content.split("```")[1].strip()
 
-        # Clean the JSON string
-        # Remove markdown formatting
-        content = re.sub(r"[*`#]", "", content)
+def _clean_json_content(content: str) -> str:
+    """Clean and prepare JSON content for parsing."""
+    # Handle code blocks
+    if "```json" in content:
+        content = content.split("```json")[-1].strip()
+        parts = content.split("```")
+        parts.pop(-1)
+        content = "".join(parts)
+    elif "```" in content:
+        content = content.split("```")[1].strip()
 
-        # Handle newlines and control characters
-        content = content.replace("\n", " ").replace("\r", "")
-        content = re.sub(r"[\x00-\x1F\x7F]", "", content)
+    # Replace markdown formatting like *"name"* or `"name"` with "name"
+    content = re.sub(r'[*`#]?"([A-Za-z0-9_]+)"[*`#]?', r'"\1"', content)
 
-        # Escape quotes only in values, not keys
-        def escape_quotes_in_values(match):
-            key = match.group(1)
-            value = match.group(2)
-            # Escape quotes in the value portion only
+    # Handle newlines and control characters
+    content = content.replace("\n", " ").replace("\r", "")
+    content = re.sub(r"[\x00-\x1F\x7F]", "", content)
+
+    # Escape quotes only in values, not keys
+    def escape_quotes_in_values(match):
+        key = match.group(1)
+        value = match.group(2)
+
+        if '\\"' in value:
+            unescaped_value = value.replace('\\"', '"')
+            escaped_value = unescaped_value.replace('"', '\\"')
+        else:
             escaped_value = value.replace('"', '\\"')
-            return f'"{key.lower()}": "{escaped_value}'
 
-        # Find and escape quotes in field values
-        content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
+        return f'"{key}": "{escaped_value}'
 
+    # Find and escape quotes in field values
+    content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
+
+    return content
+
+
+def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Optional[BaseModel]:
+    """Parse individual JSON objects from content and merge them based on response model fields."""
+    candidate_jsons = _extract_json_objects(content)
+    merged_data: dict = {}
+
+    # Get the expected fields from the response model
+    model_fields = output_schema.model_fields if hasattr(output_schema, "model_fields") else {}
+
+    for candidate in candidate_jsons:
         try:
-            # Try parsing the cleaned JSON
-            structured_output = response_model.model_validate_json(content)
+            candidate_obj = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+
+        if isinstance(candidate_obj, dict):
+            # Merge data based on model fields
+            for field_name, field_info in model_fields.items():
+                if field_name in candidate_obj:
+                    field_value = candidate_obj[field_name]
+                    # If field is a list, extend it; otherwise, use the latest value
+                    if isinstance(field_value, list):
+                        if field_name not in merged_data:
+                            merged_data[field_name] = []
+                        merged_data[field_name].extend(field_value)
+                    else:
+                        merged_data[field_name] = field_value
+
+    if not merged_data:
+        return None
+
+    try:
+        return output_schema.model_validate(merged_data)
+    except ValidationError as e:
+        logger.warning("Validation failed on merged data: %s", e)
+        return None
+
+
+def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Optional[BaseModel]:
+    structured_output = None
+
+    # Extract thinking content first to prevent <think> tags from corrupting JSON
+    from agno.utils.reasoning import extract_thinking_content
+
+    # handle thinking content b/w <think> tags
+    if "</think>" in content:
+        reasoning_content, output_content = extract_thinking_content(content)
+        if reasoning_content:
+            content = output_content
+
+    # Clean content first to simplify all parsing attempts
+    cleaned_content = _clean_json_content(content)
+
+    try:
+        # First attempt: direct JSON validation on cleaned content
+        structured_output = output_schema.model_validate_json(cleaned_content)
+    except (ValidationError, json.JSONDecodeError):
+        try:
+            # Second attempt: Parse as Python dict
+            data = json.loads(cleaned_content)
+            structured_output = output_schema.model_validate(data)
         except (ValidationError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to parse cleaned JSON: {e}")
 
-            try:
-                # Final attempt: Try parsing as Python dict
-                data = json.loads(content)
-                structured_output = response_model.model_validate(data)
-            except (ValidationError, json.JSONDecodeError) as e:
-                logger.warning(f"Failed to parse as Python dict: {e}")
+            # Third attempt: Extract individual JSON objects
+            candidate_jsons = _extract_json_objects(cleaned_content)
+
+            if len(candidate_jsons) == 1:
+                # Single JSON object - try to parse it directly
+                try:
+                    data = json.loads(candidate_jsons[0])
+                    structured_output = output_schema.model_validate(data)
+                except (ValidationError, json.JSONDecodeError):
+                    pass
+
+            if structured_output is None:
+                # Final attempt: Handle concatenated JSON objects with field merging
+                structured_output = _parse_individual_json(cleaned_content, output_schema)
+                if structured_output is None:
+                    logger.warning("All parsing attempts failed.")
 
     return structured_output
+
+
+def generate_id(seed: Optional[str] = None) -> str:
+    """
+    Generate a deterministic UUID5 based on a seed string.
+    If no seed is provided, generate a random UUID4.
+
+    Args:
+        seed (str): The seed string to generate the UUID from.
+
+    Returns:
+        str: A deterministic UUID5 string.
+    """
+    if seed is None:
+        return str(uuid4())
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, seed))
+
+
+def generate_id_from_name(name: Optional[str] = None) -> str:
+    """
+    Generate a deterministic ID from a name string.
+    If no name is provided, generate a random UUID4.
+
+    Args:
+        name (str): The name string to generate the ID from.
+    """
+    if name:
+        return name.lower().replace(" ", "-").replace("_", "-")
+    else:
+        return str(uuid4())

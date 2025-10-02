@@ -1,0 +1,35 @@
+{
+  "name": "Casey Jordan",
+  "position": "Mid-Level Software Engineer",
+  "summary": "Detail-oriented software engineer with 5 years experience in developing user-facing applications and managing Agile teams.",
+  "experience": [
+    {
+      "title": "Software Engineer",
+      "company": "BrightApps Corp.",
+      "location": "Denver, CO",
+      "period": "2021 – Present",
+      "responsibilities": [
+        "Redesigned UI components for mobile app, boosting user retention",
+        "Collaborated on Agile team to deliver bi-weekly sprints"
+      ]
+    },
+    {
+      "title": "Junior Developer",
+      "company": "DataCrate LLC",
+      "location": "Denver, CO",
+      "period": "2018 – 2021",
+      "responsibilities": [
+        "Supported legacy application updates and bug fixes",
+        "Built internal tools in Python for team productivity"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "BSc in Information Systems",
+      "institution": "University of Colorado Boulder",
+      "period": "2014 – 2018"
+    }
+  ],
+  "skills": ["Python", "React Native", "Jira", "SQL", "Scrum"]
+}

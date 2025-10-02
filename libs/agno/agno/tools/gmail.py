@@ -27,13 +27,16 @@ How to Get These Credentials:
      * Client Secret (GOOGLE_CLIENT_SECRET)
    - The Project ID (GOOGLE_PROJECT_ID) is visible in the project dropdown at the top of the page
 
-5. Set up environment variables:
+5. Add auth redirect URI:
+   - Go to https://console.cloud.google.com/auth/clients and add the redirect URI as http://127.0.0.1/
+
+6. Set up environment variables:
    Create a .envrc file in your project root with:
    ```
    export GOOGLE_CLIENT_ID=your_client_id_here
    export GOOGLE_CLIENT_SECRET=your_client_secret_here
    export GOOGLE_PROJECT_ID=your_project_id_here
-   export GOOGLE_REDIRECT_URI=http://localhost  # Default value
+   export GOOGLE_REDIRECT_URI=http://127.0.0.1/  # Default value
    ```
 
 Note: The first time you run the application, it will open a browser window for OAuth authentication.
@@ -41,16 +44,19 @@ A token.json file will be created to store the authentication credentials for fu
 """
 
 import base64
+import mimetypes
 import re
 from datetime import datetime, timedelta
 from functools import wraps
 from os import getenv
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
 
 try:
+    from email.mime.application import MIMEApplication
+    from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
 
     from google.auth.transport.requests import Request
@@ -95,94 +101,83 @@ class GmailTools(Toolkit):
 
     def __init__(
         self,
-        get_latest_emails: bool = True,
-        get_emails_from_user: bool = True,
-        get_unread_emails: bool = True,
-        get_starred_emails: bool = True,
-        get_emails_by_context: bool = True,
-        get_emails_by_date: bool = True,
-        get_emails_by_thread: bool = True,
-        create_draft_email: bool = True,
-        send_email: bool = True,
-        send_email_reply: bool = True,
-        search_emails: bool = True,
         creds: Optional[Credentials] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
         scopes: Optional[List[str]] = None,
+        port: Optional[int] = None,
         **kwargs,
     ):
         """Initialize GmailTools and authenticate with Gmail API
 
         Args:
-            get_latest_emails (bool): Enable getting latest emails. Defaults to True.
-            get_emails_from_user (bool): Enable getting emails from specific user. Defaults to True.
-            get_unread_emails (bool): Enable getting unread emails. Defaults to True.
-            get_starred_emails (bool): Enable getting starred emails. Defaults to True.
-            get_emails_by_context (bool): Enable getting emails by context. Defaults to True.
-            get_emails_by_date (bool): Enable getting emails by date. Defaults to True.
-            get_emails_by_thread (bool): Enable getting emails by thread. Defaults to True.
-            create_draft_email (bool): Enable creating draft emails. Defaults to True.
-            send_email (bool): Enable sending emails. Defaults to True.
-            search_emails (bool): Enable searching emails. Defaults to True.
-            send_email_reply (bool): Enable sending email replies. Defaults to True.
-            creds (Optional[Credentials]): Pre-existing credentials. Defaults to None.
+            creds (Optional[Credentials]): Pre-fetched OAuth credentials. Use this to skip a new auth flow. Defaults to None.
             credentials_path (Optional[str]): Path to credentials file. Defaults to None.
             token_path (Optional[str]): Path to token file. Defaults to None.
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
+            port (Optional[int]): Port to use for OAuth authentication. Defaults to None.
         """
-        super().__init__(name="gmail_tools", **kwargs)
         self.creds = creds
         self.credentials_path = credentials_path
         self.token_path = token_path
         self.service = None
         self.scopes = scopes or self.DEFAULT_SCOPES
+        self.port = port
 
-        # Validate that required scopes are present for requested operations
-        if (create_draft_email or send_email) and "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
+        """ tools functions:
+         enable_get_latest_emails (bool): Enable getting latest emails.
+         enable_get_emails_from_user (bool): Enable getting emails from specific user.
+         enable_get_unread_emails (bool): Enable getting unread emails.
+         enable_get_starred_emails (bool): Enable getting starred emails.
+         enable_get_emails_by_context (bool): Enable getting emails by context.
+         enable_get_emails_by_date (bool): Enable getting emails by date.
+         enable_get_emails_by_thread (bool): Enable getting emails by thread.
+         enable_create_draft_email (bool): Enable creating draft emails.
+         enable_send_email (bool): Enable sending emails.
+         enable_send_email_reply (bool): Enable sending email replies.
+         all (bool): Enable all tools.
+        """
+
+        tools: List[Any] = [
+            # Reading emails
+            self.get_latest_emails,
+            self.get_emails_from_user,
+            self.get_unread_emails,
+            self.get_starred_emails,
+            self.get_emails_by_context,
+            self.get_emails_by_date,
+            self.get_emails_by_thread,
+            self.search_emails,
+            # Composing emails
+            self.create_draft_email,
+            self.send_email,
+            self.send_email_reply,
+        ]
+
+        super().__init__(name="gmail_tools", tools=tools, **kwargs)
+
+        # Validate that required scopes are present for requested operations (only check registered functions)
+        if (
+            "create_draft_email" in self.functions or "send_email" in self.functions
+        ) and "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
             raise ValueError(
                 "The scope https://www.googleapis.com/auth/gmail.compose is required for email composition operations"
             )
-
         read_operations = [
-            get_latest_emails,
-            get_emails_from_user,
-            get_unread_emails,
-            get_starred_emails,
-            get_emails_by_context,
-            get_emails_by_date,
-            get_emails_by_thread,
-            search_emails,
+            "get_latest_emails",
+            "get_emails_from_user",
+            "get_unread_emails",
+            "get_starred_emails",
+            "get_emails_by_context",
+            "get_emails_by_date",
+            "get_emails_by_thread",
+            "search_emails",
         ]
-
-        if any(read_operations):
+        if any(read_operation in self.functions for read_operation in read_operations):
             read_scope = "https://www.googleapis.com/auth/gmail.readonly"
             write_scope = "https://www.googleapis.com/auth/gmail.modify"
             if read_scope not in self.scopes and write_scope not in self.scopes:
                 raise ValueError(f"The scope {read_scope} is required for email reading operations")
-
-        if get_latest_emails:
-            self.register(self.get_latest_emails)
-        if get_emails_from_user:
-            self.register(self.get_emails_from_user)
-        if get_unread_emails:
-            self.register(self.get_unread_emails)
-        if get_starred_emails:
-            self.register(self.get_starred_emails)
-        if get_emails_by_context:
-            self.register(self.get_emails_by_context)
-        if get_emails_by_date:
-            self.register(self.get_emails_by_date)
-        if get_emails_by_thread:
-            self.register(self.get_emails_by_thread)
-        if create_draft_email:
-            self.register(self.create_draft_email)
-        if send_email:
-            self.register(self.send_email)
-        if send_email_reply:
-            self.register(self.send_email_reply)
-        if search_emails:
-            self.register(self.search_emails)
 
     def _auth(self) -> None:
         """Authenticate with Gmail API"""
@@ -211,7 +206,7 @@ class GmailTools(Toolkit):
                     flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
                 else:
                     flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-                self.creds = flow.run_local_server(port=0)
+                self.creds = flow.run_local_server(port=self.port)
 
             # Save the credentials for future use
             if self.creds and self.creds.valid:
@@ -395,7 +390,14 @@ class GmailTools(Toolkit):
             return f"Unexpected error retrieving emails by date: {type(error).__name__}: {error}"
 
     @authenticate
-    def create_draft_email(self, to: str, subject: str, body: str, cc: Optional[str] = None) -> str:
+    def create_draft_email(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        cc: Optional[str] = None,
+        attachments: Optional[Union[str, List[str]]] = None,
+    ) -> str:
         """
         Create and save a draft email. to and cc are comma separated string of email ids
         Args:
@@ -403,18 +405,42 @@ class GmailTools(Toolkit):
             subject (str): Email subject
             body (str): Email body content
             cc (Optional[str]): Comma separated string of CC email addresses (optional)
+            attachments (Optional[Union[str, List[str]]]): File path(s) for attachments (optional)
 
         Returns:
             str: Stringified dictionary containing draft email details including id
         """
         self._validate_email_params(to, subject, body)
-        message = self._create_message(to.split(","), subject, body, cc.split(",") if cc else None)
+
+        # Process attachments
+        attachment_files = []
+        if attachments:
+            if isinstance(attachments, str):
+                attachment_files = [attachments]
+            else:
+                attachment_files = attachments
+
+            # Validate attachment files
+            for file_path in attachment_files:
+                if not Path(file_path).exists():
+                    raise ValueError(f"Attachment file not found: {file_path}")
+
+        message = self._create_message(
+            to.split(","), subject, body, cc.split(",") if cc else None, attachments=attachment_files
+        )
         draft = {"message": message}
         draft = self.service.users().drafts().create(userId="me", body=draft).execute()  # type: ignore
         return str(draft)
 
     @authenticate
-    def send_email(self, to: str, subject: str, body: str, cc: Optional[str] = None) -> str:
+    def send_email(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        cc: Optional[str] = None,
+        attachments: Optional[Union[str, List[str]]] = None,
+    ) -> str:
         """
         Send an email immediately. to and cc are comma separated string of email ids
         Args:
@@ -422,19 +448,43 @@ class GmailTools(Toolkit):
             subject (str): Email subject
             body (str): Email body content
             cc (Optional[str]): Comma separated string of CC email addresses (optional)
+            attachments (Optional[Union[str, List[str]]]): File path(s) for attachments (optional)
 
         Returns:
             str: Stringified dictionary containing sent email details including id
         """
         self._validate_email_params(to, subject, body)
+
+        # Process attachments
+        attachment_files = []
+        if attachments:
+            if isinstance(attachments, str):
+                attachment_files = [attachments]
+            else:
+                attachment_files = attachments
+
+            # Validate attachment files
+            for file_path in attachment_files:
+                if not Path(file_path).exists():
+                    raise ValueError(f"Attachment file not found: {file_path}")
+
         body = body.replace("\n", "<br>")
-        message = self._create_message(to.split(","), subject, body, cc.split(",") if cc else None)
+        message = self._create_message(
+            to.split(","), subject, body, cc.split(",") if cc else None, attachments=attachment_files
+        )
         message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
         return str(message)
 
     @authenticate
     def send_email_reply(
-        self, thread_id: str, message_id: str, to: str, subject: str, body: str, cc: Optional[str] = None
+        self,
+        thread_id: str,
+        message_id: str,
+        to: str,
+        subject: str,
+        body: str,
+        cc: Optional[str] = None,
+        attachments: Optional[Union[str, List[str]]] = None,
     ) -> str:
         """
         Respond to an existing email thread.
@@ -446,6 +496,7 @@ class GmailTools(Toolkit):
             subject (str): Email subject (prefixed with "Re:" if not already).
             body (str): Email body content.
             cc (Optional[str]): Comma-separated CC email addresses (optional).
+            attachments (Optional[Union[str, List[str]]]): File path(s) for attachments (optional)
 
         Returns:
             str: Stringified dictionary containing sent email details including id.
@@ -456,9 +507,28 @@ class GmailTools(Toolkit):
         if not subject.lower().startswith("re:"):
             subject = f"Re: {subject}"
 
+        # Process attachments
+        attachment_files = []
+        if attachments:
+            if isinstance(attachments, str):
+                attachment_files = [attachments]
+            else:
+                attachment_files = attachments
+
+            # Validate attachment files
+            for file_path in attachment_files:
+                if not Path(file_path).exists():
+                    raise ValueError(f"Attachment file not found: {file_path}")
+
         body = body.replace("\n", "<br>")
         message = self._create_message(
-            to.split(","), subject, body, cc.split(",") if cc else None, thread_id, message_id
+            to.split(","),
+            subject,
+            body,
+            cc.split(",") if cc else None,
+            thread_id,
+            message_id,
+            attachments=attachment_files,
         )
         message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
         return str(message)
@@ -509,9 +579,43 @@ class GmailTools(Toolkit):
         cc: Optional[List[str]] = None,
         thread_id: Optional[str] = None,
         message_id: Optional[str] = None,
+        attachments: Optional[List[str]] = None,
     ) -> dict:
         body = body.replace("\\n", "\n")
-        message = MIMEText(body, "html")
+
+        # Create multipart message if attachments exist, otherwise simple text message
+        message: Union[MIMEMultipart, MIMEText]
+        if attachments:
+            message = MIMEMultipart()
+
+            # Add the text body
+            text_part = MIMEText(body, "html")
+            message.attach(text_part)
+
+            # Add attachments
+            for file_path in attachments:
+                file_path_obj = Path(file_path)
+                if not file_path_obj.exists():
+                    continue
+
+                # Guess the content type based on the file extension
+                content_type, encoding = mimetypes.guess_type(file_path)
+                if content_type is None or encoding is not None:
+                    content_type = "application/octet-stream"
+
+                main_type, sub_type = content_type.split("/", 1)
+
+                # Read file and create attachment
+                with open(file_path, "rb") as file:
+                    attachment_data = file.read()
+
+                attachment = MIMEApplication(attachment_data, _subtype=sub_type)
+                attachment.add_header("Content-Disposition", "attachment", filename=file_path_obj.name)
+                message.attach(attachment)
+        else:
+            message = MIMEText(body, "html")
+
+        # Set headers
         message["to"] = ", ".join(to)
         message["from"] = "me"
         message["subject"] = subject

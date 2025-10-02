@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -18,24 +18,24 @@ class OpenWeatherTools(Toolkit):
     Args:
         api_key (Optional[str]): OpenWeatherMap API key. If not provided, will try to get from OPENWEATHER_API_KEY env var.
         units (str): Units of measurement. Options are 'standard', 'metric', and 'imperial'. Default is 'metric'.
-        current_weather (bool): Enable current weather function. Default is True.
-        forecast (bool): Enable forecast function. Default is True.
-        air_pollution (bool): Enable air pollution function. Default is True.
-        geocoding (bool): Enable geocoding function. Default is True.
+        enable_current_weather (bool): Enable current weather function. Default is True.
+        enable_forecast (bool): Enable forecast function. Default is True.
+        enable_air_pollution (bool): Enable air pollution function. Default is True.
+        enable_geocoding (bool): Enable geocoding function. Default is True.
+        all (bool): Enable all functions. Default is False.
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         units: str = "metric",
-        current_weather: bool = True,
-        forecast: bool = True,
-        air_pollution: bool = True,
-        geocoding: bool = True,
+        enable_current_weather: bool = True,
+        enable_forecast: bool = True,
+        enable_air_pollution: bool = True,
+        enable_geocoding: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="openweather_tools", **kwargs)
-
         self.api_key = api_key or getenv("OPENWEATHER_API_KEY")
         if not self.api_key:
             raise ValueError(
@@ -46,15 +46,17 @@ class OpenWeatherTools(Toolkit):
         self.base_url = "https://api.openweathermap.org/data/2.5"
         self.geo_url = "https://api.openweathermap.org/geo/1.0"
 
-        # Register functions based on parameters
-        if current_weather:
-            self.register(self.get_current_weather)
-        if forecast:
-            self.register(self.get_forecast)
-        if air_pollution:
-            self.register(self.get_air_pollution)
-        if geocoding:
-            self.register(self.geocode_location)
+        tools: List[Any] = []
+        if enable_current_weather or all:
+            tools.append(self.get_current_weather)
+        if enable_forecast or all:
+            tools.append(self.get_forecast)
+        if enable_air_pollution or all:
+            tools.append(self.get_air_pollution)
+        if enable_geocoding or all:
+            tools.append(self.geocode_location)
+
+        super().__init__(name="openweather_tools", tools=tools, **kwargs)
 
     def _make_request(self, url: str, params: Dict) -> Dict:
         """Make a request to the OpenWeatherMap API.

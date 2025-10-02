@@ -1,0 +1,10 @@
+agno==2.0.0
+httpx
+nest_asyncio
+openai
+pypdf
+pgvector
+psycopg[binary]
+rapidocr-onnxruntime
+sqlalchemy
+streamlit

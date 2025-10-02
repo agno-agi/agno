@@ -1,20 +1,21 @@
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
+from agno.db.sqlite import SqliteDb
 from agno.models.fireworks import Fireworks
-from agno.storage.sqlite import SqliteStorage
 
 
-def _assert_metrics(response: RunResponse):
-    input_tokens = response.metrics.get("input_tokens", [])
-    output_tokens = response.metrics.get("output_tokens", [])
-    total_tokens = response.metrics.get("total_tokens", [])
+def _assert_metrics(response: RunOutput):
+    assert response.metrics is not None
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
-    assert sum(input_tokens) > 0
-    assert sum(output_tokens) > 0
-    assert sum(total_tokens) > 0
-    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert total_tokens > 0
+    assert total_tokens == input_tokens + output_tokens
 
 
 def test_basic():
@@ -22,13 +23,12 @@ def test_basic():
         model=Fireworks(id="accounts/fireworks/models/llama-v3p1-8b-instruct"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
-    assert response.content is not None
+    assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
@@ -40,7 +40,6 @@ def test_basic_stream():
         model=Fireworks(id="accounts/fireworks/models/llama-v3p1-8b-instruct"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
@@ -51,10 +50,7 @@ def test_basic_stream():
     responses = list(response_stream)
     assert len(responses) > 0
     for response in responses:
-        assert isinstance(response, RunResponse)
         assert response.content is not None
-
-    _assert_metrics(agent.run_response)
 
 
 @pytest.mark.asyncio
@@ -63,12 +59,11 @@ async def test_async_basic():
         model=Fireworks(id="accounts/fireworks/models/llama-v3p1-8b-instruct"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("Share a 2 sentence horror story")
 
-    assert response.content is not None
+    assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
@@ -80,26 +75,21 @@ async def test_async_basic_stream():
         model=Fireworks(id="accounts/fireworks/models/llama-v3p1-8b-instruct"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
+    response_stream = agent.arun("Share a 2 sentence horror story", stream=True)
 
     async for response in response_stream:
-        assert isinstance(response, RunResponse)
         assert response.content is not None
-
-    _assert_metrics(agent.run_response)
 
 
 def test_with_memory():
     agent = Agent(
+        db=SqliteDb(db_file="tmp/test_with_memory.db"),
         model=Fireworks(id="accounts/fireworks/models/llama-v3p1-8b-instruct"),
-        add_history_to_messages=True,
-        num_history_responses=5,
+        add_history_to_context=True,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # First interaction
@@ -108,17 +98,19 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
+    assert response2.content is not None
     assert "John Smith" in response2.content
 
     # Verify memories were created
-    assert len(agent.memory.messages) == 5
-    assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
+    messages = agent.get_messages_for_session()
+    assert len(messages) == 5
+    assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 
     # Test metrics structure and types
     _assert_metrics(response2)
 
 
-def test_response_model():
+def test_output_schema():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
@@ -126,9 +118,8 @@ def test_response_model():
 
     agent = Agent(
         model=Fireworks(id="accounts/fireworks/models/llama-v3p1-405b-instruct"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -148,34 +139,9 @@ def test_json_response_mode():
 
     agent = Agent(
         model=Fireworks(id="accounts/fireworks/models/llama-v3p1-405b-instruct"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
-    )
-
-    response = agent.run("Create a movie about time travel")
-
-    # Verify structured output
-    assert isinstance(response.content, MovieScript)
-    assert response.content.title is not None
-    assert response.content.genre is not None
-    assert response.content.plot is not None
-
-
-# For backward compatibility
-def test_structured_outputs_deprecated():
-    class MovieScript(BaseModel):
-        title: str = Field(..., description="Movie title")
-        genre: str = Field(..., description="Movie genre")
-        plot: str = Field(..., description="Brief plot summary")
-
-    agent = Agent(
-        model=Fireworks(id="accounts/fireworks/models/llama-v3p1-405b-instruct"),
-        response_model=MovieScript,
-        structured_outputs=False,  # They don't support native structured outputs
-        telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -190,16 +156,19 @@ def test_structured_outputs_deprecated():
 def test_history():
     agent = Agent(
         model=Fireworks(id="accounts/fireworks/models/llama-v3p1-8b-instruct"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        db=SqliteDb(db_file="tmp/fireworks/test_basic.db"),
+        add_history_to_context=True,
         telemetry=False,
-        monitoring=False,
     )
-    agent.run("Hello")
-    assert len(agent.run_response.messages) == 2
-    agent.run("Hello 2")
-    assert len(agent.run_response.messages) == 4
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 2
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 4
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 6
     agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 8

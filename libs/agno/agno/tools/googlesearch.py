@@ -29,6 +29,8 @@ class GoogleSearchTools(Toolkit):
         cache_results (bool): Enable caching of search results.
         cache_ttl (int): Time-to-live for cached results in seconds.
         cache_dir (Optional[str]): Directory to store cache files.
+        enable_google_search (bool): Enable Google search.
+        all (bool): Enable all tools.
     """
 
     def __init__(
@@ -38,17 +40,21 @@ class GoogleSearchTools(Toolkit):
         headers: Optional[Any] = None,
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
+        enable_google_search: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="googlesearch", **kwargs)
-
         self.fixed_max_results: Optional[int] = fixed_max_results
         self.fixed_language: Optional[str] = fixed_language
         self.headers: Optional[Any] = headers
         self.proxy: Optional[str] = proxy
         self.timeout: Optional[int] = timeout
 
-        self.register(self.google_search)
+        tools = []
+        if all or enable_google_search:
+            tools.append(self.google_search)
+
+        super().__init__(name="google_search_tools", tools=tools, **kwargs)
 
     def google_search(self, query: str, max_results: int = 5, language: str = "en") -> str:
         """
@@ -76,7 +82,7 @@ class GoogleSearchTools(Toolkit):
         log_debug(f"Searching Google [{language}] for: {query}")
 
         # Perform Google search using the googlesearch-python package
-        results = list(search(query, num_results=max_results, lang=language, proxy=self.proxy, advanced=True))
+        results = list(search(query, num_results=max_results, lang=language))
 
         # Collect the search results
         res: List[Dict[str, str]] = []

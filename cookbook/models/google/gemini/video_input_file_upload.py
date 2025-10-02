@@ -5,6 +5,7 @@ from agno.agent import Agent
 from agno.media import Video
 from agno.models.google import Gemini
 from agno.utils.log import logger
+from google.genai.types import UploadFileConfig
 
 model = Gemini(id="gemini-2.0-flash-exp")
 agent = Agent(
@@ -14,7 +15,7 @@ agent = Agent(
 
 # Please download a sample video file to test this Agent
 # Run: `wget https://storage.googleapis.com/generativeai-downloads/images/GreatRedSpot.mp4` to download a sample video
-video_path = Path(__file__).parent.joinpath("samplevideo.mp4")
+video_path = Path(__file__).parent.joinpath("GreatRedSpot.mp4")
 video_file = None
 remote_file_name = f"files/{video_path.stem.lower().replace('_', '')}"
 try:
@@ -29,13 +30,16 @@ if not video_file:
         logger.info(f"Uploading video: {video_path}")
         video_file = model.get_client().files.upload(
             file=video_path,
-            config=dict(name=video_path.stem, display_name=video_path.stem),
+            config=UploadFileConfig(name=video_path.stem, display_name=video_path.stem),
         )
 
         # Check whether the file is ready to be used.
-        while video_file.state.name == "PROCESSING":
+        while video_file and video_file.state and video_file.state.name == "PROCESSING":
             time.sleep(2)
-            video_file = model.get_client().files.get(name=video_file.name)
+            if video_file and video_file.name:
+                video_file = model.get_client().files.get(name=video_file.name)
+            else:
+                video_file = None
 
         logger.info(f"Uploaded video: {video_file}")
     except Exception as e:

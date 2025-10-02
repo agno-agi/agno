@@ -1,7 +1,7 @@
 import functools
 import runpy
 from pathlib import Path
-from typing import Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -16,39 +16,27 @@ class PythonTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
-        save_and_run: bool = True,
-        pip_install: bool = False,
-        uv_pip_install: bool = False,
-        run_code: bool = False,
-        list_files: bool = False,
-        run_files: bool = False,
-        read_files: bool = False,
         safe_globals: Optional[dict] = None,
         safe_locals: Optional[dict] = None,
         **kwargs,
     ):
-        super().__init__(name="python_tools", **kwargs)
-
         self.base_dir: Path = base_dir or Path.cwd()
 
         # Restricted global and local scope
         self.safe_globals: dict = safe_globals or globals()
         self.safe_locals: dict = safe_locals or locals()
 
-        if run_code:
-            self.register(self.run_python_code, sanitize_arguments=False)
-        if save_and_run:
-            self.register(self.save_to_file_and_run, sanitize_arguments=False)
-        if pip_install:
-            self.register(self.pip_install_package)
-        if uv_pip_install:
-            self.register(self.uv_pip_install_package)
-        if run_files:
-            self.register(self.run_python_file_return_variable)
-        if read_files:
-            self.register(self.read_file)
-        if list_files:
-            self.register(self.list_files)
+        tools: List[Any] = [
+            self.save_to_file_and_run,
+            self.run_python_code,
+            self.pip_install_package,
+            self.uv_pip_install_package,
+            self.run_python_file_return_variable,
+            self.read_file,
+            self.list_files,
+        ]
+
+        super().__init__(name="python_tools", tools=tools, **kwargs)
 
     def save_to_file_and_run(
         self, file_name: str, code: str, variable_to_return: Optional[str] = None, overwrite: bool = True
