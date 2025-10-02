@@ -1,7 +1,6 @@
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
-from agno.os.interfaces.a2a import A2A
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 
@@ -39,7 +38,7 @@ research_team = Team(
 # Setup our AgentOS app
 agent_os = AgentOS(
     teams=[research_team],
-    interfaces=[A2A(teams=[research_team])],
+    a2a_interface=True,
 )
 app = agent_os.get_app()
 

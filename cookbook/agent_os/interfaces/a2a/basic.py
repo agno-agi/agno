@@ -1,7 +1,6 @@
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.interfaces.a2a import A2A
 
 chat_agent = Agent(
     name="basic-agent",
@@ -14,7 +13,7 @@ chat_agent = Agent(
 # Setup your AgentOS app
 agent_os = AgentOS(
     agents=[chat_agent],
-    interfaces=[A2A(agents=[chat_agent])],
+    a2a_interface=True,
 )
 app = agent_os.get_app()
 
