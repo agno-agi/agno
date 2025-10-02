@@ -132,7 +132,10 @@ def print_response(
             response_timer.stop()
 
             # Check if this is a workflow agent direct response
-            if workflow_response.workflow_agent_response is not None and not workflow_response.workflow_agent_response.get("workflow_executed", True):
+            if (
+                workflow_response.workflow_agent_response is not None
+                and not workflow_response.workflow_agent_response.get("workflow_executed", True)
+            ):
                 # Agent answered directly from history without executing workflow
                 agent_response_panel = create_panel(
                     content=Markdown(str(workflow_response.content)) if markdown else str(workflow_response.content),
@@ -621,7 +624,9 @@ def print_response_stream(
                             console.print(agent_response_panel)  # type: ignore
                             step_started_printed = True
                     # For callable functions, print the final content block here since there are no step events
-                    elif is_callable_function and show_step_details and current_step_content and not step_started_printed:
+                    elif (
+                        is_callable_function and show_step_details and current_step_content and not step_started_printed
+                    ):
                         final_step_panel = create_panel(
                             content=Markdown(current_step_content) if markdown else current_step_content,
                             title="Custom Function (Completed)",

@@ -14,12 +14,10 @@ if TYPE_CHECKING:
 class WorkflowAgent(Agent):
     """
     A restricted Agent class specifically designed for workflow orchestration.
-
     This agent can:
     1. Decide whether to run the workflow or answer directly from history
     2. Call the workflow execution tool when needed
     3. Access workflow session history for context
-
     Restrictions:
     - Only model configuration allowed
     - No custom tools (tools are set by workflow)
@@ -34,7 +32,6 @@ class WorkflowAgent(Agent):
     ):
         """
         Initialize WorkflowAgent with restricted parameters.
-
         Args:
             model: The model to use for the agent (required)
             name: Agent name (defaults to "Workflow Agent")
@@ -57,15 +54,12 @@ class WorkflowAgent(Agent):
     ) -> Callable:
         """
         Create the workflow execution tool that this agent can call.
-
         This is similar to how Agent has search_knowledge_base() method.
-
         Args:
             workflow: The workflow instance
             session: The workflow session
             execution_input: The execution input
             session_state: The session state
-
         Returns:
             Callable tool function
         """
@@ -82,10 +76,8 @@ class WorkflowAgent(Agent):
             """
             Execute the complete workflow with the given query.
             Use this tool when you need to run the workflow to answer the user's question.
-
             Args:
                 query: The input query/question to process through the workflow
-
             Returns:
                 The workflow execution result (str in non-streaming, generator in streaming)
             """
