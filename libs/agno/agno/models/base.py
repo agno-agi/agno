@@ -28,6 +28,7 @@ from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecutio
 from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutputEvent
+from agno.run.workflow import WorkflowRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.timer import Timer
@@ -1214,11 +1215,13 @@ class Model(ABC):
 
         if isinstance(function_execution_result.result, (GeneratorType, collections.abc.Iterator)):
             for item in function_execution_result.result:
-                # This function yields agent/team run events
-                if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                    item, tuple(get_args(TeamRunOutputEvent))
+                # This function yields agent/team/workflow run events
+                if (
+                    isinstance(item, tuple(get_args(RunOutputEvent)))
+                    or isinstance(item, tuple(get_args(TeamRunOutputEvent)))
+                    or isinstance(item, tuple(get_args(WorkflowRunOutputEvent)))
                 ):
-                    # We only capture content events
+                    # We only capture content events for output accumulation
                     if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                         if item.content is not None and isinstance(item.content, BaseModel):
                             function_call_output += item.content.model_dump_json()
@@ -1231,6 +1234,16 @@ class Model(ABC):
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
+
+                    # For WorkflowCompletedEvent, extract content for final output
+                    from agno.run.workflow import WorkflowCompletedEvent
+
+                    if isinstance(item, WorkflowCompletedEvent):
+                        if item.content is not None:
+                            if isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                function_call_output += str(item.content)
 
                     # Yield the event itself to bubble it up
                     yield item

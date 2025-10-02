@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 from agno.agent import Agent
 from agno.models.base import Model
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 if TYPE_CHECKING:
     from agno.session.workflow import WorkflowSession
@@ -53,6 +53,7 @@ class WorkflowAgent(Agent):
         session: "WorkflowSession",
         execution_input: "WorkflowExecutionInput",
         session_state: Optional[Dict[str, Any]],
+        stream_intermediate_steps: bool = False,
     ) -> Callable:
         """
         Create the workflow execution tool that this agent can call.
@@ -77,7 +78,7 @@ class WorkflowAgent(Agent):
         from agno.utils.log import log_debug
         from agno.workflow.types import WorkflowExecutionInput
 
-        def run_workflow(query: str) -> str:
+        def run_workflow(query: str):
             """
             Execute the complete workflow with the given query.
             Use this tool when you need to run the workflow to answer the user's question.
@@ -86,22 +87,30 @@ class WorkflowAgent(Agent):
                 query: The input query/question to process through the workflow
 
             Returns:
-                The workflow execution result
+                The workflow execution result (str in non-streaming, generator in streaming)
             """
-            logger.info("=" * 80)
-            logger.info(" TOOL EXECUTION: run_workflow")
-            logger.info("    ➜ Query: {query[:100]}{'...' if len(query) > 100 else ''}")
-            logger.info("=" * 80)
+            # Reload session to get latest data from database
+            # This ensures we don't overwrite any updates made after the tool was created
+            fresh_session = workflow.get_session(session_id=session.session_id)
+            if fresh_session is None:
+                fresh_session = session  # Fallback to closure session if reload fails
+                log_info(
+                    f"Fallback to closure session: {len(fresh_session.workflow_agent_responses or [])} agent responses"
+                )
+            else:
+                log_info(
+                    f"Reloaded session before tool execution: {len(fresh_session.workflow_agent_responses or [])} agent responses"
+                )
 
             # Create a new run ID for this execution
             run_id = str(uuid4())
-            log_debug(f" Created new run ID: {run_id}")
+            log_debug(f"Created new run ID: {run_id}")
 
             # Create workflow run response
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
                 input=query,
-                session_id=session.session_id,
+                session_id=fresh_session.session_id,
                 workflow_id=workflow.id,
                 workflow_name=workflow.name,
                 created_at=int(datetime.now().timestamp()),
@@ -117,27 +126,55 @@ class WorkflowAgent(Agent):
                 files=execution_input.files,
             )
 
-            # Execute the workflow (non-streaming)
-            log_debug(" Executing workflow steps...")
-            result = workflow._execute(
-                session=session,
-                execution_input=workflow_execution_input,
-                workflow_run_response=workflow_run_response,
-                session_state=session_state,
-            )
+            # ===== EXECUTION LOGIC (Based on streaming mode) =====
+            if stream_intermediate_steps:
+                # STREAMING MODE: Yield workflow events
+                log_debug("Executing workflow with streaming...")
 
-            logger.info("=" * 80)
-            logger.info(" TOOL EXECUTION COMPLETE: run_workflow")
-            logger.info(f"    ➜ Run ID: {result.run_id}")
-            logger.info(f"    ➜ Result length: {len(str(result.content)) if result.content else 0} chars")
-            logger.info("=" * 80)
+                final_content = ""
+                for event in workflow._execute_stream(
+                    session=fresh_session,
+                    execution_input=workflow_execution_input,
+                    workflow_run_response=workflow_run_response,
+                    session_state=session_state,
+                    stream_intermediate_steps=True,
+                ):
+                    yield event
 
-            # Return the content as string
-            if isinstance(result.content, str):
-                return result.content
-            elif isinstance(result.content, BaseModel):
-                return result.content.model_dump_json(exclude_none=True)
+                    # Capture final content from WorkflowCompletedEvent
+                    from agno.run.workflow import WorkflowCompletedEvent
+
+                    if isinstance(event, WorkflowCompletedEvent):
+                        final_content = str(event.content) if event.content else ""
+
+                logger.info("=" * 80)
+                logger.info(f"TOOL EXECUTION COMPLETE: run_workflow")
+                logger.info("=" * 80)
+
+                return final_content
             else:
-                return str(result.content)
+                # NON-STREAMING MODE: Execute synchronously
+                log_debug("Executing workflow steps...")
+
+                result = workflow._execute(
+                    session=fresh_session,
+                    execution_input=workflow_execution_input,
+                    workflow_run_response=workflow_run_response,
+                    session_state=session_state,
+                )
+
+                logger.info("=" * 80)
+                logger.info(f"TOOL EXECUTION COMPLETE: run_workflow")
+                logger.info(f"  ➜ Run ID: {result.run_id}")
+                logger.info(f"  ➜ Result length: {len(str(result.content)) if result.content else 0} chars")
+                logger.info("=" * 80)
+
+                # Return the content as string
+                if isinstance(result.content, str):
+                    return result.content
+                elif isinstance(result.content, BaseModel):
+                    return result.content.model_dump_json(exclude_none=True)
+                else:
+                    return str(result.content)
 
         return run_workflow
