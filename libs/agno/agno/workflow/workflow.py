@@ -1999,11 +1999,8 @@ class Workflow:
         session_state: Optional[Dict[str, Any]],
         stream_intermediate_steps: bool = False,
     ) -> None:
-        """Initialize the workflow agent with tools and context"""
+        """Initialize the workflow agent with tools (but NOT context - that's passed per-run)"""
         from agno.tools.function import Function
-
-        # Build workflow history context
-        history_context = self._build_workflow_history_context(session)
 
         workflow_tool_func = self.agent.create_workflow_tool(  # type: ignore
             workflow=self,
@@ -2014,35 +2011,25 @@ class Workflow:
         )
         workflow_tool = Function.from_callable(workflow_tool_func)
 
-        # Set the agent's tools
         self.agent.tools = [workflow_tool]  # type: ignore
 
-        # Build instructions with workflow context
-        base_instructions = """You are a workflow orchestration agent. Your job is to help users by either:
-            1. **Answering directly** from the workflow history context if the question can be answered from previous runs
-            2. **Running the workflow** by calling the run_workflow tool ONCE when you need to process a new query
+        log_debug("Workflow agent initialized with run_workflow tool")
 
-            Guidelines:
-            - Check the workflow history first to see if the answer already exists
-            - If the user asks about something that was already processed, answer directly from history
-            - If the user asks a new question that requires workflow execution, call the run_workflow tool ONCE
-            - After calling the tool, the result will be returned to you - use that result to answer the user
-            - IMPORTANT: Do NOT call the tool multiple times. Call it once and use the result.
-            - Keep your responses concise and helpful
-            - When calling the workflow, pass a clear and concise query
-        """
+    def _get_workflow_agent_dependencies(self, session: WorkflowSession) -> Dict[str, Any]:
+        """Build dependencies dict with workflow context to pass to agent.run()"""
+        # Build workflow history context
+        history_context = self._build_workflow_history_context(session)
 
-        # Add workflow description if available
+        # Build workflow context with description and history
+        workflow_context = ""
         if self.description:
-            base_instructions += f"\nWorkflow Description: {self.description}\n"
+            workflow_context += f"Workflow Description: {self.description}\n\n"
 
-        # Add workflow history
-        base_instructions += f"\n{history_context}\n"
+        workflow_context += history_context
 
-        # Set instructions
-        self.agent.instructions = base_instructions
-
-        log_debug(" Workflow agent initialized with run_workflow tool and history context")
+        return {
+            "workflow_context": workflow_context,
+        }
 
     def _execute_workflow_agent(
         self,
@@ -2129,6 +2116,9 @@ class Workflow:
         # Initialize agent with stream_intermediate_steps=True so tool yields events
         self._initialize_workflow_agent(session, execution_input, session_state, stream_intermediate_steps=True)
 
+        # Build dependencies with workflow context
+        dependencies = self._get_workflow_agent_dependencies(session)
+
         # Run agent with streaming - workflow events will bubble up from the tool
         agent_response: Optional[RunOutput] = None
         workflow_executed = False
@@ -2140,7 +2130,11 @@ class Workflow:
 
         # Run the agent in streaming mode and yield all events
         for event in self.agent.run(
-            input=agent_input, stream=True, stream_intermediate_steps=stream_intermediate_steps, yield_run_response=True
+            input=agent_input,
+            stream=True,
+            stream_intermediate_steps=stream_intermediate_steps,
+            yield_run_response=True,
+            dependencies=dependencies,  # Pass context dynamically per-run
         ):  # type: ignore
             # Yield WorkflowRunOutputEvent AND RunContentEvent for streaming content
             # WorkflowRunOutputEvent is a Union type, so we need to check against the tuple of types
@@ -2290,9 +2284,15 @@ class Workflow:
         # Initialize the agent
         self._initialize_workflow_agent(session, execution_input, session_state)
 
+        # Build dependencies with workflow context
+        dependencies = self._get_workflow_agent_dependencies(session)
+
         # Run the agent
         log_debug(f"Executing workflow agent with input: {agent_input}")
-        agent_response: RunOutput = self.agent.run(input=agent_input)  # type: ignore
+        agent_response: RunOutput = self.agent.run(
+            input=agent_input,
+            dependencies=dependencies,
+        )  # type: ignore
 
         # Check if the agent called the workflow tool
         workflow_executed = False
