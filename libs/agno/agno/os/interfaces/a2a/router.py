@@ -32,10 +32,43 @@ def attach_routes(
         description="Run an Agno Agent using the A2A protocol.",
         response_model_exclude_none=True,
         responses={
-            200: {"description": "A2A run successful"},  # TODO: response model
+            200: {
+                "jsonrpc": "2.0",
+                "id": "id",
+                "result": {
+                    "task": {
+                        "id": "id",
+                        "context_id": "id",
+                        "status": "status",
+                        "history": [
+                            {
+                                "message_id": "id",
+                                "role": "user",
+                                "parts": [
+                                    {
+                                        "kind": "text",
+                                        "text": "This is the user question",
+                                    }
+                                ],
+                            },
+                            {
+                                "message_id": "id",
+                                "role": "agent",
+                                "parts": [
+                                    {
+                                        "kind": "text",
+                                        "text": "This is the agent answer",
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                },
+            },
             400: {"description": "A2A run failed"},
             404: {"description": "Agent not found"},
         },
+        response_model=SendMessageSuccessResponse,
     )
     async def a2a_agent(id: str, request: Request):
         request_body = await request.json()
@@ -72,10 +105,43 @@ def attach_routes(
         description="Run an Agno Team using the A2A protocol.",
         response_model_exclude_none=True,
         responses={
-            200: {"description": "A2A run successful"},  # TODO: response model
+            200: {
+                "jsonrpc": "2.0",
+                "id": "id",
+                "result": {
+                    "task": {
+                        "id": "id",
+                        "context_id": "id",
+                        "status": "status",
+                        "history": [
+                            {
+                                "message_id": "id",
+                                "role": "user",
+                                "parts": [
+                                    {
+                                        "kind": "text",
+                                        "text": "This is the user question",
+                                    }
+                                ],
+                            },
+                            {
+                                "message_id": "id",
+                                "role": "agent",
+                                "parts": [
+                                    {
+                                        "kind": "text",
+                                        "text": "This is the team answer",
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                },
+            },
             400: {"description": "A2A run failed"},
             404: {"description": "Team not found"},
         },
+        response_model=SendMessageSuccessResponse,
     )
     async def a2a_team(id: str, request: Request):
         request_body = await request.json()
@@ -96,7 +162,7 @@ def attach_routes(
             **kwargs,
         )
 
-        # TODO: Team specific? do we need to carry members content?
+        # TODO: Team specific? can we carry members content?
         a2a_task = map_run_output_to_a2a_task(response)
 
         # Send A2A-valid JSON-RPC response
