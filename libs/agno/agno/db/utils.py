@@ -4,7 +4,6 @@ import json
 from datetime import date, datetime
 from uuid import UUID
 
-from agno.db.base import SessionType
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 
@@ -109,11 +108,9 @@ def deserialize_session_json_fields(session: dict) -> dict:
 
     # Handle runs field with session type checking
     if session.get("runs") is not None and isinstance(session["runs"], str):
-        session_type = session.get("session_type")
-        if session_type in [SessionType.AGENT.value, SessionType.TEAM.value, SessionType.WORKFLOW.value]:
-            try:
-                session["runs"] = json.loads(session["runs"])
-            except (json.JSONDecodeError, TypeError) as e:
-                log_warning(f"Warning: Could not parse runs as JSON, keeping as string: {e}")
+        try:
+            session["runs"] = json.loads(session["runs"])
+        except (json.JSONDecodeError, TypeError) as e:
+            log_warning(f"Warning: Could not parse runs as JSON, keeping as string: {e}")
 
     return session
