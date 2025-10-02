@@ -131,7 +131,16 @@ def print_response(
 
             response_timer.stop()
 
-            if show_step_details and workflow_response.step_results:
+            # Check if this is a workflow agent direct response
+            if workflow_response.workflow_agent_response is not None and not workflow_response.workflow_agent_response.get("workflow_executed", True):
+                # Agent answered directly from history without executing workflow
+                agent_response_panel = create_panel(
+                    content=Markdown(str(workflow_response.content)) if markdown else str(workflow_response.content),
+                    title="Workflow Agent Response",
+                    border_style="green",
+                )
+                console.print(agent_response_panel)  # type: ignore
+            elif show_step_details and workflow_response.step_results:
                 for i, step_output in enumerate(workflow_response.step_results):
                     print_step_output_recursive(step_output, i + 1, markdown, console)  # type: ignore
 
@@ -252,6 +261,8 @@ def print_response_stream(
     step_results = []
     step_started_printed = False
     is_callable_function = callable(workflow.steps)
+    workflow_started = False  # Track if workflow has actually started
+    is_workflow_agent_response = False  # Track if this is a workflow agent direct response
 
     # Smart step hierarchy tracking
     current_primitive_context = None  # Current primitive being executed (parallel, loop, etc.)
@@ -314,6 +325,7 @@ def print_response_stream(
             ):  # type: ignore
                 # Handle the new event types
                 if isinstance(response, WorkflowStartedEvent):
+                    workflow_started = True
                     status.update("Workflow started...")
                     if is_callable_function:
                         current_step_name = "Custom Function"
@@ -595,8 +607,21 @@ def print_response_stream(
                 elif isinstance(response, WorkflowCompletedEvent):
                     status.update("Workflow completed!")
 
+                    # Check if this is an agent direct response
+                    if response.metadata and response.metadata.get("agent_direct_response"):
+                        is_workflow_agent_response = True
+                        # Print the agent's direct response from history
+                        if show_step_details:
+                            live_log.update(status, refresh=True)
+                            agent_response_panel = create_panel(
+                                content=Markdown(str(response.content)) if markdown else str(response.content),
+                                title="Workflow Agent Response",
+                                border_style="green",
+                            )
+                            console.print(agent_response_panel)  # type: ignore
+                            step_started_printed = True
                     # For callable functions, print the final content block here since there are no step events
-                    if is_callable_function and show_step_details and current_step_content and not step_started_printed:
+                    elif is_callable_function and show_step_details and current_step_content and not step_started_printed:
                         final_step_panel = create_panel(
                             content=Markdown(current_step_content) if markdown else current_step_content,
                             title="Custom Function (Completed)",
@@ -607,8 +632,8 @@ def print_response_stream(
 
                     live_log.update(status, refresh=True)
 
-                    # Show final summary
-                    if response.metadata:
+                    # Show final summary (skip for agent responses)
+                    if response.metadata and not is_workflow_agent_response:
                         status = response.status
                         summary_content = ""
                         summary_content += f"""\n\n**Status:** {status}"""
@@ -661,6 +686,9 @@ def print_response_stream(
                             response_str = response.content  # type: ignore
                         elif isinstance(response, RunContentEvent) and current_step_executor_type != "team":
                             response_str = response.content  # type: ignore
+                            # If we get RunContentEvent BEFORE workflow starts, it's an agent direct response
+                            if not workflow_started and not is_workflow_agent_response:
+                                is_workflow_agent_response = True
                         else:
                             continue
 
@@ -675,8 +703,8 @@ def print_response_stream(
                         else:
                             current_step_content += response_str
 
-                        # Live update the step panel with streaming content
-                        if show_step_details and not step_started_printed:
+                        # Live update the step panel with streaming content (skip for workflow agent responses)
+                        if show_step_details and not step_started_printed and not is_workflow_agent_response:
                             # Generate smart step number for streaming title (will use cached value)
                             step_display = get_step_display_number(current_step_index, current_step_name)
                             title = f"{step_display}: {current_step_name} (Streaming...)"
@@ -698,8 +726,8 @@ def print_response_stream(
 
             live_log.update("")
 
-            # Final completion message
-            if show_time:
+            # Final completion message (skip for agent responses)
+            if show_time and not is_workflow_agent_response:
                 completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
                 console.print(completion_text)  # type: ignore
 

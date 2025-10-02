@@ -55,6 +55,7 @@ from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.log import (
     log_debug,
     log_error,
+    log_info,
     log_warning,
     logger,
     set_log_level_to_debug,
@@ -2128,10 +2129,9 @@ class Workflow:
         # Run agent with streaming - workflow events will bubble up from the tool
         agent_response: Optional[RunOutput] = None
         workflow_executed = False
-        workflow_started = False  # Track if workflow has actually started
 
         from agno.run.agent import RunContentEvent
-        from agno.run.workflow import StepCompletedEvent, StepStartedEvent, WorkflowStartedEvent
+        from agno.run.team import RunContentEvent as TeamRunContentEvent
 
         log_debug(f"Executing workflow agent with streaming - input: {agent_input[:100]}...")
 
@@ -2142,15 +2142,6 @@ class Workflow:
             # Yield WorkflowRunOutputEvent AND RunContentEvent for streaming content
             # WorkflowRunOutputEvent is a Union type, so we need to check against the tuple of types
             if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
-                # Track if workflow has started
-                if isinstance(event, WorkflowStartedEvent):
-                    workflow_started = True
-                    log_debug("Workflow execution started")
-
-                # Debug logging for step events
-                if isinstance(event, (StepStartedEvent, StepCompletedEvent)):
-                    log_debug(f"Yielding {type(event).__name__}: {getattr(event, 'step_name', 'unknown')}")
-
                 yield event
 
                 # Track if workflow was executed by checking for WorkflowCompletedEvent
@@ -2161,8 +2152,7 @@ class Workflow:
                     workflow_run_response.content = event.content
                     workflow_run_response.status = RunStatus.completed
                     workflow_run_response.step_results = event.step_results or []
-            elif isinstance(event, RunContentEvent) and workflow_started:
-                # Only yield content events if workflow has started (from agent steps within workflow)
+            elif isinstance(event, (RunContentEvent, TeamRunContentEvent)):
                 yield event
 
             # Capture the final RunOutput (but don't yield it)
@@ -2185,7 +2175,7 @@ class Workflow:
             logger.info("=" * 80)
             logger.info("WORKFLOW AGENT: Answered directly from session history")
             logger.info(
-                f"    ➜ Response: {str(agent_response.content)[:100] if agent_response and agent_response.content else 'None'}..."
+                f"  ➜ Response: {str(agent_response.content)[:100] if agent_response and agent_response.content else 'None'}..."
             )
             logger.info("=" * 80)
 
@@ -2337,11 +2327,6 @@ class Workflow:
             logger.info("  ➜ No workflow execution needed")
             logger.info("=" * 80)
 
-            from rich.console import Console
-            from rich.markdown import Markdown
-
-            from agno.utils.response import create_panel
-
             log_debug(f"Agent response: {str(agent_response.content)[:200]}...")
 
             workflow_run_response.content = agent_response.content
@@ -2351,15 +2336,6 @@ class Workflow:
             if session.workflow_agent_responses is None:
                 session.workflow_agent_responses = []
             session.workflow_agent_responses.append(agent_response_data)
-
-            # TODO: Move this print logic to print_response
-            console = Console()
-            agent_response_panel = create_panel(
-                content=Markdown(str(agent_response.content)),
-                title="Agent Response (from history)",
-                border_style="blue",
-            )
-            console.print(agent_response_panel)
 
             # Update the run in session
             print("--> DIRECT ANSWER: BEFORE upsert and save:")
