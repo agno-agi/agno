@@ -4,10 +4,11 @@ Core Rules
 - NEVER create agents in loops - reuse them for performance
 - Always use output_schema for structured responses
 - PostgreSQL in production, SQLite for dev only
+- Start with single agent, scale up only when needed
 
 CRITICAL: Agent Reuse Performance
 ```python
-# WRONG - Recreates agent every time (100ms+ overhead)
+# WRONG - Recreates agent every time (significant overhead)
 for query in queries:
     agent = Agent(...)  # DON'T DO THIS
     
@@ -18,9 +19,26 @@ for query in queries:
 ```
 
 When to Use Each Pattern
-- Single Agent: One task, standalone
-- Team: Multiple agents, autonomous coordination via LLM
-- Workflow: Sequential steps, programmatic control
+
+Single Agent (default, start here):
+- One clear task or domain
+- Can be solved with tools + instructions
+- Most use cases fit here
+- Example: Search web and summarize, analyze data, generate content
+
+Team (autonomous coordination):
+- Multiple specialized agents with different expertise
+- Need agents to decide who does what
+- Complex tasks requiring multiple perspectives
+- LLM coordinates delegation automatically
+- Example: Research + Analysis + Writing with auto-coordination
+
+Workflow (programmatic control):
+- 2-5 sequential steps with clear flow
+- Need conditional logic or branching
+- Want full control over execution order
+- Manual orchestration preferred
+- Example: Extract → Transform → Load pipelines
 
 Team Pattern (autonomous):
 ```python
@@ -107,6 +125,7 @@ app = agent_os.get_app()
 
 Common Mistakes
 - Creating agents in loops (massive performance hit)
+- Using Team when single agent would work (over-engineering)
 - Forgetting search_knowledge=True with knowledge bases
 - Using SQLite in production
 - Not adding history when context matters
@@ -114,7 +133,7 @@ Common Mistakes
 
 Production
 - Use PostgresDb (db_url=...) not SqliteDb
-- Set show_tool_calls=False, debug=False
+- Set show_tool_calls=False, debug_mode=False
 - Wrap agent.run() in try-except
 
 Docs: https://docs.agno.com
