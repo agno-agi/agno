@@ -412,6 +412,7 @@ jobs:
   # Run tests for xAI
   test-xai:
     runs-on: ubuntu-latest
+    if: false # Disable xAI tests until we get a test account
     strategy:
       matrix:
         python-version: ["3.12"]

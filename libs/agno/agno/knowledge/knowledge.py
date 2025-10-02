@@ -536,7 +536,6 @@ class Knowledge:
         reader = content.reader
         name = content.name if content.name else content.url
         # Else select based on file extension
-
         if reader is None:
             if file_extension == ".csv":
                 name = basename(parsed_url.path) or "data.csv"
@@ -572,6 +571,7 @@ class Knowledge:
                         read_documents = reader.read(bytes_content, name=name)
                     else:
                         read_documents = reader.read(content.url, name=name)
+
         except Exception as e:
             log_error(f"Error reading URL: {content.url} - {str(e)}")
             content.status = ContentStatus.FAILED
@@ -582,7 +582,6 @@ class Knowledge:
         # 6. Chunk documents if needed
         if reader and not reader.chunk:
             read_documents = await reader.chunk_documents_async(read_documents)
-
         # 7. Prepare and insert the content in the vector database
         file_size = 0
         if read_documents:
@@ -1357,6 +1356,12 @@ class Knowledge:
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
+
+    def get_valid_filters(self) -> Set[str]:
+        if self.valid_metadata_filters is None:
+            self.valid_metadata_filters = set()
+        self.valid_metadata_filters.update(self._get_filters_from_db)
+        return self.valid_metadata_filters
 
     def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
         if self.valid_metadata_filters is None:

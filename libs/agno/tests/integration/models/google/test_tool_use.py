@@ -10,16 +10,19 @@ from agno.tools.yfinance import YFinanceTools
 
 
 def test_tool_use():
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools(cache_results=True)],
+        tools=[get_weather],
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
     )
 
-    response = agent.run("What is the current price of TSLA?")
+    response = agent.run("What is the weather in Tokyo?")
 
     # Verify tool usage
     assert response.messages is not None
@@ -28,16 +31,19 @@ def test_tool_use():
 
 
 def test_tool_use_stream():
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools(cache_results=True)],
+        tools=[get_weather],
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+    response_stream = agent.run("What is the weather in Tokyo?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -56,16 +62,19 @@ def test_tool_use_stream():
 
 @pytest.mark.asyncio
 async def test_async_tool_use():
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools(cache_results=True)],
+        tools=[get_weather],
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
     )
 
-    response = await agent.arun("What is the current price of TSLA?")
+    response = await agent.arun("What is the weather in Tokyo?")
 
     # Verify tool usage
     assert response.messages is not None
@@ -75,16 +84,19 @@ async def test_async_tool_use():
 
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools(cache_results=True)],
+        tools=[get_weather],
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
     )
 
-    response_stream = agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+    response_stream = agent.arun("What is the weather in Tokyo?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -99,7 +111,51 @@ async def test_async_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
+    assert any("Tokyo" in r.content for r in responses if r.content)
+
+
+def test_tool_use_tool_choice_none():
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
+    agent = Agent(
+        model=Gemini(id="gemini-2.0-flash-001"),
+        tools=[get_weather],
+        tool_choice="none",
+        markdown=True,
+        exponential_backoff=True,
+        delay_between_retries=5,
+        telemetry=False,
+    )
+
+    response = agent.run("What is the weather in Tokyo?")
+
+    # Verify tool usage
+    assert not any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None), (
+        "Tool calls should not be made"
+    )
+    assert response.content is not None
+
+
+def test_tool_use_tool_choice_auto():
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
+    agent = Agent(
+        model=Gemini(id="gemini-2.0-flash-001"),
+        tools=[get_weather],
+        tool_choice="auto",
+        markdown=True,
+        exponential_backoff=True,
+        delay_between_retries=5,
+        telemetry=False,
+    )
+
+    response = agent.run("What is the weather in Tokyo?")
+
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None), "Tool calls should be made"
+    assert response.content is not None
 
 
 def test_tool_use_with_native_structured_outputs():
