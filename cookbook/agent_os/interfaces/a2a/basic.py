@@ -1,0 +1,29 @@
+from agno.agent.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.os import AgentOS
+from agno.os.interfaces.a2a import A2A
+
+chat_agent = Agent(
+    name="basic-agent",
+    model=OpenAIChat(id="gpt-4o"),
+    instructions="You are a helpful AI assistant.",
+    add_datetime_to_context=True,
+    markdown=True,
+)
+
+# Setup your AgentOS app
+agent_os = AgentOS(
+    agents=[chat_agent],
+    interfaces=[A2A(agents=[chat_agent])],
+)
+app = agent_os.get_app()
+
+
+if __name__ == "__main__":
+    """Run your AgentOS with A2A interface.
+
+    You can run the basic-agent via API:
+    http://localhost:7777/a2a/agents/basic-agent
+
+    """
+    agent_os.serve(app="basic:app", reload=True, port=7777)
