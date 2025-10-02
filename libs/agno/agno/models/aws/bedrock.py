@@ -426,10 +426,14 @@ class AwsBedrock(Model):
 
             assistant_message.metrics.start_timer()
 
+            # Track current tool being built across chunks
+            current_tool: Dict[str, Any] = {}
+
             for chunk in self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)[
                 "stream"
             ]:
-                yield self._parse_provider_response_delta(chunk)
+                model_response, current_tool = self._parse_provider_response_delta(chunk, current_tool)
+                yield model_response
 
             assistant_message.metrics.stop_timer()
 
@@ -525,10 +529,14 @@ class AwsBedrock(Model):
 
             assistant_message.metrics.start_timer()
 
+            # Track current tool being built across chunks
+            tool_use: Dict[str, Any] = {}
+
             async with self.get_async_client() as client:
                 response = await client.converse_stream(modelId=self.id, messages=formatted_messages, **body)
                 async for chunk in response["stream"]:
-                    yield self._parse_provider_response_delta(chunk)
+                    model_response, tool_use = self._parse_provider_response_delta(chunk, tool_use)
+                    yield model_response
 
             assistant_message.metrics.stop_timer()
 
@@ -643,20 +651,11 @@ class AwsBedrock(Model):
             tool_choice=tool_choice,
             run_response=run_response,
         ):
-            should_yield = False
-
-            if response_delta.content:
-                stream_data.response_content += response_delta.content
-                should_yield = True
-
-            if response_delta.tool_calls:
-                if stream_data.response_tool_calls is None:
-                    stream_data.response_tool_calls = []
-                stream_data.response_tool_calls.extend(response_delta.tool_calls)
-                should_yield = True
-
-            if should_yield:
-                yield response_delta
+            yield from self._populate_stream_data_and_assistant_message(
+                stream_data=stream_data,
+                assistant_message=assistant_message,
+                model_response_delta=response_delta,
+            )
 
     async def aprocess_response_stream(
         self,
@@ -684,55 +683,63 @@ class AwsBedrock(Model):
             tool_choice=tool_choice,
             run_response=run_response,
         ):
-            should_yield = False
-
-            if response_delta.content:
-                stream_data.response_content += response_delta.content
-                should_yield = True
-
-            if response_delta.tool_calls:
-                if stream_data.response_tool_calls is None:
-                    stream_data.response_tool_calls = []
-                stream_data.response_tool_calls.extend(response_delta.tool_calls)
-                should_yield = True
-
-            if should_yield:
-                yield response_delta
+            for model_response in self._populate_stream_data_and_assistant_message(
+                stream_data=stream_data,
+                assistant_message=assistant_message,
+                model_response_delta=response_delta,
+            ):
+                yield model_response
 
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=response_delta)
 
-    def _parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:  # type: ignore
+    def _parse_provider_response_delta(
+        self, response_delta: Dict[str, Any], tool_use: Dict[str, Any]
+    ) -> Tuple[ModelResponse, Dict[str, Any]]:
         """Parse the provider response delta for streaming.
 
         Args:
             response_delta: The streaming response delta from AWS Bedrock
+            tool_use: The current tool being built across chunks
 
         Returns:
-            ModelResponse: The parsed model response delta
+            Tuple[ModelResponse, Dict[str, Any]]: The parsed model response delta and updated tool_use
         """
         model_response = ModelResponse(role="assistant")
 
-        # Handle contentBlockDelta - text content
-        if "contentBlockDelta" in response_delta:
+        # Handle contentBlockStart - tool use start
+        if "contentBlockStart" in response_delta:
+            start = response_delta["contentBlockStart"]["start"]
+            if "toolUse" in start:
+                # Start a new tool
+                tool_use_data = start["toolUse"]
+                tool_use = {
+                    "id": tool_use_data.get("toolUseId", ""),
+                    "type": "function",
+                    "function": {
+                        "name": tool_use_data.get("name", ""),
+                        "arguments": "",  # Will be filled in subsequent deltas
+                    },
+                }
+
+        # Handle contentBlockDelta - text content or tool input
+        elif "contentBlockDelta" in response_delta:
             delta = response_delta["contentBlockDelta"]["delta"]
             if "text" in delta:
                 model_response.content = delta["text"]
+            elif "toolUse" in delta and tool_use:
+                # Accumulate tool input
+                tool_input = delta["toolUse"].get("input", "")
+                if tool_input:
+                    tool_use["function"]["arguments"] += tool_input
 
-        # Handle contentBlockStart - tool use start
-        elif "contentBlockStart" in response_delta:
-            start = response_delta["contentBlockStart"]["start"]
-            if "toolUse" in start:
-                tool_use = start["toolUse"]
-                model_response.tool_calls = [
-                    {
-                        "id": tool_use.get("toolUseId", ""),
-                        "type": "function",
-                        "function": {
-                            "name": tool_use.get("name", ""),
-                            "arguments": "",  # Will be filled in subsequent deltas
-                        },
-                    }
-                ]
+        # Handle contentBlockStop - tool use complete
+        elif "contentBlockStop" in response_delta and tool_use:
+            # Tool is complete, add it to model response
+            model_response.tool_calls = [tool_use]
+            # Track tool_id in extra for format_function_call_results
+            model_response.extra = {"tool_ids": [tool_use["id"]]}
+            # Reset tool_use for next tool
+            tool_use = {}
 
         # Handle metadata/usage information
         elif "metadata" in response_delta or "messageStop" in response_delta:
@@ -740,7 +747,7 @@ class AwsBedrock(Model):
             if "usage" in body:
                 model_response.response_usage = self._get_metrics(body["usage"])
 
-        return model_response
+        return model_response, tool_use
 
     def _get_metrics(self, response_usage: Dict[str, Any]) -> Metrics:
         """
