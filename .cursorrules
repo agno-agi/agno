@@ -1,468 +1,303 @@
-# Agno Development Rules
-# Comprehensive best practices for developing with Agno, covering code organization, performance, security, testing, and patterns.
+# Agno Development Guide
+# Build production-ready multi-agent systems with Agno
 
-## Project Context
-Agno is a high-performance runtime for multi-agent systems with:
-- Ultra-fast agent instantiation (~3μs) and minimal memory footprint (~6.5KB)
-- AgentOS runtime for production deployments with FastAPI integration
-- Built-in session management, memory, knowledge (RAG), and MCP support
-- Support for Teams (autonomous multi-agent coordination) and Workflows (step-based processes)
+## About Agno
+Agno is a high-performance framework for building intelligent agents and multi-agent systems:
+- **Ultra-fast**: ~3μs agent instantiation, ~6.5KB memory footprint
+- **Production-ready**: Built-in AgentOS runtime with FastAPI
+- **Comprehensive**: Memory, Knowledge (RAG), Tools, MCP support
+- **Flexible**: Teams (autonomous) and Workflows (structured)
 
-## General Best Practices
-- Use Pydantic BaseModel for all structured data and agent configurations
-- Leverage AgentOS for production deployments to get pre-built FastAPI app
-- Always include type hints for function parameters and return types
-- Follow Python 3.7+ compatibility requirements (actually supports 3.7-3.13)
-- Use `ruff` for formatting/linting and `mypy` for type checking
-- Import order: stdlib → third-party → agno modules
-- Use absolute imports: `from agno.agent import Agent`
+## Core Philosophy
 
-## Core Architecture Components
+### Agent-First Development
+- Each agent has a clear, focused responsibility
+- Agents collaborate through Teams or coordinate via Workflows
+- Start simple with one agent, scale as needed
+- Reuse agents for performance (~3μs instantiation)
 
-### agno.agent
-- `Agent`: Core agent with LLM, tools, memory, knowledge
-- `AgentSession`: Session management for stateful conversations
-- `Message`: Structured message handling
-- `Toolkit`: Tool registration and management
+## Decision Framework
 
-### agno.models
-- LLM provider integrations: OpenAI, Anthropic, Cohere, Groq, etc.
-- Use provider-specific models: `OpenAIChat`, `Claude`, `Gemini`
-- Configure model parameters: temperature, max_tokens, streaming
+### When to Use Each Pattern
 
-### agno.tools
-- Built-in tools: web search, APIs, file operations, databases
-- Custom tool creation using `Toolkit` base class
-- Tool registration with `self.register()` method
-
-### agno.knowledge
-- Knowledge base and RAG capabilities
-- Support for PDF, CSV, JSON, text, websites
-- Vector database integration for semantic search
-
-### agno.memory
-- `MemoryDb`: Database-backed memory for persistence
-- Session-based memory management
-- Context retrieval for informed responses
-
-### agno.team
-- Multi-agent team coordination
-- Execution modes: sequential, parallel
-- Agent delegation and collaboration patterns
-
-### agno.workflow
-- Step-based agentic workflows
-- Task dependencies and conditional execution
-- Full control over multi-step processes
-
-### agno.db
-- Storage backends: SQLite (dev), PostgreSQL (prod)
-- Session persistence and retrieval
-- Custom database implementations
-
-### agno.vectordb
-- Vector database integrations: PgVector, Qdrant, Pinecone
-- Embedding storage and similarity search
-- Knowledge base backing
-
-## Security Best Practices
-
-- **API Key Management**: Always use environment variables, never hardcode keys
-- **Input Validation**: Use Pydantic models for all user inputs and tool parameters
-- **Tool Security**: Implement access controls and validate tool inputs/outputs
-- **Data Privacy**: AgentOS runs in your cloud - no data sent to external services
-- **Sanitization**: Clean all inputs before passing to LLMs or tools
-
-## Testing Approaches
-- **Unit Tests**: Test agents, tools, and workflows in isolation with mocking
-- **Integration Tests**: Test end-to-end flows with real LLM calls (use test keys)
-- **Tool Tests**: Verify tool registration, execution, and error handling
-- **Memory Tests**: Test session persistence and context retrieval
-- Use pytest with fixtures in `conftest.py`
-- Mock external APIs with `unittest.mock`
-- Test files pattern: `tests/unit/*/test_*.py`
-
-## Agent Development Patterns
-
-### Basic Agent Creation
+**Single Agent**: Focused tasks, one set of tools, no collaboration needed
 ```python
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[tool1, tool2],
-    instructions="Clear, specific instructions",
-    markdown=True,
-)
-response = agent.run("user message")
-```
-
-### Agent with Memory
-```python
-from agno.memory.db import MemoryDb
-from agno.db.sqlite import SqliteDb
-
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    memory=MemoryDb(
-        db=SqliteDb(db_file="memory.db"),
-        num_memories=5,
-    ),
-    add_history_to_context=True,
+    tools=[search_tool],
+    instructions="Clear, specific instructions"
 )
 ```
 
-### Agent with Knowledge (RAG)
+**Team**: Multiple agents, autonomous coordination, different perspectives
 ```python
-from agno.knowledge.pdf import PDFKnowledgeBase
-from agno.vectordb.pgvector import PgVector
-
-knowledge = PDFKnowledgeBase(
-    path="docs/",
-    vector_db=PgVector(table_name="knowledge"),
+team = Team(
+    members=[researcher, writer, editor],
+    model=OpenAIChat(id="gpt-4o"),
+    instructions="Coordinate to create comprehensive reports"
 )
+```
+
+**Workflow**: Sequential steps, conditional logic, full control
+```python
+workflow = Workflow(
+    steps=[
+        Step(name="research", agent=researcher),
+        Step(name="write", agent=writer),
+    ]
+)
+```
+
+## Agent Patterns
+
+### The Specialist
+Focused expertise with specific tools and knowledge:
+```python
+specialist = Agent(
+    name="Python Expert",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[code_analyzer, profiler],
+    instructions="Expert in Python performance optimization"
+)
+```
+
+### The Coordinator
+Manages multiple agents via Team:
+```python
+team = Team(
+    members=[specialist1, specialist2, specialist3],
+    model=OpenAIChat(id="gpt-4o"),
+    instructions="Break down tasks and delegate to specialists"
+)
+```
+
+### RAG-Powered Agent
+Access to knowledge base:
+```python
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    knowledge=knowledge,
+    knowledge=Knowledge(vector_db=PgVector(...)),
     search_knowledge=True,
+    instructions="Answer using knowledge base, cite sources"
 )
 ```
 
-### Agent with Session Storage
+### Stateful Agent
+Remembers context across conversations:
 ```python
-from agno.db.sqlite import SqliteDb
-
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    db=SqliteDb(db_file="agent.db"),
-    session_id="user-123",
+    memory=MemoryDb(db=SqliteDb(db_file="memory.db")),
+    session_id="user-{user_id}",
+    add_history_to_context=True
 )
 ```
 
-## Tool Development Patterns
+## Critical Rules
+
+### Performance
+```python
+# WRONG - Destroys performance
+for query in queries:
+    agent = Agent(...)  # Don't create in loops!
+    
+# CORRECT - Reuse agents
+agent = Agent(...)
+for query in queries:
+    agent.run(query)  # Fast!
+```
+
+### Error Handling
+```python
+# Always wrap in try-except
+from agno.exceptions import AgentException
+
+try:
+    response = agent.run(query)
+except AgentException as e:
+    logger.error(f"Error: {e}")
+    # Handle appropriately
+```
+
+### Structured Output
+```python
+# Use Pydantic for validation
+from pydantic import BaseModel
+
+class Result(BaseModel):
+    summary: str
+    findings: list[str]
+
+result = agent.run(query, response_model=Result)
+```
+
+### Clear Instructions
+```python
+# Be specific
+agent = Agent(
+    instructions="""
+    You are a technical documentation expert.
+    - Analyze code and generate clear documentation
+    - Follow Google-style docstrings
+    - Include usage examples
+    """
+)
+```
+
+### Tool Limits
+```python
+# Keep tools focused (5-8 max)
+agent = Agent(
+    tools=[search, calculator, emailer]  # Not 20 tools!
+)
+```
+
+## Tool Development
 
 ### Simple Function Tools
 ```python
-# Tools can be plain Python functions
-def calculator(operation: str, x: float, y: float) -> float:
-    """Perform basic math operations.
+def calculate(operation: str, x: float, y: float) -> float:
+    """Perform mathematical operations.
     
     Args:
-        operation: Operation to perform (add, subtract, multiply, divide)
+        operation: add, subtract, multiply, divide
         x: First number
         y: Second number
-        
-    Returns:
-        Result of the operation
     """
-    if operation == "add":
-        return x + y
-    elif operation == "subtract":
-        return x - y
-    # ... etc
+    # Implementation
+    pass
 
-# Use directly in agent
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[calculator],  # Pass function directly
-)
+agent = Agent(tools=[calculate])
 ```
 
 ### Custom Toolkit
 ```python
 from agno.tools import Toolkit
+
+class WeatherTools(Toolkit):
+    def __init__(self, api_key: str = None):
+        super().__init__(name="weather", tools=[self.get_weather])
+        self.api_key = api_key or os.getenv("WEATHER_API_KEY")
+    
+    def get_weather(self, city: str) -> dict:
+        """Get current weather for a city."""
+        try:
+            # Implementation with error handling
+            return response.json()
+        except Exception as e:
+            logger.error(f"Weather error: {e}")
+            return {"error": str(e)}
+```
+
+## Testing
+
+```python
+import pytest
+
+@pytest.fixture
+def test_agent():
+    return Agent(model=OpenAIChat(id="gpt-4o"))
+
+def test_basic_response(test_agent):
+    response = test_agent.run("What is 2+2?")
+    assert "4" in response.content
+
+@pytest.mark.asyncio
+async def test_async(test_agent):
+    response = await test_agent.arun("Hello")
+    assert response is not None
+```
+
+## Production Deployment
+
+```python
+from agno.os import AgentOS
+from agno.db.postgres import PostgresDb
+
+# Production configuration
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    db=PostgresDb(connection_url=os.getenv("DATABASE_URL")),
+    show_tool_calls=False,
+    debug=False,
+)
+
+# Deploy with AgentOS
+agent_os = AgentOS(agent=agent)
+app = agent_os.get_app()
+```
+
+### Production Checklist
+- Use PostgreSQL (not SQLite)
+- Environment variables for secrets
+- Error handling on all calls
+- Logging configured
+- Rate limiting
+- Tests passing
+
+## Code Quality
+
+### Always Use Type Hints
+```python
+def create_agent(name: str, model_id: str) -> Agent:
+    return Agent(name=name, model=OpenAIChat(id=model_id))
+```
+
+### Use Pydantic for Validation
+```python
+from pydantic import BaseModel, Field
+
+class AgentConfig(BaseModel):
+    name: str = Field(..., min_length=1)
+    model_id: str
+    temperature: float = Field(0.7, ge=0, le=2)
+```
+
+### Structured Logging
+```python
 from agno.utils.log import logger
 
-class DatabaseTools(Toolkit):
-    def __init__(self, connection_string: str):
-        super().__init__(
-            name="database_tools",
-            tools=[self.query_data, self.insert_data],
-        )
-        self.connection_string = connection_string
-    
-    def query_data(self, query: str) -> dict:
-        """Execute a database query.
-        
-        Args:
-            query: SQL query to execute
-            
-        Returns:
-            Query results as dict
-        """
-        logger.info(f"Executing query: {query}")
-        # Implementation
-        return {"results": []}
-    
-    def insert_data(self, table: str, data: dict) -> str:
-        """Insert data into database.
-        
-        Args:
-            table: Table name
-            data: Data to insert
-            
-        Returns:
-            Success message
-        """
-        logger.info(f"Inserting into {table}")
-        return f"Inserted into {table}"
-
-# Use with include/exclude for fine-grained control
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[DatabaseTools(
-        connection_string="...",
-        include_tools=["query_data"]  # Only allow queries
-    )],
-)
+logger.info("Agent created", extra={
+    "agent_name": agent.name,
+    "model": agent.model.id
+})
 ```
 
-## Team Development Patterns
+## Model Selection
 
-### Team Setup
-```python
-from agno.team import Team
+- **gpt-4o-mini**: Simple tasks, high volume
+- **gpt-4o**: Complex reasoning, planning
+- **claude-3.5-sonnet**: Long context (200K)
+- **groq/llama**: Speed-critical
 
-research_agent = Agent(
-    name="Research Agent",
-    model=OpenAIChat(id="gpt-4o"),
-    instructions="Research the topic thoroughly",
-)
-writer_agent = Agent(
-    name="Writer Agent",
-    model=OpenAIChat(id="gpt-4o"),
-    instructions="Write comprehensive report",
-)
+## Key Principles
 
-# Team coordinates agents to work together
-team = Team(
-    members=[research_agent, writer_agent],
-    model=OpenAIChat(id="gpt-4o"),  # Lead/coordinator model
-    instructions="Coordinate research and writing",
-)
-response = team.run("Create report on AI trends")
+1. **Reuse agents** - Never create in loops
+2. **Clear instructions** - Be specific
+3. **Type safety** - Use type hints and Pydantic
+4. **Error handling** - Try-except on all calls
+5. **Test early** - Write tests before deploy
+6. **Log everything** - Structured logging
+7. **Start simple** - Add complexity only when needed
+8. **Focused tools** - 5-8 tools max per agent
+9. **Structured output** - Use Pydantic models
+10. **PostgreSQL in production** - Not SQLite
+
+## Project Structure
+
 ```
-
-## Workflow Development Patterns
-
-### Basic Workflow (Sequential Steps)
-```python
-from agno.workflow import Workflow, Step
-
-# Steps execute in order defined in list
-workflow = Workflow(
-    name="Content Workflow",
-    steps=[
-        Step(name="Research", agent=research_agent),
-        Step(name="Write", agent=writer_agent),
-        Step(name="Edit", agent=editor_agent),
-    ]
-)
-result = workflow.run("Create article on AI")
+project/
+├── agents/          # Agent definitions
+├── tools/           # Custom tools
+├── workflows/       # Workflow definitions
+├── tests/           # Test suites
+├── .cursorrules     # This file
+└── main.py          # AgentOS entry
 ```
-
-### Conditional Workflow
-```python
-from agno.workflow import Workflow, Step, Condition
-from agno.workflow.types import StepInput
-
-def needs_review(step_input: StepInput) -> bool:
-    """Evaluator function determines if step should run"""
-    content = step_input.previous_step_content or ""
-    return len(content) > 1000  # Review if > 1000 chars
-
-workflow = Workflow(
-    steps=[
-        Step(name="Draft", agent=writer),
-        Condition(
-            name="review_check",
-            evaluator=needs_review,
-            steps=[Step(name="Review", agent=reviewer)]
-        ),
-        Step(name="Publish", agent=publisher),
-    ]
-)
-```
-
-### Parallel Execution in Workflows
-```python
-from agno.workflow import Parallel
-
-workflow = Workflow(
-    steps=[
-        Step(name="Research", agent=researcher),
-        Parallel(
-            name="parallel_analysis",
-            steps=[
-                Step(name="Analyze Data", agent=data_analyst),
-                Step(name="Analyze Sentiment", agent=sentiment_analyst),
-            ]
-        ),
-        Step(name="Synthesize", agent=synthesizer),
-    ]
-)
-```
-
-## AgentOS Production Patterns
-
-### Deploying with AgentOS
-```python
-# Create AgentOS app (provides FastAPI automatically)
-from agno.agent import Agent
-from agno.os import AgentOS
-
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[tool1, tool2],
-)
-
-# AgentOS provides pre-built FastAPI app
-app = AgentOS(agent=agent)
-
-# Run: uvicorn main:app --reload
-# Access: http://localhost:8000/docs
-```
-
-### Session Management
-```python
-# Stateful conversations with sessions
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    db=PostgresDb(connection_url="postgresql://..."),
-    session_id="user-123",  # Track user conversations
-    add_history_to_context=True,
-)
-```
-
-### Human-in-the-Loop
-```python
-# Pause for human approval
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    requires_approval=True,  # Pause before tool execution
-)
-```
-
-## Performance Best Practices
-- **Reuse Agent Instances**: Don't recreate agents for each request
-- **Stream Responses**: Use `stream=True` for better UX
-- **Async Operations**: Use async methods for I/O-bound operations
-- **Cache Embeddings**: Store embeddings in vector DB to avoid recomputation
-- **Monitor Token Usage**: Track costs with `response.metrics`
-- **Session Management**: Limit history to relevant context
-- **Batch Operations**: Process multiple items together when possible
-
-## Agent Instructions Best Practices
-- Be specific and clear about the agent's role
-- Include examples for complex tasks
-- Specify output format (JSON, markdown, etc.)
-- Set clear boundaries and limitations
-- Use structured output with Pydantic when needed
-
-## Model Selection Guide
-- **GPT-4o**: Best for complex reasoning and multi-step tasks
-- **GPT-4o-mini**: Fast, cost-effective for simple tasks
-- **Claude 3.5 Sonnet**: Long context, excellent analysis
-- **Claude 3.5 Haiku**: Fast, efficient for straightforward tasks
-- **Groq (Llama)**: Ultra-fast inference for speed-critical apps
-
-## Common Pitfalls to Avoid
-1. **Missing Type Hints**: Always annotate function parameters and returns
-2. **Hardcoded Credentials**: Use environment variables via `python-dotenv`
-3. **Ignoring Errors**: Wrap agent/tool calls in try-except blocks
-4. **Synchronous Blocking**: Use async for I/O operations
-5. **Unmanaged Sessions**: Clean up old sessions to prevent memory bloat
-6. **Over-prompting**: Keep instructions concise and focused
-7. **Neglecting Tests**: Write tests for critical agent behaviors
-8. **Ignoring Memory**: Configure appropriate memory limits
-9. **Tool Overload**: Don't give agents too many tools (5-10 max)
-10. **Missing Validation**: Validate all inputs with Pydantic
-
-## Error Handling Patterns
-```python
-from agno.exceptions import AgentException
-
-try:
-    response = agent.run("message")
-    if response.content:
-        process_response(response.content)
-except AgentException as e:
-    logger.error(f"Agent error: {e}")
-    # Fallback logic or user notification
-except Exception as e:
-    logger.exception("Unexpected error")
-    # Handle gracefully
-```
-
-## Code Organization
-- **Project Structure**:
-  ```
-  project/
-  ├── agents/          # Agent definitions
-  ├── tools/           # Custom tools
-  ├── workflows/       # Workflow definitions
-  ├── db/             # Database configs
-  ├── tests/          # Test suites
-  └── main.py         # AgentOS entry point
-  ```
-
-- **Naming**: Use descriptive names for agents, tools, workflows
-- **Configuration**: Keep configs in separate files or env vars
-- **Logging**: Use structured logging for debugging
-- **Documentation**: Document agent purposes and tool behaviors
-
-## Development Workflow
-1. **Design Phase**: Define agent roles, tools, and interaction patterns
-2. **Implementation**: Start with simple agent, add features incrementally
-3. **Testing**: Write tests before adding complexity
-4. **Validation**: Test with real LLM calls in staging environment
-5. **Code Quality**: Run `ruff format` and `ruff check` before committing
-6. **Type Check**: Run `mypy` to catch type errors
-7. **Integration**: Test AgentOS deployment locally
-8. **Documentation**: Update docs and examples
-9. **Review**: Submit PR with clear description and examples
-10. **Monitor**: Track agent performance in production
-
-## Debugging Tips
-- Use `agent.print_response()` for quick debugging
-- Enable debug mode: `agent = Agent(debug=True)`
-- Check tool execution logs
-- Inspect session history: `agent.get_session_history()`
-- Monitor token usage in `response.metrics`
-- Use AgentOS control plane for production monitoring
-
-## MCP (Model Context Protocol) Integration
-- Connect agents to external data sources via MCP
-- Use MCP tools for standardized integrations
-- Configure MCP servers in agent setup
-- Leverage MCP for IDE integration (VS Code, Cursor)
-
-## Key Development Principles
-1. **Performance First**: Agno is built for speed, maintain that advantage
-2. **Type Safety**: Use Pydantic and type hints everywhere
-3. **Simplicity**: Start simple, add complexity only when needed
-4. **Testability**: Write testable code with clear interfaces
-5. **Observability**: Log and monitor agent behavior
-6. **Security**: Validate inputs, protect credentials
-7. **Modularity**: Build reusable agents and tools
-8. **Documentation**: Code should be self-documenting
-9. **Privacy**: Keep data in your cloud with AgentOS
-10. **Reliability**: Handle errors gracefully, fail safely
-
-## Contributing to Agno
-- Follow existing patterns in the codebase
-- Add tests for new features
-- Update documentation
-- Keep performance in mind
-- Follow Python best practices
-- Use type hints consistently
-- Write clear commit messages
 
 ## Resources
-- Documentation: https://docs.agno.com
-- Examples: https://docs.agno.com/examples
-- AgentOS Guide: https://docs.agno.com/agent-os
-- API Reference: https://docs.agno.com/api
 
-Happy building with Agno!
+- Docs: https://docs.agno.com
+- Examples: https://docs.agno.com/examples
+- Discord: https://discord.gg/4MtYHHrgA8
+- GitHub: https://github.com/agno-agi/agno
