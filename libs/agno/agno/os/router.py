@@ -784,7 +784,17 @@ def get_base_router(
 
         if files:
             for file in files:
-                if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+                if file.content_type in [
+                    "image/png",
+                    "image/jpeg",
+                    "image/jpg",
+                    "image/gif",
+                    "image/webp",
+                    "image/bmp",
+                    "image/tiff",
+                    "image/tif",
+                    "image/avif",
+                ]:
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
@@ -829,10 +839,20 @@ def get_base_router(
                         continue
                 elif file.content_type in [
                     "application/pdf",
-                    "text/csv",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "text/plain",
                     "application/json",
+                    "application/x-javascript",
+                    "application/json",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "text/javascript",
+                    "application/x-python",
+                    "text/x-python",
+                    "text/plain",
+                    "text/html",
+                    "text/css",
+                    "text/md",
+                    "text/csv",
+                    "text/xml",
+                    "text/rtf",
                 ]:
                     # Process document files
                     try:
