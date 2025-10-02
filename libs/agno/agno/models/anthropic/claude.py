@@ -505,10 +505,11 @@ class Claude(Model):
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
 
-        # Capture context management information if present
-        if response.context_management is not None:
-            model_response.extra = model_response.extra or {}
-            model_response.extra["context_management"] = response.context_management
+        # Capture context management information if present (beta feature)
+        if self.context_management is not None:
+            if response.context_management is not None:
+                model_response.extra = model_response.extra or {}
+                model_response.extra["context_management"] = response.context_management
 
         return model_response
 
