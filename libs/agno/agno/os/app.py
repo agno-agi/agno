@@ -278,6 +278,7 @@ class AgentOS:
         # Add A2A interface if requested and not provided in self.interfaces
         if self.a2a_interface and not has_a2a_interface:
             a2a_interface = A2A(agents=self.agents, teams=self.teams)
+            self.interfaces.append(a2a_interface)
             self._add_router(fastapi_app, a2a_interface.get_router())
 
         self._auto_discover_databases()
