@@ -11,9 +11,10 @@ from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.team import TeamRunOutput
 
 if TYPE_CHECKING:
-    from agno.workflow.types import StepOutput, WorkflowMetrics
+    from agno.workflow.types import StepOutput, WorkflowAgentResponse, WorkflowMetrics
 else:
     StepOutput = Any
+    WorkflowAgentResponse = Any
     WorkflowMetrics = Any
 
 
@@ -476,7 +477,7 @@ class WorkflowRunOutput:
     step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
 
     # Workflow agent response - stores agent decision and response when workflow agent is used
-    workflow_agent_response: Optional[Dict[str, Any]] = None  # TODO: make a type for this like WorkflowAgentResponse
+    workflow_agent_response: Optional[WorkflowAgentResponse] = None
 
     # Store events from workflow execution
     events: Optional[List[WorkflowRunOutputEvent]] = None
@@ -546,7 +547,7 @@ class WorkflowRunOutput:
             _dict["step_executor_runs"] = [run.to_dict() for run in self.step_executor_runs]
 
         if self.workflow_agent_response is not None:
-            _dict["workflow_agent_response"] = self.workflow_agent_response
+            _dict["workflow_agent_response"] = self.workflow_agent_response.to_dict()
 
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
@@ -595,7 +596,15 @@ class WorkflowRunOutput:
                 else:
                     step_executor_runs.append(RunOutput.from_dict(run_data))
 
-        workflow_agent_response = data.pop("workflow_agent_response", None)
+        workflow_agent_response_data = data.pop("workflow_agent_response", None)
+        workflow_agent_response = None
+        if workflow_agent_response_data:
+            from agno.workflow.types import WorkflowAgentResponse
+
+            if isinstance(workflow_agent_response_data, dict):
+                workflow_agent_response = WorkflowAgentResponse.from_dict(workflow_agent_response_data)
+            else:
+                workflow_agent_response = workflow_agent_response_data
 
         metadata = data.pop("metadata", None)
 

@@ -81,6 +81,7 @@ from agno.workflow.types import (
     StepOutput,
     StepType,
     WebSocketHandler,
+    WorkflowAgentResponse,
     WorkflowExecutionInput,
     WorkflowMetrics,
 )
@@ -2019,12 +2020,14 @@ class Workflow:
         # Build instructions with workflow context
         base_instructions = """You are a workflow orchestration agent. Your job is to help users by either:
             1. **Answering directly** from the workflow history context if the question can be answered from previous runs
-            2. **Running the workflow** by calling the run_workflow tool when you need to process a new query
+            2. **Running the workflow** by calling the run_workflow tool ONCE when you need to process a new query
 
             Guidelines:
             - Check the workflow history first to see if the answer already exists
             - If the user asks about something that was already processed, answer directly from history
-            - If the user asks a new question that requires workflow execution, call the run_workflow tool
+            - If the user asks a new question that requires workflow execution, call the run_workflow tool ONCE
+            - After calling the tool, the result will be returned to you - use that result to answer the user
+            - IMPORTANT: Do NOT call the tool multiple times. Call it once and use the result.
             - Keep your responses concise and helpful
             - When calling the workflow, pass a clear and concise query
         """
@@ -2163,12 +2166,12 @@ class Workflow:
                 )
 
         # Store the agent response in the session
-        agent_response_data = {
-            "input": agent_input,
-            "agent_response": agent_response.content if agent_response else None,
-            "workflow_executed": workflow_executed,
-            "timestamp": int(datetime.now().timestamp()),
-        }
+        agent_response_data = WorkflowAgentResponse(
+            input=agent_input,
+            agent_response=agent_response.content if agent_response else None,
+            workflow_executed=workflow_executed,
+            timestamp=int(datetime.now().timestamp()),
+        )
 
         # Handle direct answer case (no workflow execution)
         if not workflow_executed:
@@ -2194,7 +2197,7 @@ class Workflow:
             self.save_session(session=session)
 
             log_debug(f"Total workflow agent responses in session: {len(session.workflow_agent_responses)}")
-            log_debug(f"Latest agent decision: workflow_executed={agent_response_data['workflow_executed']}")
+            log_debug(f"Latest agent decision: workflow_executed={agent_response_data.workflow_executed}")
 
             # Yield a workflow completed event with the agent's direct response
             completed_event = WorkflowCompletedEvent(
@@ -2250,7 +2253,7 @@ class Workflow:
                 log_debug(
                     f"Total workflow agent responses in reloaded session: {len(reloaded_session.workflow_agent_responses)}"
                 )
-                log_debug(f"Latest agent decision: workflow_executed={agent_response_data['workflow_executed']}")
+                log_debug(f"Latest agent decision: workflow_executed={agent_response_data.workflow_executed}")
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
 
@@ -2278,7 +2281,7 @@ class Workflow:
             f"  session.workflow_agent_responses count: {len(session.workflow_agent_responses) if session.workflow_agent_responses else 0}"
         )
         if session.workflow_agent_responses:
-            print(f"  workflow_agent_responses: {[r.get('input', '')[:30] for r in session.workflow_agent_responses]}")
+            print(f"  workflow_agent_responses: {[r.input[:30] for r in session.workflow_agent_responses]}")
         print("=" * 80)
 
         logger.info("Workflow agent enabled - analyzing user input")
@@ -2313,12 +2316,12 @@ class Workflow:
         log_debug(f"Workflow agent execution complete. Workflow executed: {workflow_executed}")
 
         # Store the agent response in the session
-        agent_response_data = {
-            "input": agent_input,
-            "agent_response": agent_response.content if agent_response else None,
-            "workflow_executed": workflow_executed,
-            "timestamp": int(datetime.now().timestamp()),
-        }
+        agent_response_data = WorkflowAgentResponse(
+            input=agent_input,
+            agent_response=agent_response.content if agent_response else None,
+            workflow_executed=workflow_executed,
+            timestamp=int(datetime.now().timestamp()),
+        )
 
         # Handle direct answer case (no workflow execution)
         if not workflow_executed:
@@ -2358,7 +2361,7 @@ class Workflow:
             print("--> DIRECT ANSWER: SAVED session to DB")
 
             log_debug(f"Total workflow agent responses in session: {len(session.workflow_agent_responses)}")
-            log_debug(f"Latest agent decision: workflow_executed={agent_response_data['workflow_executed']}")
+            log_debug(f"Latest agent decision: workflow_executed={agent_response_data.workflow_executed}")
 
             return workflow_run_response
         else:
@@ -2421,7 +2424,7 @@ class Workflow:
                 log_debug(
                     f"Total workflow agent responses in reloaded session: {len(reloaded_session.workflow_agent_responses)}"
                 )
-                log_debug(f"Latest agent decision: workflow_executed={agent_response_data['workflow_executed']}")
+                log_debug(f"Latest agent decision: workflow_executed={agent_response_data.workflow_executed}")
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
 

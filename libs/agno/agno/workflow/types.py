@@ -473,6 +473,35 @@ class WebSocketHandler:
             log_warning(f"Failed to send WebSocket dict: {e}")
 
 
+@dataclass
+class WorkflowAgentResponse:
+    """Response from workflow agent decision"""
+
+    input: str
+    agent_response: Optional[Any] = None
+    workflow_executed: bool = False
+    timestamp: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        return {
+            "input": self.input,
+            "agent_response": self.agent_response,
+            "workflow_executed": self.workflow_executed,
+            "timestamp": self.timestamp,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowAgentResponse":
+        """Create WorkflowAgentResponse from dictionary"""
+        return cls(
+            input=data.get("input", ""),
+            agent_response=data.get("agent_response"),
+            workflow_executed=data.get("workflow_executed", False),
+            timestamp=data.get("timestamp"),
+        )
+
+
 class StepType(str, Enum):
     FUNCTION = "Function"
     STEP = "Step"

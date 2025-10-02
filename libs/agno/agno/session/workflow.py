@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 
 from agno.run.workflow import WorkflowRunOutput
 from agno.utils.log import logger
+
+if TYPE_CHECKING:
+    from agno.workflow.types import WorkflowAgentResponse
 
 
 @dataclass
@@ -26,9 +29,7 @@ class WorkflowSession:
     runs: Optional[List[WorkflowRunOutput]] = None
 
     # Workflow agent responses - stores agent decisions and responses
-    workflow_agent_responses: Optional[List[Dict[str, Any]]] = (
-        None  # TODO: make a type for this like WorkflowAgentResponse
-    )
+    workflow_agent_responses: Optional[List["WorkflowAgentResponse"]] = None
 
     # Session Data: session_name, session_state, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
@@ -94,13 +95,18 @@ class WorkflowSession:
                     runs_data.append(run.to_dict())
                 except Exception as e:
                     raise ValueError(f"Serialization failed: {str(e)}")
+
+        workflow_agent_responses_data = None
+        if self.workflow_agent_responses:
+            workflow_agent_responses_data = [resp.to_dict() for resp in self.workflow_agent_responses]
+
         return {
             "session_id": self.session_id,
             "user_id": self.user_id,
             "workflow_id": self.workflow_id,
             "workflow_name": self.workflow_name,
             "runs": runs_data,
-            "workflow_agent_responses": self.workflow_agent_responses,
+            "workflow_agent_responses": workflow_agent_responses_data,
             "session_data": self.session_data,
             "workflow_data": self.workflow_data,
             "metadata": self.metadata,
@@ -131,13 +137,27 @@ class WorkflowSession:
                 else:
                     logger.warning(f"Unexpected run item type: {type(run_item)}")
 
+        workflow_agent_responses_data = data.get("workflow_agent_responses")
+        workflow_agent_responses = None
+
+        if workflow_agent_responses_data is not None:
+            from agno.workflow.types import WorkflowAgentResponse
+
+            workflow_agent_responses = []
+            for resp_item in workflow_agent_responses_data:
+                if isinstance(resp_item, dict):
+                    workflow_agent_responses.append(WorkflowAgentResponse.from_dict(resp_item))
+                else:
+                    # Already a WorkflowAgentResponse object
+                    workflow_agent_responses.append(resp_item)
+
         return cls(
             session_id=data.get("session_id"),  # type: ignore
             user_id=data.get("user_id"),
             workflow_id=data.get("workflow_id"),
             workflow_name=data.get("workflow_name"),
             runs=runs,
-            workflow_agent_responses=data.get("workflow_agent_responses"),
+            workflow_agent_responses=workflow_agent_responses,
             session_data=data.get("session_data"),
             workflow_data=data.get("workflow_data"),
             metadata=data.get("metadata"),

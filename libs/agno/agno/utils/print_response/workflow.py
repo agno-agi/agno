@@ -134,7 +134,7 @@ def print_response(
             # Check if this is a workflow agent direct response
             if (
                 workflow_response.workflow_agent_response is not None
-                and not workflow_response.workflow_agent_response.get("workflow_executed", True)
+                and not workflow_response.workflow_agent_response.workflow_executed
             ):
                 # Agent answered directly from history without executing workflow
                 agent_response_panel = create_panel(
