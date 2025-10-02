@@ -151,7 +151,7 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
 
 
 def extract_format(file: UploadFile) -> Optional[str]:
-    """Extract audio format from file extension or MIME type."""
+    """Extract the File format from file name or content_type."""
     # Get the format from the filename
     if file.filename and "." in file.filename:
         return file.filename.split(".")[-1].lower()
