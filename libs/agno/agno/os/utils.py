@@ -150,13 +150,29 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         return None
 
 
-def extract_format(file: UploadFile):
-    _format = None
+def extract_format(file: UploadFile) -> Optional[str]:
+    """Extract audio format from file extension or MIME type."""
     if file.filename and "." in file.filename:
-        _format = file.filename.split(".")[-1].lower()
-    elif file.content_type:
-        _format = file.content_type.split("/")[-1]
-    return _format
+        return file.filename.split(".")[-1].lower()
+
+    # Fallback to MIME type mapping
+    if file.content_type:
+        mime_to_format = {
+            "audio/wav": "wav",
+            "audio/wave": "wav",
+            "audio/mp3": "mp3",
+            "audio/mpeg": "mp3",
+            "audio/ogg": "ogg",
+            "audio/mp4": "mp4",
+            "audio/m4a": "m4a",
+            "audio/aac": "aac",
+            "audio/flac": "flac",
+            "audio/webm": "webm",
+        }
+        base_mime = file.content_type.strip()
+        return mime_to_format.get(base_mime)
+
+    return None
 
 
 def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):

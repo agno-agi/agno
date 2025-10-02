@@ -791,12 +791,22 @@ def get_base_router(
                     except Exception as e:
                         log_error(f"Error processing image {file.filename}: {e}")
                         continue
-                elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
+                elif file.content_type in [
+                    "audio/wav",
+                    "audio/wave",
+                    "audio/mp3",
+                    "audio/mpeg",
+                    "audio/ogg",
+                    "audio/mp4",
+                    "audio/m4a",
+                    "audio/aac",
+                    "audio/flac",
+                ]:
                     try:
-                        base64_audio = process_audio(file)
-                        base64_audios.append(base64_audio)
+                        audio = process_audio(file)
+                        base64_audios.append(audio)
                     except Exception as e:
-                        log_error(f"Error processing audio {file.filename}: {e}")
+                        log_error(f"Error processing audio {file.filename} with content type {file.content_type}: {e}")
                         continue
                 elif file.content_type in [
                     "video/x-flv",
