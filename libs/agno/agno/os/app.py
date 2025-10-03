@@ -27,7 +27,6 @@ from agno.os.config import (
     SessionConfig,
     SessionDomainConfig,
 )
-from agno.os.interfaces.a2a import A2A
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router, get_websocket_router
 from agno.os.routers.evals import get_eval_router
@@ -270,13 +269,15 @@ class AgentOS:
 
         has_a2a_interface = False
         for interface in self.interfaces:
-            if not has_a2a_interface and isinstance(interface, A2A):
+            if not has_a2a_interface and interface.__class__.__name__ == "A2A":
                 has_a2a_interface = True
             interface_router = interface.get_router()
             self._add_router(fastapi_app, interface_router)
 
         # Add A2A interface if requested and not provided in self.interfaces
         if self.a2a_interface and not has_a2a_interface:
+            from agno.os.interfaces.a2a import A2A
+
             a2a_interface = A2A(agents=self.agents, teams=self.teams)
             self.interfaces.append(a2a_interface)
             self._add_router(fastapi_app, a2a_interface.get_router())
