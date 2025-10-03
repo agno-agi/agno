@@ -216,6 +216,12 @@ class Agent:
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
+    # Tool call compression - intelligent context reduction
+    # If True, compress old tool result contents while preserving message structure
+    compress_context: bool = False
+    # Number of recent tool results to keep uncompressed (older ones get compressed)
+    tool_calls_compression_threshold: int = 3
+
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
 
@@ -394,6 +400,8 @@ class Agent:
         tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        compress_context: bool = False,
+        tool_calls_compression_threshold: Optional[int] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
@@ -497,6 +505,8 @@ class Agent:
         self.tools = list(tools) if tools else []
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
+        self.compress_context = compress_context
+        self.tool_calls_compression_threshold = tool_calls_compression_threshold
         self.tool_hooks = tool_hooks
 
         # Initialize hooks with backward compatibility
@@ -864,6 +874,8 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            compress_context=self.compress_context,
+            tool_calls_compression_threshold=self.tool_calls_compression_threshold,
             response_format=response_format,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
@@ -1560,6 +1572,8 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            compress_context=self.compress_context,
+            tool_calls_compression_threshold=self.tool_calls_compression_threshold,
             response_format=response_format,
             send_media_to_model=self.send_media_to_model,
         )
@@ -2414,6 +2428,8 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            compress_context=self.compress_context,
+            tool_calls_compression_threshold=self.tool_calls_compression_threshold,
         )
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
@@ -2811,6 +2827,8 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            compress_context=self.compress_context,
+            tool_calls_compression_threshold=self.tool_calls_compression_threshold,
         )
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
@@ -3630,6 +3648,8 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            compress_context=self.compress_context,
+            tool_calls_compression_threshold=self.tool_calls_compression_threshold,
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
@@ -3707,6 +3727,8 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            compress_context=self.compress_context,
+            tool_calls_compression_threshold=self.tool_calls_compression_threshold,
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
@@ -5499,7 +5521,7 @@ class Agent:
                     elif callable(input):
                         user_msg_content = input(agent=self)
                     else:
-                        raise Exception("message must be a string or a callable when add_references is True")
+                        raise Exception("message must be a string or a callable when add_knowledge_to_context is True")
 
                     try:
                         retrieval_timer = Timer()
@@ -7058,10 +7080,8 @@ class Agent:
 
             if len(all_chats) == 0:
                 return ""
-
             for chat in all_chats[::-1]:  # type: ignore
                 history.insert(0, chat.to_dict())  # type: ignore
-
             if num_chats is not None:
                 history = history[:num_chats]
 
@@ -7114,7 +7134,6 @@ class Agent:
 
         def search_knowledge_base(query: str) -> str:
             """Use this function to search the knowledge base for information about a query.
-
             Args:
                 query: The query to search for.
 

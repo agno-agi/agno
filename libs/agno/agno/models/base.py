@@ -29,7 +29,8 @@ from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEve
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.string import _clean_json_content
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
 
@@ -145,6 +146,128 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
+    def _compress_tool_results(self, messages: List[Message]) -> None:
+        """
+        Compress ALL tool results in messages by summarizing them via LLM.
+
+        Replaces verbose tool result content with concise summaries while preserving
+        key information (entities, numbers, facts) that the agent might reference later.
+
+        Args:
+            messages: Full conversation history containing tool results to compress
+        """
+        import json
+        from textwrap import dedent
+
+        # Find all tool result messages
+        tool_result_messages = [m for m in messages if m.role == "tool"]
+
+        if not tool_result_messages:
+            return
+
+        # Prepare summarization request
+        system_prompt = dedent("""
+        You are compressing tool results for an AI agent's ongoing conversation. Your goal is to reduce token usage while preserving ALL information the agent might need to reference later.
+        
+        CRITICAL RULES:
+        1. Each numbered item below is ONE complete tool result - treat the ENTIRE result as a single unit
+        2. Create ONE summary per result (2-3 sentences max)
+        3. Return a JSON object with a "summaries" array containing one string per result, in order
+        
+        WHAT TO PRESERVE (in order of priority):
+        1. **Specific entities**: Names, organizations, locations, product names, technical terms
+        2. **Quantitative data**: Numbers, percentages, dates, measurements, counts
+        3. **Key facts**: Main findings, outcomes, status, errors/warnings
+        4. **Structure hints**: If result is a list/array, mention "X items covering..." or "results include..."
+        5. **Actionable information**: URLs, file paths, IDs only if they seem reference-worthy
+        
+        WHAT TO REMOVE:
+        - Verbose descriptions and marketing language
+        - Redundant phrasing and filler words
+        - Full article bodies (keep just key points)
+        - Duplicate information across items
+        
+        EXAMPLES:
+        - BAD: "Search returned results about AI"
+        - GOOD: "Search found 5 articles on 2024 AI: IBM trends report, Stanford AI Index, NCSL legislation tracking (45 states), and Berkeley CDSS noting video generation advances"
+        
+        - BAD: "Tool returned some data"
+        - GOOD: "API returned 3 users: Alice (ID: 123, admin), Bob (ID: 456, editor), Carol (ID: 789, viewer)"
+        
+        Tool results to summarize:
+        """)
+
+        # Add each tool result with context
+        for i, msg in enumerate(tool_result_messages, 1):
+            tool_name = getattr(msg, "tool_name", "unknown")
+            tool_args = getattr(msg, "tool_args", {})
+
+            system_prompt += f"\n{i}. Tool: {tool_name}, Args: {tool_args}\n"
+            system_prompt += f"   Result: {msg.content}\n"
+
+        # Use JSON object format for simple array response
+        response_format = {"type": "json_object"}
+
+        # Call model to summarize (sync invoke)
+        try:
+            summary_response = self.invoke(
+                messages=[
+                    Message(role="system", content=system_prompt),
+                    Message(
+                        role="user",
+                        content="Compress these tool results into dense, information-rich summaries. Preserve all key entities, numbers, and facts. Return JSON with 'summaries' array.",
+                    ),
+                ],
+                response_format=response_format,
+                assistant_message=Message(role=self.assistant_message_role),
+                run_response=None,
+            )
+
+            # Parse JSON response
+            content = summary_response.content
+
+            if isinstance(content, str):
+                # Use existing utility to clean markdown fences and other formatting
+                cleaned_content = _clean_json_content(content)
+                parsed = json.loads(cleaned_content)
+                # Handle both {"summaries": [...]} and direct array
+                if isinstance(parsed, dict) and "summaries" in parsed:
+                    summaries = parsed["summaries"]
+                elif isinstance(parsed, list):
+                    summaries = parsed
+                else:
+                    log_warning(f"Unexpected compression response format: {type(parsed)}")
+                    return
+
+                # Validate we got the right number of summaries
+                if len(summaries) != len(tool_result_messages):
+                    log_warning(
+                        f"❌ Compression failed: expected {len(tool_result_messages)} summaries, got {len(summaries)}"
+                    )
+                    return
+
+                # Replace all tool result contents with summaries
+                chars_saved = 0
+                for msg, summary_str in zip(tool_result_messages, summaries):
+                    original_len = len(str(msg.content)) if msg.content else 0
+                    msg.content = str(summary_str)
+                    chars_saved += original_len - len(str(summary_str))
+
+                log_info(f"✅ Compressed {len(tool_result_messages)} tool results, saved ~{chars_saved // 4} tokens")
+
+            else:
+                log_warning(f"Compression response is not a string: {type(content)}")
+                return
+
+        except json.JSONDecodeError as e:
+            log_warning(f"Failed to parse compression JSON: {e}")
+        except Exception as e:
+            log_warning(f"❌ Compression failed: {e}")
+
+    # ===== ASYNC COMPRESSION =====
+    # TODO: Implement async compression after sync is stable
+    # The async version should follow the same pattern but use ainvoke()
+
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
         pass
@@ -195,6 +318,8 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        compress_context: bool = False,
+        tool_calls_compression_threshold: Optional[int] = None,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
     ) -> ModelResponse:
@@ -202,15 +327,17 @@ class Model(ABC):
         Generate a response from the model.
         """
 
-        log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
-        log_debug(f"Model: {self.id}", center=True, symbol="-")
+        log_info(f"{self.get_provider()} Response Start", center=True, symbol="-")
+        log_info(f"Model: {self.id}", center=True, symbol="-")
 
-        _log_messages(messages)
+        if compress_context and tool_calls_compression_threshold:
+            log_info(f"🗜️  Tool compression enabled (threshold: {tool_calls_compression_threshold})")
+
         model_response = ModelResponse()
-
         function_call_count = 0
 
         while True:
+            _log_messages(messages)
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
             self._process_model_response(
@@ -239,6 +366,10 @@ class Model(ABC):
                     functions=functions,
                 )
                 function_call_results: List[Message] = []
+
+                # Track uncompressed results and results already added to messages
+                uncompressed_count = 0
+                results_added_count = 0
 
                 # Execute function calls
                 for function_call_response in self.run_function_calls(
@@ -292,13 +423,50 @@ class Model(ABC):
                             if function_call_response.content:
                                 model_response.content += function_call_response.content  # type: ignore
 
+                    # Add new results to messages (only if there are new results we haven't added yet)
+                    if results_added_count < len(function_call_results):
+                        # Calculate how many new results we have
+                        new_results_count = len(function_call_results) - results_added_count
+                        new_results = function_call_results[results_added_count:]
+
+                        # Add all new results using format_function_call_results
+                        # (This ensures provider-specific formatting is applied)
+                        if model_response and model_response.extra is not None:
+                            self.format_function_call_results(
+                                messages=messages, function_call_results=new_results, **model_response.extra
+                            )
+                        else:
+                            self.format_function_call_results(messages=messages, function_call_results=new_results)
+
+                        results_added_count += new_results_count
+                        uncompressed_count += new_results_count
+
+                        # Compress when threshold is exceeded (batch & reset strategy)
+                        if compress_context and tool_calls_compression_threshold is not None:
+                            if uncompressed_count > tool_calls_compression_threshold:
+                                tool_count = len([m for m in messages if m.role == "tool"])
+                                log_info(
+                                    f"🗜️  Compressing {tool_count} tool results (threshold: {tool_calls_compression_threshold} exceeded)"
+                                )
+
+                                # Compress ALL tool results in messages
+                                self._compress_tool_results(messages)
+
+                                # Reset uncompressed counter
+                                uncompressed_count = 0
+
+                # After the loop, add any remaining results that weren't added yet
+                if results_added_count < len(function_call_results):
+                    remaining_results = function_call_results[results_added_count:]
+                    if model_response and model_response.extra is not None:
+                        self.format_function_call_results(
+                            messages=messages, function_call_results=remaining_results, **model_response.extra
+                        )
+                    else:
+                        self.format_function_call_results(messages=messages, function_call_results=remaining_results)
+
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
-
-                # Format and add results to messages
-                self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **model_response.extra or {}
-                )
 
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
@@ -333,7 +501,7 @@ class Model(ABC):
             # No tool calls or finished processing them
             break
 
-        log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
+        log_info(f"{self.get_provider()} Response End", center=True, symbol="-")
         return model_response
 
     async def aresponse(
@@ -344,14 +512,20 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        compress_context: bool = False,
+        tool_calls_compression_threshold: Optional[int] = None,
         send_media_to_model: bool = True,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
         """
 
-        log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
-        log_debug(f"Model: {self.id}", center=True, symbol="-")
+        log_info(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
+        log_info(f"Model: {self.id}", center=True, symbol="-")
+
+        if compress_context and tool_calls_compression_threshold is not None:
+            log_info("⚠️  Compression not yet supported for async - use agent.run() (sync) instead")
+
         _log_messages(messages)
         model_response = ModelResponse()
 
@@ -385,6 +559,10 @@ class Model(ABC):
                     functions=functions,
                 )
                 function_call_results: List[Message] = []
+
+                # Track uncompressed results and results already added to messages
+                uncompressed_count = 0
+                results_added_count = 0
 
                 # Execute function calls
                 async for function_call_response in self.arun_function_calls(
@@ -437,13 +615,50 @@ class Model(ABC):
                             if function_call_response.content:
                                 model_response.content += function_call_response.content  # type: ignore
 
+                    # Add new results to messages (only if there are new results we haven't added yet)
+                    if results_added_count < len(function_call_results):
+                        # Calculate how many new results we have
+                        new_results_count = len(function_call_results) - results_added_count
+                        new_results = function_call_results[results_added_count:]
+
+                        # Add all new results using format_function_call_results
+                        # (This ensures provider-specific formatting is applied)
+                        if model_response and model_response.extra is not None:
+                            self.format_function_call_results(
+                                messages=messages, function_call_results=new_results, **model_response.extra
+                            )
+                        else:
+                            self.format_function_call_results(messages=messages, function_call_results=new_results)
+
+                        results_added_count += new_results_count
+                        uncompressed_count += new_results_count
+
+                        # Compress when threshold is exceeded (batch & reset strategy)
+                        if compress_context and tool_calls_compression_threshold is not None:
+                            if uncompressed_count > tool_calls_compression_threshold:
+                                tool_count = len([m for m in messages if m.role == "tool"])
+                                log_info(
+                                    f"🗜️  Compressing {tool_count} tool results (threshold: {tool_calls_compression_threshold} exceeded)"
+                                )
+
+                                # Compress ALL tool results in messages
+                                self._compress_tool_results(messages)
+
+                                # Reset uncompressed counter
+                                uncompressed_count = 0
+
+                # After the loop, add any remaining results that weren't added yet
+                if results_added_count < len(function_call_results):
+                    remaining_results = function_call_results[results_added_count:]
+                    if model_response and model_response.extra is not None:
+                        self.format_function_call_results(
+                            messages=messages, function_call_results=remaining_results, **model_response.extra
+                        )
+                    else:
+                        self.format_function_call_results(messages=messages, function_call_results=remaining_results)
+
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
-
-                # Format and add results to messages
-                self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **model_response.extra or {}
-                )
 
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
@@ -478,7 +693,7 @@ class Model(ABC):
             # No tool calls or finished processing them
             break
 
-        log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
+        log_info(f"{self.get_provider()} Async Response End", center=True, symbol="-")
         return model_response
 
     def _process_model_response(
@@ -697,6 +912,8 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        compress_context: bool = False,
+        tool_calls_compression_threshold: Optional[int] = None,
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
@@ -705,13 +922,16 @@ class Model(ABC):
         Generate a streaming response from the model.
         """
 
-        log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
-        log_debug(f"Model: {self.id}", center=True, symbol="-")
-        _log_messages(messages)
+        log_info(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
+        log_info(f"Model: {self.id}", center=True, symbol="-")
+
+        if compress_context and tool_calls_compression_threshold:
+            log_info(f"🗜️  Tool compression enabled (threshold: {tool_calls_compression_threshold})")
 
         function_call_count = 0
 
         while True:
+            _log_messages(messages)
             assistant_message = Message(role=self.assistant_message_role)
             # Create assistant message and stream data
             stream_data = MessageData()
@@ -824,7 +1044,7 @@ class Model(ABC):
             # No tool calls or finished processing them
             break
 
-        log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
+        log_info(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
 
     async def aprocess_response_stream(
         self,
@@ -865,6 +1085,8 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        compress_context: bool = False,
+        tool_calls_compression_threshold: Optional[int] = None,
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
@@ -873,8 +1095,12 @@ class Model(ABC):
         Generate an asynchronous streaming response from the model.
         """
 
-        log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
-        log_debug(f"Model: {self.id}", center=True, symbol="-")
+        log_info(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
+        log_info(f"Model: {self.id}", center=True, symbol="-")
+
+        if compress_context and tool_calls_compression_threshold is not None:
+            log_info("⚠️  Compression not yet supported for async - use agent.run(stream=True) (sync) instead")
+
         _log_messages(messages)
 
         function_call_count = 0
@@ -992,7 +1218,7 @@ class Model(ABC):
             # No tool calls or finished processing them
             break
 
-        log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
+        log_info(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
 
     def _populate_stream_data_and_assistant_message(
         self, stream_data: MessageData, assistant_message: Message, model_response_delta: ModelResponse
