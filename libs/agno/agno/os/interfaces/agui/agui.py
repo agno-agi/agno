@@ -40,7 +40,6 @@ class AGUI(BaseInterface):
             raise ValueError("AGUI requires an agent or a team")
 
     def get_router(self) -> APIRouter:
-        # Create router with the effective prefix
         self.router = APIRouter(prefix=self.prefix, tags=self.tags)  # type: ignore
 
         self.router = attach_routes(router=self.router, agent=self.agent, team=self.team)
