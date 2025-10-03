@@ -289,7 +289,7 @@ async def stream_a2a_response(
                 final=False,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True))
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         # 2. Send all content and secondary events
 
@@ -304,9 +304,10 @@ async def stream_a2a_response(
                 parts=[Part(root=TextPart(text=event.content))],
                 context_id=context_id,
                 task_id=task_id,
+                metadata={"agno_content_category": "content"},
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=message)
-            yield json.dumps(response.model_dump(exclude_none=True))
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         # Send tool call events
         elif isinstance(event, (ToolCallStartedEvent, TeamToolCallStartedEvent)):
@@ -326,7 +327,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True))
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, (ToolCallCompletedEvent, TeamToolCallCompletedEvent)):
             metadata = {"agno_event_type": "tool_call_completed"}
@@ -345,7 +346,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True))
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         # Send reasoning events
         elif isinstance(event, (ReasoningStartedEvent, TeamReasoningStartedEvent)):
@@ -357,7 +358,7 @@ async def stream_a2a_response(
                 metadata={"agno_event_type": "reasoning_started"},
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True))
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, (ReasoningStepEvent, TeamReasoningStepEvent)):
             if event.reasoning_content:
@@ -377,10 +378,10 @@ async def stream_a2a_response(
                     ],
                     context_id=context_id,
                     task_id=task_id,
-                    metadata={"agno_event_type": "reasoning_step"},
+                    metadata={"agno_content_category": "reasoning", "agno_event_type": "reasoning_step"},
                 )
                 response = SendStreamingMessageSuccessResponse(id=request_id, result=reasoning_message)
-                yield json.dumps(response.model_dump(exclude_none=True))
+                yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, (ReasoningCompletedEvent, TeamReasoningCompletedEvent)):
             status_event = TaskStatusUpdateEvent(
@@ -391,7 +392,7 @@ async def stream_a2a_response(
                 metadata={"agno_event_type": "reasoning_completed"},
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True))
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         # Send memory update events
         elif isinstance(event, (MemoryUpdateStartedEvent, TeamMemoryUpdateStartedEvent)):
@@ -403,7 +404,7 @@ async def stream_a2a_response(
                 metadata={"agno_event_type": "memory_update_started"},
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True))
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, (MemoryUpdateCompletedEvent, TeamMemoryUpdateCompletedEvent)):
             status_event = TaskStatusUpdateEvent(
@@ -414,7 +415,7 @@ async def stream_a2a_response(
                 metadata={"agno_event_type": "memory_update_completed"},
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True))
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
     # 3. Send final status event
     final_status_event = TaskStatusUpdateEvent(
@@ -424,7 +425,7 @@ async def stream_a2a_response(
         final=True,
     )
     response = SendStreamingMessageSuccessResponse(id=request_id, result=final_status_event)
-    yield json.dumps(response.model_dump(exclude_none=True))
+    yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
     # 4. Send final complete task
     final_message = A2AMessage(
@@ -441,4 +442,4 @@ async def stream_a2a_response(
         history=[final_message],
     )
     response = SendStreamingMessageSuccessResponse(id=request_id, result=task)
-    yield json.dumps(response.model_dump(exclude_none=True))
+    yield json.dumps(response.model_dump(exclude_none=True)) + "\n"

@@ -174,22 +174,22 @@ def attach_routes(
     )
     async def a2a_team(id: str, request: Request):
         request_body = await request.json()
-        method = request_body.get("method")
-        if not method:
-            method = "message/send"
+        stream = False
+        if request_body.get("method") == "message/stream":
+            stream = True
         kwargs = await _get_request_kwargs(request, a2a_team)
 
         team = get_team_by_id(id, teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        run_input = await map_a2a_request_to_run_input(request_body)
+        run_input = await map_a2a_request_to_run_input(request_body, stream)
         # Extract session_id from A2A contextId
         # Note: A2A taskId is ignored - Agno generates a new run_id for each call
         session_id = request_body.get("params", {}).get("message", {}).get("contextId")
 
         # We stream the response if the request method is "message/stream"
-        if method == "message/stream":
+        if stream:
             event_stream = team.arun(
                 input=run_input.input_content,
                 images=run_input.images,
@@ -217,7 +217,6 @@ def attach_routes(
                 **kwargs,
             )
 
-            # TODO: Team specific? can we carry members content?
             a2a_task = map_run_output_to_a2a_task(response)
 
             # Send A2A-valid JSON-RPC response
