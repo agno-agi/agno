@@ -216,6 +216,13 @@ class Agent:
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
+    # Tool call forgetting - sliding window for context management
+    # If True, remove old tool results beyond the window to reduce context
+    forget_tool_calls: bool = False
+    # Keep only this many most recent tool results (older ones removed completely)
+    # Example: tool_call_window=5 means keep last 5 tool results, delete older ones
+    tool_call_window: int = 5
+
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
 
@@ -394,6 +401,8 @@ class Agent:
         tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        forget_tool_calls: bool = False,
+        tool_call_window: Optional[int] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
@@ -497,6 +506,8 @@ class Agent:
         self.tools = list(tools) if tools else []
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
+        self.forget_tool_calls = forget_tool_calls
+        self.tool_call_window = tool_call_window if tool_call_window is not None else 5
         self.tool_hooks = tool_hooks
 
         # Initialize hooks with backward compatibility
@@ -858,6 +869,11 @@ class Agent:
 
         # 4. Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
+
+        # Log if forget_tool_calls is enabled
+        if self.forget_tool_calls:
+            log_info(f"🗑️  Tool forgetting enabled (window: {self.tool_call_window})")
+
         model_response: ModelResponse = self.model.response(
             messages=run_messages.messages,
             tools=self._tools_for_model,
@@ -867,6 +883,8 @@ class Agent:
             response_format=response_format,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            forget_tool_calls=self.forget_tool_calls,
+            tool_call_window=self.tool_call_window,
         )
 
         # Check for cancellation after model call
@@ -2414,6 +2432,8 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            forget_tool_calls=self.forget_tool_calls,
+            tool_call_window=self.tool_call_window,
         )
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
@@ -3623,6 +3643,10 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
+        # Log if forget_tool_calls is enabled
+        if self.forget_tool_calls:
+            log_info(f"🗑️  Tool forgetting enabled (window: {self.tool_call_window})")
+
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -3633,6 +3657,8 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            forget_tool_calls=self.forget_tool_calls,
+            tool_call_window=self.tool_call_window,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
