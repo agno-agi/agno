@@ -23,7 +23,9 @@ except (ImportError, ModuleNotFoundError):
 def _prepare_command(command: str) -> list[str]:
     """Sanitize a command and split it into parts before using it to run a MCP server."""
     from shlex import split
-
+    import os
+    import shutil
+    
     # Block dangerous characters
     if any(char in command for char in ["&", "|", ";", "`", "$", "(", ")"]):
         raise ValueError("MCP command can't contain shell metacharacters")
@@ -55,6 +57,27 @@ def _prepare_command(command: str) -> list[str]:
     }
 
     executable = parts[0].split("/")[-1]
+
+    # Check if it's a relative path starting with ./ or ../
+    if executable.startswith("./") or executable.startswith("../"):
+        # Allow relative paths to binaries
+        return parts
+
+    # Check if it's an absolute path to a binary
+    if executable.startswith("/") and os.path.isfile(executable):
+        # Allow absolute paths to existing files
+        return parts
+
+    # Check if it's a binary in current directory without ./
+    if "/" not in executable and os.path.isfile(executable):
+        # Allow binaries in current directory
+        return parts
+
+    # Check if it's a binary in PATH
+    if shutil.which(executable):
+        return parts
+    
+   
     if executable not in ALLOWED_COMMANDS:
         raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")
 
