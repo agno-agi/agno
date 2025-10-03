@@ -4,7 +4,16 @@ from uuid import uuid4
 from fastapi import HTTPException
 from typing_extensions import AsyncIterator, List, Union
 
+from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
+from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
+from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
+from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
+from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
+from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import TeamRunOutputEvent
+from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
+from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 
 try:
     from a2a.types import (
@@ -30,7 +39,20 @@ except ImportError as e:
 
 
 from agno.media import Audio, File, Image, Video
-from agno.run.agent import RunContentEvent, RunInput, RunOutput, RunOutputEvent, RunStartedEvent
+from agno.run.agent import (
+    MemoryUpdateCompletedEvent,
+    MemoryUpdateStartedEvent,
+    ReasoningCompletedEvent,
+    ReasoningStartedEvent,
+    ReasoningStepEvent,
+    RunContentEvent,
+    RunInput,
+    RunOutput,
+    RunOutputEvent,
+    RunStartedEvent,
+    ToolCallCompletedEvent,
+    ToolCallStartedEvent,
+)
 
 
 async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) -> RunInput:
@@ -233,15 +255,14 @@ async def stream_a2a_response(
 ) -> AsyncIterator[str]:
     """Stream the given event stream as A2A responses.
 
-    1. Handle initial event
-    2. Handle content events
+    1. Send initial event
+    2. Send content and secondary events
     3. Send final status event
     4. Send final complete task
 
     Args:
         event_stream: The async iterator of Agno events from agent.arun(stream=True)
         request_id: The JSON-RPC request ID
-        run_input: The original run input (for context)
 
     Yields:
         str: JSON-RPC response objects (A2A-valid)
@@ -253,8 +274,8 @@ async def stream_a2a_response(
 
     # Stream events
     async for event in event_stream:
-        # 1. Handle initial event
-        if isinstance(event, RunStartedEvent):
+        # 1. Send initial event
+        if isinstance(event, (RunStartedEvent, TeamRunStartedEvent)):
             if hasattr(event, "run_id") and event.run_id:
                 task_id = event.run_id
             if hasattr(event, "session_id") and event.session_id:
@@ -270,8 +291,10 @@ async def stream_a2a_response(
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
             yield json.dumps(response.model_dump(exclude_none=True))
 
-        # 2. Handle content events
-        if isinstance(event, RunContentEvent) and event.content:
+        # 2. Send all content and secondary events
+
+        # Send content events
+        elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
             accumulated_content += event.content
 
             # Send content event
@@ -285,7 +308,113 @@ async def stream_a2a_response(
             response = SendStreamingMessageSuccessResponse(id=request_id, result=message)
             yield json.dumps(response.model_dump(exclude_none=True))
 
-        # TODO: Handle all other events
+        # Send tool call events
+        elif isinstance(event, (ToolCallStartedEvent, TeamToolCallStartedEvent)):
+            metadata = {"agno_event_type": "tool_call_started"}
+            if event.tool:
+                metadata["tool_name"] = event.tool.tool_name or "tool"
+                if hasattr(event.tool, "tool_call_id") and event.tool.tool_call_id:
+                    metadata["tool_call_id"] = event.tool.tool_call_id
+                if hasattr(event.tool, "tool_args") and event.tool.tool_args:
+                    metadata["tool_args"] = json.dumps(event.tool.tool_args)
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True))
+
+        elif isinstance(event, (ToolCallCompletedEvent, TeamToolCallCompletedEvent)):
+            metadata = {"agno_event_type": "tool_call_completed"}
+            if event.tool:
+                metadata["tool_name"] = event.tool.tool_name or "tool"
+                if hasattr(event.tool, "tool_call_id") and event.tool.tool_call_id:
+                    metadata["tool_call_id"] = event.tool.tool_call_id
+                if hasattr(event.tool, "tool_args") and event.tool.tool_args:
+                    metadata["tool_args"] = json.dumps(event.tool.tool_args)
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True))
+
+        # Send reasoning events
+        elif isinstance(event, (ReasoningStartedEvent, TeamReasoningStartedEvent)):
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata={"agno_event_type": "reasoning_started"},
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True))
+
+        elif isinstance(event, (ReasoningStepEvent, TeamReasoningStepEvent)):
+            if event.reasoning_content:
+                # Send reasoning step as a message
+                reasoning_message = A2AMessage(
+                    message_id=str(uuid4()),
+                    role=Role.agent,
+                    parts=[
+                        Part(
+                            root=TextPart(
+                                text=event.reasoning_content,
+                                metadata={
+                                    "step_type": event.content_type if event.content_type else "str",
+                                },
+                            )
+                        )
+                    ],
+                    context_id=context_id,
+                    task_id=task_id,
+                    metadata={"agno_event_type": "reasoning_step"},
+                )
+                response = SendStreamingMessageSuccessResponse(id=request_id, result=reasoning_message)
+                yield json.dumps(response.model_dump(exclude_none=True))
+
+        elif isinstance(event, (ReasoningCompletedEvent, TeamReasoningCompletedEvent)):
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata={"agno_event_type": "reasoning_completed"},
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True))
+
+        # Send memory update events
+        elif isinstance(event, (MemoryUpdateStartedEvent, TeamMemoryUpdateStartedEvent)):
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata={"agno_event_type": "memory_update_started"},
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True))
+
+        elif isinstance(event, (MemoryUpdateCompletedEvent, TeamMemoryUpdateCompletedEvent)):
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata={"agno_event_type": "memory_update_completed"},
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True))
 
     # 3. Send final status event
     final_status_event = TaskStatusUpdateEvent(
