@@ -3,6 +3,7 @@
 from typing import Optional
 
 from fastapi import HTTPException, Request
+from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRouter
 from typing_extensions import List
 
@@ -12,7 +13,11 @@ except ImportError as e:
     raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a`") from e
 
 from agno.agent import Agent
-from agno.os.interfaces.a2a.utils import map_a2a_request_to_run_input, map_run_output_to_a2a_task
+from agno.os.interfaces.a2a.utils import (
+    map_a2a_request_to_run_input,
+    map_run_output_to_a2a_task,
+    stream_a2a_response,
+)
 from agno.os.router import _get_request_kwargs
 from agno.os.utils import get_agent_by_id, get_team_by_id
 from agno.team import Team
@@ -72,30 +77,54 @@ def attach_routes(
     )
     async def a2a_agent(id: str, request: Request):
         request_body = await request.json()
+        stream = False
+        if request_body.get("method") == "message/stream":
+            stream = True
         kwargs = await _get_request_kwargs(request, a2a_agent)
 
         agent = get_agent_by_id(id, agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        run_input = await map_a2a_request_to_run_input(request_body)
+        run_input = await map_a2a_request_to_run_input(request_body, stream)
+        context_id = request_body.get("params", {}).get("message", {}).get("contextId")
 
-        response = await agent.arun(
-            input=run_input.input_content,
-            images=run_input.images,
-            videos=run_input.videos,
-            audio=run_input.audios,
-            files=run_input.files,
-            **kwargs,
-        )
+        # Stream the response if the request method is "message/stream"
+        if stream:
+            event_stream = agent.arun(
+                input=run_input.input_content,
+                images=run_input.images,
+                videos=run_input.videos,
+                audio=run_input.audios,
+                files=run_input.files,
+                session_id=context_id,
+                stream=True,
+                stream_intermediate_steps=True,
+                **kwargs,
+            )
+            return StreamingResponse(
+                stream_a2a_response(event_stream=event_stream, request_id=request_body["id"]),
+                media_type="application/x-ndjson",
+            )
 
-        a2a_task = map_run_output_to_a2a_task(response)
+        else:
+            response = await agent.arun(
+                input=run_input.input_content,
+                images=run_input.images,
+                videos=run_input.videos,
+                audio=run_input.audios,
+                files=run_input.files,
+                session_id=context_id,
+                **kwargs,
+            )
 
-        # Send A2A-valid JSON-RPC response
-        return SendMessageSuccessResponse(
-            id=request_body.get("id", "unknown"),
-            result=a2a_task,
-        )
+            a2a_task = map_run_output_to_a2a_task(response)
+
+            # Send A2A-valid JSON-RPC response
+            return SendMessageSuccessResponse(
+                id=request_body.get("id", "unknown"),
+                result=a2a_task,
+            )
 
     @router.post(
         "/a2a/teams/{id}",
@@ -145,6 +174,9 @@ def attach_routes(
     )
     async def a2a_team(id: str, request: Request):
         request_body = await request.json()
+        method = request_body.get("method")
+        if not method:
+            method = "message/send"
         kwargs = await _get_request_kwargs(request, a2a_team)
 
         team = get_team_by_id(id, teams)
@@ -152,23 +184,46 @@ def attach_routes(
             raise HTTPException(status_code=404, detail="Team not found")
 
         run_input = await map_a2a_request_to_run_input(request_body)
+        # Extract session_id from A2A contextId
+        # Note: A2A taskId is ignored - Agno generates a new run_id for each call
+        session_id = request_body.get("params", {}).get("message", {}).get("contextId")
 
-        response = await team.arun(
-            input=run_input.input_content,
-            images=run_input.images,
-            videos=run_input.videos,
-            audio=run_input.audios,
-            files=run_input.files,
-            **kwargs,
-        )
+        # We stream the response if the request method is "message/stream"
+        if method == "message/stream":
+            event_stream = team.arun(
+                input=run_input.input_content,
+                images=run_input.images,
+                videos=run_input.videos,
+                audio=run_input.audios,
+                files=run_input.files,
+                session_id=session_id,
+                stream=True,
+                stream_intermediate_steps=True,
+                **kwargs,
+            )
+            return StreamingResponse(
+                stream_a2a_response(event_stream=event_stream, request_id=request_body["id"]),
+                media_type="application/x-ndjson",
+            )
 
-        # TODO: Team specific? can we carry members content?
-        a2a_task = map_run_output_to_a2a_task(response)
+        else:
+            response = await team.arun(
+                input=run_input.input_content,
+                images=run_input.images,
+                videos=run_input.videos,
+                audio=run_input.audios,
+                files=run_input.files,
+                session_id=session_id,
+                **kwargs,
+            )
 
-        # Send A2A-valid JSON-RPC response
-        return SendMessageSuccessResponse(
-            id=request_body.get("id", "unknown"),
-            result=a2a_task,
-        )
+            # TODO: Team specific? can we carry members content?
+            a2a_task = map_run_output_to_a2a_task(response)
+
+            # Send A2A-valid JSON-RPC response
+            return SendMessageSuccessResponse(
+                id=request_body.get("id", "unknown"),
+                result=a2a_task,
+            )
 
     return router

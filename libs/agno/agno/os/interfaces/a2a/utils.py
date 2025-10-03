@@ -1,7 +1,10 @@
+import json
 from uuid import uuid4
 
 from fastapi import HTTPException
-from typing_extensions import List
+from typing_extensions import AsyncIterator, List, Union
+
+from agno.run.team import TeamRunOutputEvent
 
 try:
     from a2a.types import (
@@ -13,9 +16,12 @@ try:
         Part,
         Role,
         SendMessageRequest,
+        SendStreamingMessageRequest,
+        SendStreamingMessageSuccessResponse,
         Task,
         TaskState,
         TaskStatus,
+        TaskStatusUpdateEvent,
         TextPart,
     )
     from a2a.types import Message as A2AMessage
@@ -24,10 +30,10 @@ except ImportError as e:
 
 
 from agno.media import Audio, File, Image, Video
-from agno.run.agent import RunInput, RunOutput
+from agno.run.agent import RunContentEvent, RunInput, RunOutput, RunOutputEvent, RunStartedEvent
 
 
-async def map_a2a_request_to_run_input(request_body: dict) -> RunInput:
+async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) -> RunInput:
     """Map A2A SendMessageRequest to Agno RunInput.
 
     1. Validate the request
@@ -55,13 +61,20 @@ async def map_a2a_request_to_run_input(request_body: dict) -> RunInput:
 
     Returns:
         RunInput: The Agno RunInput
+        stream: Wheter we are in stream mode
     """
 
     # 1. Validate the request
-    try:
-        a2a_request = SendMessageRequest.model_validate(request_body)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid A2A request: {str(e)}")
+    if stream:
+        try:
+            a2a_request = SendStreamingMessageRequest.model_validate(request_body)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid A2A request: {str(e)}")
+    else:
+        try:
+            a2a_request = SendMessageRequest.model_validate(request_body)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid A2A request: {str(e)}")
 
     a2a_message = a2a_request.params.message
     if a2a_message.role != "user":
@@ -213,3 +226,90 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
         history=[agent_message],
         artifacts=artifacts if artifacts else None,
     )
+
+
+async def stream_a2a_response(
+    event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, RunStartedEvent]], request_id: Union[str, int]
+) -> AsyncIterator[str]:
+    """Stream the given event stream as A2A responses.
+
+    1. Handle initial event
+    2. Handle content events
+    3. Send final status event
+    4. Send final complete task
+
+    Args:
+        event_stream: The async iterator of Agno events from agent.arun(stream=True)
+        request_id: The JSON-RPC request ID
+        run_input: The original run input (for context)
+
+    Yields:
+        str: JSON-RPC response objects (A2A-valid)
+    """
+    task_id: str = str(uuid4())
+    context_id: str = str(uuid4())
+    message_id: str = str(uuid4())
+    accumulated_content = ""
+
+    # Stream events
+    async for event in event_stream:
+        # 1. Handle initial event
+        if isinstance(event, RunStartedEvent):
+            if hasattr(event, "run_id") and event.run_id:
+                task_id = event.run_id
+            if hasattr(event, "session_id") and event.session_id:
+                context_id = event.session_id
+
+            # Send initial status event
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True))
+
+        # 2. Handle content events
+        if isinstance(event, RunContentEvent) and event.content:
+            accumulated_content += event.content
+
+            # Send content event
+            message = A2AMessage(
+                message_id=message_id,
+                role=Role.agent,
+                parts=[Part(root=TextPart(text=event.content))],
+                context_id=context_id,
+                task_id=task_id,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=message)
+            yield json.dumps(response.model_dump(exclude_none=True))
+
+        # TODO: Handle all other events
+
+    # 3. Send final status event
+    final_status_event = TaskStatusUpdateEvent(
+        task_id=task_id,
+        context_id=context_id,
+        status=TaskStatus(state=TaskState.completed),
+        final=True,
+    )
+    response = SendStreamingMessageSuccessResponse(id=request_id, result=final_status_event)
+    yield json.dumps(response.model_dump(exclude_none=True))
+
+    # 4. Send final complete task
+    final_message = A2AMessage(
+        message_id=message_id,
+        role=Role.agent,
+        parts=[Part(root=TextPart(text=accumulated_content))] if accumulated_content else [],
+        context_id=context_id,
+        task_id=task_id,
+    )
+    task = Task(
+        id=task_id,
+        context_id=context_id,
+        status=TaskStatus(state=TaskState.completed),
+        history=[final_message],
+    )
+    response = SendStreamingMessageSuccessResponse(id=request_id, result=task)
+    yield json.dumps(response.model_dump(exclude_none=True))
