@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
+import json
+from datetime import date, datetime, time
 
 from fastapi import WebSocket
 from pydantic import BaseModel
@@ -443,9 +445,18 @@ class WebSocketHandler:
             else:
                 data = {"type": "message", "content": str(event)}
 
-            import json
+            def json_serializer(obj):
+                # Datetime like
+                if isinstance(obj, (datetime, date, time)):
+                    return obj.isoformat()
+                # Enums
+                if isinstance(obj, Enum):
+                    v = obj.value
+                    return v if isinstance(v, (str, int, float, bool, type(None))) else obj.name
+                # Fallback to string
+                return str(obj)
 
-            await self.websocket.send_text(self.format_sse_event(json.dumps(data)))
+            await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
 
         except Exception as e:
             log_warning(f"Failed to handle WebSocket event: {e}")
@@ -466,9 +477,18 @@ class WebSocketHandler:
             return
 
         try:
-            import json
+            def json_serializer(obj):
+                # Datetime like
+                if isinstance(obj, (datetime, date, time)):
+                    return obj.isoformat()
+                # Enums
+                if isinstance(obj, Enum):
+                    v = obj.value
+                    return v if isinstance(v, (str, int, float, bool, type(None))) else obj.name
+                # Fallback to string
+                return str(obj)
 
-            await self.websocket.send_text(self.format_sse_event(json.dumps(data)))
+            await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
         except Exception as e:
             log_warning(f"Failed to send WebSocket dict: {e}")
 
