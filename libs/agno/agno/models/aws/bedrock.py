@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Ty
 from pydantic import BaseModel
 
 from agno.exceptions import AgnoError, ModelProviderError
-from agno.models.base import MessageData, Model
+from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
@@ -530,12 +530,12 @@ class AwsBedrock(Model):
             assistant_message.metrics.start_timer()
 
             # Track current tool being built across chunks
-            tool_use: Dict[str, Any] = {}
+            current_tool: Dict[str, Any] = {}
 
             async with self.get_async_client() as client:
                 response = await client.converse_stream(modelId=self.id, messages=formatted_messages, **body)
                 async for chunk in response["stream"]:
-                    model_response, tool_use = self._parse_provider_response_delta(chunk, tool_use)
+                    model_response, current_tool = self._parse_provider_response_delta(chunk, current_tool)
                     yield model_response
 
             assistant_message.metrics.stop_timer()
@@ -625,84 +625,17 @@ class AwsBedrock(Model):
 
         return model_response
 
-    def process_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
-    ) -> Iterator[ModelResponse]:
-        """
-        Process the synchronous response stream.
-
-        Args:
-            messages (List[Message]): The messages to include in the request.
-            assistant_message (Message): The assistant message.
-            stream_data (MessageData): The stream data.
-        """
-        for response_delta in self.invoke_stream(
-            messages=messages,
-            assistant_message=assistant_message,
-            response_format=response_format,
-            tools=tools,
-            tool_choice=tool_choice,
-            run_response=run_response,
-        ):
-            yield from self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data,
-                assistant_message=assistant_message,
-                model_response_delta=response_delta,
-            )
-
-    async def aprocess_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
-    ) -> AsyncIterator[ModelResponse]:
-        """
-        Process the asynchronous response stream.
-
-        Args:
-            messages (List[Message]): The messages to include in the request.
-            assistant_message (Message): The assistant message.
-            stream_data (MessageData): The stream data.
-        """
-        async for response_delta in self.ainvoke_stream(
-            messages=messages,
-            assistant_message=assistant_message,
-            response_format=response_format,
-            tools=tools,
-            tool_choice=tool_choice,
-            run_response=run_response,
-        ):
-            for model_response in self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data,
-                assistant_message=assistant_message,
-                model_response_delta=response_delta,
-            ):
-                yield model_response
-
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=response_delta)
-
     def _parse_provider_response_delta(
-        self, response_delta: Dict[str, Any], tool_use: Dict[str, Any]
+        self, response_delta: Dict[str, Any], current_tool: Dict[str, Any]
     ) -> Tuple[ModelResponse, Dict[str, Any]]:
         """Parse the provider response delta for streaming.
 
         Args:
             response_delta: The streaming response delta from AWS Bedrock
-            tool_use: The current tool being built across chunks
+            current_tool: The current tool being built across chunks
 
         Returns:
-            Tuple[ModelResponse, Dict[str, Any]]: The parsed model response delta and updated tool_use
+            Tuple[ModelResponse, Dict[str, Any]]: The parsed model response delta and updated current_tool
         """
         model_response = ModelResponse(role="assistant")
 
@@ -712,7 +645,7 @@ class AwsBedrock(Model):
             if "toolUse" in start:
                 # Start a new tool
                 tool_use_data = start["toolUse"]
-                tool_use = {
+                current_tool = {
                     "id": tool_use_data.get("toolUseId", ""),
                     "type": "function",
                     "function": {
@@ -726,20 +659,20 @@ class AwsBedrock(Model):
             delta = response_delta["contentBlockDelta"]["delta"]
             if "text" in delta:
                 model_response.content = delta["text"]
-            elif "toolUse" in delta and tool_use:
+            elif "toolUse" in delta and current_tool:
                 # Accumulate tool input
                 tool_input = delta["toolUse"].get("input", "")
                 if tool_input:
-                    tool_use["function"]["arguments"] += tool_input
+                    current_tool["function"]["arguments"] += tool_input
 
         # Handle contentBlockStop - tool use complete
-        elif "contentBlockStop" in response_delta and tool_use:
+        elif "contentBlockStop" in response_delta and current_tool:
             # Tool is complete, add it to model response
-            model_response.tool_calls = [tool_use]
+            model_response.tool_calls = [current_tool]
             # Track tool_id in extra for format_function_call_results
-            model_response.extra = {"tool_ids": [tool_use["id"]]}
-            # Reset tool_use for next tool
-            tool_use = {}
+            model_response.extra = {"tool_ids": [current_tool["id"]]}
+            # Reset current_tool for next tool
+            current_tool = {}
 
         # Handle metadata/usage information
         elif "metadata" in response_delta or "messageStop" in response_delta:
@@ -747,7 +680,7 @@ class AwsBedrock(Model):
             if "usage" in body:
                 model_response.response_usage = self._get_metrics(body["usage"])
 
-        return model_response, tool_use
+        return model_response, current_tool
 
     def _get_metrics(self, response_usage: Dict[str, Any]) -> Metrics:
         """
