@@ -47,9 +47,18 @@ How to Get These Credentials:
    export GOOGLE_REDIRECT_URI=http://localhost/  # Default value
    export GOOGLE_AUTHENTICATION_PORT=5050  # Port for OAuth redirect
    ``
+
 ---
 
 Remember to install the dependencies using `pip install google google-auth-oauthlib`
+
+Important Points to Note :
+1. The first time you run the application, it will open a browser window for OAuth authentication.
+2. A token.json file will be created to store the authentication credentials for future use.
+
+You can customize the authentication port by setting the `GOOGLE_AUTHENTICATION_PORT` environment variable.
+This will be used in the `run_local_server` method for OAuth authentication.
+
 """
 
 import mimetypes
@@ -90,15 +99,22 @@ class GoogleDriveTools(Toolkit):
     # Default scopes for Google Drive API access
     DEFAULT_SCOPES = ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive.readonly"]
 
-    def __init__(self, auth_port: int,creds: Optional[Credentials] = None, scopes: Optional[List[str]] = None, **kwargs):
+    def __init__(self,auth_port:int,
+                  creds: Optional[Credentials] = None, 
+                  scopes: Optional[List[str]] = None, 
+                  creds_path: Optional[str] = None,
+                  token_path: Optional[str] = None,
+                  **kwargs):
         self.creds: Optional[Credentials] = creds
         self.service: Optional[Resource] = None
+        self.credentials_path = creds_path
+        self.token_path = token_path
         self.scopes = scopes or []
         self.scopes.extend(self.DEFAULT_SCOPES)
+        self.auth_port: int = int(getenv("GOOGLE_AUTH_PORT", str(auth_port)))
         tools: List[Any] = [
             self.list_files,
         ]
-        
         super().__init__(name="google_drive_tools", tools=tools, **kwargs)
         if not self.scopes:
             # Add read permission by default
@@ -115,33 +131,36 @@ class GoogleDriveTools(Toolkit):
         if self.creds and self.creds.valid:
             # Already authenticated
             return
-        if self.creds and self.creds.expired and self.creds.refresh_token:
-            self.creds.refresh(Request())
-            return
-        # Prompt for credentials if not available
-        client_id = getenv("GOOGLE_CLIENT_ID")
-        client_secret = getenv("GOOGLE_CLIENT_SECRET")
-        redirect_uri = getenv("GOOGLE_REDIRECT_URI", "http://localhost")
-        auth_port = getenv("GOOGLE_AUTHENTICATION_PORT")
-        if not client_id or not client_secret:
-            raise ValueError(
-                "Google Drive authentication failed: Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your environment variables."
-            )
-        flow = InstalledAppFlow.from_client_config(
-            {
-                "installed": {
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "redirect_uris": [redirect_uri],
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                }
-            },
-            self.scopes,
-        )
-        # The Dynamic Port allocation is not 100% reliable, hence using fixed port from env variable or default 54718
-        self.creds = flow.run_local_server(port=auth_port,redirect_uri_trusted=True)
+        
 
+        token_file = Path(self.token_path or "token.json")
+        creds_file = Path(self.credentials_path or "credentials.json")
+
+        if token_file.exists():
+            self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+        if not self.creds or not self.creds.valid:
+            if self.creds and self.creds.expired and self.creds.refresh_token:
+                self.creds.refresh(Request())
+            else:
+                client_config = {
+                    "installed": {
+                        "client_id": getenv("GOOGLE_CLIENT_ID"),
+                        "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
+                        "project_id": getenv("GOOGLE_PROJECT_ID"),
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                        "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
+                    }
+                }
+                # File based authentication
+                if creds_file.exists():
+                    flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+                else:
+                    flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
+                # Opens up a browser window for OAuth authentication
+                self.creds = flow.run_local_server(port=self.auth_port)
+            token_file.write_text(self.creds.to_json()) if self.creds else None
     @authenticate
     def list_files(self, query: Optional[str] = None, page_size: int = 10) -> List[dict]:
         """
