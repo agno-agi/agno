@@ -205,6 +205,12 @@ class Ollama(Model):
             if message.videos is not None and len(message.videos) > 0:
                 log_warning("Video input is currently unsupported.")
 
+        if message.role == "assistant" and message.tool_calls:
+            tool_calls = []
+            for tool_call in  message.tool_calls:
+                tool_calls.append({'function': {'name': f'{tool_call['function']['name']}', 'arguments': json.loads(tool_call['function']['arguments'])}})
+            _message['tool_calls'] = tool_calls
+
         return _message
 
     def _prepare_request_kwargs_for_invoke(
