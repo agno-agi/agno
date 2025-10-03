@@ -1,4 +1,5 @@
 import time
+from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
@@ -107,15 +108,17 @@ class InMemoryDb(BaseDb):
                     if session_data.get("session_type") != session_type_value:
                         continue
 
+                    session_data_copy = deepcopy(session_data)
+
                     if not deserialize:
-                        return session_data
+                        return session_data_copy
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session_data)
+                        return AgentSession.from_dict(session_data_copy)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session_data)
+                        return TeamSession.from_dict(session_data_copy)
                     else:
-                        return WorkflowSession.from_dict(session_data)
+                        return WorkflowSession.from_dict(session_data_copy)
 
             return None
 
@@ -188,7 +191,7 @@ class InMemoryDb(BaseDb):
                 if session_data.get("session_type") != session_type_value:
                     continue
 
-                filtered_sessions.append(session_data)
+                filtered_sessions.append(deepcopy(session_data))
 
             total_count = len(filtered_sessions)
 
@@ -233,15 +236,16 @@ class InMemoryDb(BaseDb):
 
                     log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
+                    session_copy = deepcopy(session)
                     if not deserialize:
-                        return session
+                        return session_copy
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session)
+                        return AgentSession.from_dict(session_copy)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session)
+                        return TeamSession.from_dict(session_copy)
                     else:
-                        return WorkflowSession.from_dict(session)
+                        return WorkflowSession.from_dict(session_copy)
 
             return None
 
@@ -269,22 +273,26 @@ class InMemoryDb(BaseDb):
                 if existing_session.get("session_id") == session_dict.get("session_id") and self._matches_session_key(
                     existing_session, session
                 ):
-                    # Update existing session
                     session_dict["updated_at"] = int(time.time())
-                    self._sessions[i] = session_dict
+                    self._sessions[i] = deepcopy(session_dict)
                     session_updated = True
                     break
 
             if not session_updated:
-                # Add new session
                 session_dict["created_at"] = session_dict.get("created_at", int(time.time()))
                 session_dict["updated_at"] = session_dict.get("created_at")
-                self._sessions.append(session_dict)
+                self._sessions.append(deepcopy(session_dict))
 
+            session_dict_copy = deepcopy(session_dict)
             if not deserialize:
-                return session_dict
+                return session_dict_copy
 
-            return session
+            if session_dict_copy["session_type"] == SessionType.AGENT:
+                return AgentSession.from_dict(session_dict_copy)
+            elif session_dict_copy["session_type"] == SessionType.TEAM:
+                return TeamSession.from_dict(session_dict_copy)
+            else:
+                return WorkflowSession.from_dict(session_dict_copy)
 
         except Exception as e:
             log_error(f"Exception upserting session: {e}")
@@ -378,9 +386,10 @@ class InMemoryDb(BaseDb):
         try:
             for memory_data in self._memories:
                 if memory_data.get("memory_id") == memory_id:
+                    memory_data_copy = deepcopy(memory_data)
                     if not deserialize:
-                        return memory_data
-                    return UserMemory.from_dict(memory_data)
+                        return memory_data_copy
+                    return UserMemory.from_dict(memory_data_copy)
 
             return None
 
@@ -420,7 +429,7 @@ class InMemoryDb(BaseDb):
                     if search_content.lower() not in memory_content.lower():
                         continue
 
-                filtered_memories.append(memory_data)
+                filtered_memories.append(deepcopy(memory_data))
 
             total_count = len(filtered_memories)
 
@@ -499,9 +508,11 @@ class InMemoryDb(BaseDb):
             if not memory_updated:
                 self._memories.append(memory_dict)
 
+            memory_dict_copy = deepcopy(memory_dict)
             if not deserialize:
-                return memory_dict
-            return UserMemory.from_dict(memory_dict)
+                return memory_dict_copy
+
+            return UserMemory.from_dict(memory_dict_copy)
 
         except Exception as e:
             log_warning(f"Exception upserting user memory: {e}")
@@ -657,8 +668,8 @@ class InMemoryDb(BaseDb):
                 # Only include necessary fields for metrics
                 filtered_session = {
                     "user_id": session.get("user_id"),
-                    "session_data": session.get("session_data"),
-                    "runs": session.get("runs"),
+                    "session_data": deepcopy(session.get("session_data")),
+                    "runs": deepcopy(session.get("runs")),
                     "created_at": session.get("created_at"),
                     "session_type": session.get("session_type"),
                 }
@@ -688,7 +699,7 @@ class InMemoryDb(BaseDb):
                 if ending_date and metric_date > ending_date:
                     continue
 
-                filtered_metrics.append(metric)
+                filtered_metrics.append(deepcopy(metric))
 
                 updated_at = metric.get("updated_at")
                 if updated_at and (latest_updated_at is None or updated_at > latest_updated_at):
@@ -763,7 +774,7 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            knowledge_items = self._knowledge.copy()
+            knowledge_items = [deepcopy(item) for item in self._knowledge]
 
             total_count = len(knowledge_items)
 
@@ -858,9 +869,10 @@ class InMemoryDb(BaseDb):
         try:
             for run_data in self._eval_runs:
                 if run_data.get("run_id") == eval_run_id:
+                    run_data_copy = deepcopy(run_data)
                     if not deserialize:
-                        return run_data
-                    return EvalRunRecord.model_validate(run_data)
+                        return run_data_copy
+                    return EvalRunRecord.model_validate(run_data_copy)
 
             return None
 
@@ -906,7 +918,7 @@ class InMemoryDb(BaseDb):
                     elif filter_type == EvalFilterType.WORKFLOW and run_data.get("workflow_id") is None:
                         continue
 
-                filtered_runs.append(run_data)
+                filtered_runs.append(deepcopy(run_data))
 
             total_count = len(filtered_runs)
 
@@ -945,10 +957,11 @@ class InMemoryDb(BaseDb):
 
                     log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
 
+                    run_data_copy = deepcopy(run_data)
                     if not deserialize:
-                        return run_data
+                        return run_data_copy
 
-                    return EvalRunRecord.model_validate(run_data)
+                    return EvalRunRecord.model_validate(run_data_copy)
 
             return None
 

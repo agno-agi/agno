@@ -43,7 +43,7 @@ async def lifespan(app):
 agent_os = AgentOS(
     description="Example app with MCP Tools",
     agents=[agno_support_agent],
-    enable_mcp=True,
+    enable_mcp_server=True,
     lifespan=lifespan,
 )
 

@@ -715,6 +715,7 @@ class Model(ABC):
             assistant_message = Message(role=self.assistant_message_role)
             # Create assistant message and stream data
             stream_data = MessageData()
+            model_response = ModelResponse()
             if stream_model_response:
                 # Generate response
                 yield from self.process_response_stream(
@@ -744,7 +745,6 @@ class Model(ABC):
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
             else:
-                model_response = ModelResponse()
                 self._process_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
@@ -783,6 +783,10 @@ class Model(ABC):
                 if stream_data and stream_data.extra is not None:
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
+                    )
+                elif model_response and model_response.extra is not None:
+                    self.format_function_call_results(
+                        messages=messages, function_call_results=function_call_results, **model_response.extra
                     )
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
@@ -879,9 +883,10 @@ class Model(ABC):
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
             stream_data = MessageData()
+            model_response = ModelResponse()
             if stream_model_response:
                 # Generate response
-                async for response in self.aprocess_response_stream(
+                async for model_response in self.aprocess_response_stream(
                     messages=messages,
                     assistant_message=assistant_message,
                     stream_data=stream_data,
@@ -890,7 +895,7 @@ class Model(ABC):
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
                 ):
-                    yield response
+                    yield model_response
 
                 # Populate assistant message from stream data
                 if stream_data.response_content:
@@ -907,7 +912,6 @@ class Model(ABC):
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
             else:
-                model_response = ModelResponse()
                 await self._aprocess_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
@@ -947,6 +951,10 @@ class Model(ABC):
                 if stream_data and stream_data.extra is not None:
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
+                    )
+                elif model_response and model_response.extra is not None:
+                    self.format_function_call_results(
+                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                     )
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
@@ -1573,15 +1581,124 @@ class Model(ABC):
             *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
         )
 
-        # Process results
+        # Separate async generators from other results for concurrent processing
+        async_generator_results: List[Any] = []
+        non_async_generator_results: List[Any] = []
+
         for result in results:
-            # If result is an exception, skip processing it
             if isinstance(result, BaseException):
-                log_error(f"Error during function call: {result}")
-                raise result
+                non_async_generator_results.append(result)
+                continue
+
+            function_call_success, function_call_timer, function_call, function_execution_result = result
+
+            # Check if this result contains an async generator
+            if isinstance(function_call.result, (AsyncGeneratorType, AsyncIterator)):
+                async_generator_results.append(result)
+            else:
+                non_async_generator_results.append(result)
+
+        # Process async generators with real-time event streaming using asyncio.Queue
+        async_generator_outputs: Dict[int, Tuple[Any, str, Optional[BaseException]]] = {}
+        event_queue: asyncio.Queue = asyncio.Queue()
+        active_generators_count: int = len(async_generator_results)
+
+        # Create background tasks for each async generator
+        async def process_async_generator(result, generator_id):
+            function_call_success, function_call_timer, function_call, function_execution_result = result
+            function_call_output = ""
+
+            try:
+                async for item in function_call.result:
+                    # This function yields agent/team run events
+                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
+                        item, tuple(get_args(TeamRunOutputEvent))
+                    ):
+                        # We only capture content events
+                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
+                            if item.content is not None and isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                # Capture output
+                                function_call_output += item.content or ""
+
+                            if function_call.function.show_result:
+                                await event_queue.put(ModelResponse(content=item.content))
+                                continue
+
+                            if isinstance(item, CustomEvent):
+                                function_call_output += str(item)
+
+                        # Put the event into the queue to be yielded
+                        await event_queue.put(item)
+
+                    # Yield custom events emitted by the tool
+                    else:
+                        function_call_output += str(item)
+                        if function_call.function.show_result:
+                            await event_queue.put(ModelResponse(content=str(item)))
+
+                # Store the final output for this generator
+                async_generator_outputs[generator_id] = (result, function_call_output, None)
+
+            except Exception as e:
+                # Store the exception
+                async_generator_outputs[generator_id] = (result, "", e)
+
+            # Signal that this generator is done
+            await event_queue.put(("GENERATOR_DONE", generator_id))
+
+        # Start all async generator tasks
+        generator_tasks = []
+        for i, result in enumerate(async_generator_results):
+            task = asyncio.create_task(process_async_generator(result, i))
+            generator_tasks.append(task)
+
+        # Stream events from the queue as they arrive
+        completed_generators_count = 0
+        while completed_generators_count < active_generators_count:
+            try:
+                event = await event_queue.get()
+
+                # Check if this is a completion signal
+                if isinstance(event, tuple) and event[0] == "GENERATOR_DONE":
+                    completed_generators_count += 1
+                    continue
+
+                # Yield the actual event
+                yield event
+
+            except Exception as e:
+                log_error(f"Error processing async generator event: {e}")
+                break
+
+        # Now process all results (non-async generators and completed async generators)
+        for i, original_result in enumerate(results):
+            # If result is an exception, skip processing it
+            if isinstance(original_result, BaseException):
+                log_error(f"Error during function call: {original_result}")
+                raise original_result
 
             # Unpack result
-            function_call_success, function_call_timer, function_call, function_execution_result = result
+            function_call_success, function_call_timer, function_call, function_execution_result = original_result
+
+            # Check if this was an async generator that was already processed
+            async_function_call_output = None
+            if isinstance(function_call.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
+                # Find the corresponding processed result
+                async_gen_index = 0
+                for j, result in enumerate(results[: i + 1]):
+                    if not isinstance(result, BaseException):
+                        _, _, fc, _ = result
+                        if isinstance(fc.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
+                            if j == i:  # This is our async generator
+                                if async_gen_index in async_generator_outputs:
+                                    _, async_function_call_output, error = async_generator_outputs[async_gen_index]
+                                    if error:
+                                        log_error(f"Error in async generator: {error}")
+                                        raise error
+                                break
+                            async_gen_index += 1
 
             updated_session_state = function_execution_result.updated_session_state
 
@@ -1595,7 +1712,12 @@ class Model(ABC):
 
             # Process function call output
             function_call_output: str = ""
-            if isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
+
+            # Check if this was an async generator that was already processed
+            if async_function_call_output is not None:
+                function_call_output = async_function_call_output
+                # Events from async generators were already yielded in real-time above
+            elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
                 for item in function_call.result:
                     # This function yields agent/team run events
                     if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
@@ -1615,35 +1737,6 @@ class Model(ABC):
 
                         # Yield the event itself to bubble it up
                         yield item
-                    else:
-                        function_call_output += str(item)
-                        if function_call.function.show_result:
-                            yield ModelResponse(content=str(item))
-            elif isinstance(function_call.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
-                async for item in function_call.result:
-                    # This function yields agent/team run events
-                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                        item, tuple(get_args(TeamRunOutputEvent))
-                    ):
-                        # We only capture content events
-                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
-                            if item.content is not None and isinstance(item.content, BaseModel):
-                                function_call_output += item.content.model_dump_json()
-                            else:
-                                # Capture output
-                                function_call_output += item.content or ""
-
-                            if function_call.function.show_result:
-                                yield ModelResponse(content=item.content)
-                                continue
-
-                            if isinstance(item, CustomEvent):
-                                function_call_output += str(item)
-
-                        # Yield the event itself to bubble it up
-                        yield item
-
-                    # Yield custom events emitted by the tool
                     else:
                         function_call_output += str(item)
                         if function_call.function.show_result:
