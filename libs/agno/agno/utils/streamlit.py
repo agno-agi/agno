@@ -452,7 +452,7 @@ MODELS = [
     "gpt-4o",
     "o3-mini",
     "gpt-5",
-    "claude-4-sonnet",
+    "claude-sonnet-4-5-20250929",
     "gemini-2.5-pro",
 ]
 
