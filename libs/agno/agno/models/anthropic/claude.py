@@ -59,7 +59,7 @@ class Claude(Model):
     For more information, see: https://docs.anthropic.com/en/api/messages
     """
 
-    id: str = "claude-3-5-sonnet-20241022"
+    id: str = "claude-sonnet-4-5-20250929"
     name: str = "Claude"
     provider: str = "Anthropic"
 
