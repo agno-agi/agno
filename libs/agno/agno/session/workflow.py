@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 from agno.run.workflow import WorkflowRunOutput
 from agno.utils.log import logger
@@ -28,9 +28,6 @@ class WorkflowSession:
     # Workflow runs - stores WorkflowRunOutput objects in memory
     runs: Optional[List[WorkflowRunOutput]] = None
 
-    # Workflow agent responses - stores agent decisions and responses
-    workflow_agent_responses: Optional[List["WorkflowAgentResponse"]] = None
-
     # Session Data: session_name, session_state, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
     # Workflow configuration and metadata
@@ -46,9 +43,6 @@ class WorkflowSession:
     def __post_init__(self):
         if self.runs is None:
             self.runs = []
-
-        if self.workflow_agent_responses is None:
-            self.workflow_agent_responses = []
 
         # Ensure session_data, workflow_data, and metadata are dictionaries, not None
         if self.session_data is None:
@@ -84,6 +78,62 @@ class WorkflowSession:
         else:
             self.runs.append(run)
 
+    def get_workflow_history(self, num_runs: int = 3) -> List[Tuple[str, str]]:
+        """Get workflow history as structured data (input, response pairs)"""
+        if not self or not self.runs:
+            return []
+
+        from agno.run.base import RunStatus
+
+        # Get completed runs only (exclude current/pending run)
+        completed_runs = [run for run in self.runs if run.status == RunStatus.completed]
+        recent_runs = completed_runs[-num_runs:] if len(completed_runs) > num_runs else completed_runs
+
+        if not recent_runs:
+            return []
+
+        # Return structured data as list of (input, response) tuples
+        history_data = []
+        for run in recent_runs:
+            # Get input
+            input_str = ""
+            if run.input:
+                input_str = str(run.input) if not isinstance(run.input, str) else run.input
+
+            # Get response
+            response_str = ""
+            if run.content:
+                response_str = str(run.content) if not isinstance(run.content, str) else run.content
+
+            history_data.append((input_str, response_str))
+
+        return history_data
+
+    def get_workflow_history_context(self, num_runs: int = 3) -> Optional[str]:
+        """Get formatted workflow history context for steps"""
+        history_data = self.get_workflow_history(num_runs)
+
+        if not history_data:
+            return None
+
+        # Format as workflow context using the structured data
+        context_parts = ["<workflow_history_context>"]
+
+        for i, (input_str, response_str) in enumerate(history_data, 1):
+            context_parts.append(f"[run-{i}]")
+
+            if input_str:
+                context_parts.append(f"input: {input_str}")
+            if response_str:
+                context_parts.append(f"response: {response_str}")
+
+            context_parts.append("")  # Empty line between runs
+
+        context_parts.append("</workflow_history_context>")
+        context_parts.append("")  # Empty line before current input
+
+        return "\n".join(context_parts)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage, serializing runs to dicts"""
 
@@ -96,17 +146,12 @@ class WorkflowSession:
                 except Exception as e:
                     raise ValueError(f"Serialization failed: {str(e)}")
 
-        workflow_agent_responses_data = None
-        if self.workflow_agent_responses:
-            workflow_agent_responses_data = [resp.to_dict() for resp in self.workflow_agent_responses]
-
         return {
             "session_id": self.session_id,
             "user_id": self.user_id,
             "workflow_id": self.workflow_id,
             "workflow_name": self.workflow_name,
             "runs": runs_data,
-            "workflow_agent_responses": workflow_agent_responses_data,
             "session_data": self.session_data,
             "workflow_data": self.workflow_data,
             "metadata": self.metadata,
@@ -137,27 +182,12 @@ class WorkflowSession:
                 else:
                     logger.warning(f"Unexpected run item type: {type(run_item)}")
 
-        workflow_agent_responses_data = data.get("workflow_agent_responses")
-        workflow_agent_responses = None
-
-        if workflow_agent_responses_data is not None:
-            from agno.workflow.types import WorkflowAgentResponse
-
-            workflow_agent_responses = []
-            for resp_item in workflow_agent_responses_data:
-                if isinstance(resp_item, dict):
-                    workflow_agent_responses.append(WorkflowAgentResponse.from_dict(resp_item))
-                else:
-                    # Already a WorkflowAgentResponse object
-                    workflow_agent_responses.append(resp_item)
-
         return cls(
             session_id=data.get("session_id"),  # type: ignore
             user_id=data.get("user_id"),
             workflow_id=data.get("workflow_id"),
             workflow_name=data.get("workflow_name"),
             runs=runs,
-            workflow_agent_responses=workflow_agent_responses,
             session_data=data.get("session_data"),
             workflow_data=data.get("workflow_data"),
             metadata=data.get("metadata"),

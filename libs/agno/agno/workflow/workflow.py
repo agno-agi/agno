@@ -1954,44 +1954,6 @@ class Workflow:
 
         return None
 
-    def _build_workflow_history_context(self, session: WorkflowSession) -> str:
-        """Build context string from previous workflow runs for the workflow agent"""
-        if not session.runs or len(session.runs) == 0:
-            return "No previous workflow runs in this session."
-
-        context_parts = ["<workflow_history_context>"]
-
-        for idx, run in enumerate(session.runs, 1):
-            context_parts.append(f"[run-{idx}]")
-
-            # Add input
-            if run.input:
-                if isinstance(run.input, str):
-                    context_parts.append(f"input: {run.input}")
-                elif isinstance(run.input, BaseModel):
-                    context_parts.append(f"input: {run.input.model_dump_json(exclude_none=True)}")
-                else:
-                    context_parts.append(f"input: {str(run.input)}")
-
-            # Add response/content
-            if run.content:
-                if isinstance(run.content, str):
-                    # Truncate long responses
-                    content_str = run.content[:500] + "..." if len(run.content) > 500 else run.content
-                    context_parts.append(f"response: {content_str}")
-                elif isinstance(run.content, BaseModel):
-                    context_parts.append(f"response: {run.content.model_dump_json(exclude_none=True)}")
-                else:
-                    content_str = str(run.content)
-                    content_str = content_str[:500] + "..." if len(content_str) > 500 else content_str
-                    context_parts.append(f"response: {content_str}")
-
-            context_parts.append("")  # Empty line between runs
-
-        context_parts.append("</workflow_history_context>")
-
-        return "\n".join(context_parts)
-
     def _initialize_workflow_agent(
         self,
         session: WorkflowSession,
@@ -2017,8 +1979,9 @@ class Workflow:
 
     def _get_workflow_agent_dependencies(self, session: WorkflowSession) -> Dict[str, Any]:
         """Build dependencies dict with workflow context to pass to agent.run()"""
-        # Build workflow history context
-        history_context = self._build_workflow_history_context(session)
+        history_context = (
+            session.get_workflow_history_context(num_runs=5) or "No previous workflow runs in this session."
+        )
 
         # Build workflow context with description and history
         workflow_context = ""
@@ -2180,18 +2143,12 @@ class Workflow:
             workflow_run_response.status = RunStatus.completed
             workflow_run_response.workflow_agent_response = agent_response_data
 
-            # Append to session-level workflow_agent_responses
-            if session.workflow_agent_responses is None:
-                session.workflow_agent_responses = []
-            session.workflow_agent_responses.append(agent_response_data)
-
             # Update the run in session
             session.upsert_run(run=workflow_run_response)
             # Save session
             self.save_session(session=session)
 
-            log_debug(f"Total workflow agent responses in session: {len(session.workflow_agent_responses)}")
-            log_debug(f"Latest agent decision: workflow_executed={agent_response_data.workflow_executed}")
+            log_debug(f"Agent decision: workflow_executed={agent_response_data.workflow_executed}")
 
             # Yield a workflow completed event with the agent's direct response
             completed_event = WorkflowCompletedEvent(
@@ -2222,11 +2179,6 @@ class Workflow:
                 # Update the last run directly with workflow_agent_response
                 last_run.workflow_agent_response = agent_response_data
 
-                # Also append to the session-level list
-                if reloaded_session.workflow_agent_responses is None:
-                    reloaded_session.workflow_agent_responses = []
-                reloaded_session.workflow_agent_responses.append(agent_response_data)
-
                 # Save the reloaded session (which has the updated run)
                 self.save_session(session=reloaded_session)
 
@@ -2244,10 +2196,7 @@ class Workflow:
                 workflow_run_response.audio = last_run.audio
                 workflow_run_response.workflow_agent_response = agent_response_data
 
-                log_debug(
-                    f"Total workflow agent responses in reloaded session: {len(reloaded_session.workflow_agent_responses)}"
-                )
-                log_debug(f"Latest agent decision: workflow_executed={agent_response_data.workflow_executed}")
+                log_debug(f"Agent decision: workflow_executed={agent_response_data.workflow_executed}")
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
 
@@ -2271,11 +2220,6 @@ class Workflow:
         print(">>> FUNCTION START: _execute_workflow_agent_non_streaming")
         print(f"  session.session_id: {session.session_id}")
         print(f"  session.runs count: {len(session.runs) if session.runs else 0}")
-        print(
-            f"  session.workflow_agent_responses count: {len(session.workflow_agent_responses) if session.workflow_agent_responses else 0}"
-        )
-        if session.workflow_agent_responses:
-            print(f"  workflow_agent_responses: {[r.input[:30] for r in session.workflow_agent_responses]}")
         print("=" * 80)
 
         logger.info("Workflow agent enabled - analyzing user input")
@@ -2336,14 +2280,9 @@ class Workflow:
             workflow_run_response.status = RunStatus.completed
             workflow_run_response.workflow_agent_response = agent_response_data
 
-            if session.workflow_agent_responses is None:
-                session.workflow_agent_responses = []
-            session.workflow_agent_responses.append(agent_response_data)
-
             # Update the run in session
             print("--> DIRECT ANSWER: BEFORE upsert and save:")
             print(f"  session.runs count: {len(session.runs) if session.runs else 0}")
-            print(f"  session.workflow_agent_responses count: {len(session.workflow_agent_responses)}")
             print(f"  workflow_run_response.run_id: {workflow_run_response.run_id}")
             print(
                 f"  workflow_run_response.workflow_agent_response: {workflow_run_response.workflow_agent_response is not None}"
@@ -2360,8 +2299,7 @@ class Workflow:
             self.save_session(session=session)
             print("--> DIRECT ANSWER: SAVED session to DB")
 
-            log_debug(f"Total workflow agent responses in session: {len(session.workflow_agent_responses)}")
-            log_debug(f"Latest agent decision: workflow_executed={agent_response_data.workflow_executed}")
+            log_debug(f"Agent decision: workflow_executed={agent_response_data.workflow_executed}")
 
             return workflow_run_response
         else:
@@ -2378,9 +2316,6 @@ class Workflow:
             print(
                 f"  reloaded_session.runs count: {len(reloaded_session.runs) if reloaded_session and reloaded_session.runs else 0}"
             )
-            print(
-                f"  reloaded_session.workflow_agent_responses count: {len(reloaded_session.workflow_agent_responses) if reloaded_session and reloaded_session.workflow_agent_responses else 0}"
-            )
 
             if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
                 # Get the last run (which is the one just created by the tool)
@@ -2391,15 +2326,8 @@ class Workflow:
                 # Update the last run directly with workflow_agent_response
                 last_run.workflow_agent_response = agent_response_data
 
-                if reloaded_session.workflow_agent_responses is None:
-                    reloaded_session.workflow_agent_responses = []
-                reloaded_session.workflow_agent_responses.append(agent_response_data)
-
                 print("--> BEFORE saving updated reloaded session:")
                 print(f"  reloaded_session.runs count: {len(reloaded_session.runs)}")
-                print(
-                    f"  reloaded_session.workflow_agent_responses count: {len(reloaded_session.workflow_agent_responses)}"
-                )
                 print(f"  last_run.run_id: {last_run.run_id}")
                 print(f"  last_run.workflow_agent_response: {last_run.workflow_agent_response is not None}")
 
@@ -2421,10 +2349,7 @@ class Workflow:
                 workflow_run_response.audio = last_run.audio
                 workflow_run_response.workflow_agent_response = agent_response_data
 
-                log_debug(
-                    f"Total workflow agent responses in reloaded session: {len(reloaded_session.workflow_agent_responses)}"
-                )
-                log_debug(f"Latest agent decision: workflow_executed={agent_response_data.workflow_executed}")
+                log_debug(f"Agent decision: workflow_executed={agent_response_data.workflow_executed}")
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
 

@@ -49,7 +49,6 @@ print("\n\n" + "=" * 80)
 print("STREAMING MODE EXAMPLES")
 print("=" * 80)
 
-# Fifth call - streaming a new story
 print("\n" + "=" * 80)
 print("FIRST CALL (STREAMING): Tell me a story about a dog named Rocky")
 print("=" * 80)
@@ -59,12 +58,9 @@ workflow.print_response(
     stream_intermediate_steps=True,
 )
 
-# Sixth call - streaming answer from history
 print("\n" + "=" * 80)
 print("SECOND CALL (STREAMING): What was Rocky's personality?")
 print("=" * 80)
 workflow.print_response(
     "What was Rocky's personality?", stream=True, stream_intermediate_steps=True
 )
-
-# workflow.cli_app()

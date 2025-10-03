@@ -37,7 +37,6 @@ workflow = Workflow(
     description="A workflow that generates stories, formats them, and adds references",
     agent=workflow_agent,
     steps=[story_writer, story_formatter, add_references],
-    session_id="agentic_workflow_session",
     db=PostgresDb(db_url),
     # debug_mode=True,
 )

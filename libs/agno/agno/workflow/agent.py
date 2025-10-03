@@ -44,13 +44,15 @@ class WorkflowAgent(Agent):
             2. **Running the workflow** by calling the run_workflow tool ONCE when you need to process a new query
 
             Guidelines:
-            - Check the workflow history first to see if the answer already exists
-            - If the user asks about something that was already processed, answer directly from history
-            - If the user asks a new question that requires workflow execution, call the run_workflow tool ONCE
-            - After calling the tool, the result will be returned to you - use that result to answer the user
+            - ALWAYS check the workflow history first before calling the tool
+            - Answer directly from history if:
+              * The user asks about something already in history
+              * The user asks for comparisons/analysis of things in history (e.g., "compare X and Y")
+              * The user asks follow-up questions about previous results
+            - Only call the run_workflow tool for NEW topics not covered in history
             - IMPORTANT: Do NOT call the tool multiple times. Call it once and use the result.
             - Keep your responses concise and helpful
-            - When calling the workflow, pass a clear and concise query
+            - When you must call the workflow, pass a clear and concise query
 
             {workflow_context}
         """
@@ -103,13 +105,9 @@ class WorkflowAgent(Agent):
             fresh_session = workflow.get_session(session_id=session.session_id)
             if fresh_session is None:
                 fresh_session = session  # Fallback to closure session if reload fails
-                log_info(
-                    f"Fallback to closure session: {len(fresh_session.workflow_agent_responses or [])} agent responses"
-                )
+                log_info(f"Fallback to closure session: {len(fresh_session.runs or [])} runs")
             else:
-                log_info(
-                    f"Reloaded session before tool execution: {len(fresh_session.workflow_agent_responses or [])} agent responses"
-                )
+                log_info(f"Reloaded session before tool execution: {len(fresh_session.runs or [])} runs")
 
             # Create a new run ID for this execution
             run_id = str(uuid4())
