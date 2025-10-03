@@ -229,7 +229,7 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
 
 
 async def stream_a2a_response(
-    event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, RunStartedEvent]], request_id: Union[str, int]
+    event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, RunOutput]], request_id: Union[str, int]
 ) -> AsyncIterator[str]:
     """Stream the given event stream as A2A responses.
 
