@@ -1357,6 +1357,12 @@ class Knowledge:
             log_error(f"Error searching for documents: {e}")
             return []
 
+    def get_valid_filters(self) -> Set[str]:
+        if self.valid_metadata_filters is None:
+            self.valid_metadata_filters = set()
+        self.valid_metadata_filters.update(self._get_filters_from_db)
+        return self.valid_metadata_filters
+
     def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
         if self.valid_metadata_filters is None:
             self.valid_metadata_filters = set()
