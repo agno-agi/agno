@@ -132,10 +132,7 @@ def print_response(
             response_timer.stop()
 
             # Check if this is a workflow agent direct response
-            if (
-                workflow_response.workflow_agent_response is not None
-                and not workflow_response.workflow_agent_response.workflow_executed
-            ):
+            if workflow_response.workflow_agent_run is not None and not workflow_response.workflow_agent_run.tools:
                 # Agent answered directly from history without executing workflow
                 agent_response_panel = create_panel(
                     content=Markdown(str(workflow_response.content)) if markdown else str(workflow_response.content),

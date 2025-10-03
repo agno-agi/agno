@@ -81,7 +81,6 @@ from agno.workflow.types import (
     StepOutput,
     StepType,
     WebSocketHandler,
-    WorkflowAgentResponse,
     WorkflowExecutionInput,
     WorkflowMetrics,
 )
@@ -2122,13 +2121,11 @@ class Workflow:
                     f"Agent response: {str(agent_response.content)[:100] if agent_response.content else 'None'}..."
                 )
 
-        # Store the agent response in the session
-        agent_response_data = WorkflowAgentResponse(
-            input=agent_input,
-            agent_response=agent_response.content if agent_response else None,
-            workflow_executed=workflow_executed,
-            timestamp=int(datetime.now().timestamp()),
-        )
+        # Store the full agent RunOutput and establish parent-child relationship
+        if agent_response:
+            # Set parent_run_id to link agent run to this workflow run
+            agent_response.parent_run_id = workflow_run_response.run_id
+            agent_response.workflow_id = workflow_run_response.workflow_id
 
         # Handle direct answer case (no workflow execution)
         if not workflow_executed:
@@ -2141,14 +2138,14 @@ class Workflow:
 
             workflow_run_response.content = agent_response.content if agent_response else ""
             workflow_run_response.status = RunStatus.completed
-            workflow_run_response.workflow_agent_response = agent_response_data
+            workflow_run_response.workflow_agent_run = agent_response
 
             # Update the run in session
             session.upsert_run(run=workflow_run_response)
             # Save session
             self.save_session(session=session)
 
-            log_debug(f"Agent decision: workflow_executed={agent_response_data.workflow_executed}")
+            log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
             # Yield a workflow completed event with the agent's direct response
             completed_event = WorkflowCompletedEvent(
@@ -2176,8 +2173,8 @@ class Workflow:
                 log_debug(f"Retrieved latest workflow run: {last_run.run_id}")
                 log_debug(f"Total workflow runs in session: {len(reloaded_session.runs)}")
 
-                # Update the last run directly with workflow_agent_response
-                last_run.workflow_agent_response = agent_response_data
+                # Update the last run directly with workflow_agent_run
+                last_run.workflow_agent_run = agent_response
 
                 # Save the reloaded session (which has the updated run)
                 self.save_session(session=reloaded_session)
@@ -2194,9 +2191,9 @@ class Workflow:
                 workflow_run_response.images = last_run.images
                 workflow_run_response.videos = last_run.videos
                 workflow_run_response.audio = last_run.audio
-                workflow_run_response.workflow_agent_response = agent_response_data
+                workflow_run_response.workflow_agent_run = agent_response
 
-                log_debug(f"Agent decision: workflow_executed={agent_response_data.workflow_executed}")
+                log_debug(f"Agent decision: workflow_executed={workflow_executed}")
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
 
@@ -2259,13 +2256,11 @@ class Workflow:
 
         log_debug(f"Workflow agent execution complete. Workflow executed: {workflow_executed}")
 
-        # Store the agent response in the session
-        agent_response_data = WorkflowAgentResponse(
-            input=agent_input,
-            agent_response=agent_response.content if agent_response else None,
-            workflow_executed=workflow_executed,
-            timestamp=int(datetime.now().timestamp()),
-        )
+        # Store the full agent RunOutput and establish parent-child relationship
+        if agent_response:
+            # Set parent_run_id to link agent run to this workflow run
+            agent_response.parent_run_id = workflow_run_response.run_id
+            agent_response.workflow_id = workflow_run_response.workflow_id
 
         # Handle direct answer case (no workflow execution)
         if not workflow_executed:
@@ -2278,28 +2273,26 @@ class Workflow:
 
             workflow_run_response.content = agent_response.content
             workflow_run_response.status = RunStatus.completed
-            workflow_run_response.workflow_agent_response = agent_response_data
+            workflow_run_response.workflow_agent_run = agent_response
 
             # Update the run in session
             print("--> DIRECT ANSWER: BEFORE upsert and save:")
             print(f"  session.runs count: {len(session.runs) if session.runs else 0}")
             print(f"  workflow_run_response.run_id: {workflow_run_response.run_id}")
-            print(
-                f"  workflow_run_response.workflow_agent_response: {workflow_run_response.workflow_agent_response is not None}"
-            )
+            print(f"  workflow_run_response.workflow_agent_run: {workflow_run_response.workflow_agent_run is not None}")
 
             session.upsert_run(run=workflow_run_response)
 
             print("--> DIRECT ANSWER: AFTER upsert:")
             print(f"  session.runs count: {len(session.runs)}")
             for i, run in enumerate(session.runs):
-                has_agent_resp = run.workflow_agent_response is not None
-                print(f"    run[{i}]: run_id={run.run_id}, has_workflow_agent_response={has_agent_resp}")
+                has_agent_run = run.workflow_agent_run is not None
+                print(f"    run[{i}]: run_id={run.run_id}, has_workflow_agent_run={has_agent_run}")
 
             self.save_session(session=session)
             print("--> DIRECT ANSWER: SAVED session to DB")
 
-            log_debug(f"Agent decision: workflow_executed={agent_response_data.workflow_executed}")
+            log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
             return workflow_run_response
         else:
@@ -2323,13 +2316,13 @@ class Workflow:
                 log_debug(f"Retrieved latest workflow run: {last_run.run_id}")
                 log_debug(f"Total workflow runs in session: {len(reloaded_session.runs)}")
 
-                # Update the last run directly with workflow_agent_response
-                last_run.workflow_agent_response = agent_response_data
+                # Update the last run directly with workflow_agent_run
+                last_run.workflow_agent_run = agent_response
 
                 print("--> BEFORE saving updated reloaded session:")
                 print(f"  reloaded_session.runs count: {len(reloaded_session.runs)}")
                 print(f"  last_run.run_id: {last_run.run_id}")
-                print(f"  last_run.workflow_agent_response: {last_run.workflow_agent_response is not None}")
+                print(f"  last_run.workflow_agent_run: {last_run.workflow_agent_run is not None}")
 
                 # Save the reloaded session (which has the updated run)
                 self.save_session(session=reloaded_session)
@@ -2347,9 +2340,9 @@ class Workflow:
                 workflow_run_response.images = last_run.images
                 workflow_run_response.videos = last_run.videos
                 workflow_run_response.audio = last_run.audio
-                workflow_run_response.workflow_agent_response = agent_response_data
+                workflow_run_response.workflow_agent_run = agent_response
 
-                log_debug(f"Agent decision: workflow_executed={agent_response_data.workflow_executed}")
+                log_debug(f"Agent decision: workflow_executed={workflow_executed}")
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
 
