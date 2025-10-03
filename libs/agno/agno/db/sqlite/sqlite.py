@@ -504,10 +504,12 @@ class SqliteDb(BaseDb):
         """
         try:
             # Get the current session as a deserialized object
+            # Get the session record
             session = self.get_session(session_id, session_type, deserialize=True)
-            if session is None or not isinstance(session, (AgentSession, TeamSession, WorkflowSession)):
+            if session is None:
                 return None
 
+            session = cast(Session, session)
             # Update the session name
             if session.session_data is None:
                 session.session_data = {}
