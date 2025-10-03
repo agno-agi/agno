@@ -48,7 +48,7 @@ def test_custom_app_with_cors_middleware(test_agent: Agent):
     # Create AgentOS with custom app
     agent_os = AgentOS(
         agents=[test_agent],
-        fastapi_app=custom_app,
+        base_app=custom_app,
     )
 
     app = agent_os.get_app()
@@ -96,7 +96,7 @@ def test_cors_middleware_configuration_only(test_agent: Agent):
     # Create AgentOS with custom app
     agent_os = AgentOS(
         agents=[test_agent],
-        fastapi_app=custom_app,
+        base_app=custom_app,
     )
 
     app = agent_os.get_app()
@@ -150,7 +150,7 @@ def test_options_request_with_explicit_handler(test_agent: Agent):
     # Create AgentOS with custom app
     agent_os = AgentOS(
         agents=[test_agent],
-        fastapi_app=custom_app,
+        base_app=custom_app,
     )
 
     app = agent_os.get_app()
@@ -188,7 +188,7 @@ def test_custom_app_endpoints_preserved(test_agent: Agent):
     # Create AgentOS with custom app
     agent_os = AgentOS(
         agents=[test_agent],
-        fastapi_app=custom_app,
+        base_app=custom_app,
     )
 
     app = agent_os.get_app()
@@ -215,79 +215,6 @@ def test_custom_app_endpoints_preserved(test_agent: Agent):
     data = response.json()
     assert "name" in data
     assert "AgentOS API" in data["name"]
-
-
-def test_route_conflicts_replace_routes_true(test_agent: Agent):
-    """Test route conflict resolution when replace_routes=True (default)."""
-    # Create custom FastAPI app with conflicting routes
-    custom_app = FastAPI(title="Custom App")
-
-    @custom_app.get("/")
-    async def custom_home():
-        return {"message": "custom home"}
-
-    @custom_app.get("/health")
-    async def custom_health():
-        return {"status": "custom_ok"}
-
-    # Create AgentOS with custom app (replace_routes=True by default)
-    agent_os = AgentOS(
-        agents=[test_agent],
-        fastapi_app=custom_app,
-        replace_routes=True,
-    )
-
-    app = agent_os.get_app()
-    client = TestClient(app)
-
-    # AgentOS routes should override custom routes
-    response = client.get("/health")
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"  # AgentOS health endpoint
-
-    response = client.get("/")
-    assert response.status_code == 200
-    data = response.json()
-    assert "name" in data  # AgentOS home endpoint
-    assert "AgentOS API" in data["name"]
-
-
-def test_route_conflicts_replace_routes_false(test_agent: Agent):
-    """Test route conflict resolution when replace_routes=False."""
-    # Create custom FastAPI app with conflicting routes
-    custom_app = FastAPI(title="Custom App")
-
-    @custom_app.get("/")
-    async def custom_home():
-        return {"message": "custom home"}
-
-    @custom_app.get("/health")
-    async def custom_health():
-        return {"status": "custom_ok"}
-
-    # Create AgentOS with custom app and replace_routes=False
-    agent_os = AgentOS(
-        agents=[test_agent],
-        fastapi_app=custom_app,
-        replace_routes=False,
-    )
-
-    app = agent_os.get_app()
-    client = TestClient(app)
-
-    # Custom routes should be preserved
-    response = client.get("/health")
-    assert response.status_code == 200
-    assert response.json()["status"] == "custom_ok"  # Custom health endpoint
-
-    response = client.get("/")
-    assert response.status_code == 200
-    assert response.json() == {"message": "custom home"}  # Custom home endpoint
-
-    # Non-conflicting AgentOS routes should still be available
-    response = client.post("/agents/test-agent/runs", data={"message": "hello"})
-    # Should either work (200/202) or fail with specific error, not 404
-    assert response.status_code != 404
 
 
 def test_custom_lifespan_integration(test_agent: Agent):
@@ -342,7 +269,7 @@ def test_custom_app_middleware_preservation(test_agent: Agent):
     # Create AgentOS with custom app
     agent_os = AgentOS(
         agents=[test_agent],
-        fastapi_app=custom_app,
+        base_app=custom_app,
     )
 
     app = agent_os.get_app()
@@ -369,7 +296,7 @@ def test_available_endpoints_with_custom_app(test_agent: Agent, test_team: Team,
         agents=[test_agent],
         teams=[test_team],
         workflows=[test_workflow],
-        fastapi_app=custom_app,
+        base_app=custom_app,
     )
 
     app = agent_os.get_app()
@@ -408,7 +335,7 @@ def test_route_listing_with_custom_app(test_agent: Agent):
     # Create AgentOS with custom app
     agent_os = AgentOS(
         agents=[test_agent],
-        fastapi_app=custom_app,
+        base_app=custom_app,
     )
 
     routes = agent_os.get_routes()
@@ -455,7 +382,7 @@ def test_cors_origin_merging(test_agent: Agent):
         # Create AgentOS with custom app
         agent_os = AgentOS(
             agents=[test_agent],
-            fastapi_app=custom_app,
+            base_app=custom_app,
             settings=mock_settings,
         )
 
@@ -488,7 +415,7 @@ def test_exception_handling_with_custom_app(test_agent: Agent):
     # Create AgentOS with custom app
     agent_os = AgentOS(
         agents=[test_agent],
-        fastapi_app=custom_app,
+        base_app=custom_app,
     )
 
     app = agent_os.get_app()
@@ -518,7 +445,7 @@ def test_custom_app_docs_configuration(test_agent: Agent):
     # Create AgentOS with custom app
     agent_os = AgentOS(
         agents=[test_agent],
-        fastapi_app=custom_app,
+        base_app=custom_app,
     )
 
     app = agent_os.get_app()
@@ -561,7 +488,7 @@ def test_multiple_middleware_interaction(test_agent: Agent):
     # Create AgentOS with custom app
     agent_os = AgentOS(
         agents=[test_agent],
-        fastapi_app=custom_app,
+        base_app=custom_app,
     )
 
     app = agent_os.get_app()
@@ -580,3 +507,207 @@ def test_multiple_middleware_interaction(test_agent: Agent):
     # Check headers from middleware
     assert "X-First" in response.headers
     assert "X-Second" in response.headers
+
+
+# Additional Route Conflict Tests
+def test_multiple_conflicting_routes_preserve_agentos(test_agent: Agent):
+    """Test multiple conflicting routes when on_route_conflict="preserve_agentos"."""
+    # Create custom FastAPI app with multiple conflicting routes
+    custom_app = FastAPI(title="Custom App")
+
+    @custom_app.get("/")
+    async def custom_home():
+        return {"message": "custom home"}
+
+    @custom_app.get("/health")
+    async def custom_health():
+        return {"status": "custom_ok"}
+
+    @custom_app.get("/sessions")
+    async def custom_sessions():
+        return {"sessions": ["custom_session1", "custom_session2"]}
+
+    # Create AgentOS with custom app (on_route_conflict="preserve_agentos" by default)
+    agent_os = AgentOS(
+        agents=[test_agent],
+        base_app=custom_app,
+        on_route_conflict="preserve_agentos",
+    )
+
+    app = agent_os.get_app()
+    client = TestClient(app)
+
+    # All AgentOS routes should override custom routes
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"  # AgentOS health endpoint
+
+    response = client.get("/")
+    assert response.status_code == 200
+    data = response.json()
+    assert "name" in data  # AgentOS home endpoint
+    assert "AgentOS API" in data["name"]
+
+    response = client.get("/sessions")
+    assert response.status_code == 200
+    # Should be AgentOS sessions endpoint, not custom
+
+
+def test_multiple_conflicting_routes_preserve_base_app(test_agent: Agent):
+    """Test multiple conflicting routes when on_route_conflict="preserve_base_app"."""
+    # Create custom FastAPI app with multiple conflicting routes
+    custom_app = FastAPI(title="Custom App")
+
+    @custom_app.get("/")
+    async def custom_home():
+        return {"message": "custom home"}
+
+    @custom_app.get("/health")
+    async def custom_health():
+        return {"status": "custom_ok"}
+
+    @custom_app.get("/sessions")
+    async def custom_sessions():
+        return {"sessions": ["custom_session1", "custom_session2"]}
+
+    # Create AgentOS with custom app and on_route_conflict="preserve_base_app"
+    agent_os = AgentOS(
+        agents=[test_agent],
+        base_app=custom_app,
+        on_route_conflict="preserve_base_app",
+    )
+
+    app = agent_os.get_app()
+    client = TestClient(app)
+
+    # All custom routes should be preserved
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "custom_ok"  # Custom health endpoint
+
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.json() == {"message": "custom home"}  # Custom home endpoint
+
+    response = client.get("/sessions")
+    assert response.status_code == 200
+    sessions = response.json()["sessions"]
+    assert "custom_session1" in sessions  # Custom sessions endpoint
+
+
+def test_http_method_conflicts(test_agent: Agent):
+    """Test conflicts with different HTTP methods on same path."""
+    # Create custom FastAPI app with different methods on conflicting paths
+    custom_app = FastAPI(title="Custom App")
+
+    @custom_app.get("/health")
+    async def custom_health_get():
+        return {"status": "custom_get"}
+
+    @custom_app.post("/health")
+    async def custom_health_post():
+        return {"status": "custom_post"}
+
+    @custom_app.put("/health")
+    async def custom_health_put():
+        return {"status": "custom_put"}
+
+    # Create AgentOS with custom app
+    agent_os = AgentOS(
+        agents=[test_agent],
+        base_app=custom_app,
+        on_route_conflict="preserve_agentos",
+    )
+
+    app = agent_os.get_app()
+    client = TestClient(app)
+
+    # GET should be replaced by AgentOS
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"  # AgentOS health endpoint
+
+    # POST and PUT should remain custom since AgentOS health is only GET
+    response = client.post("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "custom_post"
+
+    response = client.put("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "custom_put"
+
+
+def test_complex_route_conflict_scenario(test_agent: Agent, test_team: Team, test_workflow: Workflow):
+    """Test complex scenario with multiple types of route conflicts."""
+    # Create custom FastAPI app with various conflicting routes
+    custom_app = FastAPI(title="Complex Custom App")
+
+    # Root level conflicts
+    @custom_app.get("/")
+    async def custom_root():
+        return {"app": "custom", "version": "1.0"}
+
+    @custom_app.get("/health")
+    async def custom_health():
+        return {"status": "custom_healthy"}
+
+    # Agent conflicts with different methods
+    @custom_app.get("/agents")
+    async def custom_agents_list():
+        return {"agents": ["custom1", "custom2"]}
+
+    @custom_app.post("/agents")
+    async def custom_agents_create():
+        return {"created": "custom_agent"}
+
+    # Team conflicts
+    @custom_app.get("/teams")
+    async def custom_teams():
+        return {"teams": ["custom_team"]}
+
+    # Workflow conflicts
+    @custom_app.get("/workflows")
+    async def custom_workflows():
+        return {"workflows": ["custom_workflow"]}
+
+    # Mixed parameterized conflicts
+    @custom_app.get("/agents/{agent_name}/status")
+    async def custom_agent_status(agent_name: str):
+        return {"agent": agent_name, "status": "custom_active"}
+
+    # Non-conflicting routes
+    @custom_app.get("/custom-only")
+    async def custom_only():
+        return {"message": "this should always work"}
+
+    # Test with on_route_conflict=True
+    agent_os = AgentOS(
+        agents=[test_agent],
+        teams=[test_team],
+        workflows=[test_workflow],
+        base_app=custom_app,
+        on_route_conflict="preserve_agentos",
+    )
+
+    app = agent_os.get_app()
+    client = TestClient(app)
+
+    # AgentOS should override conflicting GET routes
+    response = client.get("/")
+    assert response.status_code == 200
+    data = response.json()
+    assert "AgentOS" in str(data) or "name" in data  # AgentOS format
+
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"  # AgentOS health
+
+    # Non-conflicting custom routes should work
+    response = client.get("/custom-only")
+    assert response.status_code == 200
+    assert response.json()["message"] == "this should always work"
+
+    # Test POST agents (might not conflict if AgentOS doesn't have POST /agents)
+    response = client.post("/agents")
+    # Should either work (custom) or have specific AgentOS behavior
+    assert response.status_code != 404

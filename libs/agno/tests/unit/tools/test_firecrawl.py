@@ -177,7 +177,7 @@ def test_search(firecrawl_tools, mock_firecrawl):
     mock_firecrawl.search.return_value = mock_response
 
     # Call the method
-    result = firecrawl_tools.search("test query")
+    result = firecrawl_tools.search_web("test query")
     result_data = json.loads(result)
 
     # Verify results
@@ -196,7 +196,7 @@ def test_search_with_error(firecrawl_tools, mock_firecrawl):
     mock_firecrawl.search.return_value = mock_response
 
     # Call the method
-    result = firecrawl_tools.search("test query")
+    result = firecrawl_tools.search_web("test query")
 
     # Verify results
     assert result == "Error searching with the Firecrawl tool: Search failed"
@@ -215,7 +215,7 @@ def test_search_with_custom_params(firecrawl_tools, mock_firecrawl):
     firecrawl_tools.search_params = {"language": "en", "region": "us"}
 
     # Call the method
-    result = firecrawl_tools.search("test query")
+    result = firecrawl_tools.search_web("test query")
     result_data = json.loads(result)
 
     # Verify results

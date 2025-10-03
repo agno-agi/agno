@@ -160,6 +160,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -372,7 +373,9 @@ class OpenAIChat(Model):
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
-                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(
+                    response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+                ),
             )
             assistant_message.metrics.stop_timer()
 
@@ -449,7 +452,9 @@ class OpenAIChat(Model):
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
-                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(
+                    response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+                ),
             )
             assistant_message.metrics.stop_timer()
 
@@ -526,7 +531,9 @@ class OpenAIChat(Model):
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(
+                    response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+                ),
             ):
                 yield self._parse_provider_response_delta(chunk)
 
@@ -600,7 +607,9 @@ class OpenAIChat(Model):
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(
+                    response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+                ),
             )
 
             async for chunk in async_stream:
