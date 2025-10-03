@@ -146,21 +146,37 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
-    def _compress_tool_results(self, messages: List[Message]) -> None:
+    def _compress_tool_results(self, messages: List[Message], num_recent_to_compress: Optional[int] = None) -> None:
         """
-        Compress ALL tool results in messages by summarizing them via LLM.
+        Compress recent uncompressed tool results by summarizing them via LLM.
 
-        Replaces verbose tool result content with concise summaries while preserving
-        key information (entities, numbers, facts) that the agent might reference later.
+        Uses batch compression strategy: compresses only the most recent N tool results
+        that haven't been compressed yet, avoiding re-compression of previous batches.
 
         Args:
             messages: Full conversation history containing tool results to compress
+            num_recent_to_compress: Number of recent tool results to compress.
+            If None, compresses all tool results (legacy behavior).
         """
         import json
         from textwrap import dedent
 
         # Find all tool result messages
-        tool_result_messages = [m for m in messages if m.role == "tool"]
+        all_tool_messages = [m for m in messages if m.role == "tool"]
+
+        if not all_tool_messages:
+            return
+
+        # Determine which messages to compress
+        if num_recent_to_compress is not None and num_recent_to_compress > 0:
+            # Compress only the most recent N tool results (batch compression)
+            if len(all_tool_messages) < num_recent_to_compress:
+                tool_result_messages = all_tool_messages
+            else:
+                tool_result_messages = all_tool_messages[-num_recent_to_compress:]
+        else:
+            # Legacy: compress all tool results
+            tool_result_messages = all_tool_messages
 
         if not tool_result_messages:
             return
@@ -444,13 +460,12 @@ class Model(ABC):
                         # Compress when threshold is exceeded (batch & reset strategy)
                         if compress_context and tool_calls_compression_threshold is not None:
                             if uncompressed_count > tool_calls_compression_threshold:
-                                tool_count = len([m for m in messages if m.role == "tool"])
                                 log_info(
-                                    f"🗜️  Compressing {tool_count} tool results (threshold: {tool_calls_compression_threshold} exceeded)"
+                                    f"🗜️  Compressing batch of {uncompressed_count} tool results (threshold: {tool_calls_compression_threshold} exceeded)"
                                 )
 
-                                # Compress ALL tool results in messages
-                                self._compress_tool_results(messages)
+                                # Compress only the recent uncompressed batch, not already-compressed ones
+                                self._compress_tool_results(messages, num_recent_to_compress=uncompressed_count)
 
                                 # Reset uncompressed counter
                                 uncompressed_count = 0
@@ -636,13 +651,12 @@ class Model(ABC):
                         # Compress when threshold is exceeded (batch & reset strategy)
                         if compress_context and tool_calls_compression_threshold is not None:
                             if uncompressed_count > tool_calls_compression_threshold:
-                                tool_count = len([m for m in messages if m.role == "tool"])
                                 log_info(
-                                    f"🗜️  Compressing {tool_count} tool results (threshold: {tool_calls_compression_threshold} exceeded)"
+                                    f"🗜️  Compressing batch of {uncompressed_count} tool results (threshold: {tool_calls_compression_threshold} exceeded)"
                                 )
 
-                                # Compress ALL tool results in messages
-                                self._compress_tool_results(messages)
+                                # Compress only the recent uncompressed batch, not already-compressed ones
+                                self._compress_tool_results(messages, num_recent_to_compress=uncompressed_count)
 
                                 # Reset uncompressed counter
                                 uncompressed_count = 0

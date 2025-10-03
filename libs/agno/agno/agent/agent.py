@@ -216,10 +216,12 @@ class Agent:
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
-    # Tool call compression - intelligent context reduction
-    # If True, compress old tool result contents while preserving message structure
+    # Tool call compression - batch compression for context management
+    # If True, compress tool results in batches to reduce context size
+    # Strategy: Accumulate N uncompressed results, then compress that batch
     compress_context: bool = False
-    # Number of recent tool results to keep uncompressed (older ones get compressed)
+    # Compress tool results when this many accumulate (batch compression threshold)
+    # Example: threshold=3 means compress after tools 1,2,3 execute, then start fresh batch with tool 4
     tool_calls_compression_threshold: int = 3
 
     # A function that acts as middleware and is called around tool calls.
