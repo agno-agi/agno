@@ -191,6 +191,11 @@ competitor_analysis_agent = Agent(
     markdown=True,
     add_datetime_to_context=True,
     stream_intermediate_steps=True,
+    # Enable tool call forgetting for competitive analysis with multiple searches
+    # This keeps only the most recent 10 searches/scrapes in context
+    forget_tool_calls=True,
+    tool_call_window=10,
+    debug_mode=True,
 )
 
 competitor_analysis_agent.print_response(

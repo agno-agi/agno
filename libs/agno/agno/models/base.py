@@ -29,7 +29,7 @@ from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEve
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
 
@@ -61,6 +61,41 @@ def _log_messages(messages: List[Message]) -> None:
     for m in messages:
         # Don't log metrics for input messages
         m.log(metrics=False)
+
+
+def _log_messages_sent_to_api(messages: List[Message]) -> None:
+    """
+    Log message structure being sent to API, with focus on tool_calls.
+    This helps verify that forgotten tool calls are properly removed.
+    """
+    log_info("=" * 80)
+    log_info("📤 MESSAGES BEING SENT TO MODEL API")
+    log_info("=" * 80)
+
+    for i, msg in enumerate(messages):
+        role_info = f"[{i}] {msg.role.upper()}"
+
+        if msg.role == "assistant" and msg.tool_calls:
+            tool_call_ids = [tc.get("id", "no-id") for tc in msg.tool_calls]
+            log_info(f"{role_info} (tool_calls: {len(msg.tool_calls)}) IDs: {tool_call_ids}")
+        elif msg.role == "tool":
+            log_info(f"{role_info} (tool_call_id: {msg.tool_call_id})")
+        else:
+            content_preview = str(msg.content)[:60] if msg.content else "(empty)"
+            log_info(f"{role_info}: {content_preview}...")
+
+    # Summary
+    assistant_msgs = [m for m in messages if m.role == "assistant"]
+    tool_result_msgs = [m for m in messages if m.role == "tool"]
+    total_tool_calls = sum(len(m.tool_calls or []) for m in assistant_msgs)
+
+    log_info("-" * 80)
+    log_info(
+        f"📊 Summary: {len(messages)} messages | "
+        f"{total_tool_calls} tool_use blocks | "
+        f"{len(tool_result_msgs)} tool_result blocks"
+    )
+    log_info("=" * 80)
 
 
 def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional[List[Message]] = None) -> None:
@@ -145,6 +180,68 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
+    def _filter_messages(self, messages: List[Message], tool_call_window: int) -> int:
+        """
+        Filter messages to keep only the most recent N tool calls.
+
+        Args:
+            messages: List of messages
+            tool_call_window: Number of recent tool calls to keep
+
+        Returns:
+            Number of tool calls filtered out
+        """
+        # Count total tool calls (not messages) - each tool result = 1 tool call
+        total_tool_calls = sum(1 for m in messages if m.role == "tool")
+
+        if total_tool_calls <= tool_call_window:
+            return 0
+
+        # Collect tool_call_ids to keep (most recent N)
+        tool_call_ids_to_keep = []
+        for msg in reversed(messages):
+            if msg.role == "tool" and len(tool_call_ids_to_keep) < tool_call_window:
+                if msg.tool_call_id:
+                    tool_call_ids_to_keep.append(msg.tool_call_id)
+
+        tool_call_ids_to_keep = set(tool_call_ids_to_keep)
+
+        # Filter messages in-place
+        filtered_messages = []
+        for msg in messages:
+            if msg.role == "tool":
+                # Keep only tool results in our window
+                if msg.tool_call_id in tool_call_ids_to_keep:
+                    filtered_messages.append(msg)
+            elif msg.role == "assistant" and msg.tool_calls:
+                # Filter tool_calls within the assistant message
+                import copy
+
+                filtered_msg = copy.copy(msg)
+                filtered_msg.tool_calls = [tc for tc in msg.tool_calls if tc.get("id") in tool_call_ids_to_keep]
+                if filtered_msg.tool_calls:
+                    # Has tool_calls remaining, keep it
+                    filtered_messages.append(filtered_msg)
+                elif filtered_msg.content:
+                    # No tool_calls left but has content (e.g., thinking text), keep it
+                    filtered_msg.tool_calls = None
+                    filtered_messages.append(filtered_msg)
+            else:
+                # Keep all non-tool messages
+                filtered_messages.append(msg)
+
+        # Replace messages list in-place
+        messages[:] = filtered_messages
+
+        # Return number filtered
+        num_filtered = total_tool_calls - len(tool_call_ids_to_keep)
+        if num_filtered > 0:
+            log_info(
+                f"🗑️  Keeping last {tool_call_window} tool call cycles (filtered out {num_filtered} older tool calls)"
+            )
+
+        return num_filtered
+
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
         pass
@@ -197,6 +294,8 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
+        forget_tool_calls: bool = False,
+        tool_call_window: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -326,6 +425,11 @@ class Model(ABC):
                 # If we have any tool calls that require user input, break the loop
                 if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                     break
+
+                # Apply message filtering if forget_tool_calls is enabled (sliding window)
+                # This filters AFTER tool results are added, BEFORE next API call
+                if forget_tool_calls and tool_call_window is not None:
+                    self._filter_messages(messages, tool_call_window)
 
                 # Continue loop to get next response
                 continue
@@ -497,6 +601,9 @@ class Model(ABC):
         Returns:
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
+        # Log messages being sent to API (helps verify tool call forgetting)
+        _log_messages_sent_to_api(messages)
+
         # Generate response
         provider_response = self.invoke(
             assistant_message=assistant_message,
@@ -550,6 +657,9 @@ class Model(ABC):
         Returns:
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
+        # Log messages being sent to API (helps verify tool call forgetting)
+        _log_messages_sent_to_api(messages)
+
         # Generate response
         provider_response = await self.ainvoke(
             messages=messages,
@@ -700,6 +810,8 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
+        forget_tool_calls: bool = False,
+        tool_call_window: Optional[int] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -818,6 +930,11 @@ class Model(ABC):
                 if any(fc.function.requires_user_input for fc in function_calls_to_run):
                     break
 
+                # Apply message filtering if forget_tool_calls is enabled (sliding window)
+                # This filters AFTER tool results are added, BEFORE next API call
+                if forget_tool_calls and tool_call_window is not None:
+                    self._filter_messages(messages, tool_call_window)
+
                 # Continue loop to get next response
                 continue
 
@@ -868,6 +985,8 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
+        forget_tool_calls: bool = False,
+        tool_call_window: Optional[int] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -985,6 +1104,11 @@ class Model(ABC):
                 # If we have any tool calls that require user input, break the loop
                 if any(fc.function.requires_user_input for fc in function_calls_to_run):
                     break
+
+                # Apply message filtering if forget_tool_calls is enabled (sliding window)
+                # This filters AFTER tool results are added, BEFORE next API call
+                if forget_tool_calls and tool_call_window is not None:
+                    self._filter_messages(messages, tool_call_window)
 
                 # Continue loop to get next response
                 continue
