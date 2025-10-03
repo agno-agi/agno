@@ -1,7 +1,7 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
