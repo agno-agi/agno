@@ -1,32 +1,33 @@
-"""Integration tests for the Session related methods of the PostgresDb class"""
+"""Integration tests for the Session related methods of the SqliteDb class"""
 
 import time
 from datetime import datetime
 
 import pytest
-from sqlalchemy import text
 
 from agno.db.base import SessionType
-from agno.db.postgres.postgres import PostgresDb
+from agno.db.sqlite.sqlite import SqliteDb
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session.agent import AgentSession
 from agno.session.summary import SessionSummary
 from agno.session.team import TeamSession
+from agno.workflow.workflow import WorkflowSession
 
 
 @pytest.fixture(autouse=True)
-def cleanup_sessions(postgres_db_real: PostgresDb):
+def cleanup_sessions(sqlite_db_real: SqliteDb):
     """Fixture to clean-up session rows after each test"""
     yield
 
-    with postgres_db_real.Session() as session:
+    with sqlite_db_real.Session() as session:
         try:
-            sessions_table = postgres_db_real._get_table("sessions")
+            sessions_table = sqlite_db_real._get_table("sessions")
             if sessions_table is not None:
                 session.execute(sessions_table.delete())
-            session.commit()
+                session.commit()
         except Exception:
             session.rollback()
 
@@ -57,6 +58,25 @@ def sample_agent_session() -> AgentSession:
 
 
 @pytest.fixture
+def sample_workflow_session() -> WorkflowSession:
+    """Fixture returning a sample WorkflowSession"""
+    workflow_run = WorkflowRunOutput(
+        run_id="test_workflow_run_1", status=RunStatus.completed, workflow_id="test_workflow_1"
+    )
+    return WorkflowSession(
+        session_id="test_workflow_session_1",
+        workflow_id="test_workflow_1",
+        user_id="test_user_1",
+        session_data={"session_name": "Test Workflow Session", "key": "value"},
+        workflow_data={"name": "Test Workflow", "model": "gpt-4"},
+        metadata={"extra_key": "extra_value"},
+        runs=[workflow_run],
+        created_at=int(time.time()),
+        updated_at=int(time.time()),
+    )
+
+
+@pytest.fixture
 def sample_team_session() -> TeamSession:
     """Fixture returning a sample TeamSession"""
     team_run = TeamRunOutput(
@@ -80,30 +100,9 @@ def sample_team_session() -> TeamSession:
     )
 
 
-def test_session_table_constraint_exists(postgres_db_real: PostgresDb):
-    """Ensure the session table has the expected unique constraint on session_id"""
-    with postgres_db_real.Session() as session:
-        # Ensure table is created by calling _get_table with create_table_if_not_found=True
-        table = postgres_db_real._get_table(table_type="sessions", create_table_if_not_found=True)
-        assert table is not None, "Session table should be created"
-
-        result = session.execute(
-            text(
-                "SELECT constraint_name FROM information_schema.table_constraints "
-                "WHERE table_schema = :schema AND table_name = :table AND constraint_type = 'UNIQUE'"
-            ),
-            {"schema": postgres_db_real.db_schema, "table": postgres_db_real.session_table_name},
-        )
-        constraint_names = [row[0] for row in result.fetchall()]
-        expected_constraint = f"{postgres_db_real.session_table_name}_uq_session_id"
-        assert expected_constraint in constraint_names, (
-            f"Session table missing unique constraint {expected_constraint}. Found: {constraint_names}"
-        )
-
-
-def test_insert_agent_session(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
+def test_insert_agent_session(sqlite_db_real: SqliteDb, sample_agent_session: AgentSession):
     """Ensure the upsert method works as expected when inserting a new AgentSession"""
-    result = postgres_db_real.upsert_session(sample_agent_session)
+    result = sqlite_db_real.upsert_session(sample_agent_session)
 
     assert result is not None
     assert isinstance(result, AgentSession)
@@ -114,16 +113,16 @@ def test_insert_agent_session(postgres_db_real: PostgresDb, sample_agent_session
     assert result.agent_data == sample_agent_session.agent_data
 
 
-def test_update_agent_session(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
+def test_update_agent_session(sqlite_db_real: SqliteDb, sample_agent_session: AgentSession):
     """Ensure the upsert method works as expected when updating an existing AgentSession"""
     # Inserting
-    postgres_db_real.upsert_session(sample_agent_session)
+    sqlite_db_real.upsert_session(sample_agent_session)
 
     # Updating
     sample_agent_session.session_data = {"session_name": "Updated Session", "updated": True}
     sample_agent_session.agent_data = {"foo": "bar"}
 
-    result = postgres_db_real.upsert_session(sample_agent_session)
+    result = sqlite_db_real.upsert_session(sample_agent_session)
 
     assert result is not None
     assert isinstance(result, AgentSession)
@@ -138,9 +137,9 @@ def test_update_agent_session(postgres_db_real: PostgresDb, sample_agent_session
     assert result.runs[0].run_id == sample_agent_session.runs[0].run_id
 
 
-def test_insert_team_session(postgres_db_real: PostgresDb, sample_team_session: TeamSession):
+def test_insert_team_session(sqlite_db_real: SqliteDb, sample_team_session: TeamSession):
     """Ensure the upsert method works as expected when inserting a new TeamSession"""
-    result = postgres_db_real.upsert_session(sample_team_session)
+    result = sqlite_db_real.upsert_session(sample_team_session)
 
     assert result is not None
     assert isinstance(result, TeamSession)
@@ -156,16 +155,16 @@ def test_insert_team_session(postgres_db_real: PostgresDb, sample_team_session: 
     assert result.runs[0].run_id == sample_team_session.runs[0].run_id
 
 
-def test_update_team_session(postgres_db_real: PostgresDb, sample_team_session: TeamSession):
+def test_update_team_session(sqlite_db_real: SqliteDb, sample_team_session: TeamSession):
     """Ensure the upsert method works as expected when updating an existing TeamSession"""
     # Inserting
-    postgres_db_real.upsert_session(sample_team_session)
+    sqlite_db_real.upsert_session(sample_team_session)
 
     # Update
     sample_team_session.session_data = {"session_name": "Updated Team Session", "updated": True}
     sample_team_session.team_data = {"foo": "bar"}
 
-    result = postgres_db_real.upsert_session(sample_team_session)
+    result = sqlite_db_real.upsert_session(sample_team_session)
 
     assert result is not None
     assert isinstance(result, TeamSession)
@@ -175,22 +174,22 @@ def test_update_team_session(postgres_db_real: PostgresDb, sample_team_session: 
     assert result.team_data["foo"] == "bar"
 
 
-def test_upserting_without_deserialization(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
+def test_upserting_without_deserialization(sqlite_db_real: SqliteDb, sample_agent_session: AgentSession):
     """Ensure the upsert method works as expected when upserting a session without deserialization"""
-    result = postgres_db_real.upsert_session(sample_agent_session, deserialize=False)
+    result = sqlite_db_real.upsert_session(sample_agent_session, deserialize=False)
 
     assert result is not None
     assert isinstance(result, dict)
     assert result["session_id"] == sample_agent_session.session_id
 
 
-def test_get_agent_session_by_id(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
+def test_get_agent_session_by_id(sqlite_db_real: SqliteDb, sample_agent_session: AgentSession):
     """Ensure the get_session method works as expected when retrieving an AgentSession by session_id"""
     # Insert session first
-    postgres_db_real.upsert_session(sample_agent_session)
+    sqlite_db_real.upsert_session(sample_agent_session)
 
     # Retrieve session
-    result = postgres_db_real.get_session(session_id=sample_agent_session.session_id, session_type=SessionType.AGENT)
+    result = sqlite_db_real.get_session(session_id=sample_agent_session.session_id, session_type=SessionType.AGENT)
 
     assert result is not None
     assert isinstance(result, AgentSession)
@@ -198,13 +197,13 @@ def test_get_agent_session_by_id(postgres_db_real: PostgresDb, sample_agent_sess
     assert result.agent_id == sample_agent_session.agent_id
 
 
-def test_get_team_session_by_id(postgres_db_real: PostgresDb, sample_team_session: TeamSession):
+def test_get_team_session_by_id(sqlite_db_real: SqliteDb, sample_team_session: TeamSession):
     """Ensure the get_session method works as expected when retrieving a TeamSession by session_id"""
     # Insert session first
-    postgres_db_real.upsert_session(sample_team_session)
+    sqlite_db_real.upsert_session(sample_team_session)
 
     # Retrieve session
-    result = postgres_db_real.get_session(session_id=sample_team_session.session_id, session_type=SessionType.TEAM)
+    result = sqlite_db_real.get_session(session_id=sample_team_session.session_id, session_type=SessionType.TEAM)
 
     assert result is not None
     assert isinstance(result, TeamSession)
@@ -212,13 +211,13 @@ def test_get_team_session_by_id(postgres_db_real: PostgresDb, sample_team_sessio
     assert result.team_id == sample_team_session.team_id
 
 
-def test_get_session_with_user_id_filter(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
+def test_get_session_with_user_id_filter(sqlite_db_real: SqliteDb, sample_agent_session: AgentSession):
     """Ensure the get_session method works as expected when retrieving a session with user_id filter"""
     # Insert session
-    postgres_db_real.upsert_session(sample_agent_session)
+    sqlite_db_real.upsert_session(sample_agent_session)
 
     # Get with correct user_id
-    result = postgres_db_real.get_session(
+    result = sqlite_db_real.get_session(
         session_id=sample_agent_session.session_id,
         user_id=sample_agent_session.user_id,
         session_type=SessionType.AGENT,
@@ -226,7 +225,7 @@ def test_get_session_with_user_id_filter(postgres_db_real: PostgresDb, sample_ag
     assert result is not None
 
     # Get with wrong user_id
-    result = postgres_db_real.get_session(
+    result = sqlite_db_real.get_session(
         session_id=sample_agent_session.session_id,
         user_id="wrong_user",
         session_type=SessionType.AGENT,
@@ -234,13 +233,13 @@ def test_get_session_with_user_id_filter(postgres_db_real: PostgresDb, sample_ag
     assert result is None
 
 
-def test_get_session_without_deserialization(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
+def test_get_session_without_deserialization(sqlite_db_real: SqliteDb, sample_agent_session: AgentSession):
     """Ensure the get_session method works as expected when retrieving a session without deserialization"""
     # Insert session
-    postgres_db_real.upsert_session(sample_agent_session)
+    sqlite_db_real.upsert_session(sample_agent_session)
 
     # Retrieve as dict
-    result = postgres_db_real.get_session(
+    result = sqlite_db_real.get_session(
         session_id=sample_agent_session.session_id, session_type=SessionType.AGENT, deserialize=False
     )
 
@@ -250,52 +249,52 @@ def test_get_session_without_deserialization(postgres_db_real: PostgresDb, sampl
 
 
 def test_get_all_sessions(
-    postgres_db_real: PostgresDb,
+    sqlite_db_real: SqliteDb,
     sample_agent_session: AgentSession,
     sample_team_session: TeamSession,
 ):
     """Ensure the get_sessions method works as expected when retrieving all sessions"""
     # Insert both sessions
-    postgres_db_real.upsert_session(sample_agent_session)
-    postgres_db_real.upsert_session(sample_team_session)
+    sqlite_db_real.upsert_session(sample_agent_session)
+    sqlite_db_real.upsert_session(sample_team_session)
 
     # Get all agent sessions
-    agent_sessions = postgres_db_real.get_sessions(session_type=SessionType.AGENT)
+    agent_sessions = sqlite_db_real.get_sessions(session_type=SessionType.AGENT)
     assert len(agent_sessions) == 1
     assert isinstance(agent_sessions[0], AgentSession)
 
     # Get all team sessions
-    team_sessions = postgres_db_real.get_sessions(session_type=SessionType.TEAM)
+    team_sessions = sqlite_db_real.get_sessions(session_type=SessionType.TEAM)
     assert len(team_sessions) == 1
     assert isinstance(team_sessions[0], TeamSession)
 
 
-def test_filtering_by_user_id(postgres_db_real: PostgresDb):
+def test_filtering_by_user_id(sqlite_db_real: SqliteDb):
     """Ensure the get_sessions method works as expected when filtering by user_id"""
     # Create sessions with different user_ids
     session1 = AgentSession(session_id="session1", agent_id="agent1", user_id="user1", created_at=int(time.time()))
     session2 = AgentSession(session_id="session2", agent_id="agent2", user_id="user2", created_at=int(time.time()))
 
-    postgres_db_real.upsert_session(session1)
-    postgres_db_real.upsert_session(session2)
+    sqlite_db_real.upsert_session(session1)
+    sqlite_db_real.upsert_session(session2)
 
     # Filter by user1
-    user1_sessions = postgres_db_real.get_sessions(session_type=SessionType.AGENT, user_id="user1")
+    user1_sessions = sqlite_db_real.get_sessions(session_type=SessionType.AGENT, user_id="user1")
     assert len(user1_sessions) == 1
     assert user1_sessions[0].user_id == "user1"
 
 
-def test_filtering_by_component_id(postgres_db_real: PostgresDb):
+def test_filtering_by_component_id(sqlite_db_real: SqliteDb):
     """Ensure the get_sessions method works as expected when filtering by component_id (agent_id/team_id)"""
     # Create sessions with different agent_ids
     session1 = AgentSession(session_id="session1", agent_id="agent1", user_id="user1", created_at=int(time.time()))
     session2 = AgentSession(session_id="session2", agent_id="agent2", user_id="user1", created_at=int(time.time()))
 
-    postgres_db_real.upsert_session(session1)
-    postgres_db_real.upsert_session(session2)
+    sqlite_db_real.upsert_session(session1)
+    sqlite_db_real.upsert_session(session2)
 
     # Filter by agent_id
-    agent1_sessions = postgres_db_real.get_sessions(
+    agent1_sessions = sqlite_db_real.get_sessions(
         session_type=SessionType.AGENT,
         component_id="agent1",
     )
@@ -304,7 +303,7 @@ def test_filtering_by_component_id(postgres_db_real: PostgresDb):
     assert agent1_sessions[0].agent_id == "agent1"
 
 
-def test_get_sessions_with_pagination(postgres_db_real: PostgresDb):
+def test_get_sessions_with_pagination(sqlite_db_real: SqliteDb):
     """Test retrieving sessions with pagination"""
 
     # Create multiple sessions
@@ -314,13 +313,13 @@ def test_get_sessions_with_pagination(postgres_db_real: PostgresDb):
             session_id=f"session_{i}", agent_id=f"agent_{i}", user_id="test_user", created_at=int(time.time()) + i
         )
         sessions.append(session)
-        postgres_db_real.upsert_session(session)
+        sqlite_db_real.upsert_session(session)
 
     # Test pagination
-    page1 = postgres_db_real.get_sessions(session_type=SessionType.AGENT, limit=2, page=1)
+    page1 = sqlite_db_real.get_sessions(session_type=SessionType.AGENT, limit=2, page=1)
     assert len(page1) == 2
 
-    page2 = postgres_db_real.get_sessions(session_type=SessionType.AGENT, limit=2, page=2)
+    page2 = sqlite_db_real.get_sessions(session_type=SessionType.AGENT, limit=2, page=2)
     assert len(page2) == 2
 
     # Verify no overlap
@@ -330,7 +329,7 @@ def test_get_sessions_with_pagination(postgres_db_real: PostgresDb):
     assert len(page1_ids & page2_ids) == 0
 
 
-def test_get_sessions_with_sorting(postgres_db_real: PostgresDb):
+def test_get_sessions_with_sorting(sqlite_db_real: SqliteDb):
     """Test retrieving sessions with sorting"""
     from agno.db.base import SessionType
     from agno.session.agent import AgentSession
@@ -340,25 +339,23 @@ def test_get_sessions_with_sorting(postgres_db_real: PostgresDb):
     session1 = AgentSession(session_id="session1", agent_id="agent1", created_at=base_time + 100)
     session2 = AgentSession(session_id="session2", agent_id="agent2", created_at=base_time + 200)
 
-    postgres_db_real.upsert_session(session1)
-    postgres_db_real.upsert_session(session2)
+    sqlite_db_real.upsert_session(session1)
+    sqlite_db_real.upsert_session(session2)
 
     # Sort by created_at ascending
-    sessions_asc = postgres_db_real.get_sessions(session_type=SessionType.AGENT, sort_by="created_at", sort_order="asc")
+    sessions_asc = sqlite_db_real.get_sessions(session_type=SessionType.AGENT, sort_by="created_at", sort_order="asc")
     assert sessions_asc is not None and isinstance(sessions_asc, list)
     assert sessions_asc[0].session_id == "session1"
     assert sessions_asc[1].session_id == "session2"
 
     # Sort by created_at descending
-    sessions_desc = postgres_db_real.get_sessions(
-        session_type=SessionType.AGENT, sort_by="created_at", sort_order="desc"
-    )
+    sessions_desc = sqlite_db_real.get_sessions(session_type=SessionType.AGENT, sort_by="created_at", sort_order="desc")
     assert sessions_desc is not None and isinstance(sessions_desc, list)
     assert sessions_desc[0].session_id == "session2"
     assert sessions_desc[1].session_id == "session1"
 
 
-def test_get_sessions_with_timestamp_filter(postgres_db_real: PostgresDb):
+def test_get_sessions_with_timestamp_filter(sqlite_db_real: SqliteDb):
     """Test retrieving sessions with timestamp filters"""
     from agno.db.base import SessionType
     from agno.session.agent import AgentSession
@@ -377,21 +374,21 @@ def test_get_sessions_with_timestamp_filter(postgres_db_real: PostgresDb):
         created_at=base_time + 1000,  # New session
     )
 
-    postgres_db_real.upsert_session(session1)
-    postgres_db_real.upsert_session(session2)
+    sqlite_db_real.upsert_session(session1)
+    sqlite_db_real.upsert_session(session2)
 
     # Filter by start timestamp
-    recent_sessions = postgres_db_real.get_sessions(session_type=SessionType.AGENT, start_timestamp=base_time)
+    recent_sessions = sqlite_db_real.get_sessions(session_type=SessionType.AGENT, start_timestamp=base_time)
     assert len(recent_sessions) == 1
     assert recent_sessions[0].session_id == "session2"
 
     # Filter by end timestamp
-    old_sessions = postgres_db_real.get_sessions(session_type=SessionType.AGENT, end_timestamp=base_time)
+    old_sessions = sqlite_db_real.get_sessions(session_type=SessionType.AGENT, end_timestamp=base_time)
     assert len(old_sessions) == 1
     assert old_sessions[0].session_id == "session1"
 
 
-def test_get_sessions_with_session_name_filter(postgres_db_real: PostgresDb):
+def test_get_sessions_with_session_name_filter(sqlite_db_real: SqliteDb):
     """Test retrieving sessions filtered by session name"""
     from agno.db.base import SessionType
     from agno.session.agent import AgentSession
@@ -410,24 +407,24 @@ def test_get_sessions_with_session_name_filter(postgres_db_real: PostgresDb):
         created_at=int(time.time()),
     )
 
-    postgres_db_real.upsert_session(session1)
-    postgres_db_real.upsert_session(session2)
+    sqlite_db_real.upsert_session(session1)
+    sqlite_db_real.upsert_session(session2)
 
     # Search by partial name
-    alpha_sessions = postgres_db_real.get_sessions(session_type=SessionType.AGENT, session_name="Alpha")
+    alpha_sessions = sqlite_db_real.get_sessions(session_type=SessionType.AGENT, session_name="Alpha")
     assert len(alpha_sessions) == 1
     assert alpha_sessions[0].session_id == "session1"
 
 
-def test_get_sessions_without_deserialize(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
+def test_get_sessions_without_deserialize(sqlite_db_real: SqliteDb, sample_agent_session: AgentSession):
     """Test retrieving sessions without deserialization"""
     from agno.db.base import SessionType
 
     # Insert session
-    postgres_db_real.upsert_session(sample_agent_session)
+    sqlite_db_real.upsert_session(sample_agent_session)
 
     # Get as dicts
-    sessions, total_count = postgres_db_real.get_sessions(session_type=SessionType.AGENT, deserialize=False)
+    sessions, total_count = sqlite_db_real.get_sessions(session_type=SessionType.AGENT, deserialize=False)
 
     assert isinstance(sessions, list)
     assert len(sessions) == 1
@@ -436,16 +433,16 @@ def test_get_sessions_without_deserialize(postgres_db_real: PostgresDb, sample_a
     assert total_count == 1
 
 
-def test_rename_agent_session(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
+def test_rename_agent_session(sqlite_db_real: SqliteDb, sample_agent_session: AgentSession):
     """Test renaming an AgentSession"""
     from agno.db.base import SessionType
 
     # Insert session
-    postgres_db_real.upsert_session(sample_agent_session)
+    sqlite_db_real.upsert_session(sample_agent_session)
 
     # Rename session
     new_name = "Renamed Agent Session"
-    result = postgres_db_real.rename_session(
+    result = sqlite_db_real.rename_session(
         session_id=sample_agent_session.session_id,
         session_type=SessionType.AGENT,
         session_name=new_name,
@@ -457,16 +454,37 @@ def test_rename_agent_session(postgres_db_real: PostgresDb, sample_agent_session
     assert result.session_data["session_name"] == new_name
 
 
-def test_rename_team_session(postgres_db_real: PostgresDb, sample_team_session: TeamSession):
+def test_rename_workflow_session(sqlite_db_real: SqliteDb, sample_workflow_session: WorkflowSession):
+    """Test renaming a WorkflowSession"""
+    from agno.db.base import SessionType
+
+    # Insert session
+    sqlite_db_real.upsert_session(sample_workflow_session)
+
+    # Rename session
+    new_name = "Renamed Workflow Session"
+    result = sqlite_db_real.rename_session(
+        session_id=sample_workflow_session.session_id,
+        session_type=SessionType.WORKFLOW,
+        session_name=new_name,
+    )
+
+    assert result is not None
+    assert isinstance(result, WorkflowSession)
+    assert result.session_data is not None
+    assert result.session_data["session_name"] == new_name
+
+
+def test_rename_team_session(sqlite_db_real: SqliteDb, sample_team_session: TeamSession):
     """Test renaming a TeamSession"""
     from agno.db.base import SessionType
 
     # Insert session
-    postgres_db_real.upsert_session(sample_team_session)
+    sqlite_db_real.upsert_session(sample_team_session)
 
     # Rename session
     new_name = "Renamed Team Session"
-    result = postgres_db_real.rename_session(
+    result = sqlite_db_real.rename_session(
         session_id=sample_team_session.session_id,
         session_type=SessionType.TEAM,
         session_name=new_name,
@@ -478,16 +496,16 @@ def test_rename_team_session(postgres_db_real: PostgresDb, sample_team_session: 
     assert result.session_data["session_name"] == new_name
 
 
-def test_rename_session_without_deserialize(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
+def test_rename_session_without_deserialize(sqlite_db_real: SqliteDb, sample_agent_session: AgentSession):
     """Test renaming session without deserialization"""
     from agno.db.base import SessionType
 
     # Insert session
-    postgres_db_real.upsert_session(sample_agent_session)
+    sqlite_db_real.upsert_session(sample_agent_session)
 
     # Rename session
     new_name = "Renamed Session Dict"
-    result = postgres_db_real.rename_session(
+    result = sqlite_db_real.rename_session(
         session_id=sample_agent_session.session_id,
         session_type=SessionType.AGENT,
         session_name=new_name,
@@ -499,27 +517,27 @@ def test_rename_session_without_deserialize(postgres_db_real: PostgresDb, sample
     assert result["session_data"]["session_name"] == new_name
 
 
-def test_delete_single_session(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
+def test_delete_single_session(sqlite_db_real: SqliteDb, sample_agent_session: AgentSession):
     """Test deleting a single session"""
     # Insert session
-    postgres_db_real.upsert_session(sample_agent_session)
+    sqlite_db_real.upsert_session(sample_agent_session)
 
     # Verify it exists
     from agno.db.base import SessionType
 
-    session = postgres_db_real.get_session(session_id=sample_agent_session.session_id, session_type=SessionType.AGENT)
+    session = sqlite_db_real.get_session(session_id=sample_agent_session.session_id, session_type=SessionType.AGENT)
     assert session is not None
 
     # Delete session
-    success = postgres_db_real.delete_session(sample_agent_session.session_id)
+    success = sqlite_db_real.delete_session(sample_agent_session.session_id)
     assert success is True
 
     # Verify it's gone
-    session = postgres_db_real.get_session(session_id=sample_agent_session.session_id, session_type=SessionType.AGENT)
+    session = sqlite_db_real.get_session(session_id=sample_agent_session.session_id, session_type=SessionType.AGENT)
     assert session is None
 
 
-def test_delete_multiple_sessions(postgres_db_real: PostgresDb):
+def test_delete_multiple_sessions(sqlite_db_real: SqliteDb):
     """Test deleting multiple sessions"""
     from agno.db.base import SessionType
     from agno.session.agent import AgentSession
@@ -531,42 +549,42 @@ def test_delete_multiple_sessions(postgres_db_real: PostgresDb):
         session = AgentSession(session_id=f"session_{i}", agent_id=f"agent_{i}", created_at=int(time.time()))
         sessions.append(session)
         session_ids.append(session.session_id)
-        postgres_db_real.upsert_session(session)
+        sqlite_db_real.upsert_session(session)
 
     # Verify they exist
-    all_sessions = postgres_db_real.get_sessions(session_type=SessionType.AGENT)
+    all_sessions = sqlite_db_real.get_sessions(session_type=SessionType.AGENT)
     assert len(all_sessions) == 3
 
     # Delete multiple sessions
-    postgres_db_real.delete_sessions(session_ids[:2])  # Delete first 2
+    sqlite_db_real.delete_sessions(session_ids[:2])  # Delete first 2
 
     # Verify deletion
-    remaining_sessions = postgres_db_real.get_sessions(session_type=SessionType.AGENT)
+    remaining_sessions = sqlite_db_real.get_sessions(session_type=SessionType.AGENT)
     assert len(remaining_sessions) == 1
     assert remaining_sessions[0].session_id == "session_2"
 
 
 def test_session_type_polymorphism(
-    postgres_db_real: PostgresDb, sample_agent_session: AgentSession, sample_team_session: TeamSession
+    sqlite_db_real: SqliteDb, sample_agent_session: AgentSession, sample_team_session: TeamSession
 ):
     """Ensuring session types propagate into types correctly into and out of the database"""
 
     # Insert both session types
-    postgres_db_real.upsert_session(sample_agent_session)
-    postgres_db_real.upsert_session(sample_team_session)
+    sqlite_db_real.upsert_session(sample_agent_session)
+    sqlite_db_real.upsert_session(sample_team_session)
 
     # Verify agent session is returned as AgentSession
-    agent_result = postgres_db_real.get_session(
+    agent_result = sqlite_db_real.get_session(
         session_id=sample_agent_session.session_id, session_type=SessionType.AGENT
     )
     assert isinstance(agent_result, AgentSession)
 
     # Verify team session is returned as TeamSession
-    team_result = postgres_db_real.get_session(session_id=sample_team_session.session_id, session_type=SessionType.TEAM)
+    team_result = sqlite_db_real.get_session(session_id=sample_team_session.session_id, session_type=SessionType.TEAM)
     assert isinstance(team_result, TeamSession)
 
     # Verify wrong session type returns None
-    wrong_type_result = postgres_db_real.get_session(
+    wrong_type_result = sqlite_db_real.get_session(
         session_id=sample_agent_session.session_id,
         # Wrong session type!
         session_type=SessionType.TEAM,
@@ -574,7 +592,7 @@ def test_session_type_polymorphism(
     assert wrong_type_result is None
 
 
-def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: PostgresDb):
+def test_upsert_session_handles_all_agent_session_fields(sqlite_db_real: SqliteDb):
     """Ensure upsert_session correctly handles all AgentSession fields"""
     # Create comprehensive AgentSession with all possible fields populated
     agent_run = RunOutput(
@@ -611,7 +629,7 @@ def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: Postg
     )
 
     # Insert session
-    result = postgres_db_real.upsert_session(comprehensive_agent_session)
+    result = sqlite_db_real.upsert_session(comprehensive_agent_session)
     assert result is not None
     assert isinstance(result, AgentSession)
 
@@ -630,7 +648,7 @@ def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: Postg
     assert result.runs[0].run_id == agent_run.run_id
 
 
-def test_upsert_session_handles_all_team_session_fields(postgres_db_real: PostgresDb):
+def test_upsert_session_handles_all_team_session_fields(sqlite_db_real: SqliteDb):
     """Ensure upsert_session correctly handles all TeamSession fields"""
     # Create comprehensive TeamSession with all possible fields populated
     team_run = TeamRunOutput(
@@ -677,7 +695,7 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
     )
 
     # Insert session
-    result = postgres_db_real.upsert_session(comprehensive_team_session)
+    result = sqlite_db_real.upsert_session(comprehensive_team_session)
     assert result is not None
     assert isinstance(result, TeamSession)
 
@@ -697,7 +715,7 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
     assert result.runs[0].run_id == team_run.run_id
 
 
-def test_upsert_sessions(postgres_db_real: PostgresDb):
+def test_upsert_sessions(sqlite_db_real: SqliteDb):
     """Test upsert_sessions with mixed session types (Agent, Team, Workflow)"""
     from agno.run.workflow import WorkflowRunOutput
     from agno.session.workflow import WorkflowSession
@@ -755,7 +773,7 @@ def test_upsert_sessions(postgres_db_real: PostgresDb):
 
     # Bulk upsert all sessions
     sessions = [agent_session, team_session, workflow_session]
-    results = postgres_db_real.upsert_sessions(sessions)
+    results = sqlite_db_real.upsert_sessions(sessions)
 
     # Verify results
     assert len(results) == 3
@@ -781,7 +799,7 @@ def test_upsert_sessions(postgres_db_real: PostgresDb):
     assert workflow_result.workflow_data == workflow_session.workflow_data
 
 
-def test_upsert_sessions_update(postgres_db_real: PostgresDb):
+def test_upsert_sessions_update(sqlite_db_real: SqliteDb):
     """Test upsert_sessions correctly updates existing sessions"""
 
     # Insert sessions
@@ -801,7 +819,7 @@ def test_upsert_sessions_update(postgres_db_real: PostgresDb):
         session_data={"version": 1},
         created_at=int(time.time()),
     )
-    postgres_db_real.upsert_sessions([session1, session2])
+    sqlite_db_real.upsert_sessions([session1, session2])
 
     # Update sessions
     updated_session1 = AgentSession(
@@ -820,7 +838,7 @@ def test_upsert_sessions_update(postgres_db_real: PostgresDb):
         session_data={"version": 2, "updated": True},
         created_at=session2.created_at,  # Keep original created_at
     )
-    results = postgres_db_real.upsert_sessions([updated_session1, updated_session2])
+    results = sqlite_db_real.upsert_sessions([updated_session1, updated_session2])
     assert len(results) == 2
 
     # Verify sessions were updated
@@ -837,7 +855,7 @@ def test_upsert_sessions_update(postgres_db_real: PostgresDb):
             assert result.created_at == session2.created_at
 
 
-def test_upsert_sessions_performance(postgres_db_real: PostgresDb):
+def test_upsert_sessions_performance(sqlite_db_real: SqliteDb):
     """Ensure the bulk upsert method is considerably faster than individual upserts"""
     import time as time_module
 
@@ -857,20 +875,20 @@ def test_upsert_sessions_performance(postgres_db_real: PostgresDb):
     # Test individual upsert
     start_time = time_module.time()
     for session in sessions:
-        postgres_db_real.upsert_session(session)
+        sqlite_db_real.upsert_session(session)
     individual_time = time_module.time() - start_time
 
     # Clean up for bulk test
     session_ids = [s.session_id for s in sessions]
-    postgres_db_real.delete_sessions(session_ids)
+    sqlite_db_real.delete_sessions(session_ids)
 
     # Test bulk upsert
     start_time = time_module.time()
-    postgres_db_real.upsert_sessions(sessions)
+    sqlite_db_real.upsert_sessions(sessions)
     bulk_time = time_module.time() - start_time
 
     # Verify all sessions were created
-    all_sessions = postgres_db_real.get_sessions(session_type=SessionType.AGENT, user_id="perf_user")
+    all_sessions = sqlite_db_real.get_sessions(session_type=SessionType.AGENT, user_id="perf_user")
     assert len(all_sessions) == 50
 
     # Asserting bulk upsert is at least 2x faster
