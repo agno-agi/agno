@@ -215,7 +215,9 @@ class Agent:
     #   forces the model to call that tool.
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-
+      
+    # If set, limits the number of tool call and tool result pairs included in messages sent to the model (i.e. older ones are dropped)
+    num_tools_calls_to_include: Optional[int] = None
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
 
@@ -394,6 +396,7 @@ class Agent:
         tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        num_tools_calls_to_include: Optional[int] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
@@ -497,6 +500,7 @@ class Agent:
         self.tools = list(tools) if tools else []
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
+        self.num_tools_calls_to_include = num_tools_calls_to_include
         self.tool_hooks = tool_hooks
 
         # Initialize hooks with backward compatibility
@@ -4639,6 +4643,14 @@ class Agent:
     async def _aresolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
         from inspect import iscoroutine, iscoroutinefunction, signature
 
+        # Set num_tools_calls_to_include on the Model
+        if self.num_tools_calls_to_include is not None:
+            self.model.num_tools_calls_to_include = self.num_tools_calls_to_include
+
+        # Set tool_call_limit on the Model
+        if self.tool_call_limit is not None:
+            self.model.tool_call_limit = self.tool_call_limit
+            
         log_debug("Resolving context (async)")
         if not isinstance(dependencies, dict):
             log_warning("Context is not a dict")
