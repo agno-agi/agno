@@ -150,13 +150,17 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         return None
 
 
-def extract_format(file: UploadFile):
-    _format = None
+def extract_format(file: UploadFile) -> Optional[str]:
+    """Extract the File format from file name or content_type."""
+    # Get the format from the filename
     if file.filename and "." in file.filename:
-        _format = file.filename.split(".")[-1].lower()
-    elif file.content_type:
-        _format = file.content_type.split("/")[-1]
-    return _format
+        return file.filename.split(".")[-1].lower()
+
+    # Fallback to the file content_type
+    if file.content_type:
+        return file.content_type.strip().split("/")[-1]
+
+    return None
 
 
 def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
