@@ -121,6 +121,7 @@ class TestMem0Toolkit:
             [{"role": "user", "content": "Session user test"}],
             user_id="session_user_add",
             infer=True,
+            async_mode=True,
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
@@ -140,6 +141,7 @@ class TestMem0Toolkit:
             [{"role": "user", "content": "Test message"}],
             user_id="test_user_add",
             infer=True,
+            async_mode=True,
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
@@ -152,6 +154,7 @@ class TestMem0Toolkit:
             [{"role": "user", "content": json.dumps(dict_content)}],
             user_id="user1",
             infer=True,
+            async_mode=True,
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
@@ -163,6 +166,7 @@ class TestMem0Toolkit:
             [{"role": "user", "content": "123"}],
             user_id="user1",
             infer=True,
+            async_mode=True,
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
@@ -256,6 +260,7 @@ class TestMem0Toolkit:
             [{"role": "user", "content": "Test message"}],
             user_id="test_user",
             infer=False,
+            async_mode=True,
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
