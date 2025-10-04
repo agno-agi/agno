@@ -473,6 +473,7 @@ class Function(BaseModel):
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name and arguments."""
+        import json
         from hashlib import md5
 
         copy_entrypoint_args = entrypoint_args.copy()
@@ -493,7 +494,8 @@ class Function(BaseModel):
             del copy_entrypoint_args["files"]
         if "dependencies" in copy_entrypoint_args:
             del copy_entrypoint_args["dependencies"]
-        args_str = str(copy_entrypoint_args)
+        # Use json.dumps with sort_keys=True to ensure consistent ordering regardless of dict key order
+        args_str = json.dumps(copy_entrypoint_args, sort_keys=True, default=str)
 
         kwargs_str = str(sorted((call_args or {}).items()))
         key_str = f"{self.name}:{args_str}:{kwargs_str}"
