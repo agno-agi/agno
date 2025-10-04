@@ -34,12 +34,18 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
         messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
+        # Look for user_id in run_input.forwarded_props
+        user_id = None
+        if run_input.forwarded_props and isinstance(run_input.forwarded_props, dict):
+            user_id = run_input.forwarded_props.get("user_id")
+
         # Request streaming response from agent
         response_stream = agent.arun(
             input=messages,
             session_id=run_input.thread_id,
             stream=True,
             stream_intermediate_steps=True,
+            user_id=user_id,
         )
 
         # Stream the response content in AG-UI format
@@ -64,12 +70,18 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
         messages = convert_agui_messages_to_agno_messages(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
+        # Look for user_id in input.forwarded_props
+        user_id = None
+        if input.forwarded_props and isinstance(input.forwarded_props, dict):
+            user_id = input.forwarded_props.get("user_id")
+
         # Request streaming response from team
         response_stream = team.arun(
             input=messages,
             session_id=input.thread_id,
             stream=True,
             stream_intermediate_steps=True,
+            user_id=user_id,
         )
 
         # Stream the response content in AG-UI format
