@@ -97,6 +97,19 @@ class Weaviate(VectorDb):
                 self.client = weaviate.connect_to_weaviate_cloud(
                     cluster_url=self.wcd_url, auth_credentials=Auth.api_key(self.wcd_api_key)
                 )
+            elif self.wcd_url and not self.local:
+                log_info("Initializing Weaviate custom client")
+                from urllib.parse import urlparse
+                parsed_url = urlparse(self.wcd_url)
+                self.client = weaviate.connect_to_custom(
+                    http_host=parsed_url.hostname,
+                    http_port=parsed_url.port,
+                    http_secure=parsed_url.scheme == 'https',
+                    grpc_host=parsed_url.hostname,
+                    grpc_port=50051,  # Default gRPC port inside docker network
+                    grpc_secure=parsed_url.scheme == 'https',
+                    auth_credentials=Auth.api_key(self.wcd_api_key) if self.wcd_api_key else None,
+                )
             else:
                 log_info("Initializing local Weaviate client")
                 self.client = weaviate.connect_to_local()
@@ -117,6 +130,19 @@ class Weaviate(VectorDb):
                 self.async_client = weaviate.use_async_with_weaviate_cloud(
                     cluster_url=self.wcd_url,
                     auth_credentials=Auth.api_key(self.wcd_api_key),  # type: ignore
+                )
+            elif self.wcd_url and not self.local:
+                log_info("Initializing Weaviate custom async client")
+                from urllib.parse import urlparse
+                parsed_url = urlparse(self.wcd_url)
+                self.async_client = weaviate.use_async_with_custom(
+                    http_host=parsed_url.hostname,
+                    http_port=parsed_url.port,
+                    http_secure=parsed_url.scheme == 'https',
+                    grpc_host=parsed_url.hostname,
+                    grpc_port=50051,  # Default gRPC port inside docker network
+                    grpc_secure=parsed_url.scheme == 'https',
+                    auth_credentials=Auth.api_key(self.wcd_api_key) if self.wcd_api_key else None,
                 )
             else:
                 log_info("Initializing local Weaviate async client")
@@ -266,6 +292,7 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
+        print(f"DEBUG: Patched async_insert received filters: {filters}") # DEBUG LOG
         log_debug(f"Inserting {len(documents)} documents into Weaviate asynchronously.")
         if not documents:
             return
@@ -314,7 +341,7 @@ class Weaviate(VectorDb):
         try:
             collection = client.collections.get(self.collection)
 
-            # Process documents first
+            # Process documents one by one (async client doesn't support batch)
             for document in documents:
                 try:
                     if document.embedding is None:
@@ -326,25 +353,43 @@ class Weaviate(VectorDb):
                     record_id = md5(cleaned_content.encode()).hexdigest()
                     doc_uuid = uuid.UUID(hex=record_id[:32])
 
-                    # Serialize meta_data to JSON string
-                    meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
+                    # --- FIX START ---
+                    # Merge filters with the document's own metadata
+                    print(f"DEBUG: Original document meta_data: {document.meta_data}") # DEBUG LOG
+                    meta_data = document.meta_data.copy() if document.meta_data else {}
+                    if filters:
+                        meta_data.update(filters)
+                    
+                    print(f"DEBUG: Merged meta_data: {meta_data}") # DEBUG LOG
+                    
+                    # Serialize the combined metadata to a JSON string
+                    meta_data_str = json.dumps(meta_data) if meta_data else None
+                    print(f"DEBUG: Serialized meta_data_str: {meta_data_str}") # DEBUG LOG
+                    # --- FIX END ---
 
                     # Insert properties and vector separately
                     properties = {
                         "name": document.name,
                         "content": cleaned_content,
-                        "meta_data": meta_data_str,
+                        "meta_data": meta_data_str, # Use serialized string
                         "content_id": document.content_id,
                         "content_hash": content_hash,
                     }
 
-                    # Use the API correctly - properties, vector and uuid are separate parameters
-                    await collection.data.insert(properties=properties, vector=document.embedding, uuid=doc_uuid)
-
+                    await collection.data.insert(
+                        properties=properties,
+                        uuid=doc_uuid,
+                        vector=document.embedding
+                    )
+                    
                     log_debug(f"Inserted document asynchronously: {document.name}")
 
                 except Exception as e:
                     logger.error(f"Error inserting document {document.name}: {str(e)}")
+
+
+        except Exception as e:
+            logger.error(f"Error in async_insert operation: {str(e)}")
         finally:
             await client.close()
 
@@ -913,7 +958,7 @@ class Weaviate(VectorDb):
 
             # Query for objects with the given content_id
             query_result = collection.query.fetch_objects(  # type: ignore
-                where=Filter.by_property("content_id").equal(content_id),
+                filters=Filter.by_property("content_id").equal(content_id),
                 limit=1000,  # Get all matching objects
             )
 
@@ -921,31 +966,30 @@ class Weaviate(VectorDb):
                 logger.debug(f"No documents found with content_id: {content_id}")
                 return
 
-            # Update each matching object
+            # Update each matching object (async client doesn't support batch)
             updated_count = 0
             for obj in query_result.objects:
-                # Get current properties
-                current_properties = obj.properties or {}
-
-                # Merge existing metadata with new metadata
-                updated_properties = current_properties.copy()
-
-                # Handle nested metadata updates
-                if "meta_data" in updated_properties and isinstance(updated_properties["meta_data"], dict):
-                    updated_properties["meta_data"].update(metadata)
-                else:
-                    # If no existing meta_data or it's not a dict, set it directly
-                    updated_properties["meta_data"] = metadata
-
-                if "filters" in updated_properties and isinstance(updated_properties["filters"], dict):
-                    updated_properties["filters"].update(metadata)
-                else:
-                    updated_properties["filters"] = metadata
-
-                # Update the object
-                collection.data.update(uuid=obj.uuid, properties=updated_properties)
-                updated_count += 1
-
+                try:
+                    # Deserialize existing metadata, merge, and re-serialize
+                    existing_meta_str = obj.properties.get("meta_data", "{}")
+                    try:
+                        existing_meta = json.loads(existing_meta_str) if existing_meta_str else {}
+                    except (json.JSONDecodeError, TypeError):
+                        existing_meta = {}
+                    
+                    existing_meta.update(metadata)
+                    updated_meta_str = json.dumps(existing_meta)
+                    
+                    collection.data.update(
+                        uuid=obj.uuid,
+                        properties={
+                            "meta_data": updated_meta_str
+                        }
+                    )
+                    updated_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to update metadata for object {obj.uuid}: {e}")
+            
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
         except Exception as e:
