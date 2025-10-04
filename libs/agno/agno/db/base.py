@@ -95,20 +95,23 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete_user_memory(self, memory_id: str) -> None:
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         raise NotImplementedError
 
     @abstractmethod
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self,
+        memory_id: str,
+        deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -133,6 +136,7 @@ class BaseDb(ABC):
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError
 
