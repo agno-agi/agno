@@ -573,6 +573,11 @@ class TeamRunOutput:
         messages = data.pop("messages", None)
         messages = [Message.from_dict(message) for message in messages] if messages else None
 
+        if messages:
+            for msg in messages:
+                if getattr(msg, "tool_calls", None) and msg.role == "user":
+                    msg.role = "tool"
+
         member_responses = data.pop("member_responses", [])
         parsed_member_responses: List[Union["TeamRunOutput", RunOutput]] = []
         if member_responses:
