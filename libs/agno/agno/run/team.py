@@ -575,7 +575,7 @@ class TeamRunOutput:
 
         if messages:
             for msg in messages:
-                if getattr(msg, "tools", None) and msg.role == "user":
+                if getattr(msg, "tool_calls", None) and msg.role == "user":
                     msg.role = "tool"
 
         member_responses = data.pop("member_responses", [])
