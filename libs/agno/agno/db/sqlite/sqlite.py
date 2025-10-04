@@ -779,14 +779,14 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
-                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            session_raw = deserialize_session_json_fields(dict(row._mapping))
                             if deserialize:
-                                deserialized_agent_session = AgentSession.from_dict(session_dict)
+                                deserialized_agent_session = AgentSession.from_dict(session_raw)
                                 if deserialized_agent_session is None:
                                     continue
                                 results.append(deserialized_agent_session)
                             else:
-                                results.append(session_dict)
+                                results.append(session_raw)
 
                 # Bulk upsert team sessions
                 if team_sessions:
@@ -832,14 +832,14 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
-                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            session_raw = deserialize_session_json_fields(dict(row._mapping))
                             if deserialize:
-                                deserialized_team_session = TeamSession.from_dict(session_dict)
+                                deserialized_team_session = TeamSession.from_dict(session_raw)
                                 if deserialized_team_session is None:
                                     continue
                                 results.append(deserialized_team_session)
                             else:
-                                results.append(session_dict)
+                                results.append(session_raw)
 
                 # Bulk upsert workflow sessions
                 if workflow_sessions:
@@ -885,14 +885,14 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
-                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            session_raw = deserialize_session_json_fields(dict(row._mapping))
                             if deserialize:
-                                deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                                deserialized_workflow_session = WorkflowSession.from_dict(session_raw)
                                 if deserialized_workflow_session is None:
                                     continue
                                 results.append(deserialized_workflow_session)
                             else:
-                                results.append(session_dict)
+                                results.append(session_raw)
 
             return results
 
