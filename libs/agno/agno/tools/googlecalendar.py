@@ -164,6 +164,9 @@ class GoogleCalendarTools(Toolkit):
                 )
 
         try:
+            if self.service is None:
+                return json.dumps({"error": "Google Calendar service not initialized"})
+                
             events_result = (
                 self.service.events()  # type: ignore
                 .list(
@@ -246,6 +249,9 @@ class GoogleCalendarTools(Toolkit):
             # Determine sendUpdates value based on notify_attendees parameter
             send_updates = "all" if notify_attendees and attendees else "none"
             
+            if self.service is None:
+                return json.dumps({"error": "Google Calendar service not initialized"})
+            
             event_result = (
                 self.service.events()  # type: ignore
                 .insert(
@@ -293,6 +299,9 @@ class GoogleCalendarTools(Toolkit):
             str: JSON string containing the updated Google Calendar event or error message
         """
         try:
+            if self.service is None:
+                return json.dumps({"error": "Google Calendar service not initialized"})
+                
             # First get the existing event to preserve its structure
             event = self.service.events().get(calendarId=self.calendar_id, eventId=event_id).execute()  # type: ignore
 
@@ -329,6 +338,9 @@ class GoogleCalendarTools(Toolkit):
             send_updates = "all" if notify_attendees and attendees else "none"
             
             # Update the event
+            if self.service is None:
+                return json.dumps({"error": "Google Calendar service not initialized"})
+            
             updated_event = (
                 self.service.events().update(
                     calendarId=self.calendar_id, 
@@ -360,6 +372,9 @@ class GoogleCalendarTools(Toolkit):
             # Determine sendUpdates value based on notify_attendees parameter
             send_updates = "all" if notify_attendees else "none"
             
+            if self.service is None:
+                return json.dumps({"error": "Google Calendar service not initialized"})
+            
             self.service.events().delete(
                 calendarId=self.calendar_id, 
                 eventId=event_id,
@@ -390,6 +405,9 @@ class GoogleCalendarTools(Toolkit):
             str: JSON string containing all Google Calendar events or error message
         """
         try:
+            if self.service is None:
+                return json.dumps({"error": "Google Calendar service not initialized"})
+                
             params = {
                 "calendarId": self.calendar_id,
                 "maxResults": min(max_results, 100),
