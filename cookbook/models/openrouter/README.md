@@ -49,4 +49,10 @@ python cookbook/models/openrouter/tool_use.py
 python cookbook/models/openrouter/structured_output.py
 ```
 
+### 7. Run Agent with fallback models
+
+```shell
+python cookbook/models/openrouter/fallback_models.py
+```
+
 
