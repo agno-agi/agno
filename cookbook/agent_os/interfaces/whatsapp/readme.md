@@ -97,7 +97,7 @@ The WhatsApp API module provides integration between WhatsApp Business API and A
    ```
    3. Click on "Configure a webhook".
    4. Configure the webhook:
-      - URL: Your ngrok URL + "/webhook" (e.g., https://your-domain.ngrok-free.app/whatsapp/webhook)
+      - URL: Your ngrok URL + "/whatsapp/webhook" (e.g., https://your-domain.ngrok-free.app/whatsapp/webhook) (or with a custom prefix: https://your-domain.ngrok-free.app/custom-prefix/webhook)
       - Verify Token: Same as WHATSAPP_VERIFY_TOKEN in your .envrc
    5. Run your app locally with `python <my-app>.py` and click "Verify and save".
    6. Subscribe to the 'messages' webhook field.
