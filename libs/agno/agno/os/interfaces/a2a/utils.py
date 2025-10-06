@@ -845,11 +845,11 @@ async def stream_a2a_response(
             )
 
         # Handle all other data as Message metadata
-        metadata: Dict[str, Any] = {}
+        final_metadata: Dict[str, Any] = {}
         if hasattr(completion_event, "metrics") and completion_event.metrics:
-            metadata["metrics"] = completion_event.metrics.__dict__
+            final_metadata["metrics"] = completion_event.metrics.__dict__
         if hasattr(completion_event, "metadata") and completion_event.metadata:
-            metadata.update(completion_event.metadata)
+            final_metadata.update(completion_event.metadata)
 
         final_message = A2AMessage(
             message_id=message_id,
@@ -857,7 +857,7 @@ async def stream_a2a_response(
             parts=final_parts,
             context_id=context_id,
             task_id=task_id,
-            metadata=metadata if metadata else None,
+            metadata=final_metadata if final_metadata else None,
         )
 
     else:
