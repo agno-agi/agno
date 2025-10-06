@@ -16,11 +16,11 @@
 
 ## What is Agno?
 
-[Agno](https://docs.agno.com) is a high-performance runtime for multi-agent systems. Use it to build, run and manage secure multi-agent systems in your cloud.
+[Agno](https://docs.agno.com) is a high-performance SDK and runtime for multi-agent systems. Use it to build, run and manage multi-agent systems in your cloud.
 
-Agno gives you the fastest framework for building agents with session management, memory, knowledge, human in the loop and MCP support. You can put agents together as an autonomous multi-agent team, or build step-based agentic workflows for full control over complex multi-step processes.
+Agno is the fastest framework for building agents with built-in memory, knowledge, session management, human in the loop and best-in-class MCP support. You can put agents together as multi-agent teams or step-based agentic workflows.
 
-In 10 lines of code, we can build an Agent that will fetch the top stories from HackerNews and summarize them.
+In 10 lines of code, we can build an Agent that uses tools to achieve a task.
 
 ```python hackernews_agent.py
 from agno.agent import Agent
@@ -28,22 +28,22 @@ from agno.models.anthropic import Claude
 from agno.tools.hackernews import HackerNewsTools
 
 agent = Agent(
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-5"),
     tools=[HackerNewsTools()],
     markdown=True,
 )
-agent.print_response("Summarize the top 5 stories on hackernews", stream=True)
+agent.print_response("Write a report on trending startups and products.", stream=True)
 ```
 
 But the real advantage of Agno is its [AgentOS](https://docs.agno.com/agent-os/introduction) runtime:
 
-1. You get a pre-built FastAPI app for running your agentic system, meaning you start building your product on day one. This is a remarkable advantage over other solutions or rolling your own.
-2. You also get a control plane which connects directly to your AgentOS for testing, monitoring and managing your system. This gives you unmatched visibility and control over your system.
-3. Your AgentOS runs in your cloud and you get complete data privacy because no data ever leaves your system. This is incredible for security conscious enterprises that can't send traces to external services.
+1. You get a pre-built FastAPI app for serving your agents, teams and workflows, meaning you start building your AI product on day one. This is a remarkable advantage over other solutions.
+2. You also get a UI that connects directly to the pre-built FastAPI app. Use it to test, monitor and manage your system. This gives you unmatched visibility and control.
+3. Your AgentOS runs in your cloud and you get complete privacy because no data ever leaves your system. This is incredible for security conscious enterprises that can't send data to external services.
 
-For organizations building agents, Agno provides the complete solution. You get the fastest framework for building agents (speed of development and execution), a pre-built FastAPI app that lets you build your product on day one, and a control plane for managing your system.
+For organizations building agents, Agno provides the complete solution. You get the fastest framework for building agents (speed of development and execution), a pre-built FastAPI app that get you building product on day one, and a control plane for managing your system.
 
-We bring a novel architecture that no other framework provides, your AgentOS runs securely in your cloud, and the control plane connects directly to it from your browser. You don't need to send data to external services or pay retention costs, you get complete privacy and control.
+We bring a novel architecture that no other framework provides, your AgentOS runs securely in your cloud, and the control plane connects directly to it from your browser. You don't need to send data to any external services or pay retention costs, you get complete privacy and control.
 
 ## Getting started
 
@@ -100,10 +100,10 @@ source .venvs/perfenv/bin/activate
 # pip install openai agno langgraph langchain_openai
 
 # Agno
-python evals/performance/instantiation_with_tool.py
+python cookbook/evals/performance/instantiate_agent_with_tool.py
 
 # LangGraph
-python evals/performance/other/langgraph_instantiation.py
+python cookbook/evals/performance/comparison/langgraph_instantiation.py
 ```
 
 > The following evaluation is run on an Apple M4 MacBook Pro. It also runs as a Github action on this repo.

@@ -23,7 +23,7 @@ def instantiate_agent():
 
 
 instantiation_perf = PerformanceEval(
-    name="Tool Instantiation Performance", func=instantiate_agent, num_iterations=1000
+    name="Agent Instantiation", func=instantiate_agent, num_iterations=1000
 )
 
 if __name__ == "__main__":
