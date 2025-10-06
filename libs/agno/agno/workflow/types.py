@@ -174,15 +174,23 @@ class StepInput:
         # Use the helper method to get the deepest content
         return self._get_deepest_step_content(last_output)  # type: ignore[return-value]
 
-    def get_workflow_history(self, num_runs: int = 3) -> List[Tuple[str, str]]:
-        """Get workflow conversation history as structured data for custom function steps"""
+    def get_workflow_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
+        """Get workflow conversation history as structured data for custom function steps
+        
+        Args:
+            num_runs: Number of recent runs to include. If None, returns all available history.
+        """
         if not self.workflow_session:
             return []
 
         return self.workflow_session.get_workflow_history(num_runs=num_runs)
 
-    def get_workflow_history_context(self, num_runs: int = 3) -> Optional[str]:
-        """Get formatted workflow conversation history context for custom function steps"""
+    def get_workflow_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
+        """Get formatted workflow conversation history context for custom function steps
+        
+        Args:
+            num_runs: Number of recent runs to include. If None, returns all available history.
+        """
         if not self.workflow_session:
             return None
 

@@ -90,6 +90,25 @@ workflow = Workflow(
 )
 ```
 
+### History Length Control
+
+**By default, ALL available history is included** (no limit). It is recommended to use a fixed history run limit to avoid bloating the LLM context window.
+
+You can control this at both levels:
+
+```python
+# Workflow-level: limit history for all steps
+workflow = Workflow(
+    add_workflow_history_to_steps=True,
+    num_history_runs=5  # Only last 5 runs
+)
+
+# Step-level: override for specific steps
+Step("Analysis", agent=analysis_agent, 
+     add_workflow_history=True,
+     num_history_runs=3)  # Only last 3 runs for this step
+```
+
 ## Where to start?
 
 ### 1. Single-Step Conversational Workflow
