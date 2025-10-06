@@ -94,7 +94,7 @@ class SurrealDb(BaseDb):
             "knowledge": self.knowledge_table_name,
             "memories": self.memory_table_name,
             "sessions": self.session_table_name,
-            "teams": self._users_table_name,
+            "teams": self._teams_table_name,
             "users": self._users_table_name,
             "workflows": self._workflows_table_name,
         }
