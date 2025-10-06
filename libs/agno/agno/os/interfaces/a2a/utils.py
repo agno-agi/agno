@@ -537,9 +537,9 @@ async def stream_a2a_response(
     if completion_event:
         final_content = completion_event.content if completion_event.content else accumulated_content
 
-        parts: List[Part] = []
+        final_parts: List[Part] = []
         if final_content:
-            parts.append(Part(root=TextPart(text=str(final_content))))
+            final_parts.append(Part(root=TextPart(text=str(final_content))))
 
         # Handle all media artifacts
         artifacts: List[Artifact] = []
@@ -597,7 +597,7 @@ async def stream_a2a_response(
             )
 
         # Handle all other data as Message metadata
-        metadata = {}
+        metadata: Dict[str, Any] = {}
         if hasattr(completion_event, "metrics") and completion_event.metrics:
             metadata["metrics"] = completion_event.metrics.__dict__
         if hasattr(completion_event, "metadata") and completion_event.metadata:
@@ -606,7 +606,7 @@ async def stream_a2a_response(
         final_message = A2AMessage(
             message_id=message_id,
             role=Role.agent,
-            parts=parts,
+            parts=final_parts,
             context_id=context_id,
             task_id=task_id,
             metadata=metadata if metadata else None,

@@ -1,6 +1,6 @@
 """Async router handling exposing an Agno Agent or Team in an A2A compatible format."""
 
-from typing import Optional
+from typing import Optional, Union
 from uuid import uuid4
 
 from fastapi import HTTPException, Request
@@ -85,7 +85,7 @@ def attach_routes(
                 status_code=400,
                 detail="Entity ID required. Provide it via 'agentId' in params.message or 'X-Agent-ID' header.",
             )
-        entity = None
+        entity: Optional[Union[Agent, Team, Workflow]] = None
         if agents:
             entity = get_agent_by_id(agent_id, agents)
         if not entity and teams:
@@ -194,7 +194,7 @@ def attach_routes(
                 status_code=400,
                 detail="Entity ID required. Provide 'agentId' in params.message or 'X-Agent-ID' header.",
             )
-        entity = None
+        entity: Optional[Union[Agent, Team, Workflow]] = None
         if agents:
             entity = get_agent_by_id(agent_id, agents)
         if not entity and teams:
