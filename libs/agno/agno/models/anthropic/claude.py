@@ -96,7 +96,7 @@ class Claude(Model):
         client_params["api_key"] = self.api_key
         if self.timeout is not None:
             client_params["timeout"] = self.timeout
-            
+
         # Add additional client parameters
         if self.client_params is not None:
             client_params.update(self.client_params)
