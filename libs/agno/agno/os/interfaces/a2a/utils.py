@@ -1,4 +1,5 @@
 import json
+from typing import cast
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -9,6 +10,7 @@ from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEve
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
+from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import TeamRunOutputEvent
@@ -45,6 +47,7 @@ from agno.run.agent import (
     ReasoningCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
+    RunCompletedEvent,
     RunContentEvent,
     RunInput,
     RunOutput,
@@ -233,7 +236,7 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
 
     # 3. Build the A2A message
     agent_message = A2AMessage(
-        message_id=str(uuid4()),
+        message_id=str(uuid4()),  # TODO: use our message_id once it's implemented
         role=Role.agent,
         parts=parts,
         context_id=run_output.session_id,
@@ -241,9 +244,11 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
     )
 
     # 4. Build and return the A2A task
+    run_id = cast(str, run_output.run_id)
+    session_id = cast(str, run_output.session_id)
     return Task(
-        id=run_output.run_id or str(uuid4()),
-        context_id=run_output.session_id or str(uuid4()),
+        id=run_id,
+        context_id=session_id,
         status=TaskStatus(state=TaskState.completed),
         history=[agent_message],
         artifacts=artifacts if artifacts else None,
@@ -271,6 +276,7 @@ async def stream_a2a_response(
     context_id: str = str(uuid4())
     message_id: str = str(uuid4())
     accumulated_content = ""
+    completion_event = None
 
     # Stream events
     async for event in event_stream:
@@ -417,6 +423,10 @@ async def stream_a2a_response(
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
+        # Capture completion event for final task construction
+        elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+            completion_event = event
+
     # 3. Send final status event
     final_status_event = TaskStatusUpdateEvent(
         task_id=task_id,
@@ -428,18 +438,144 @@ async def stream_a2a_response(
     yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
     # 4. Send final complete task
-    final_message = A2AMessage(
-        message_id=message_id,
-        role=Role.agent,
-        parts=[Part(root=TextPart(text=accumulated_content))] if accumulated_content else [],
-        context_id=context_id,
-        task_id=task_id,
-    )
+    # Build from completion_event if available, otherwise use accumulated content
+    if completion_event:
+        final_content = completion_event.content if completion_event.content else accumulated_content
+
+        parts: List[Part] = []
+        if final_content:
+            parts.append(Part(root=TextPart(text=str(final_content))))
+
+        # Handle all media artifacts
+        artifacts: List[Artifact] = []
+        if hasattr(completion_event, "images") and completion_event.images:
+            for idx, image in enumerate(completion_event.images):
+                artifact_parts = []
+                if image.url:
+                    artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=image.url, mime_type="image/*"))))
+                artifacts.append(
+                    Artifact(
+                        artifact_id=f"image-{idx}",
+                        name=getattr(image, "name", None) or f"image-{idx}",
+                        description="Image generated during task",
+                        parts=artifact_parts,
+                    )
+                )
+        if hasattr(completion_event, "videos") and completion_event.videos:
+            for idx, video in enumerate(completion_event.videos):
+                artifact_parts = []
+                if video.url:
+                    artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=video.url, mime_type="video/*"))))
+                artifacts.append(
+                    Artifact(
+                        artifact_id=f"video-{idx}",
+                        name=getattr(video, "name", None) or f"video-{idx}",
+                        description="Video generated during task",
+                        parts=artifact_parts,
+                    )
+                )
+        if hasattr(completion_event, "audio") and completion_event.audio:
+            for idx, audio in enumerate(completion_event.audio):
+                artifact_parts = []
+                if audio.url:
+                    artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=audio.url, mime_type="audio/*"))))
+                artifacts.append(
+                    Artifact(
+                        artifact_id=f"audio-{idx}",
+                        name=getattr(audio, "name", None) or f"audio-{idx}",
+                        description="Audio generated during task",
+                        parts=artifact_parts,
+                    )
+                )
+        if hasattr(completion_event, "response_audio") and completion_event.response_audio:
+            audio = completion_event.response_audio
+            artifact_parts = []
+            if audio.url:
+                artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=audio.url, mime_type="audio/*"))))
+            artifacts.append(
+                Artifact(
+                    artifact_id="response-audio",
+                    name=getattr(audio, "name", None) or "response-audio",
+                    description="Audio response from agent",
+                    parts=artifact_parts,
+                )
+            )
+
+        # Handle all other data as Message metadata
+        metadata = {}
+        if hasattr(completion_event, "metrics") and completion_event.metrics:
+            metadata["metrics"] = completion_event.metrics.__dict__
+        if hasattr(completion_event, "metadata") and completion_event.metadata:
+            metadata.update(completion_event.metadata)
+
+        final_message = A2AMessage(
+            message_id=message_id,
+            role=Role.agent,
+            parts=parts,
+            context_id=context_id,
+            task_id=task_id,
+            metadata=metadata if metadata else None,
+        )
+
+    else:
+        # Fallback in case we didn't find the completion event, using accumulated content
+        final_message = A2AMessage(
+            message_id=message_id,
+            role=Role.agent,
+            parts=[Part(root=TextPart(text=accumulated_content))] if accumulated_content else [],
+            context_id=context_id,
+            task_id=task_id,
+        )
+        artifacts = []
+
+    # Build and return the final Task
     task = Task(
         id=task_id,
         context_id=context_id,
         status=TaskStatus(state=TaskState.completed),
         history=[final_message],
+        artifacts=artifacts if artifacts else None,
     )
     response = SendStreamingMessageSuccessResponse(id=request_id, result=task)
     yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+
+async def stream_a2a_response_with_error_handling(
+    event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, RunOutput]],
+    request_id: Union[str, int],
+) -> AsyncIterator[str]:
+    """Wrapper around stream_a2a_response that handles errors and returns failed Task status."""
+    task_id: str = str(uuid4())
+    context_id: str = str(uuid4())
+
+    try:
+        async for response_chunk in stream_a2a_response(event_stream, request_id):
+            yield response_chunk
+
+    # Catch any critical errors, emit the expected status task and close the stream
+    except Exception as e:
+        failed_status_event = TaskStatusUpdateEvent(
+            task_id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.failed),
+            final=True,
+        )
+        response = SendStreamingMessageSuccessResponse(id=request_id, result=failed_status_event)
+        yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        # Send failed Task
+        error_message = A2AMessage(
+            message_id=str(uuid4()),
+            role=Role.agent,
+            parts=[Part(root=TextPart(text=f"Error: {str(e)}"))],
+            context_id=context_id,
+        )
+        failed_task = Task(
+            id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.failed),
+            history=[error_message],
+        )
+
+        response = SendStreamingMessageSuccessResponse(id=request_id, result=failed_task)
+        yield json.dumps(response.model_dump(exclude_none=True)) + "\n"

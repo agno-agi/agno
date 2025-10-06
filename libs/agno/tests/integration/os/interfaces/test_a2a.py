@@ -223,7 +223,8 @@ def test_a2a_streaming(test_agent: Agent, test_client: TestClient):
         assert final_task["id"] == "request-123"
         assert final_task["result"]["contextId"] == "context-789"
         assert final_task["result"]["status"]["state"] == "completed"
-        assert final_task["result"]["history"][0]["parts"][0]["text"] == "Hello! This is a streaming response."
+        # Final content comes from RunCompletedEvent, not accumulated content
+        assert final_task["result"]["history"][0]["parts"][0]["text"] == "Hello! this is a streaming response."
 
         mock_arun.assert_called_once()
         call_kwargs = mock_arun.call_args.kwargs
@@ -752,9 +753,10 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
         assert final_task["id"] == "request-123"
         assert final_task["result"]["contextId"] == "context-789"
         assert final_task["result"]["status"]["state"] == "completed"
+        # Final content comes from RunCompletedEvent, not accumulated content
         assert (
             final_task["result"]["history"][0]["parts"][0]["text"]
-            == "Hello! This is a streaming response from the team."
+            == "Hello! this is a streaming response from the team."
         )
 
         mock_arun.assert_called_once()
@@ -763,3 +765,206 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
         assert call_kwargs["session_id"] == "context-789"
         assert call_kwargs["stream"] is True
         assert call_kwargs["stream_intermediate_steps"] is True
+
+
+def test_a2a_user_id_from_header(test_agent: Agent, test_client: TestClient):
+    """Test that user_id is extracted from X-User-ID header and passed to arun()."""
+    mock_output = RunOutput(
+        run_id="test-run-123",
+        session_id="context-789",
+        agent_id=test_agent.id,
+        agent_name=test_agent.name,
+        content="Response",
+    )
+
+    with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_output
+
+        request_body = {
+            "jsonrpc": "2.0",
+            "method": "message/send",
+            "id": "request-123",
+            "params": {
+                "message": {
+                    "messageId": "msg-123",
+                    "role": "user",
+                    "agentId": test_agent.name,
+                    "parts": [{"kind": "text", "text": "Hello!"}],
+                }
+            },
+        }
+
+        response = test_client.post(
+            "/a2a/message/send", json=request_body, headers={"X-User-ID": "user-456"}
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+        call_kwargs = mock_arun.call_args.kwargs
+        assert call_kwargs["user_id"] == "user-456"
+
+
+def test_a2a_user_id_from_metadata(test_agent: Agent, test_client: TestClient):
+    """Test that user_id is extracted from params.message.metadata as fallback."""
+    mock_output = RunOutput(
+        run_id="test-run-123",
+        session_id="context-789",
+        agent_id=test_agent.id,
+        agent_name=test_agent.name,
+        content="Response",
+    )
+
+    with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_output
+
+        request_body = {
+            "jsonrpc": "2.0",
+            "method": "message/send",
+            "id": "request-123",
+            "params": {
+                "message": {
+                    "messageId": "msg-123",
+                    "role": "user",
+                    "agentId": test_agent.name,
+                    "metadata": {"userId": "user-789"},
+                    "parts": [{"kind": "text", "text": "Hello!"}],
+                }
+            },
+        }
+
+        response = test_client.post("/a2a/message/send", json=request_body)
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+        call_kwargs = mock_arun.call_args.kwargs
+        assert call_kwargs["user_id"] == "user-789"
+
+
+def test_a2a_error_handling_non_streaming(test_agent: Agent, test_client: TestClient):
+    """Test that errors during agent run return Task with failed status."""
+
+    with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.side_effect = Exception("Agent execution failed")
+
+        request_body = {
+            "jsonrpc": "2.0",
+            "method": "message/send",
+            "id": "request-123",
+            "params": {
+                "message": {
+                    "messageId": "msg-123",
+                    "role": "user",
+                    "contextId": "context-789",
+                    "agentId": test_agent.name,
+                    "parts": [{"kind": "text", "text": "Hello!"}],
+                }
+            },
+        }
+
+        response = test_client.post("/a2a/message/send", json=request_body)
+
+        assert response.status_code == 200  # A2A returns 200 with failed Task
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+        assert data["id"] == "request-123"
+        assert data["result"]["status"]["state"] == "failed"
+        assert data["result"]["contextId"] == "context-789"
+        # Error message is in history, not status.message
+        assert len(data["result"]["history"]) == 1
+        assert "Agent execution failed" in data["result"]["history"][0]["parts"][0]["text"]
+
+
+def test_a2a_streaming_with_media_artifacts(test_agent: Agent, test_client: TestClient):
+    """Test that media outputs from RunCompletedEvent are mapped to A2A Artifacts."""
+
+    async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
+        from agno.media import Image, Video, Audio
+
+        yield RunStartedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,  # type: ignore
+            agent_name=test_agent.name,  # type: ignore
+            run_id="test-run-123",
+        )
+
+        yield RunContentEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,  # type: ignore
+            agent_name=test_agent.name,  # type: ignore
+            run_id="test-run-123",
+            content="Generated image",
+        )
+
+        yield RunCompletedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,  # type: ignore
+            agent_name=test_agent.name,  # type: ignore
+            run_id="test-run-123",
+            content="Generated image",
+            images=[Image(url="https://example.com/image.png")],
+            videos=[Video(url="https://example.com/video.mp4")],
+            audio=[Audio(url="https://example.com/audio.mp3")],
+        )
+
+    with patch.object(test_agent, "arun") as mock_arun:
+        mock_arun.return_value = mock_event_stream()
+
+        request_body = {
+            "jsonrpc": "2.0",
+            "method": "message/stream",
+            "id": "request-123",
+            "params": {
+                "message": {
+                    "messageId": "msg-123",
+                    "role": "user",
+                    "contextId": "context-789",
+                    "agentId": test_agent.name,
+                    "parts": [{"kind": "text", "text": "Generate media"}],
+                }
+            },
+        }
+
+        response = test_client.post("/a2a/message/stream", json=request_body)
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/x-ndjson"
+
+        events = []
+        for line in response.text.strip().split("\n"):
+            if line.strip():
+                events.append(json.loads(line))
+
+        # Find the final task
+        final_task = events[-1]
+        assert final_task["result"]["kind"] == "task"
+
+        # Debug: print error if failed
+        if final_task["result"]["status"]["state"] != "completed":
+            if final_task["result"].get("history"):
+                error_text = final_task["result"]["history"][0]["parts"][0]["text"]
+                print(f"\nError from task: {error_text}\n")
+
+        assert final_task["result"]["status"]["state"] == "completed"
+
+        # Check that artifacts were created
+        artifacts = final_task["result"].get("artifacts")
+        assert artifacts is not None
+        assert len(artifacts) == 3
+
+        # Check image artifact
+        image_artifact = next((a for a in artifacts if "image" in a["artifactId"]), None)
+        assert image_artifact is not None
+        assert image_artifact["name"] == "image-0"  # Default name since Image doesn't have name attribute
+        assert image_artifact["parts"][0]["file"]["uri"] == "https://example.com/image.png"
+
+        # Check video artifact
+        video_artifact = next((a for a in artifacts if "video" in a["artifactId"]), None)
+        assert video_artifact is not None
+        assert video_artifact["name"] == "video-0"  # Default name
+        assert video_artifact["parts"][0]["file"]["uri"] == "https://example.com/video.mp4"
+
+        # Check audio artifact
+        audio_artifact = next((a for a in artifacts if "audio" in a["artifactId"]), None)
+        assert audio_artifact is not None
+        assert audio_artifact["name"] == "audio-0"  # Default name
+        assert audio_artifact["parts"][0]["file"]["uri"] == "https://example.com/audio.mp3"
