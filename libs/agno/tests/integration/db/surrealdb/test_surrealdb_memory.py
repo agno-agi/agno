@@ -50,6 +50,13 @@ def test_crud_memory(db: SurrealDb):
     _mem = db.upsert_user_memory(new_mem)
     _last_mems = db.upsert_memories([new_mem_2, new_mem_3])
     stats, count = db.get_user_memory_stats()
+    assert len(stats) == 2
+    assert isinstance(stats[0]["last_memory_updated_at"], int)
+    assert stats[0]["total_memories"] == 1
+    assert stats[0]["user_id"] == "1"
+    assert isinstance(stats[1]["last_memory_updated_at"], int)
+    assert stats[1]["total_memories"] == 2
+    assert stats[1]["user_id"] == "2"
     assert count == 2
     topics = db.get_all_memory_topics()
     assert set(topics) == set(["stormlight", "mistborn", "skyward", "cosmere"])
@@ -63,3 +70,8 @@ def test_crud_memory(db: SurrealDb):
     db.delete_user_memory(mem_id)
     user_mems, count = db.get_user_memories("1", deserialize=False)
     assert count == 0
+    user_mems = db.get_user_memories("2")
+    assert isinstance(user_mems, list)
+    db.delete_user_memories([x.memory_id for x in user_mems if x.memory_id is not None])
+    list_ = db.get_user_memories("2")
+    assert len(list_) == 0

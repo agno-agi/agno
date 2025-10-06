@@ -54,7 +54,11 @@ def test_crud_knowledge(db: SurrealDb):
     new_kl_2 = KnowledgeRow(name="name 2", description="description")
     _upserted_knowledge_2 = db.upsert_knowledge_content(new_kl_2)
     # list
+    # TODO: test pagination and sorting
     res, total = db.get_knowledge_contents()
     assert total == 2
     # delete
     _ = db.delete_knowledge_content(upserted_knowledge.id)
+    # list
+    res, total = db.get_knowledge_contents()
+    assert total == 1

@@ -184,6 +184,23 @@ class SurrealDb(BaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
+        r"""
+        Read a session from the database.
+
+        Args:
+            session_id (str): ID of the session to read.
+            session_type (SessionType): Type of session to get.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+
+        Returns:
+            Optional[Union[Session, Dict[str, Any]]]:
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         sessions_table = self._get_table("sessions")
         record = RecordID(sessions_table, session_id)
         where = WhereClause()
@@ -222,6 +239,30 @@ class SurrealDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
+        r"""
+        Get all sessions in the given table. Can filter by user_id and entity_id.
+
+        Args:
+            session_type (SessionType): The type of session to get.
+            user_id (Optional[str]): The ID of the user to filter by.
+            component_id (Optional[str]): The ID of the agent / team / workflow to filter by.
+            session_name (Optional[str]): The name of the session to filter by.
+            start_timestamp (Optional[int]): The start timestamp to filter by.
+            end_timestamp (Optional[int]): The end timestamp to filter by.
+            limit (Optional[int]): The maximum number of sessions to return. Defaults to None.
+            page (Optional[int]): The page number to return. Defaults to None.
+            sort_by (Optional[str]): The field to sort by. Defaults to None.
+            sort_order (Optional[str]): The sort order. Defaults to None.
+            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+
+        Returns:
+            Union[List[Session], Tuple[List[Dict], int]]:
+                - When deserialize=True: List of Session objects
+                - When deserialize=False: Tuple of (session dictionaries, total count)
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         table = self._get_table("sessions")
 
         # -- Filters
@@ -275,6 +316,23 @@ class SurrealDb(BaseDb):
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
+        """
+        Rename a session in the database.
+
+        Args:
+            session_id (str): The ID of the session to rename.
+            session_type (SessionType): The type of session to rename.
+            session_name (str): The new name for the session.
+            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+
+        Returns:
+            Optional[Union[Session, Dict[str, Any]]]:
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
+
+        Raises:
+            Exception: If an error occurs during renaming.
+        """
         table = self._get_table("sessions")
         vars = {"record": RecordID(table, session_id), "name": session_name}
 
@@ -292,6 +350,21 @@ class SurrealDb(BaseDb):
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
+        """
+        Insert or update a session in the database.
+
+        Args:
+            session (Session): The session data to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
+
+        Returns:
+            Optional[Union[Session, Dict[str, Any]]]:
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
         session_type = get_session_type(session)
         table = self._get_table("sessions")
         session_raw = self._query_one(
@@ -310,6 +383,19 @@ class SurrealDb(BaseDb):
     def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True
     ) -> List[Union[Session, Dict[str, Any]]]:
+        """
+        Bulk insert or update multiple sessions.
+
+        Args:
+            sessions (List[Session]): The list of session data to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+
+        Returns:
+            List[Union[Session, Dict[str, Any]]]: List of upserted sessions
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
         if not sessions:
             return []
         session_type = get_session_type(sessions[0])
@@ -338,19 +424,46 @@ class SurrealDb(BaseDb):
     # --- Memory ---
 
     def clear_memories(self) -> None:
+        """Delete all memories from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         table = self._get_table("memories")
         _ = self.client.delete(table)
 
     def delete_user_memory(self, memory_id: str) -> None:
+        """Delete a user memory from the database.
+
+        Returns:
+            bool: True if deletion was successful, False otherwise.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         table = self._get_table("memories")
         self.client.delete(RecordID(table, memory_id))
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
+        """Delete user memories from the database.
+
+        Args:
+            memory_ids (List[str]): The IDs of the memories to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         table = self._get_table("memories")
         records = [RecordID(table, memory_id) for memory_id in memory_ids]
+        print(f"------------- {records}")
         _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
 
     def get_all_memory_topics(self) -> List[str]:
+        """Get all memory topics from the database.
+
+        Returns:
+            List[str]: List of memory topics.
+        """
         table = self._get_table("memories")
         vars: dict[str, Any] = {}
 
@@ -369,6 +482,20 @@ class SurrealDb(BaseDb):
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
+        """Get a memory from the database.
+
+        Args:
+            memory_id (str): The ID of the memory to get.
+            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+
+        Returns:
+            Optional[Union[UserMemory, Dict[str, Any]]]:
+                - When deserialize=True: UserMemory object
+                - When deserialize=False: UserMemory dictionary
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         table_name = self._get_table("memories")
         record = RecordID(table_name, memory_id)
         query = "SELECT * FROM ONLY $record"
@@ -390,6 +517,29 @@ class SurrealDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
+        """Get all memories from the database as UserMemory objects.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            topics (Optional[List[str]]): The topics to filter by.
+            search_content (Optional[str]): The content to search for.
+            limit (Optional[int]): The maximum number of memories to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+
+
+        Returns:
+            Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of UserMemory objects
+                - When deserialize=False: Tuple of (memory dictionaries, total count)
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         table = self._get_table("memories")
         where = WhereClause()
         if user_id is not None:
@@ -428,6 +578,27 @@ class SurrealDb(BaseDb):
         limit: Optional[int] = None,
         page: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get user memories stats.
+
+        Args:
+            limit (Optional[int]): The maximum number of user stats to return.
+            page (Optional[int]): The page number.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
+
+        Example:
+        (
+            [
+                {
+                    "user_id": "123",
+                    "total_memories": 10,
+                    "last_memory_updated_at": 1714560000,
+                },
+            ],
+            total_count: 1,
+        )
+        """
         memories_table_name = self._get_table("memories")
         where = WhereClause()
         where.and_("!!user", True, "=")
@@ -453,11 +624,33 @@ class SurrealDb(BaseDb):
             {order_limit_start_clause}
         """)
         result = self._query(query, where_vars, dict)
+
+        # deserialize dates and RecordIDs
+        for row in result:
+            row["user_id"] = row["user"].id
+            del row["user"]
+            row["last_memory_updated_at"] = row["last_memory_updated_at"].timestamp()
+            row["last_memory_updated_at"] = int(row["last_memory_updated_at"])
+
         return list(result), total_count
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
+        """Upsert a user memory in the database.
+
+        Args:
+            memory (UserMemory): The user memory to upsert.
+            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+
+        Returns:
+            Optional[Union[UserMemory, Dict[str, Any]]]:
+                - When deserialize=True: UserMemory object
+                - When deserialize=False: UserMemory dictionary
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
         table = self._get_table("memories")
         user_table = self._get_table("users")
         if memory.memory_id:
@@ -478,6 +671,19 @@ class SurrealDb(BaseDb):
     def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """
+        Bulk insert or update multiple memories in the database for improved performance.
+
+        Args:
+            memories (List[UserMemory]): The list of memories to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+
+        Returns:
+            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
         if not memories:
             return []
         table = self._get_table("memories")
@@ -510,6 +716,8 @@ class SurrealDb(BaseDb):
         return list(deserialize_user_memories(raw))
 
     # --- Metrics ---
+    # TODO: test evals
+
     def get_metrics(
         self,
         starting_date: Optional[date] = None,
@@ -525,14 +733,32 @@ class SurrealDb(BaseDb):
     # --- Knowledge ---
 
     def clear_knowledge(self) -> None:
+        """Delete all knowledge rows from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         table = self._get_table("knowledge")
         _ = self.client.delete(table)
 
     def delete_knowledge_content(self, id: str):
+        """Delete a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+        """
         table = self._get_table("knowledge")
         self.client.delete(RecordID(table, id))
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+        """Get a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+        """
         table = self._get_table("knowledge")
         record_id = RecordID(table, id)
         raw = self._query_one("SELECT * FROM ONLY $record_id", {"record_id": record_id}, dict)
@@ -545,6 +771,20 @@ class SurrealDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
+        """Get all knowledge contents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         table = self._get_table("knowledge")
         where = WhereClause()
         where_clause, where_vars = where.build()
@@ -564,6 +804,14 @@ class SurrealDb(BaseDb):
         return [deserialize_knowledge_row(row) for row in result], total_count
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow) -> Optional[KnowledgeRow]:
+        """Upsert knowledge content in the database.
+
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+        """
         knowledge_table_name = self._get_table("knowledge")
         record = RecordID(knowledge_table_name, knowledge_row.id)
         query = "UPSERT ONLY $record CONTENT $content"
@@ -573,6 +821,8 @@ class SurrealDb(BaseDb):
         return deserialize_knowledge_row(result) if result else None
 
     # --- Evals ---
+    # TODO: test evals
+
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         table = self._get_table("evals")
         query = f"CREATE {table} CONTENT $content"

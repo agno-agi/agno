@@ -42,6 +42,7 @@ def db() -> SurrealDb:
     return db
 
 
+# TODO: add tests for get_sessions using filters and sorting
 def test_crud_sessions(db: SurrealDb):
     db.delete_sessions(["1", "2"])
     _, count = db.get_sessions(SessionType.AGENT, deserialize=False)
