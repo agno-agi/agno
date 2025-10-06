@@ -847,6 +847,8 @@ class FunctionCall(BaseModel):
         if exception_to_raise is not None:
             raise exception_to_raise
 
+        # execution_result is guaranteed to be set here (either in try block or except Exception block)
+        assert execution_result is not None
         return execution_result
 
     async def _handle_pre_hook_async(self):
@@ -1055,6 +1057,8 @@ class FunctionCall(BaseModel):
         if exception_to_raise is not None:
             raise exception_to_raise
 
+        # execution_result is guaranteed to be set here (either in try block or except Exception block)
+        assert execution_result is not None
         return execution_result
 
 
