@@ -8,7 +8,6 @@ from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields
 from agno.session import Session
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
@@ -17,19 +16,42 @@ from agno.session.workflow import WorkflowSession
 TableType = Literal["sessions", "memories", "users", "knowledge", "evals", "agents", "teams", "workflows"]
 
 
+def deserialize_record_id(record: dict, agno_field: str, surreal_field: str | None = None) -> dict:
+    if surreal_field is None:
+        surreal_field = agno_field
+    x = record.get(surreal_field)
+    if isinstance(x, RecordID):
+        record[agno_field] = x.id
+        if agno_field != surreal_field:
+            del record[surreal_field]
+    return record
+
+
 def serialize_session(session: Session, table_names: dict[TableType, str]) -> dict:
     _dict = session.to_dict()
+    if session.session_id is not None:
+        _dict["id"] = RecordID(table_names["sessions"], session.session_id)
+        del _dict["session_id"]
     if isinstance(session, AgentSession):
         _dict["agent"] = RecordID(table_names["agents"], session.agent_id)
+        del _dict["agent_id"]
     elif isinstance(session, TeamSession):
         _dict["team"] = RecordID(table_names["teams"], session.team_id)
+        del _dict["team_id"]
     elif isinstance(session, WorkflowSession):
         _dict["workflow"] = RecordID(table_names["workflows"], session.workflow_id)
+        del _dict["workflow_id"]
     return _dict
 
 
 def deserialize_session(session_type: SessionType, session_raw: dict) -> Optional[Session]:
-    session_raw = deserialize_session_json_fields(session_raw)
+    # session_raw = deserialize_session_json_fields(session_raw)
+
+    session_raw = deserialize_record_id(session_raw, "session_id", "id")
+    session_raw = deserialize_record_id(session_raw, "agent_id", "agent")
+    session_raw = deserialize_record_id(session_raw, "team_id", "team")
+    session_raw = deserialize_record_id(session_raw, "workflow_id", "workflow")
+
     if session_type == SessionType.AGENT:
         return AgentSession.from_dict(session_raw)
     elif session_type == SessionType.TEAM:
@@ -57,29 +79,16 @@ def get_session_type(session: Session) -> SessionType:
 
 def desurrealize_user_memory(memory_raw: dict) -> dict:
     copy = memory_raw.copy()
-    id = copy.get("id")
-    if isinstance(id, RecordID):
-        copy["memory_id"] = id.id
-        del copy["id"]
 
-    user = copy.get("user")
-    if isinstance(user, RecordID):
-        copy["user_id"] = user.id
-        del copy["user"]
+    copy = deserialize_record_id(copy, "memory_id", "id")
+    copy = deserialize_record_id(copy, "user_id", "user")
+    copy = deserialize_record_id(copy, "agent_id", "agent")
+    copy = deserialize_record_id(copy, "team_id", "team")
+    copy = deserialize_record_id(copy, "workflow_id", "workflow")
 
     updated_at = copy.get("updated_at")
     if not isinstance(updated_at, str):
         copy["updated_at"] = str(updated_at)
-
-    agent = copy.get("agent")
-    if isinstance(agent, RecordID):
-        copy["agent_id"] = agent.id
-        del copy["agent"]
-
-    team = copy.get("team")
-    if isinstance(team, RecordID):
-        copy["team_id"] = team.id
-        del copy["team"]
 
     return copy
 
@@ -107,9 +116,7 @@ def deserialize_knowledge_row(knowledge_row_raw: dict) -> KnowledgeRow:
     copy = knowledge_row_raw.copy()
 
     # - id
-    id = copy.get("id")
-    if isinstance(id, RecordID):
-        copy["id"] = id.id
+    copy = deserialize_record_id(copy, "id")
 
     # - created_at
     created_at = copy.get("created_at")

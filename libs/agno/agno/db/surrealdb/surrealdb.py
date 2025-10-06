@@ -202,10 +202,11 @@ class SurrealDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         sessions_table = self._get_table("sessions")
+        users_table = self._get_table("users", False)
         record = RecordID(sessions_table, session_id)
         where = WhereClause()
         if user_id is not None:
-            where = where.and_("user", RecordID("user", user_id))
+            where = where.and_("user", RecordID(users_table, user_id))
         if session_type == SessionType.AGENT:
             where = where.and_("agent", None, "!=")
         elif session_type == SessionType.TEAM:
@@ -264,22 +265,26 @@ class SurrealDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         table = self._get_table("sessions")
+        users_table = self._get_table("users", False)
+        agents_table = self._get_table("agents", False)
+        teams_table = self._get_table("teams", False)
+        workflows_table = self._get_table("workflows", False)
 
         # -- Filters
         where = WhereClause()
 
         # user_id
         if user_id is not None:
-            where = where.and_("user", RecordID("user", user_id))
+            where = where.and_("user", RecordID(users_table, user_id))
 
         # component_id
         if component_id is not None:
             if session_type == SessionType.AGENT:
-                where = where.and_("agent", RecordID("agent", component_id))
+                where = where.and_("agent", RecordID(agents_table, component_id))
             elif session_type == SessionType.TEAM:
-                where = where.and_("team", RecordID("team", component_id))
+                where = where.and_("team", RecordID(teams_table, component_id))
             elif session_type == SessionType.WORKFLOW:
-                where = where.and_("workflow", RecordID("workflow", component_id))
+                where = where.and_("workflow", RecordID(workflows_table, component_id))
 
         # session_name
         if session_name is not None:
