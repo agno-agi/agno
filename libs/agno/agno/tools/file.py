@@ -75,7 +75,9 @@ class FileTools(Toolkit):
         """
         try:
             log_info(f"Reading files in : {self.base_dir}")
-            return json.dumps([str(file_path.relative_to(self.base_dir)) for file_path in self.base_dir.iterdir()], indent=4)
+            return json.dumps(
+                [str(file_path.relative_to(self.base_dir)) for file_path in self.base_dir.iterdir()], indent=4
+            )
         except Exception as e:
             log_error(f"Error reading files: {e}")
             return f"Error reading files: {e}"
