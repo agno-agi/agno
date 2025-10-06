@@ -364,7 +364,7 @@ async def stream_a2a_response(
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, (ToolCallCompletedEvent, TeamToolCallCompletedEvent)):
-            metadata: Dict[str, Any] = {"agno_event_type": "tool_call_completed"}
+            metadata = {"agno_event_type": "tool_call_completed"}
             if event.tool:
                 metadata["tool_name"] = event.tool.tool_name or "tool"
                 if hasattr(event.tool, "tool_call_id") and event.tool.tool_call_id:
@@ -453,7 +453,7 @@ async def stream_a2a_response(
 
         # Send workflow events
         elif isinstance(event, WorkflowStepStartedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "workflow_step_started"}
+            metadata = {"agno_event_type": "workflow_step_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
 
@@ -468,7 +468,7 @@ async def stream_a2a_response(
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, WorkflowStepCompletedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "workflow_step_completed"}
+            metadata = {"agno_event_type": "workflow_step_completed"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
 
@@ -483,7 +483,7 @@ async def stream_a2a_response(
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, WorkflowStepErrorEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "workflow_step_error"}
+            metadata = {"agno_event_type": "workflow_step_error"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "error") and event.error:
@@ -501,7 +501,7 @@ async def stream_a2a_response(
 
         # Send loop events
         elif isinstance(event, LoopExecutionStartedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "loop_execution_started"}
+            metadata = {"agno_event_type": "loop_execution_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "max_iterations") and event.max_iterations:
@@ -518,7 +518,7 @@ async def stream_a2a_response(
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, LoopIterationStartedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "loop_iteration_started"}
+            metadata = {"agno_event_type": "loop_iteration_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "iteration") and event.iteration is not None:
@@ -537,7 +537,7 @@ async def stream_a2a_response(
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, LoopIterationCompletedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "loop_iteration_completed"}
+            metadata = {"agno_event_type": "loop_iteration_completed"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "iteration") and event.iteration is not None:
@@ -556,7 +556,7 @@ async def stream_a2a_response(
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, LoopExecutionCompletedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "loop_execution_completed"}
+            metadata = {"agno_event_type": "loop_execution_completed"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "total_iterations") and event.total_iterations is not None:
@@ -574,7 +574,7 @@ async def stream_a2a_response(
 
         # Send parallel events
         elif isinstance(event, ParallelExecutionStartedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "parallel_execution_started"}
+            metadata = {"agno_event_type": "parallel_execution_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "parallel_step_count") and event.parallel_step_count:
@@ -591,7 +591,7 @@ async def stream_a2a_response(
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, ParallelExecutionCompletedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "parallel_execution_completed"}
+            metadata = {"agno_event_type": "parallel_execution_completed"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "parallel_step_count") and event.parallel_step_count:
@@ -609,7 +609,7 @@ async def stream_a2a_response(
 
         # Send condition events
         elif isinstance(event, ConditionExecutionStartedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "condition_execution_started"}
+            metadata = {"agno_event_type": "condition_execution_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "condition_result") and event.condition_result is not None:
@@ -626,7 +626,7 @@ async def stream_a2a_response(
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, ConditionExecutionCompletedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "condition_execution_completed"}
+            metadata = {"agno_event_type": "condition_execution_completed"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "condition_result") and event.condition_result is not None:
@@ -646,7 +646,7 @@ async def stream_a2a_response(
 
         # Send router events
         elif isinstance(event, RouterExecutionStartedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "router_execution_started"}
+            metadata = {"agno_event_type": "router_execution_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "selected_steps") and event.selected_steps:
@@ -663,7 +663,7 @@ async def stream_a2a_response(
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, RouterExecutionCompletedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "router_execution_completed"}
+            metadata = {"agno_event_type": "router_execution_completed"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "selected_steps") and event.selected_steps:
@@ -683,7 +683,7 @@ async def stream_a2a_response(
 
         # Send steps events
         elif isinstance(event, StepsExecutionStartedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "steps_execution_started"}
+            metadata = {"agno_event_type": "steps_execution_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "steps_count") and event.steps_count:
@@ -700,7 +700,7 @@ async def stream_a2a_response(
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
         elif isinstance(event, StepsExecutionCompletedEvent):
-            metadata: Dict[str, Any] = {"agno_event_type": "steps_execution_completed"}
+            metadata = {"agno_event_type": "steps_execution_completed"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "steps_count") and event.steps_count:
@@ -730,7 +730,7 @@ async def stream_a2a_response(
     # If cancelled, send canceled status; otherwise send completed
     if cancelled_event:
         final_state = TaskState.canceled
-        metadata: Dict[str, Any] = {"agno_event_type": "run_cancelled"}
+        metadata = {"agno_event_type": "run_cancelled"}
         if hasattr(cancelled_event, "reason") and cancelled_event.reason:
             metadata["reason"] = cancelled_event.reason
         final_status_event = TaskStatusUpdateEvent(
