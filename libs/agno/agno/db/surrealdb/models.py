@@ -16,7 +16,7 @@ from agno.session.workflow import WorkflowSession
 TableType = Literal["sessions", "memories", "users", "knowledge", "evals", "agents", "teams", "workflows"]
 
 
-def deserialize_record_id(record: dict, agno_field: str, surreal_field: str | None = None) -> dict:
+def deserialize_record_id(record: dict, agno_field: str, surreal_field: Optional[str] = None) -> dict:
     if surreal_field is None:
         surreal_field = agno_field
     x = record.get(surreal_field)
