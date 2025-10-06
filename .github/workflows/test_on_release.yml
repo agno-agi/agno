@@ -846,17 +846,13 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Install a2a-sdk
-        working-directory: .
-        run: |
-          source .venv/bin/activate
-          pip install a2a-sdk
-      - name: Run A2A integration tests
+      - name: Install a2a-sdk and run tests
         working-directory: .
         env:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
+          pip install a2a-sdk
           python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
 
   # Run remaining integration tests
