@@ -30,199 +30,156 @@ def attach_routes(
         raise ValueError("Agents or Teams are required to setup the A2A interface.")
 
     @router.post(
-        "/agents/{id}",
+        "/message/send",
         tags=["A2A"],
-        operation_id="run_a2a",
-        summary="Run Agent via A2A",
-        description="Run an Agno Agent using the A2A protocol.",
+        operation_id="send_message",
+        summary="Send message to Agent or Team (A2A Protocol)",
+        description="Send a message to an Agno Agent or Team. "
+        "The agent or team is identified via the 'agentId' field in params.message or X-Agent-ID header.",
         response_model_exclude_none=True,
         responses={
             200: {
-                "jsonrpc": "2.0",
-                "id": "id",
-                "result": {
-                    "task": {
-                        "id": "id",
-                        "context_id": "id",
-                        "status": "status",
-                        "history": [
-                            {
-                                "message_id": "id",
-                                "role": "user",
-                                "parts": [
-                                    {
-                                        "kind": "text",
-                                        "text": "This is the user question",
-                                    }
-                                ],
+                "description": "Message sent successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "jsonrpc": "2.0",
+                            "id": "request-123",
+                            "result": {
+                                "task": {
+                                    "id": "task-456",
+                                    "context_id": "context-789",
+                                    "status": "completed",
+                                    "history": [
+                                        {
+                                            "message_id": "msg-1",
+                                            "role": "agent",
+                                            "parts": [{"kind": "text", "text": "Response from agent"}],
+                                        }
+                                    ],
+                                }
                             },
-                            {
-                                "message_id": "id",
-                                "role": "agent",
-                                "parts": [
-                                    {
-                                        "kind": "text",
-                                        "text": "This is the agent answer",
-                                    }
-                                ],
-                            },
-                        ],
+                        }
                     }
                 },
             },
-            400: {"description": "A2A run failed"},
-            404: {"description": "Agent not found"},
+            400: {"description": "Invalid request or unsupported method"},
+            404: {"description": "Agent or Team not found"},
         },
         response_model=SendMessageSuccessResponse,
     )
-    async def a2a_agent(id: str, request: Request):
+    async def a2a_send_message(request: Request):
         request_body = await request.json()
-        stream = False
-        if request_body.get("method") == "message/stream":
-            stream = True
-        kwargs = await _get_request_kwargs(request, a2a_agent)
 
-        agent = get_agent_by_id(id, agents)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
+        # Extract agent/team ID from params.message.agentId or header
+        agent_id = request_body.get("params", {}).get("message", {}).get("agentId") or request.headers.get("X-Agent-ID")
+        if not agent_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Agent/Team ID required. Provide it via 'agentId' in params.message or 'X-Agent-ID' header.",
+            )
 
-        run_input = await map_a2a_request_to_run_input(request_body, stream)
+        kwargs = await _get_request_kwargs(request, a2a_send_message)
+
+        # Try to find agent first, then team
+        entity = None
+        if agents:
+            entity = get_agent_by_id(agent_id, agents)
+        if not entity and teams:
+            entity = get_team_by_id(agent_id, teams)
+
+        if entity is None:
+            raise HTTPException(status_code=404, detail=f"Agent or Team with ID '{agent_id}' not found")
+
+        run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
 
-        # Stream the response if the request method is "message/stream"
-        if stream:
-            event_stream = agent.arun(
-                input=run_input.input_content,
-                images=run_input.images,
-                videos=run_input.videos,
-                audio=run_input.audios,
-                files=run_input.files,
-                session_id=context_id,
-                stream=True,
-                stream_intermediate_steps=True,
-                **kwargs,
-            )
-            return StreamingResponse(
-                stream_a2a_response(event_stream=event_stream, request_id=request_body["id"]),
-                media_type="application/x-ndjson",
-            )
+        # Run the agent or team
+        response = await entity.arun(
+            input=run_input.input_content,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
+            session_id=context_id,
+            **kwargs,
+        )
 
-        else:
-            response = await agent.arun(
-                input=run_input.input_content,
-                images=run_input.images,
-                videos=run_input.videos,
-                audio=run_input.audios,
-                files=run_input.files,
-                session_id=context_id,
-                **kwargs,
-            )
+        a2a_task = map_run_output_to_a2a_task(response)
 
-            a2a_task = map_run_output_to_a2a_task(response)
-
-            # Send A2A-valid JSON-RPC response
-            return SendMessageSuccessResponse(
-                id=request_body.get("id", "unknown"),
-                result=a2a_task,
-            )
+        # Send A2A-valid JSON-RPC response
+        return SendMessageSuccessResponse(
+            id=request_body.get("id", "unknown"),
+            result=a2a_task,
+        )
 
     @router.post(
-        "/teams/{id}",
+        "/message/stream",
         tags=["A2A"],
-        operation_id="run_a2a",
-        summary="Run Team via A2A",
-        description="Run an Agno Team using the A2A protocol.",
+        operation_id="stream_message",
+        summary="Stream message to Agent or Team (A2A Protocol)",
+        description="Stream a message to an Agno Agent or Team using the A2A protocol standard endpoint. "
+        "The agent or team is identified via the 'agentId' field in params.message or X-Agent-ID header. "
+        "Returns real-time updates as newline-delimited JSON (NDJSON).",
         response_model_exclude_none=True,
         responses={
             200: {
-                "jsonrpc": "2.0",
-                "id": "id",
-                "result": {
-                    "task": {
-                        "id": "id",
-                        "context_id": "id",
-                        "status": "status",
-                        "history": [
-                            {
-                                "message_id": "id",
-                                "role": "user",
-                                "parts": [
-                                    {
-                                        "kind": "text",
-                                        "text": "This is the user question",
-                                    }
-                                ],
-                            },
-                            {
-                                "message_id": "id",
-                                "role": "agent",
-                                "parts": [
-                                    {
-                                        "kind": "text",
-                                        "text": "This is the team answer",
-                                    }
-                                ],
-                            },
-                        ],
+                "description": "Streaming response with task updates",
+                "content": {
+                    "application/x-ndjson": {
+                        "example": '{"jsonrpc":"2.0","id":"request-123","result":{"taskId":"task-456","status":"working"}}\n'
+                        '{"jsonrpc":"2.0","id":"request-123","result":{"messageId":"msg-1","role":"agent","parts":[{"kind":"text","text":"Response"}]}}\n'
                     }
                 },
             },
-            400: {"description": "A2A run failed"},
-            404: {"description": "Team not found"},
+            400: {"description": "Invalid request or unsupported method"},
+            404: {"description": "Agent or Team not found"},
         },
-        response_model=SendMessageSuccessResponse,
     )
-    async def a2a_team(id: str, request: Request):
+    async def a2a_stream_message(request: Request):
         request_body = await request.json()
-        stream = False
-        if request_body.get("method") == "message/stream":
-            stream = True
-        kwargs = await _get_request_kwargs(request, a2a_team)
 
-        team = get_team_by_id(id, teams)
-        if team is None:
-            raise HTTPException(status_code=404, detail="Team not found")
-
-        run_input = await map_a2a_request_to_run_input(request_body, stream)
-        # Extract session_id from A2A contextId
-        # Note: A2A taskId is ignored - Agno generates a new run_id for each call
-        session_id = request_body.get("params", {}).get("message", {}).get("contextId")
-
-        # We stream the response if the request method is "message/stream"
-        if stream:
-            event_stream = team.arun(
-                input=run_input.input_content,
-                images=run_input.images,
-                videos=run_input.videos,
-                audio=run_input.audios,
-                files=run_input.files,
-                session_id=session_id,
-                stream=True,
-                stream_intermediate_steps=True,
-                **kwargs,
-            )
-            return StreamingResponse(
-                stream_a2a_response(event_stream=event_stream, request_id=request_body["id"]),
-                media_type="application/x-ndjson",
+        # Extract agent/team ID from params.message.agentId or header
+        agent_id = request_body.get("params", {}).get("message", {}).get("agentId")
+        if not agent_id:
+            agent_id = request.headers.get("X-Agent-ID")
+        if not agent_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Agent/Team ID required. Provide 'agentId' in params.message or 'X-Agent-ID' header.",
             )
 
-        else:
-            response = await team.arun(
-                input=run_input.input_content,
-                images=run_input.images,
-                videos=run_input.videos,
-                audio=run_input.audios,
-                files=run_input.files,
-                session_id=session_id,
-                **kwargs,
-            )
+        kwargs = await _get_request_kwargs(request, a2a_stream_message)
 
-            a2a_task = map_run_output_to_a2a_task(response)
+        # Try to find agent first, then team
+        entity = None
+        if agents:
+            entity = get_agent_by_id(agent_id, agents)
+        if not entity and teams:
+            entity = get_team_by_id(agent_id, teams)
 
-            # Send A2A-valid JSON-RPC response
-            return SendMessageSuccessResponse(
-                id=request_body.get("id", "unknown"),
-                result=a2a_task,
-            )
+        if entity is None:
+            raise HTTPException(status_code=404, detail=f"Agent or Team with ID '{agent_id}' not found")
+
+        run_input = await map_a2a_request_to_run_input(request_body, stream=True)
+        context_id = request_body.get("params", {}).get("message", {}).get("contextId")
+
+        # Stream the response
+        event_stream = entity.arun(
+            input=run_input.input_content,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
+            session_id=context_id,
+            stream=True,
+            stream_intermediate_steps=True,
+            **kwargs,
+        )
+
+        return StreamingResponse(
+            stream_a2a_response(event_stream=event_stream, request_id=request_body["id"]),
+            media_type="application/x-ndjson",
+        )
 
     return router

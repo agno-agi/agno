@@ -44,7 +44,8 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """Run your AgentOS with A2A interface.
 
-    You can run the structured-output-agent via API:
-    http://localhost:7777/a2a/agents/structured-output-agent
+    You can run the structured-output-agent via A2A protocol:
+    POST http://localhost:7777/a2a/message/send
+    (include "agentId": "structured-output-agent" in params.message)
     """
     agent_os.serve(app="structured_output:app", port=7777, reload=True)

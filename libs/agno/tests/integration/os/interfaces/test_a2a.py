@@ -50,7 +50,8 @@ def test_a2a_interface_parameter():
     # Assert that the app has the A2A interface
     assert app is not None
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
-    assert "/a2a/agents/{id}" in [route.path for route in app.routes]  # type: ignore
+    assert "/a2a/message/send" in [route.path for route in app.routes]  # type: ignore
+    assert "/a2a/message/stream" in [route.path for route in app.routes]  # type: ignore
 
 
 def test_a2a_interface_in_interfaces_parameter():
@@ -64,7 +65,8 @@ def test_a2a_interface_in_interfaces_parameter():
     # Assert setting the app didn't raise and the A2A interface is the expected one
     assert app is not None
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
-    assert "/a2a/agents/{id}" in [route.path for route in app.routes]  # type: ignore
+    assert "/a2a/message/send" in [route.path for route in app.routes]  # type: ignore
+    assert "/a2a/message/stream" in [route.path for route in app.routes]  # type: ignore
 
 
 def test_a2a(test_agent: Agent, test_client: TestClient):
@@ -90,12 +92,13 @@ def test_a2a(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
+                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Hello, agent!"}],
                 }
             },
         }
 
-        response = test_client.post(f"/a2a/agents/{test_agent.name}", json=request_body)
+        response = test_client.post("/a2a/message/send", json=request_body)
 
         assert response.status_code == 200
         data = response.json()
@@ -177,12 +180,13 @@ def test_a2a_streaming(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
+                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Hello, agent!"}],
                 }
             },
         }
 
-        response = test_client.post(f"/a2a/agents/{test_agent.name}", json=request_body)
+        response = test_client.post("/a2a/message/stream", json=request_body)
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/x-ndjson"
@@ -287,12 +291,13 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
+                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "What's the weather in SF?"}],
                 }
             },
         }
 
-        response = test_client.post(f"/a2a/agents/{test_agent.name}", json=request_body)
+        response = test_client.post("/a2a/message/stream", json=request_body)
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/x-ndjson"
@@ -412,12 +417,13 @@ def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
+                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Help me think through this problem."}],
                 }
             },
         }
 
-        response = test_client.post(f"/a2a/agents/{test_agent.name}", json=request_body)
+        response = test_client.post("/a2a/message/stream", json=request_body)
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/x-ndjson"
@@ -532,12 +538,13 @@ def test_a2a_streaming_with_memory(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
+                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Remember this for later."}],
                 }
             },
         }
 
-        response = test_client.post(f"/a2a/agents/{test_agent.name}", json=request_body)
+        response = test_client.post("/a2a/message/stream", json=request_body)
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/x-ndjson"
@@ -614,12 +621,13 @@ def test_a2a_team(test_team: Team, test_team_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
+                    "agentId": test_team.name,
                     "parts": [{"kind": "text", "text": "Hello, team!"}],
                 }
             },
         }
 
-        response = test_team_client.post(f"/a2a/teams/{test_team.name}", json=request_body)
+        response = test_team_client.post("/a2a/message/send", json=request_body)
 
         assert response.status_code == 200
         data = response.json()
@@ -701,12 +709,13 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
+                    "agentId": test_team.name,
                     "parts": [{"kind": "text", "text": "Hello, team!"}],
                 }
             },
         }
 
-        response = test_team_client.post(f"/a2a/teams/{test_team.name}", json=request_body)
+        response = test_team_client.post("/a2a/message/stream", json=request_body)
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/x-ndjson"

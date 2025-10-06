@@ -26,7 +26,8 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """Run your AgentOS with A2A interface.
 
-    You can run the reasoning-agent via API:
-    http://localhost:7777/a2a/agents/reasoning-agent
+    You can run the reasoning-agent via A2A protocol:
+    POST http://localhost:7777/a2a/message/send
+    (include "agentId": "reasoning-agent" in params.message)
     """
     agent_os.serve(app="reasoning_agent:app", reload=True, port=7777)

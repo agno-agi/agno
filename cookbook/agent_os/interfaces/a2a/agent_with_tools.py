@@ -35,7 +35,8 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """Run your AgentOS.
 
-    You can run the Agent via API:
-    http://localhost:7777/a2a/agents/agent-with-tools
+    You can run the Agent via A2A protocol:
+    POST http://localhost:7777/a2a/message/send
+    (include "agentId": "agent-with-tools" in params.message)
     """
     agent_os.serve(app="agent_with_tools:app", port=7777, reload=True)

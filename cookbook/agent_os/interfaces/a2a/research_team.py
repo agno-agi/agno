@@ -24,7 +24,7 @@ writer = Agent(
 
 research_team = Team(
     members=[researcher, writer],
-    name="research_team",
+    name="Research Team",
     instructions="""
     You are a research team that helps users with research and content creation.
     First, use the researcher to gather information, then use the writer to create content.
@@ -46,8 +46,9 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """Run your AgentOS with A2A interface.
 
-    You can run the research_team via API:
-    http://localhost:9001/a2a/teams/research_team
+    You can run the research_team via A2A protocol:
+    POST http://localhost:7777/a2a/message/send
+    (include "agentId": "research-team" in params.message)
 
     """
-    agent_os.serve(app="research_team:app", reload=True, port=9001)
+    agent_os.serve(app="research_team:app", reload=True, port=7777)

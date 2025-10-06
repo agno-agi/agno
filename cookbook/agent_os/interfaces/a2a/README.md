@@ -50,17 +50,34 @@ python cookbook/agent_os/interfaces/a2a/basic.py
 ### Access your agent
 
 Once running, your agent will be available at:
-- **Agent endpoint**: `http://localhost:7777/a2a/agents/basic-agent`
+- **Agent endpoint**: `http://localhost:7777/a2a/message/send`
 - **API documentation**: `http://localhost:7777/docs`
 
 ### Making API calls
 
-You can interact with your agent via HTTP POST requests:
+You can interact with your agent via A2A protocol (JSON-RPC 2.0):
 
 ```bash
-curl -X POST http://localhost:7777/a2a/agents/basic-agent \
+curl -X POST http://localhost:7777/a2a/message/send \
   -H "Content-Type: application/json" \
-  -d '{"message": "Hello, agent!"}'
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "message/send",
+    "id": "request-1",
+    "params": {
+      "message": {
+        "messageId": "msg-1",
+        "role": "user",
+        "agentId": "basic-agent",
+        "parts": [
+          {
+            "kind": "text",
+            "text": "Hello, agent!"
+          }
+        ]
+      }
+    }
+  }'
 ```
 
 ## Examples
@@ -90,7 +107,9 @@ Check out these example agents and teams:
 
 When you enable A2A interface, the following endpoints are automatically created:
 
-- `POST /a2a/agents/{agent_name}` - Interact with a specific agent
-- `POST /a2a/teams/{team_name}` - Interact with a specific team
+- `POST /a2a/message/send` - Send a message to an agent or team (standard A2A protocol)
+- `POST /a2a/message/stream` - Stream messages to/from an agent or team (standard A2A protocol)
 - `GET /docs` - OpenAPI documentation
 - `GET /config` - View AgentOS configuration
+
+The agent or team is identified via the `agentId` field in the request body's `params.message` object.
