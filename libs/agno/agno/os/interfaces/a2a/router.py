@@ -30,7 +30,7 @@ def attach_routes(
         raise ValueError("Agents or Teams are required to setup the A2A interface.")
 
     @router.post(
-        "/a2a/agents/{id}",
+        "/agents/{id}",
         tags=["A2A"],
         operation_id="run_a2a",
         summary="Run Agent via A2A",
@@ -127,7 +127,7 @@ def attach_routes(
             )
 
     @router.post(
-        "/a2a/teams/{id}",
+        "/teams/{id}",
         tags=["A2A"],
         operation_id="run_a2a",
         summary="Run Team via A2A",

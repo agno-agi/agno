@@ -25,7 +25,7 @@ class A2A(BaseInterface):
 
     def get_router(self, **kwargs) -> APIRouter:
         # Cannot be overridden
-        self.router = APIRouter(tags=["A2A"])
+        self.router = APIRouter(prefix="/a2a", tags=["A2A"])
 
         self.router = attach_routes(router=self.router, agents=self.agents, teams=self.teams)
 

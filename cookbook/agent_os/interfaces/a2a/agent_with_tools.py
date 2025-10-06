@@ -1,15 +1,12 @@
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.interfaces.agui import AGUI
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
+    name="Agent with Tools",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        DuckDuckGoTools(),
-    ],
-    description="You are a helpful AI assistant with both backend and frontend capabilities. You can search the web, create beautiful haikus, modify the UI, ask for user confirmations, and create visualizations.",
+    tools=[DuckDuckGoTools()],
     instructions="""
     You are a versatile AI assistant with the following capabilities:
 
@@ -30,7 +27,7 @@ agent = Agent(
 # Setup your AgentOS app
 agent_os = AgentOS(
     agents=[agent],
-    interfaces=[AGUI(agent=agent)],
+    a2a_interface=True,
 )
 app = agent_os.get_app()
 
@@ -38,9 +35,7 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """Run your AgentOS.
 
-    You can see the configuration and available apps at:
-    http://localhost:9001/config
-
-    Use Port 9001 to configure Dojo endpoint.
+    You can run the Agent via API:
+    http://localhost:7777/a2a/agents/agent-with-tools
     """
-    agent_os.serve(app="agent_with_tools:app", port=9001, reload=True)
+    agent_os.serve(app="agent_with_tools:app", port=7777, reload=True)
