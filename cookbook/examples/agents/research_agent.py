@@ -114,12 +114,17 @@ research_agent = Agent(
     """),
     markdown=True,
     add_datetime_to_context=True,
+    # Enable tool call forgetting for long research sessions with 10+ searches
+    # This keeps only the most recent 5 search results in context
+    forget_tool_calls=True,
+    num_tool_calls_to_keep=3,
+    debug_mode=True,
 )
 
 # Example usage with detailed research request
 if __name__ == "__main__":
     research_agent.print_response(
-        "Analyze the current state and future implications of artificial intelligence regulation worldwide",
+        "Analyze the current state and future implications of artificial intelligence regulation regionally. Focus specifically on the United States, Europe, and Asia. Then for some major countries as well",
         stream=True,
     )
 

@@ -194,7 +194,7 @@ competitor_analysis_agent = Agent(
     # Enable tool call forgetting for competitive analysis with multiple searches
     # This keeps only the most recent 10 searches/scrapes in context
     forget_tool_calls=True,
-    tool_call_window=10,
+    num_tool_calls_to_keep=10,
     debug_mode=True,
 )
 

@@ -180,13 +180,13 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
-    def _filter_messages(self, messages: List[Message], tool_call_window: int) -> int:
+    def _filter_messages(self, messages: List[Message], num_tool_calls_to_keep: int) -> int:
         """
         Filter messages to keep only the most recent N tool calls.
 
         Args:
             messages: List of messages
-            tool_call_window: Number of recent tool calls to keep
+            num_tool_calls_to_keep: Number of recent tool calls to keep
 
         Returns:
             Number of tool calls filtered out
@@ -194,13 +194,13 @@ class Model(ABC):
         # Count total tool calls (not messages) - each tool result = 1 tool call
         total_tool_calls = sum(1 for m in messages if m.role == "tool")
 
-        if total_tool_calls <= tool_call_window:
+        if total_tool_calls <= num_tool_calls_to_keep:
             return 0
 
         # Collect tool_call_ids to keep (most recent N)
         tool_call_ids_to_keep = []
         for msg in reversed(messages):
-            if msg.role == "tool" and len(tool_call_ids_to_keep) < tool_call_window:
+            if msg.role == "tool" and len(tool_call_ids_to_keep) < num_tool_calls_to_keep:
                 if msg.tool_call_id:
                     tool_call_ids_to_keep.append(msg.tool_call_id)
 
@@ -215,6 +215,7 @@ class Model(ABC):
                     filtered_messages.append(msg)
             elif msg.role == "assistant" and msg.tool_calls:
                 # Filter tool_calls within the assistant message
+                # copy maintains run_response and session data integrity
                 import copy
 
                 filtered_msg = copy.copy(msg)
@@ -237,7 +238,7 @@ class Model(ABC):
         num_filtered = total_tool_calls - len(tool_call_ids_to_keep)
         if num_filtered > 0:
             log_info(
-                f"🗑️  Keeping last {tool_call_window} tool call cycles (filtered out {num_filtered} older tool calls)"
+                f"🗑️  Keeping last {num_tool_calls_to_keep} tool call cycles (filtered out {num_filtered} older tool calls)"
             )
 
         return num_filtered
@@ -295,7 +296,7 @@ class Model(ABC):
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
         forget_tool_calls: bool = False,
-        tool_call_window: Optional[int] = None,
+        num_tool_calls_to_keep: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -428,8 +429,8 @@ class Model(ABC):
 
                 # Apply message filtering if forget_tool_calls is enabled (sliding window)
                 # This filters AFTER tool results are added, BEFORE next API call
-                if forget_tool_calls and tool_call_window is not None:
-                    self._filter_messages(messages, tool_call_window)
+                if forget_tool_calls and num_tool_calls_to_keep is not None:
+                    self._filter_messages(messages, num_tool_calls_to_keep)
 
                 # Continue loop to get next response
                 continue
@@ -811,7 +812,7 @@ class Model(ABC):
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
         forget_tool_calls: bool = False,
-        tool_call_window: Optional[int] = None,
+        num_tool_calls_to_keep: Optional[int] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -932,8 +933,8 @@ class Model(ABC):
 
                 # Apply message filtering if forget_tool_calls is enabled (sliding window)
                 # This filters AFTER tool results are added, BEFORE next API call
-                if forget_tool_calls and tool_call_window is not None:
-                    self._filter_messages(messages, tool_call_window)
+                if forget_tool_calls and num_tool_calls_to_keep is not None:
+                    self._filter_messages(messages, num_tool_calls_to_keep)
 
                 # Continue loop to get next response
                 continue
@@ -986,7 +987,7 @@ class Model(ABC):
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
         forget_tool_calls: bool = False,
-        tool_call_window: Optional[int] = None,
+        num_tool_calls_to_keep: Optional[int] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1107,8 +1108,8 @@ class Model(ABC):
 
                 # Apply message filtering if forget_tool_calls is enabled (sliding window)
                 # This filters AFTER tool results are added, BEFORE next API call
-                if forget_tool_calls and tool_call_window is not None:
-                    self._filter_messages(messages, tool_call_window)
+                if forget_tool_calls and num_tool_calls_to_keep is not None:
+                    self._filter_messages(messages, num_tool_calls_to_keep)
 
                 # Continue loop to get next response
                 continue
