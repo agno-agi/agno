@@ -60,7 +60,7 @@ Add workflow history to **all steps** in the workflow:
 ```python
 workflow = Workflow(
     steps=[research_step, analysis_step, writing_step],
-    add_workflow_history=True  # All steps get history
+    add_workflow_history_to_steps=True  # All steps get history
 )
 ```
 
@@ -86,7 +86,7 @@ workflow = Workflow(
         Step("Analysis", agent=analysis_agent, add_workflow_history=False),  # False → overrides workflow  
         Step("Writing", agent=writing_agent, add_workflow_history=True),     # True → overrides workflow
     ],
-    add_workflow_history=True  # Default for all steps
+    add_workflow_history_to_steps=True  # Default for all steps
 )
 ```
 
@@ -101,7 +101,7 @@ Learn the basics with a simple AI tutor that remembers your conversation:
 # Simple single-step workflow with history
 workflow = Workflow(
     steps=[Step(name="AI Tutoring", agent=tutor_agent)],
-    add_workflow_history=True
+    add_workflow_history_to_steps=True
 )
 ```
 
@@ -230,7 +230,7 @@ Customer: "Could less funds be the reason for the above error?"
 ### Workflow Configuration
 ```python
 Workflow(
-    add_workflow_history: bool = False,  # Enable for all steps
+    add_workflow_history_to_steps: bool = False,  # Enable for all steps
     num_history_runs: int = 3           # Number of previous runs to include
 )
 ```
