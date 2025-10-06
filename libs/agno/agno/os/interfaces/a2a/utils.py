@@ -121,7 +121,7 @@ async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) 
             raise HTTPException(status_code=400, detail=f"Invalid A2A request: {str(e)}")
     else:
         try:
-            a2a_request = SendMessageRequest.model_validate(request_body)
+            a2a_request = SendMessageRequest.model_validate(request_body)  # type: ignore[assignment]
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid A2A request: {str(e)}")
 
@@ -195,7 +195,7 @@ def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) 
 
     # 1. Handle output content
     if run_output.content:
-        parts.append(Part(root=TextPart(text=run_output.content)))
+        parts.append(Part(root=TextPart(text=str(run_output.content))))
 
     # 2. Handle output media
     artifacts: List[Artifact] = []
@@ -884,7 +884,7 @@ async def stream_a2a_response(
 
 
 async def stream_a2a_response_with_error_handling(
-    event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, RunOutput]],
+    event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent, RunOutput]],
     request_id: Union[str, int],
 ) -> AsyncIterator[str]:
     """Wrapper around stream_a2a_response to handle critical errors."""

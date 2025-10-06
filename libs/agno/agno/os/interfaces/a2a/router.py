@@ -227,7 +227,7 @@ def attach_routes(
                     **kwargs,
                 )
             else:
-                event_stream = entity.arun(
+                event_stream = entity.arun(  # type: ignore[assignment]
                     input=run_input.input_content,
                     images=run_input.images,
                     videos=run_input.videos,
@@ -242,7 +242,7 @@ def attach_routes(
 
             # 4. Stream the response
             return StreamingResponse(
-                stream_a2a_response_with_error_handling(event_stream=event_stream, request_id=request_body["id"]),
+                stream_a2a_response_with_error_handling(event_stream=event_stream, request_id=request_body["id"]),  # type: ignore[arg-type]
                 media_type="application/x-ndjson",
             )
 
