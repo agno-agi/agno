@@ -847,13 +847,13 @@ jobs:
         run: |
           ./scripts/dev_setup.sh
       - name: Install a2a-sdk and run tests
-        working-directory: .
+        working-directory: ./libs/agno
         env:
           AGNO_TELEMETRY: false
         run: |
-          source .venv/bin/activate
+          source ../../.venv/bin/activate
           pip install a2a-sdk
-          python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
+          python -m pytest tests/integration/os/interfaces/test_a2a.py
 
   # Run remaining integration tests
   test-remaining:
