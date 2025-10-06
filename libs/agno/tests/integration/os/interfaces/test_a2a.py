@@ -15,6 +15,7 @@ from agno.run.agent import (
     ReasoningCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
+    RunCancelledEvent,
     RunCompletedEvent,
     RunContentEvent,
     RunOutput,
@@ -42,12 +43,10 @@ def test_client(test_agent: Agent):
 
 def test_a2a_interface_parameter():
     """Test that the A2A interface is setup correctly using the a2a_interface parameter."""
-    # Setup OS with the a2a_interface parameter
     agent = Agent()
     agent_os = AgentOS(agents=[agent], a2a_interface=True)
     app = agent_os.get_app()
 
-    # Assert that the app has the A2A interface
     assert app is not None
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
     assert "/a2a/message/send" in [route.path for route in app.routes]  # type: ignore
@@ -56,13 +55,11 @@ def test_a2a_interface_parameter():
 
 def test_a2a_interface_in_interfaces_parameter():
     """Test that the A2A interface is setup correctly using the interfaces parameter."""
-    # Setup OS with the a2a_interface parameter
     interface_agent = Agent(name="interface-agent")
     os_agent = Agent(name="os-agent")
     agent_os = AgentOS(agents=[os_agent], interfaces=[A2A(agents=[interface_agent])])
     app = agent_os.get_app()
 
-    # Assert setting the app didn't raise and the A2A interface is the expected one
     assert app is not None
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
     assert "/a2a/message/send" in [route.path for route in app.routes]  # type: ignore
@@ -131,39 +128,39 @@ def test_a2a_streaming(test_agent: Agent, test_client: TestClient):
     async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
         yield RunStartedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
         )
 
         yield RunContentEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             content="Hello! ",
         )
 
         yield RunContentEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             content="This is ",
         )
 
         yield RunContentEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             content="a streaming response.",
         )
 
         yield RunCompletedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             content="Hello! this is a streaming response.",
         )
@@ -223,7 +220,6 @@ def test_a2a_streaming(test_agent: Agent, test_client: TestClient):
         assert final_task["id"] == "request-123"
         assert final_task["result"]["contextId"] == "context-789"
         assert final_task["result"]["status"]["state"] == "completed"
-        # Final content comes from RunCompletedEvent, not accumulated content
         assert final_task["result"]["history"][0]["parts"][0]["text"] == "Hello! this is a streaming response."
 
         mock_arun.assert_called_once()
@@ -241,23 +237,23 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
         """Mock event stream with tool calls."""
         yield RunStartedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
         )
 
         yield ToolCallStartedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             tool=ToolExecution(tool_name="get_weather", tool_args={"location": "Shanghai"}),
         )
 
         yield ToolCallCompletedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             tool=ToolExecution(tool_name="get_weather", tool_args={"location": "Shanghai"}),
             content="72°F and sunny",
@@ -266,16 +262,16 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
         # Agent responds with content
         yield RunContentEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             content="The weather in Shanghai is 72°F and sunny.",
         )
 
         yield RunCompletedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             content="The weather in Shanghai is 72°F and sunny.",
         )
@@ -303,13 +299,11 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/x-ndjson"
 
-        # Parse events
         events = []
         for line in response.text.strip().split("\n"):
             if line.strip():
                 events.append(json.loads(line))
 
-        # Verify tool started event is a status update with metadata
         tool_started = [
             e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "tool_call_started"
         ]
@@ -320,7 +314,6 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
         tool_args = json.loads(tool_started[0]["result"]["metadata"]["tool_args"])
         assert tool_args == {"location": "Shanghai"}
 
-        # Verify tool completed event is a status update
         tool_completed = [
             e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "tool_call_completed"
         ]
@@ -328,13 +321,11 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
         assert tool_completed[0]["result"]["kind"] == "status-update"
         assert tool_completed[0]["result"]["metadata"]["tool_name"] == "get_weather"
 
-        # Verify content was streamed as a message (NOT as tool result)
         content_messages = [e for e in events if e["result"].get("kind") == "message" and e["result"].get("parts")]
         assert len(content_messages) == 1
         assert content_messages[0]["result"]["parts"][0]["text"] == "The weather in Shanghai is 72°F and sunny."
         assert content_messages[0]["result"]["metadata"]["agno_content_category"] == "content"
 
-        # Verify final task contains accumulated content
         final_task = events[-1]
         assert final_task["result"]["kind"] == "task"
         assert final_task["result"]["status"]["state"] == "completed"
@@ -348,60 +339,55 @@ def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient
         """Mock event stream with reasoning."""
         yield RunStartedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
         )
 
-        # Reasoning starts
         yield ReasoningStartedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
         )
 
-        # Reasoning step 1
         yield ReasoningStepEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             reasoning_content="First, I need to understand what the user is asking...",
             content_type="str",
         )
 
-        # Reasoning step 2
         yield ReasoningStepEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             reasoning_content="Then I should formulate a clear response.",
             content_type="str",
         )
 
-        # Reasoning completes
         yield ReasoningCompletedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
         )
 
-        # Agent responds with content
         yield RunContentEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             content="Based on my analysis, here's the answer.",
         )
 
         yield RunCompletedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             content="Based on my analysis, here's the answer.",
         )
@@ -429,13 +415,11 @@ def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/x-ndjson"
 
-        # Parse events
         events = []
         for line in response.text.strip().split("\n"):
             if line.strip():
                 events.append(json.loads(line))
 
-        # Verify reasoning started is a status update
         reasoning_started = [
             e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "reasoning_started"
         ]
@@ -443,7 +427,6 @@ def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient
         assert reasoning_started[0]["result"]["kind"] == "status-update"
         assert reasoning_started[0]["result"]["status"]["state"] == "working"
 
-        # Verify reasoning steps are messages with reasoning category
         reasoning_messages = [
             e
             for e in events
@@ -457,19 +440,16 @@ def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient
         )
         assert reasoning_messages[1]["result"]["parts"][0]["text"] == "Then I should formulate a clear response."
 
-        # Verify reasoning messages have proper metadata
         for msg in reasoning_messages:
             assert msg["result"]["metadata"]["agno_content_category"] == "reasoning"
             assert msg["result"]["metadata"]["agno_event_type"] == "reasoning_step"
 
-        # Verify reasoning completed is a status update
         reasoning_completed = [
             e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "reasoning_completed"
         ]
         assert len(reasoning_completed) == 1
         assert reasoning_completed[0]["result"]["kind"] == "status-update"
 
-        # Verify content message is separate from reasoning (content category)
         content_messages = [
             e
             for e in events
@@ -479,7 +459,6 @@ def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient
         assert len(content_messages) == 1
         assert content_messages[0]["result"]["parts"][0]["text"] == "Based on my analysis, here's the answer."
 
-        # Verify final task contains only the content (not reasoning)
         final_task = events[-1]
         assert final_task["result"]["kind"] == "task"
         assert final_task["result"]["status"]["state"] == "completed"
@@ -492,37 +471,37 @@ def test_a2a_streaming_with_memory(test_agent: Agent, test_client: TestClient):
     async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
         yield RunStartedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
         )
 
         yield MemoryUpdateStartedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
         )
 
         yield MemoryUpdateCompletedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
         )
 
         yield RunContentEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             content="I've updated my memory with this information.",
         )
 
         yield RunCompletedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             content="I've updated my memory with this information.",
         )
@@ -661,39 +640,39 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
     async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
         yield RunStartedEvent(
             session_id="context-789",
-            agent_id=test_team.id,  # type: ignore
-            agent_name=test_team.name,  # type: ignore
+            agent_id=test_team.id,
+            agent_name=test_team.name,
             run_id="test-run-123",
         )
 
         yield RunContentEvent(
             session_id="context-789",
-            agent_id=test_team.id,  # type: ignore
-            agent_name=test_team.name,  # type: ignore
+            agent_id=test_team.id,
+            agent_name=test_team.name,
             run_id="test-run-123",
             content="Hello! ",
         )
 
         yield RunContentEvent(
             session_id="context-789",
-            agent_id=test_team.id,  # type: ignore
-            agent_name=test_team.name,  # type: ignore
+            agent_id=test_team.id,
+            agent_name=test_team.name,
             run_id="test-run-123",
             content="This is ",
         )
 
         yield RunContentEvent(
             session_id="context-789",
-            agent_id=test_team.id,  # type: ignore
-            agent_name=test_team.name,  # type: ignore
+            agent_id=test_team.id,
+            agent_name=test_team.name,
             run_id="test-run-123",
             content="a streaming response from the team.",
         )
 
         yield RunCompletedEvent(
             session_id="context-789",
-            agent_id=test_team.id,  # type: ignore
-            agent_name=test_team.name,  # type: ignore
+            agent_id=test_team.id,
+            agent_name=test_team.name,
             run_id="test-run-123",
             content="Hello! this is a streaming response from the team.",
         )
@@ -753,7 +732,6 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
         assert final_task["id"] == "request-123"
         assert final_task["result"]["contextId"] == "context-789"
         assert final_task["result"]["status"]["state"] == "completed"
-        # Final content comes from RunCompletedEvent, not accumulated content
         assert (
             final_task["result"]["history"][0]["parts"][0]["text"]
             == "Hello! this is a streaming response from the team."
@@ -863,13 +841,12 @@ def test_a2a_error_handling_non_streaming(test_agent: Agent, test_client: TestCl
 
         response = test_client.post("/a2a/message/send", json=request_body)
 
-        assert response.status_code == 200  # A2A returns 200 with failed Task
+        assert response.status_code == 200
         data = response.json()
         assert data["jsonrpc"] == "2.0"
         assert data["id"] == "request-123"
         assert data["result"]["status"]["state"] == "failed"
         assert data["result"]["contextId"] == "context-789"
-        # Error message is in history, not status.message
         assert len(data["result"]["history"]) == 1
         assert "Agent execution failed" in data["result"]["history"][0]["parts"][0]["text"]
 
@@ -882,23 +859,23 @@ def test_a2a_streaming_with_media_artifacts(test_agent: Agent, test_client: Test
 
         yield RunStartedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
         )
 
         yield RunContentEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             content="Generated image",
         )
 
         yield RunCompletedEvent(
             session_id="context-789",
-            agent_id=test_agent.id,  # type: ignore
-            agent_name=test_agent.name,  # type: ignore
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
             run_id="test-run-123",
             content="Generated image",
             images=[Image(url="https://example.com/image.png")],
@@ -934,37 +911,150 @@ def test_a2a_streaming_with_media_artifacts(test_agent: Agent, test_client: Test
             if line.strip():
                 events.append(json.loads(line))
 
-        # Find the final task
         final_task = events[-1]
         assert final_task["result"]["kind"] == "task"
-
-        # Debug: print error if failed
-        if final_task["result"]["status"]["state"] != "completed":
-            if final_task["result"].get("history"):
-                error_text = final_task["result"]["history"][0]["parts"][0]["text"]
-                print(f"\nError from task: {error_text}\n")
-
         assert final_task["result"]["status"]["state"] == "completed"
 
-        # Check that artifacts were created
         artifacts = final_task["result"].get("artifacts")
         assert artifacts is not None
         assert len(artifacts) == 3
 
-        # Check image artifact
         image_artifact = next((a for a in artifacts if "image" in a["artifactId"]), None)
         assert image_artifact is not None
-        assert image_artifact["name"] == "image-0"  # Default name since Image doesn't have name attribute
+        assert image_artifact["name"] == "image-0"
         assert image_artifact["parts"][0]["file"]["uri"] == "https://example.com/image.png"
 
-        # Check video artifact
         video_artifact = next((a for a in artifacts if "video" in a["artifactId"]), None)
         assert video_artifact is not None
-        assert video_artifact["name"] == "video-0"  # Default name
+        assert video_artifact["name"] == "video-0"
         assert video_artifact["parts"][0]["file"]["uri"] == "https://example.com/video.mp4"
 
-        # Check audio artifact
         audio_artifact = next((a for a in artifacts if "audio" in a["artifactId"]), None)
         assert audio_artifact is not None
-        assert audio_artifact["name"] == "audio-0"  # Default name
+        assert audio_artifact["name"] == "audio-0"
         assert audio_artifact["parts"][0]["file"]["uri"] == "https://example.com/audio.mp3"
+
+
+def test_a2a_streaming_with_cancellation(test_agent: Agent, test_client: TestClient):
+    """Test A2A streaming with run cancellation."""
+
+    async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
+        yield RunStartedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+        )
+
+        yield RunContentEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            content="Starting to process...",
+        )
+
+        yield RunCancelledEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            reason="User requested cancellation",
+        )
+
+    with patch.object(test_agent, "arun") as mock_arun:
+        mock_arun.return_value = mock_event_stream()
+
+        request_body = {
+            "jsonrpc": "2.0",
+            "method": "message/stream",
+            "id": "request-123",
+            "params": {
+                "message": {
+                    "messageId": "msg-123",
+                    "role": "user",
+                    "contextId": "context-789",
+                    "agentId": test_agent.name,
+                    "parts": [{"kind": "text", "text": "Start processing"}],
+                }
+            },
+        }
+
+        response = test_client.post("/a2a/message/stream", json=request_body)
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/x-ndjson"
+
+        events = []
+        for line in response.text.strip().split("\n"):
+            if line.strip():
+                events.append(json.loads(line))
+
+        content_messages = [
+            e
+            for e in events
+            if e["result"].get("kind") == "message"
+            and e["result"].get("metadata", {}).get("agno_content_category") == "content"
+        ]
+        assert len(content_messages) == 1
+        assert content_messages[0]["result"]["parts"][0]["text"] == "Starting to process..."
+
+        final_status_events = [
+            e for e in events if e["result"].get("kind") == "status-update" and e["result"].get("final") is True
+        ]
+        assert len(final_status_events) == 1
+        assert final_status_events[0]["result"]["status"]["state"] == "canceled"
+        assert final_status_events[0]["result"]["metadata"]["agno_event_type"] == "run_cancelled"
+        assert final_status_events[0]["result"]["metadata"]["reason"] == "User requested cancellation"
+
+        final_task = events[-1]
+        assert final_task["result"]["kind"] == "task"
+        assert final_task["result"]["status"]["state"] == "canceled"
+        assert final_task["result"]["history"][0]["metadata"]["agno_event_type"] == "run_cancelled"
+
+        parts = final_task["result"]["history"][0]["parts"]
+        cancellation_text = " ".join([p["text"] for p in parts])
+        assert "cancelled" in cancellation_text.lower()
+        assert "User requested cancellation" in cancellation_text
+
+
+def test_a2a_user_id_in_response_metadata(test_agent: Agent, test_client: TestClient):
+    """Test that user_id is included in response message metadata when provided."""
+    mock_output = RunOutput(
+        run_id="test-run-123",
+        session_id="context-789",
+        agent_id=test_agent.id,
+        agent_name=test_agent.name,
+        content="Response",
+        user_id="user-456",
+    )
+
+    with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_output
+
+        request_body = {
+            "jsonrpc": "2.0",
+            "method": "message/send",
+            "id": "request-123",
+            "params": {
+                "message": {
+                    "messageId": "msg-123",
+                    "role": "user",
+                    "agentId": test_agent.name,
+                    "parts": [{"kind": "text", "text": "Hello!"}],
+                }
+            },
+        }
+
+        response = test_client.post(
+            "/a2a/message/send", json=request_body, headers={"X-User-ID": "user-456"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        task = data["result"]
+        assert len(task["history"]) == 1
+        message = task["history"][0]
+        assert message["metadata"] is not None
+        assert message["metadata"]["userId"] == "user-456"

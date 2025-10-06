@@ -10,6 +10,7 @@ from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEve
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
+from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
 from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
@@ -47,6 +48,7 @@ from agno.run.agent import (
     ReasoningCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
+    RunCancelledEvent,
     RunCompletedEvent,
     RunContentEvent,
     RunInput,
@@ -235,12 +237,17 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
             )
 
     # 3. Build the A2A message
+    metadata = {}
+    if run_output.user_id:
+        metadata["userId"] = run_output.user_id
+
     agent_message = A2AMessage(
         message_id=str(uuid4()),  # TODO: use our message_id once it's implemented
         role=Role.agent,
         parts=parts,
         context_id=run_output.session_id,
         task_id=run_output.run_id,
+        metadata=metadata if metadata else None,
     )
 
     # 4. Build and return the A2A task
@@ -277,6 +284,7 @@ async def stream_a2a_response(
     message_id: str = str(uuid4())
     accumulated_content = ""
     completion_event = None
+    cancelled_event = None
 
     # Stream events
     async for event in event_stream:
@@ -427,17 +435,65 @@ async def stream_a2a_response(
         elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
             completion_event = event
 
+        # Capture cancelled event for final task construction
+        elif isinstance(event, (RunCancelledEvent, TeamRunCancelledEvent)):
+            cancelled_event = event
+
     # 3. Send final status event
-    final_status_event = TaskStatusUpdateEvent(
-        task_id=task_id,
-        context_id=context_id,
-        status=TaskStatus(state=TaskState.completed),
-        final=True,
-    )
+    # If cancelled, send canceled status; otherwise send completed
+    if cancelled_event:
+        final_state = TaskState.canceled
+        metadata = {"agno_event_type": "run_cancelled"}
+        if hasattr(cancelled_event, "reason") and cancelled_event.reason:
+            metadata["reason"] = cancelled_event.reason
+        final_status_event = TaskStatusUpdateEvent(
+            task_id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=final_state),
+            final=True,
+            metadata=metadata,
+        )
+    else:
+        final_status_event = TaskStatusUpdateEvent(
+            task_id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.completed),
+            final=True,
+        )
     response = SendStreamingMessageSuccessResponse(id=request_id, result=final_status_event)
     yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
-    # 4. Send final complete task
+    # 4. Send final task
+    # Handle cancelled case
+    if cancelled_event:
+        cancel_message = "Run was cancelled"
+        if hasattr(cancelled_event, "reason") and cancelled_event.reason:
+            cancel_message = f"Run was cancelled: {cancelled_event.reason}"
+
+        parts: List[Part] = []
+        if accumulated_content:
+            parts.append(Part(root=TextPart(text=accumulated_content)))
+        parts.append(Part(root=TextPart(text=cancel_message)))
+
+        final_message = A2AMessage(
+            message_id=message_id,
+            role=Role.agent,
+            parts=parts,
+            context_id=context_id,
+            task_id=task_id,
+            metadata={"agno_event_type": "run_cancelled"},
+        )
+
+        task = Task(
+            id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.canceled),
+            history=[final_message],
+        )
+        response = SendStreamingMessageSuccessResponse(id=request_id, result=task)
+        yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+        return
+
     # Build from completion_event if available, otherwise use accumulated content
     if completion_event:
         final_content = completion_event.content if completion_event.content else accumulated_content
