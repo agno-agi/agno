@@ -656,6 +656,10 @@ class Model(ABC):
         if provider_response.response_usage is not None:
             assistant_message.metrics += provider_response.response_usage
 
+        # Add extra metadata if provided (e.g., context_management data)
+        if provider_response.extra is not None:
+            assistant_message.extra = provider_response.extra
+
         return assistant_message
 
     def process_response_stream(

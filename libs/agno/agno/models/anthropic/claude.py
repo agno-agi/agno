@@ -512,7 +512,11 @@ class Claude(Model):
         if self.context_management is not None:
             if response.context_management is not None:
                 model_response.extra = model_response.extra or {}
-                model_response.extra["context_management"] = response.context_management
+                # Store as dict for JSON serialization
+                if hasattr(response.context_management, 'model_dump'):
+                    model_response.extra["context_management"] = response.context_management.model_dump()
+                else:
+                    model_response.extra["context_management"] = response.context_management
 
         return model_response
 
