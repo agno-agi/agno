@@ -47,7 +47,7 @@ evaluation = AccuracyEval(
 # Setup the Agno API App
 agent_os = AgentOS(
     description="Example app for basic agent with eval capabilities",
-    os_id="eval-demo",
+    id="eval-demo",
     agents=[basic_agent],
 )
 app = agent_os.get_app()

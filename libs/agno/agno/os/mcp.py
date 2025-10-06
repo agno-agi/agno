@@ -54,7 +54,7 @@ def get_mcp_server(
     )  # type: ignore
     async def config() -> ConfigResponse:
         return ConfigResponse(
-            os_id=os.os_id or "AgentOS",
+            os_id=os.id or "AgentOS",
             description=os.description,
             available_models=os.config.available_models if os.config else [],
             databases=[db.id for db in os.dbs.values()],
@@ -68,7 +68,7 @@ def get_mcp_server(
             teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
             workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
             interfaces=[
-                InterfaceResponse(type=interface.type, version=interface.version, route=interface.router_prefix)
+                InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces
             ],
         )

@@ -265,7 +265,6 @@ class BasePDFReader(Reader):
 
         if self.chunk:
             return self._build_chunked_documents(documents)
-
         return documents
 
     def _pdf_reader_to_documents(
@@ -342,8 +341,6 @@ class PDFReader(BasePDFReader):
                 doc_name = pdf.name.split(".")[0]
         except Exception:
             doc_name = "pdf"
-
-        log_info(f"Reading: {doc_name}")
 
         try:
             DocumentReader(pdf)

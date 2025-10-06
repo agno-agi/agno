@@ -81,14 +81,14 @@ def test_mixed_structured_output():
         model=OpenAIChat("gpt-4o"),
         role="Get stock information",
         output_schema=StockInfo,
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(include_tools=["get_current_stock_price"])],
     )
 
     news_agent = Agent(
         name="News Agent",
         model=OpenAIChat("gpt-4o"),
         role="Get company news",
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(include_tools=["get_company_news"])],
     )
 
     team = Team(
