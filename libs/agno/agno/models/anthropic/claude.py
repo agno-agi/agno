@@ -45,6 +45,8 @@ except ImportError as e:
 # Import Beta types
 try:
     from anthropic.types.beta import BetaRawContentBlockDeltaEvent, BetaTextDelta
+    from anthropic.types.beta.beta_message import BetaMessage
+    from anthropic.types.beta.beta_usage import BetaUsage
 except ImportError as e:
     raise ImportError(
         "`anthropic` not installed or missing beta components. Please install with `pip install anthropic`"
@@ -433,7 +435,7 @@ class Claude(Model):
             return tool_call_prompt
         return None
 
-    def _parse_provider_response(self, response: AnthropicMessage, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: Union[AnthropicMessage, BetaMessage], **kwargs) -> ModelResponse:
         """
         Parse the Claude response into a ModelResponse.
 
@@ -509,14 +511,13 @@ class Claude(Model):
             model_response.response_usage = self._get_metrics(response.usage)
 
         # Capture context management information if present
-        if self.context_management is not None:
-            if response.context_management is not None:
+        if self.context_management is not None and hasattr(response, "context_management"):
+            if response.context_management is not None:  # type: ignore
                 model_response.extra = model_response.extra or {}
-                # Store as dict for JSON serialization
-                if hasattr(response.context_management, 'model_dump'):
-                    model_response.extra["context_management"] = response.context_management.model_dump()
+                if hasattr(response.context_management, "model_dump"):
+                    model_response.extra["context_management"] = response.context_management.model_dump()  # type: ignore
                 else:
-                    model_response.extra["context_management"] = response.context_management
+                    model_response.extra["context_management"] = response.context_management  # type: ignore
 
         return model_response
 
@@ -612,7 +613,7 @@ class Claude(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage]) -> Metrics:
+    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage, BetaUsage]) -> Metrics:
         """
         Parse the given Anthropic-specific usage into an Agno Metrics object.
 

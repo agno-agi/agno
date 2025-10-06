@@ -85,6 +85,9 @@ class Message(BaseModel):
     # Citations received from the model
     citations: Optional[Citations] = None
 
+    # Extra metadata from the model
+    extra: Optional[Dict[str, Any]] = None
+
     # --- Data not sent to the Model API ---
     # The reasoning content from the model
     reasoning_content: Optional[str] = None
