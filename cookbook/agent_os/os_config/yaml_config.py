@@ -53,7 +53,7 @@ basic_workflow = Workflow(
 # Setup our AgentOS app
 agent_os = AgentOS(
     description="Example AgentOS",
-    os_id="basic-os",
+    id="basic-os",
     agents=[basic_agent],
     teams=[basic_team],
     workflows=[basic_workflow],

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agno.exceptions import AgnoError, ModelProviderError
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_error, logger
+from agno.utils.log import log_error, log_warning
 
 try:
     from boto3 import client as AwsClient
@@ -68,6 +68,11 @@ class AwsBedrockEmbedder(Embedder):
     request_params: Optional[Dict[str, Any]] = None
     client_params: Optional[Dict[str, Any]] = None
     client: Optional[AwsClient] = None
+
+    def __post_init__(self):
+        if self.enable_batch:
+            log_warning("AwsBedrockEmbedder does not support batch embeddings, setting enable_batch to False")
+            self.enable_batch = False
 
     def get_client(self) -> AwsClient:
         """
@@ -220,10 +225,10 @@ class AwsBedrockEmbedder(Embedder):
                     # Fallback to the first available embedding type
                     for embedding_type in response["embeddings"]:
                         return response["embeddings"][embedding_type][0]
-            logger.warning("No embeddings found in response")
+            log_warning("No embeddings found in response")
             return []
         except Exception as e:
-            logger.warning(f"Error extracting embeddings: {e}")
+            log_warning(f"Error extracting embeddings: {e}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -286,7 +291,7 @@ class AwsBedrockEmbedder(Embedder):
                         # Fallback to the first available embedding type
                         for embedding_type in response_body["embeddings"]:
                             return response_body["embeddings"][embedding_type][0]
-                logger.warning("No embeddings found in response")
+                log_warning("No embeddings found in response")
                 return []
         except ClientError as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")

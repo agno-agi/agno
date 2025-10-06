@@ -8,7 +8,7 @@ from agno.workflow import Step, StepInput, StepOutput, Workflow
 
 def research_step_function(step_input: StepInput) -> StepOutput:
     """Minimal research function."""
-    topic = step_input.message
+    topic = step_input.input
     return StepOutput(content=f"Research: {topic}")
 
 

@@ -12,7 +12,7 @@ from agno.tools.exa import ExaTools
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[ExaTools(research=True, research_model="exa-research-pro")],
+    tools=[ExaTools(enable_research=True, research_model="exa-research-pro")],
     instructions=dedent("""
         You are an expert research analyst with access to advanced research tools.
         
