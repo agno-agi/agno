@@ -100,10 +100,10 @@ source .venvs/perfenv/bin/activate
 # pip install openai agno langgraph langchain_openai
 
 # Agno
-python evals/performance/instantiation_with_tool.py
+python cookbook/evals/performance/instantiate_agent_with_tool.py
 
 # LangGraph
-python evals/performance/other/langgraph_instantiation.py
+python cookbook/evals/performance/comparison/langgraph_instantiation.py
 ```
 
 > The following evaluation is run on an Apple M4 MacBook Pro. It also runs as a Github action on this repo.
