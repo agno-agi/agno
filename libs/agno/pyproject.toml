@@ -296,7 +296,6 @@ tests = [
     "agno[performance]",
     "agno[cookbooks]",
     "agno[agui]",
-    "agno[a2a]",
     "twine",
     "build",
 ]
