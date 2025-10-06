@@ -22,19 +22,21 @@ class A2A(BaseInterface):
         agents: Optional[List[Agent]] = None,
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
+        prefix: str = "/a2a",
+        tags: Optional[List[str]] = None,
     ):
         self.agents = agents
         self.teams = teams
         self.workflows = workflows
+        self.prefix = prefix
+        self.tags = tags or ["A2A"]
 
         if not (self.agents or self.teams or self.workflows):
             raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")
 
     def get_router(self, **kwargs) -> APIRouter:
-        self.router = APIRouter(prefix="/a2a", tags=["A2A"])
+        self.router = APIRouter(prefix=self.prefix, tags=self.tags)  # type: ignore
 
-        self.router = attach_routes(
-            router=self.router, agents=self.agents, teams=self.teams, workflows=self.workflows
-        )
+        self.router = attach_routes(router=self.router, agents=self.agents, teams=self.teams, workflows=self.workflows)
 
         return self.router
