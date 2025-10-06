@@ -1,5 +1,5 @@
 import json
-from typing import cast
+from typing import Any, Dict, cast
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -17,15 +17,28 @@ from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
-from agno.run.workflow import StepCompletedEvent as WorkflowStepCompletedEvent
-from agno.run.workflow import StepStartedEvent as WorkflowStepStartedEvent
 from agno.run.workflow import (
+    ConditionExecutionCompletedEvent,
+    ConditionExecutionStartedEvent,
+    LoopExecutionCompletedEvent,
+    LoopExecutionStartedEvent,
+    LoopIterationCompletedEvent,
+    LoopIterationStartedEvent,
+    ParallelExecutionCompletedEvent,
+    ParallelExecutionStartedEvent,
+    RouterExecutionCompletedEvent,
+    RouterExecutionStartedEvent,
+    StepsExecutionCompletedEvent,
+    StepsExecutionStartedEvent,
     WorkflowCancelledEvent,
     WorkflowCompletedEvent,
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
     WorkflowStartedEvent,
 )
+from agno.run.workflow import StepCompletedEvent as WorkflowStepCompletedEvent
+from agno.run.workflow import StepErrorEvent as WorkflowStepErrorEvent
+from agno.run.workflow import StepStartedEvent as WorkflowStepStartedEvent
 
 try:
     from a2a.types import (
@@ -319,8 +332,6 @@ async def stream_a2a_response(
         # Send content events
         elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
             accumulated_content += event.content
-
-            # Send content event
             message = A2AMessage(
                 message_id=message_id,
                 role=Role.agent,
@@ -440,6 +451,7 @@ async def stream_a2a_response(
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
+        # Send workflow events
         elif isinstance(event, WorkflowStepStartedEvent):
             metadata = {"agno_event_type": "workflow_step_started"}
             if hasattr(event, "step_name") and event.step_name:
@@ -459,6 +471,242 @@ async def stream_a2a_response(
             metadata = {"agno_event_type": "workflow_step_completed"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        elif isinstance(event, WorkflowStepErrorEvent):
+            metadata = {"agno_event_type": "workflow_step_error"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "error") and event.error:
+                metadata["error"] = event.error
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        # Send loop events
+        elif isinstance(event, LoopExecutionStartedEvent):
+            metadata = {"agno_event_type": "loop_execution_started"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "max_iterations") and event.max_iterations:
+                metadata["max_iterations"] = event.max_iterations
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        elif isinstance(event, LoopIterationStartedEvent):
+            metadata = {"agno_event_type": "loop_iteration_started"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "iteration") and event.iteration is not None:
+                metadata["iteration"] = event.iteration
+            if hasattr(event, "max_iterations") and event.max_iterations:
+                metadata["max_iterations"] = event.max_iterations
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        elif isinstance(event, LoopIterationCompletedEvent):
+            metadata = {"agno_event_type": "loop_iteration_completed"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "iteration") and event.iteration is not None:
+                metadata["iteration"] = event.iteration
+            if hasattr(event, "should_continue") and event.should_continue is not None:
+                metadata["should_continue"] = event.should_continue
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        elif isinstance(event, LoopExecutionCompletedEvent):
+            metadata = {"agno_event_type": "loop_execution_completed"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "total_iterations") and event.total_iterations is not None:
+                metadata["total_iterations"] = event.total_iterations
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        # Send parallel events
+        elif isinstance(event, ParallelExecutionStartedEvent):
+            metadata = {"agno_event_type": "parallel_execution_started"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "parallel_step_count") and event.parallel_step_count:
+                metadata["parallel_step_count"] = event.parallel_step_count
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        elif isinstance(event, ParallelExecutionCompletedEvent):
+            metadata = {"agno_event_type": "parallel_execution_completed"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "parallel_step_count") and event.parallel_step_count:
+                metadata["parallel_step_count"] = event.parallel_step_count
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        # Send condition events
+        elif isinstance(event, ConditionExecutionStartedEvent):
+            metadata = {"agno_event_type": "condition_execution_started"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "condition_result") and event.condition_result is not None:
+                metadata["condition_result"] = event.condition_result
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        elif isinstance(event, ConditionExecutionCompletedEvent):
+            metadata = {"agno_event_type": "condition_execution_completed"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "condition_result") and event.condition_result is not None:
+                metadata["condition_result"] = event.condition_result
+            if hasattr(event, "executed_steps") and event.executed_steps is not None:
+                metadata["executed_steps"] = event.executed_steps
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        # Send router events
+        elif isinstance(event, RouterExecutionStartedEvent):
+            metadata = {"agno_event_type": "router_execution_started"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "selected_steps") and event.selected_steps:
+                metadata["selected_steps"] = event.selected_steps
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        elif isinstance(event, RouterExecutionCompletedEvent):
+            metadata = {"agno_event_type": "router_execution_completed"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "selected_steps") and event.selected_steps:
+                metadata["selected_steps"] = event.selected_steps
+            if hasattr(event, "executed_steps") and event.executed_steps is not None:
+                metadata["executed_steps"] = event.executed_steps
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        # Send steps events
+        elif isinstance(event, StepsExecutionStartedEvent):
+            metadata = {"agno_event_type": "steps_execution_started"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "steps_count") and event.steps_count:
+                metadata["steps_count"] = event.steps_count
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        elif isinstance(event, StepsExecutionCompletedEvent):
+            metadata = {"agno_event_type": "steps_execution_completed"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+            if hasattr(event, "steps_count") and event.steps_count:
+                metadata["steps_count"] = event.steps_count
+            if hasattr(event, "executed_steps") and event.executed_steps is not None:
+                metadata["executed_steps"] = event.executed_steps
 
             status_event = TaskStatusUpdateEvent(
                 task_id=task_id,
@@ -639,7 +887,7 @@ async def stream_a2a_response_with_error_handling(
     event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, RunOutput]],
     request_id: Union[str, int],
 ) -> AsyncIterator[str]:
-    """Wrapper around stream_a2a_response that handles errors and returns failed Task status."""
+    """Wrapper around stream_a2a_response to handle critical errors."""
     task_id: str = str(uuid4())
     context_id: str = str(uuid4())
 
