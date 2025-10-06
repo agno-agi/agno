@@ -1,5 +1,5 @@
 """
-This example shows how to use the add_workflow_history flag to add workflow history to the steps.
+This example shows how to use the add_workflow_history_to_steps flag to add workflow history to the steps.
 In this case we have a multi-step workflow with a single agent.
 
 We show different scenarios of a continuous execution of the workflow.
@@ -68,7 +68,7 @@ def create_customer_support_workflow():
             Step(name="Technical Resolution", agent=technical_specialist),
             Step(name="Final Resolution", agent=resolution_manager),
         ],
-        add_workflow_history=True,
+        add_workflow_history_to_steps=True,
     )
 
 

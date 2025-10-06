@@ -1,5 +1,5 @@
 """
-This example shows how to use the add_workflow_history flag to add workflow history to the steps.
+This example shows how to use the add_workflow_history_to_steps flag to add workflow history to the steps.
 In this case we have a single step workflow with a single agent.
 The agent has access to the workflow history and uses it to provide personalized educational support.
 """
@@ -40,7 +40,7 @@ def create_simple_tutoring_workflow():
         steps=[
             Step(name="AI Tutoring", agent=tutor_agent),
         ],
-        add_workflow_history=True,
+        add_workflow_history_to_steps=True,
     )
 
 

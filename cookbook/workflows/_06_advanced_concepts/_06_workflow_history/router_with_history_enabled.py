@@ -133,7 +133,7 @@ def create_smart_customer_service_workflow():
                 description="Routes to appropriate specialist based on simple intent detection",
             )
         ],
-        add_workflow_history=True,  # Enable history for the workflow
+        add_workflow_history_to_steps=True,  # Enable history for the workflow
     )
 
 

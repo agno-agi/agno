@@ -204,7 +204,7 @@ def create_content_workflow():
         description="Research → Strategic Analysis → Content Creation with historical awareness",
         db=SqliteDb(db_file="tmp/content_workflow.db"),
         steps=[research_step, strategy_step, writer_step],
-        add_workflow_history=True,
+        add_workflow_history_to_steps=True,
     )
 
 

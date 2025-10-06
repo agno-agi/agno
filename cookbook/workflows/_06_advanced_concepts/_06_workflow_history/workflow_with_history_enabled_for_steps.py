@@ -130,7 +130,7 @@ meal_workflow = Workflow(
         db_file="tmp/meal_workflow.db",
     ),
     steps=[suggestion_step, preference_analysis_step, recipe_step],
-    add_workflow_history=True,
+    add_workflow_history_to_steps=True,
 )
 
 

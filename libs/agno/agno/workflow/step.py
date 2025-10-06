@@ -213,7 +213,7 @@ class Step:
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
-        add_workflow_history: Optional[bool] = False,
+        add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
@@ -309,7 +309,9 @@ class Step:
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
-                            self.add_workflow_history if self.add_workflow_history is not None else add_workflow_history
+                            self.add_workflow_history
+                            if self.add_workflow_history is not None
+                            else add_workflow_history_to_steps
                         )
 
                         final_message = message
@@ -386,7 +388,7 @@ class Step:
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional["WorkflowSession"] = None,
-        add_workflow_history: Optional[bool] = False,
+        add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
@@ -497,7 +499,9 @@ class Step:
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
-                            self.add_workflow_history if self.add_workflow_history is not None else add_workflow_history
+                            self.add_workflow_history
+                            if self.add_workflow_history is not None
+                            else add_workflow_history_to_steps
                         )
 
                         print(f"use_history: {use_history}")
@@ -605,7 +609,7 @@ class Step:
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional["WorkflowSession"] = None,
-        add_workflow_history: Optional[bool] = False,
+        add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
@@ -724,7 +728,9 @@ class Step:
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
-                            self.add_workflow_history if self.add_workflow_history is not None else add_workflow_history
+                            self.add_workflow_history
+                            if self.add_workflow_history is not None
+                            else add_workflow_history_to_steps
                         )
 
                         final_message = message
@@ -788,7 +794,7 @@ class Step:
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional["WorkflowSession"] = None,
-        add_workflow_history: Optional[bool] = False,
+        add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
@@ -914,7 +920,9 @@ class Step:
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
-                            self.add_workflow_history if self.add_workflow_history is not None else add_workflow_history
+                            self.add_workflow_history
+                            if self.add_workflow_history is not None
+                            else add_workflow_history_to_steps
                         )
 
                         final_message = message

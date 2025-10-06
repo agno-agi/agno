@@ -152,7 +152,7 @@ class Router:
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
-        add_workflow_history: Optional[bool] = False,
+        add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute the router and its selected steps with sequential chaining"""
@@ -189,7 +189,7 @@ class Router:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     workflow_session=workflow_session,
-                    add_workflow_history=add_workflow_history,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                 )
 
@@ -251,7 +251,7 @@ class Router:
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
-        add_workflow_history: Optional[bool] = False,
+        add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the router with streaming support"""
@@ -316,7 +316,7 @@ class Router:
                     session_state=session_state,
                     parent_step_id=router_step_id,
                     workflow_session=workflow_session,
-                    add_workflow_history=add_workflow_history,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                 ):
                     if isinstance(event, StepOutput):
@@ -400,7 +400,7 @@ class Router:
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
-        add_workflow_history: Optional[bool] = False,
+        add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> StepOutput:
         """Async execute the router and its selected steps with sequential chaining"""
@@ -438,7 +438,7 @@ class Router:
                     store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     workflow_session=workflow_session,
-                    add_workflow_history=add_workflow_history,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                 )
                 # Handle both single StepOutput and List[StepOutput]
@@ -502,7 +502,7 @@ class Router:
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
-        add_workflow_history: Optional[bool] = False,
+        add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Async execute the router with streaming support"""
@@ -569,7 +569,7 @@ class Router:
                     session_state=session_state,
                     parent_step_id=router_step_id,
                     workflow_session=workflow_session,
-                    add_workflow_history=add_workflow_history,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                 ):
                     if isinstance(event, StepOutput):
