@@ -17,6 +17,15 @@ from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
+from agno.run.workflow import StepCompletedEvent as WorkflowStepCompletedEvent
+from agno.run.workflow import StepStartedEvent as WorkflowStepStartedEvent
+from agno.run.workflow import (
+    WorkflowCancelledEvent,
+    WorkflowCompletedEvent,
+    WorkflowRunOutput,
+    WorkflowRunOutputEvent,
+    WorkflowStartedEvent,
+)
 
 try:
     from a2a.types import (
@@ -155,8 +164,8 @@ async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) 
     )
 
 
-def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
-    """Map the given RunOutput into an A2A Task.
+def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) -> Task:
+    """Map the given RunOutput or WorkflowRunOutput into an A2A Task.
 
     1. Handle output content
     2. Handle output media
@@ -164,7 +173,7 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
     4. Build and return the A2A task
 
     Args:
-        run_output: The Agno RunOutput
+        run_output: The Agno RunOutput or WorkflowRunOutput
 
     Returns:
         Task: The A2A Task
@@ -177,7 +186,7 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
 
     # 2. Handle output media
     artifacts: List[Artifact] = []
-    if run_output.images:
+    if hasattr(run_output, "images") and run_output.images:
         for idx, img in enumerate(run_output.images):
             artifact_parts = []
             if img.url:
@@ -190,7 +199,7 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
                     parts=artifact_parts,
                 )
             )
-    if run_output.videos:
+    if hasattr(run_output, "videos") and run_output.videos:
         for idx, vid in enumerate(run_output.videos):
             artifact_parts = []
             if vid.url:
@@ -203,7 +212,7 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
                     parts=artifact_parts,
                 )
             )
-    if run_output.audio:
+    if hasattr(run_output, "audio") and run_output.audio:
         for idx, aud in enumerate(run_output.audio):
             artifact_parts = []
             if aud.url:
@@ -216,7 +225,7 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
                     parts=artifact_parts,
                 )
             )
-    if run_output.files:
+    if hasattr(run_output, "files") and run_output.files:
         for idx, file in enumerate(run_output.files):
             artifact_parts = []
             if file.url:
@@ -238,7 +247,7 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
 
     # 3. Build the A2A message
     metadata = {}
-    if run_output.user_id:
+    if hasattr(run_output, "user_id") and run_output.user_id:
         metadata["userId"] = run_output.user_id
 
     agent_message = A2AMessage(
@@ -251,8 +260,8 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
     )
 
     # 4. Build and return the A2A task
-    run_id = cast(str, run_output.run_id)
-    session_id = cast(str, run_output.session_id)
+    run_id = cast(str, run_output.run_id) if run_output.run_id else str(uuid4())
+    session_id = cast(str, run_output.session_id) if run_output.session_id else str(uuid4())
     return Task(
         id=run_id,
         context_id=session_id,
@@ -263,7 +272,8 @@ def map_run_output_to_a2a_task(run_output: RunOutput) -> Task:
 
 
 async def stream_a2a_response(
-    event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, RunOutput]], request_id: Union[str, int]
+    event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent, RunOutput]],
+    request_id: Union[str, int],
 ) -> AsyncIterator[str]:
     """Stream the given event stream as A2A responses.
 
@@ -273,7 +283,7 @@ async def stream_a2a_response(
     4. Send final complete task
 
     Args:
-        event_stream: The async iterator of Agno events from agent.arun(stream=True)
+        event_stream: The async iterator of Agno events from agent/team/workflow.arun(stream=True)
         request_id: The JSON-RPC request ID
 
     Yields:
@@ -289,13 +299,12 @@ async def stream_a2a_response(
     # Stream events
     async for event in event_stream:
         # 1. Send initial event
-        if isinstance(event, (RunStartedEvent, TeamRunStartedEvent)):
+        if isinstance(event, (RunStartedEvent, TeamRunStartedEvent, WorkflowStartedEvent)):
             if hasattr(event, "run_id") and event.run_id:
                 task_id = event.run_id
             if hasattr(event, "session_id") and event.session_id:
                 context_id = event.session_id
 
-            # Send initial status event
             status_event = TaskStatusUpdateEvent(
                 task_id=task_id,
                 context_id=context_id,
@@ -431,12 +440,42 @@ async def stream_a2a_response(
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
             yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
 
+        elif isinstance(event, WorkflowStepStartedEvent):
+            metadata = {"agno_event_type": "workflow_step_started"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
+        elif isinstance(event, WorkflowStepCompletedEvent):
+            metadata = {"agno_event_type": "workflow_step_completed"}
+            if hasattr(event, "step_name") and event.step_name:
+                metadata["step_name"] = event.step_name
+
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+
         # Capture completion event for final task construction
-        elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+        elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent, WorkflowCompletedEvent)):
             completion_event = event
 
         # Capture cancelled event for final task construction
-        elif isinstance(event, (RunCancelledEvent, TeamRunCancelledEvent)):
+        elif isinstance(event, (RunCancelledEvent, TeamRunCancelledEvent, WorkflowCancelledEvent)):
             cancelled_event = event
 
     # 3. Send final status event

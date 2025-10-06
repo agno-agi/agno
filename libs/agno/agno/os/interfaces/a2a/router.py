@@ -20,23 +20,27 @@ from agno.os.interfaces.a2a.utils import (
     stream_a2a_response_with_error_handling,
 )
 from agno.os.router import _get_request_kwargs
-from agno.os.utils import get_agent_by_id, get_team_by_id
+from agno.os.utils import get_agent_by_id, get_team_by_id, get_workflow_by_id
 from agno.team import Team
+from agno.workflow import Workflow
 
 
 def attach_routes(
-    router: APIRouter, agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None
+    router: APIRouter,
+    agents: Optional[List[Agent]] = None,
+    teams: Optional[List[Team]] = None,
+    workflows: Optional[List[Workflow]] = None,
 ) -> APIRouter:
-    if agents is None and teams is None:
-        raise ValueError("Agents or Teams are required to setup the A2A interface.")
+    if agents is None and teams is None and workflows is None:
+        raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")
 
     @router.post(
         "/message/send",
         tags=["A2A"],
         operation_id="send_message",
-        summary="Send message to Agent or Team (A2A Protocol)",
-        description="Send a message to an Agno Agent or Team. "
-        "The agent or team is identified via the 'agentId' field in params.message or X-Agent-ID header. "
+        summary="Send message to Agent, Team, or Workflow (A2A Protocol)",
+        description="Send a message to an Agno Agent, Team, or Workflow. "
+        "The Agent, Team or Workflow is identified via the 'agentId' field in params.message or X-Agent-ID header. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata.",
         response_model_exclude_none=True,
         responses={
@@ -66,7 +70,7 @@ def attach_routes(
                 },
             },
             400: {"description": "Invalid request or unsupported method"},
-            404: {"description": "Agent or Team not found"},
+            404: {"description": "Agent, Team, or Workflow not found"},
         },
         response_model=SendMessageSuccessResponse,
     )
@@ -74,20 +78,22 @@ def attach_routes(
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_send_message)
 
-        # 1. Get the Agent or Team to run
+        # 1. Get the Agent, Team, or Workflow to run
         agent_id = request_body.get("params", {}).get("message", {}).get("agentId") or request.headers.get("X-Agent-ID")
         if not agent_id:
             raise HTTPException(
                 status_code=400,
-                detail="Agent/Team ID required. Provide it via 'agentId' in params.message or 'X-Agent-ID' header.",
+                detail="Entity ID required. Provide it via 'agentId' in params.message or 'X-Agent-ID' header.",
             )
         entity = None
         if agents:
             entity = get_agent_by_id(agent_id, agents)
         if not entity and teams:
             entity = get_team_by_id(agent_id, teams)
+        if not entity and workflows:
+            entity = get_workflow_by_id(agent_id, workflows)
         if entity is None:
-            raise HTTPException(status_code=404, detail=f"Agent or Team with ID '{agent_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Agent, Team, or Workflow with ID '{agent_id}' not found")
 
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
@@ -96,18 +102,30 @@ def attach_routes(
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
-        # 3. Run the agent or team
+        # 3. Run the agent, team, or workflow
         try:
-            response = await entity.arun(
-                input=run_input.input_content,
-                images=run_input.images,
-                videos=run_input.videos,
-                audio=run_input.audios,
-                files=run_input.files,
-                session_id=context_id,
-                user_id=user_id,
-                **kwargs,
-            )
+            if isinstance(entity, Workflow):
+                response = await entity.arun(
+                    input=run_input.input_content,
+                    images=list(run_input.images) if run_input.images else None,
+                    videos=list(run_input.videos) if run_input.videos else None,
+                    audio=list(run_input.audios) if run_input.audios else None,
+                    files=list(run_input.files) if run_input.files else None,
+                    session_id=context_id,
+                    user_id=user_id,
+                    **kwargs,
+                )
+            else:
+                response = await entity.arun(
+                    input=run_input.input_content,
+                    images=run_input.images,
+                    videos=run_input.videos,
+                    audio=run_input.audios,
+                    files=run_input.files,
+                    session_id=context_id,
+                    user_id=user_id,
+                    **kwargs,
+                )
 
             # 4. Send the response
             a2a_task = map_run_output_to_a2a_task(response)
@@ -143,9 +161,9 @@ def attach_routes(
         "/message/stream",
         tags=["A2A"],
         operation_id="stream_message",
-        summary="Stream message to Agent or Team (A2A Protocol)",
-        description="Stream a message to an Agno Agent or Team using the A2A protocol standard endpoint. "
-        "The agent or team is identified via the 'agentId' field in params.message or X-Agent-ID header. "
+        summary="Stream message to Agent, Team, or Workflow (A2A Protocol)",
+        description="Stream a message to an Agno Agent, Team, or Workflow."
+        "The Agent, Team or Workflow is identified via the 'agentId' field in params.message or X-Agent-ID header. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata. "
         "Returns real-time updates as newline-delimited JSON (NDJSON).",
         response_model_exclude_none=True,
@@ -160,29 +178,31 @@ def attach_routes(
                 },
             },
             400: {"description": "Invalid request or unsupported method"},
-            404: {"description": "Agent or Team not found"},
+            404: {"description": "Agent, Team, or Workflow not found"},
         },
     )
     async def a2a_stream_message(request: Request):
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_stream_message)
 
-        # 1. Get the Agent or Team to run
+        # 1. Get the Agent, Team, or Workflow to run
         agent_id = request_body.get("params", {}).get("message", {}).get("agentId")
         if not agent_id:
             agent_id = request.headers.get("X-Agent-ID")
         if not agent_id:
             raise HTTPException(
                 status_code=400,
-                detail="Agent/Team ID required. Provide 'agentId' in params.message or 'X-Agent-ID' header.",
+                detail="Entity ID required. Provide 'agentId' in params.message or 'X-Agent-ID' header.",
             )
         entity = None
         if agents:
             entity = get_agent_by_id(agent_id, agents)
         if not entity and teams:
             entity = get_team_by_id(agent_id, teams)
+        if not entity and workflows:
+            entity = get_workflow_by_id(agent_id, workflows)
         if entity is None:
-            raise HTTPException(status_code=404, detail=f"Agent or Team with ID '{agent_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Agent, Team, or Workflow with ID '{agent_id}' not found")
 
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
@@ -191,20 +211,34 @@ def attach_routes(
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
-        # 3. Run the Agent or Team and stream the response
+        # 3. Run the Agent, Team, or Workflow and stream the response
         try:
-            event_stream = entity.arun(
-                input=run_input.input_content,
-                images=run_input.images,
-                videos=run_input.videos,
-                audio=run_input.audios,
-                files=run_input.files,
-                session_id=context_id,
-                user_id=user_id,
-                stream=True,
-                stream_intermediate_steps=True,
-                **kwargs,
-            )
+            if isinstance(entity, Workflow):
+                event_stream = entity.arun(
+                    input=run_input.input_content,
+                    images=list(run_input.images) if run_input.images else None,
+                    videos=list(run_input.videos) if run_input.videos else None,
+                    audio=list(run_input.audios) if run_input.audios else None,
+                    files=list(run_input.files) if run_input.files else None,
+                    session_id=context_id,
+                    user_id=user_id,
+                    stream=True,
+                    stream_intermediate_steps=True,
+                    **kwargs,
+                )
+            else:
+                event_stream = entity.arun(
+                    input=run_input.input_content,
+                    images=run_input.images,
+                    videos=run_input.videos,
+                    audio=run_input.audios,
+                    files=run_input.files,
+                    session_id=context_id,
+                    user_id=user_id,
+                    stream=True,
+                    stream_intermediate_steps=True,
+                    **kwargs,
+                )
 
             # 4. Stream the response
             return StreamingResponse(
@@ -213,7 +247,6 @@ def attach_routes(
             )
 
         except Exception as e:
-            # Handle errors prior to streaming
-            raise HTTPException(status_code=500, detail=f"Failed to start agent run: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
 
     return router

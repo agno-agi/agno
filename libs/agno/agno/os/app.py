@@ -278,7 +278,7 @@ class AgentOS:
         if self.a2a_interface and not has_a2a_interface:
             from agno.os.interfaces.a2a import A2A
 
-            a2a_interface = A2A(agents=self.agents, teams=self.teams)
+            a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
             self.interfaces.append(a2a_interface)
             self._add_router(fastapi_app, a2a_interface.get_router())
 

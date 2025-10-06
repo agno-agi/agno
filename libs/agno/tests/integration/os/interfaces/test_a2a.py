@@ -24,7 +24,19 @@ from agno.run.agent import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
+from agno.run.workflow import (
+    StepCompletedEvent as WorkflowStepCompletedEvent,
+)
+from agno.run.workflow import (
+    StepStartedEvent as WorkflowStepStartedEvent,
+)
+from agno.run.workflow import (
+    WorkflowCompletedEvent,
+    WorkflowRunOutput,
+    WorkflowStartedEvent,
+)
 from agno.team import Team
+from agno.workflow import Workflow
 
 
 @pytest.fixture
@@ -259,7 +271,6 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
             content="72°F and sunny",
         )
 
-        # Agent responds with content
         yield RunContentEvent(
             session_id="context-789",
             agent_id=test_agent.id,
@@ -772,9 +783,7 @@ def test_a2a_user_id_from_header(test_agent: Agent, test_client: TestClient):
             },
         }
 
-        response = test_client.post(
-            "/a2a/message/send", json=request_body, headers={"X-User-ID": "user-456"}
-        )
+        response = test_client.post("/a2a/message/send", json=request_body, headers={"X-User-ID": "user-456"})
 
         assert response.status_code == 200
         mock_arun.assert_called_once()
@@ -855,7 +864,7 @@ def test_a2a_streaming_with_media_artifacts(test_agent: Agent, test_client: Test
     """Test that media outputs from RunCompletedEvent are mapped to A2A Artifacts."""
 
     async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
-        from agno.media import Image, Video, Audio
+        from agno.media import Audio, Image, Video
 
         yield RunStartedEvent(
             session_id="context-789",
@@ -1046,9 +1055,7 @@ def test_a2a_user_id_in_response_metadata(test_agent: Agent, test_client: TestCl
             },
         }
 
-        response = test_client.post(
-            "/a2a/message/send", json=request_body, headers={"X-User-ID": "user-456"}
-        )
+        response = test_client.post("/a2a/message/send", json=request_body, headers={"X-User-ID": "user-456"})
 
         assert response.status_code == 200
         data = response.json()
@@ -1058,3 +1065,147 @@ def test_a2a_user_id_in_response_metadata(test_agent: Agent, test_client: TestCl
         message = task["history"][0]
         assert message["metadata"] is not None
         assert message["metadata"]["userId"] == "user-456"
+
+
+@pytest.fixture
+def test_workflow():
+    """Create a test workflow for A2A."""
+
+    async def echo_step(input: str) -> str:
+        return f"Workflow echo: {input}"
+
+    workflow = Workflow(name="test-a2a-workflow", steps=[echo_step])
+    return workflow
+
+
+@pytest.fixture
+def test_workflow_client(test_workflow: Workflow):
+    """Create a FastAPI test client with A2A interface for workflows."""
+    agent_os = AgentOS(workflows=[test_workflow], a2a_interface=True)
+    app = agent_os.get_app()
+    return TestClient(app)
+
+
+def test_a2a_workflow(test_workflow: Workflow, test_workflow_client: TestClient):
+    """Test the basic non-streaming A2A flow with a Workflow."""
+
+    mock_output = WorkflowRunOutput(
+        run_id="test-run-123",
+        session_id="context-789",
+        workflow_id=test_workflow.id,
+        workflow_name=test_workflow.name,
+        content="Workflow echo: Hello from workflow!",
+    )
+
+    with patch.object(test_workflow, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_output
+
+        request_body = {
+            "jsonrpc": "2.0",
+            "method": "message/send",
+            "id": "request-123",
+            "params": {
+                "message": {
+                    "messageId": "msg-123",
+                    "role": "user",
+                    "contextId": "context-789",
+                    "agentId": test_workflow.name,
+                    "parts": [{"kind": "text", "text": "Hello, workflow!"}],
+                }
+            },
+        }
+
+        response = test_workflow_client.post("/a2a/message/send", json=request_body)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["jsonrpc"] == "2.0"
+        assert data["id"] == "request-123"
+        assert "result" in data
+
+        task = data["result"]
+        assert task["contextId"] == "context-789"
+        assert task["status"]["state"] == "completed"
+        assert len(task["history"]) == 1
+
+        message = task["history"][0]
+        assert message["role"] == "agent"
+        assert len(message["parts"]) == 1
+        assert message["parts"][0]["kind"] == "text"
+        assert message["parts"][0]["text"] == "Workflow echo: Hello from workflow!"
+
+        mock_arun.assert_called_once()
+        call_kwargs = mock_arun.call_args.kwargs
+        assert call_kwargs["input"] == "Hello, workflow!"
+        assert call_kwargs["session_id"] == "context-789"
+
+
+def test_a2a_streaming_workflow(test_workflow: Workflow, test_workflow_client: TestClient):
+    """Test the basic streaming A2A flow with a Workflow."""
+
+    async def mock_event_stream():
+        yield WorkflowStartedEvent(
+            session_id="context-789",
+            workflow_id=test_workflow.id,
+            workflow_name=test_workflow.name,
+            run_id="test-run-123",
+        )
+
+        yield WorkflowStepStartedEvent(
+            session_id="context-789",
+            workflow_id=test_workflow.id,
+            workflow_name=test_workflow.name,
+            run_id="test-run-123",
+            step_name="echo_step",
+        )
+
+        yield WorkflowStepCompletedEvent(
+            session_id="context-789",
+            workflow_id=test_workflow.id,
+            workflow_name=test_workflow.name,
+            run_id="test-run-123",
+            step_name="echo_step",
+        )
+
+        yield WorkflowCompletedEvent(
+            session_id="context-789",
+            workflow_id=test_workflow.id,
+            workflow_name=test_workflow.name,
+            run_id="test-run-123",
+            content="Workflow echo: Hello from workflow!",
+        )
+
+    with patch.object(test_workflow, "arun") as mock_arun:
+        mock_arun.return_value = mock_event_stream()
+
+        request_body = {
+            "jsonrpc": "2.0",
+            "method": "message/stream",
+            "id": "request-123",
+            "params": {
+                "message": {
+                    "messageId": "msg-123",
+                    "role": "user",
+                    "contextId": "context-789",
+                    "agentId": test_workflow.name,
+                    "parts": [{"kind": "text", "text": "Hello, workflow!"}],
+                }
+            },
+        }
+
+        response = test_workflow_client.post("/a2a/message/stream", json=request_body)
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/x-ndjson"
+
+        events = []
+        for line in response.text.strip().split("\n"):
+            if line.strip():
+                events.append(json.loads(line))
+
+        assert len(events) >= 2
+
+        final_task = events[-1]
+        assert final_task["result"]["kind"] == "task"
+        assert final_task["result"]["status"]["state"] in ["completed", "failed"]
