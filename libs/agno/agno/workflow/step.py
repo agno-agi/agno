@@ -504,12 +504,9 @@ class Step:
                             else add_workflow_history_to_steps
                         )
 
-                        print(f"use_history: {use_history}")
-
                         final_message = message
                         if use_history and workflow_session:
                             history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
-                            print(f"history_messages: {history_messages}")
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 

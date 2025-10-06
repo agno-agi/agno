@@ -124,7 +124,7 @@ def create_medical_consultation_workflow():
             Step(name="Physician Consultation", agent=consulting_physician),
             Step(name="Care Coordination", agent=care_coordinator),
         ],
-        add_history_to_steps=True,
+        add_workflow_history_to_steps=True,
     )
 
 
@@ -181,7 +181,7 @@ def create_tutoring_workflow():
             Step(name="Subject Tutoring", agent=subject_tutor),
             Step(name="Progress Planning", agent=progress_coach),
         ],
-        add_history_to_steps=True,
+        add_workflow_history_to_steps=True,
     )
 
 

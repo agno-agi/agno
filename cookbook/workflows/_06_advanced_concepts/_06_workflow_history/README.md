@@ -93,7 +93,7 @@ workflow = Workflow(
 ## Where to start?
 
 ### 1. Single-Step Conversational Workflow
-**File**: [`single_step_continuous_execution_workflow.py`](./single_step_continuous_execution_workflow.py)
+**File**: [`01_single_step_continuous_execution_workflow.py`](./01_single_step_continuous_execution_workflow.py)
 
 Learn the basics with a simple AI tutor that remembers your conversation:
 
@@ -113,7 +113,7 @@ workflow = Workflow(
 ---
 
 ### 2. Multi-Step with Smart Analysis  
-**File**: [`workflow_with_history_enabled_for_steps.py`](./workflow_with_history_enabled_for_steps.py)
+**File**: [`02_workflow_with_history_enabled_for_steps.py`](./02_workflow_with_history_enabled_for_steps.py)
 
 A meal planning workflow that learns your preferences through conversation:
 
@@ -134,7 +134,7 @@ steps = [
 ---
 
 ### 3. Step-Level Control
-**File**: [`enable_history_for_step.py`](./enable_history_for_step.py)
+**File**: [`03_enable_history_for_step.py`](./03_enable_history_for_step.py)
 
 Learn when to enable history for specific steps only:
 
@@ -153,10 +153,15 @@ steps = [
 - **Focus**: Reduces noise for steps that don't need context
 - **Flexibility**: Mix history-aware and stateless steps
 
+**Try it**:
+- Ask it to create a Twitter thread about productivity tips
+- After it responds, ask it to "Make it specifically about Software Engineering"
+- Notice how the content creator references previous content
+
 ---
 
 ### 4. Custom Functions with History Access
-**File**: [`use_history_in_custom_function_step_continuous_execution_workflow.py`](./use_history_in_custom_function_step_continuous_execution_workflow.py)
+**File**: [`04_get_history_in_function.py`](./04_get_history_in_function.py)
 
 Show how custom Python functions can access and analyze workflow history:
 
@@ -178,10 +183,14 @@ def analyze_content_strategy(step_input: StepInput) -> StepOutput:
 - **Strategic recommendations**: Guide subsequent agents
 - **Real business value**: Prevent duplicate content, ensure progression
 
+**Try it**:
+- Ask it to create content about AI in healthcare
+- After it responds, ask it to "Make it family focused"
+
 ---
 
 ### 5. Interactive CLI Demos
-**File**: [`cli_app_continuous_execution_based_workflow.py`](./cli_app_continuous_execution_based_workflow.py)
+**File**: [`05_multi_purpose_cli.py`](./05_multi_purpose_cli.py)
 
 Production-ready examples with full CLI interfaces:
 
@@ -191,14 +200,14 @@ Production-ready examples with full CLI interfaces:
 
 ```bash
 # Run specific demo
-python cli_app_continuous_execution_based_workflow.py support
+python 05_multi_purpose_cli.py support
 
 # Interactive menu
-python cli_app_continuous_execution_based_workflow.py
+python 05_multi_purpose_cli.py
 ```
 
 ### 6. Router with Shared History
-**File**: [`router_with_history_enabled.py`](./router_with_history_enabled.py)
+**File**: [`06_intent_routing_with_history.py`](./06_intent_routing_with_history.py)
 
 Demonstrates how different specialist agents can share the same conversation history, creating seamless handoffs:
 
