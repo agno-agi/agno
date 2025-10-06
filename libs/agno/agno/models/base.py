@@ -238,7 +238,7 @@ class Model(ABC):
         num_filtered = total_tool_calls - len(tool_call_ids_to_keep)
         if num_filtered > 0:
             log_info(
-                f"🗑️  Keeping last {num_tool_calls_to_keep} tool call cycles (filtered out {num_filtered} older tool calls)"
+                f"Keeping last {num_tool_calls_to_keep} tool call cycles (filtered out {num_filtered} older tool calls)"
             )
 
         return num_filtered
@@ -430,6 +430,7 @@ class Model(ABC):
                 # Apply message filtering if forget_tool_calls is enabled (sliding window)
                 # This filters AFTER tool results are added, BEFORE next API call
                 if forget_tool_calls and num_tool_calls_to_keep is not None:
+                    # maybe add the condition to filter here itselg]f
                     self._filter_messages(messages, num_tool_calls_to_keep)
 
                 # Continue loop to get next response
@@ -450,6 +451,8 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         send_media_to_model: bool = True,
+        forget_tool_calls: bool = False,
+        num_tool_calls_to_keep: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -576,6 +579,11 @@ class Model(ABC):
                 # If we have any tool calls that require user input, break the loop
                 if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                     break
+
+                # Apply message filtering if forget_tool_calls is enabled (sliding window)
+                # This filters AFTER tool results are added, BEFORE next API call
+                if forget_tool_calls and num_tool_calls_to_keep is not None:
+                    self._filter_messages(messages, num_tool_calls_to_keep)
 
                 # Continue loop to get next response
                 continue

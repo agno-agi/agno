@@ -1571,6 +1571,10 @@ class Agent:
         # Check for cancellation before model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
+        # Log if forget_tool_calls is enabled
+        if self.forget_tool_calls:
+            log_info(f"Tool forgetting enabled (window: {self.num_tool_calls_to_keep})")
+
         # 5. Generate a response from the Model (includes running function calls)
         model_response: ModelResponse = await self.model.aresponse(
             messages=run_messages.messages,
@@ -1580,6 +1584,8 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
             send_media_to_model=self.send_media_to_model,
+            forget_tool_calls=self.forget_tool_calls,
+            num_tool_calls_to_keep=self.num_tool_calls_to_keep,
         )
 
         # Check for cancellation after model call
@@ -2823,6 +2829,10 @@ class Agent:
         # 1. Handle the updated tools
         await self._ahandle_tool_call_updates(run_response=run_response, run_messages=run_messages)
 
+        # Log if forget_tool_calls is enabled
+        if self.forget_tool_calls:
+            log_info(f"Tool forgetting enabled (window: {self.num_tool_calls_to_keep})")
+
         # 2. Generate a response from the Model (includes running function calls)
         model_response: ModelResponse = await self.model.aresponse(
             messages=run_messages.messages,
@@ -2831,6 +2841,8 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            forget_tool_calls=self.forget_tool_calls,
+            num_tool_calls_to_keep=self.num_tool_calls_to_keep,
         )
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
@@ -3726,6 +3738,10 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
+        # Log if forget_tool_calls is enabled
+        if self.forget_tool_calls:
+            log_info(f"Tool forgetting enabled (window: {self.num_tool_calls_to_keep})")
+
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -3736,6 +3752,8 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            forget_tool_calls=self.forget_tool_calls,
+            num_tool_calls_to_keep=self.num_tool_calls_to_keep,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
