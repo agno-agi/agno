@@ -114,6 +114,8 @@ class SurrealDb(BaseDb):
             table_name = self.session_table_name
         elif table_type == "memories":
             table_name = self.memory_table_name
+        elif table_type == "knowledge":
+            table_name = self.knowledge_table_name
         elif table_type == "users":
             table_name = self._users_table_name
         elif table_type == "agents":
@@ -521,14 +523,19 @@ class SurrealDb(BaseDb):
         raise NotImplementedError
 
     # --- Knowledge ---
+
+    def clear_knowledge(self) -> None:
+        table = self._get_table("knowledge")
+        _ = self.client.delete(table)
+
     def delete_knowledge_content(self, id: str):
         table = self._get_table("knowledge")
         self.client.delete(RecordID(table, id))
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        table_type = "knowledge"
-        record_id = RecordID(table_type, id)
-        raw = self._query_one("SELECT * FROM $record_id", {"record_id": record_id}, dict)
+        table = self._get_table("knowledge")
+        record_id = RecordID(table, id)
+        raw = self._query_one("SELECT * FROM ONLY $record_id", {"record_id": record_id}, dict)
         return deserialize_knowledge_row(raw) if raw else None
 
     def get_knowledge_contents(
@@ -557,10 +564,12 @@ class SurrealDb(BaseDb):
         return [deserialize_knowledge_row(row) for row in result], total_count
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow) -> Optional[KnowledgeRow]:
-        table = self._get_table("knowledge")
-        record = RecordID(table, knowledge_row.id)
+        knowledge_table_name = self._get_table("knowledge")
+        record = RecordID(knowledge_table_name, knowledge_row.id)
         query = "UPSERT ONLY $record CONTENT $content"
-        result = self._query_one(query, {"record": record, "content": serialize_knowledge_row(knowledge_row)}, dict)
+        result = self._query_one(
+            query, {"record": record, "content": serialize_knowledge_row(knowledge_row, knowledge_table_name)}, dict
+        )
         return deserialize_knowledge_row(result) if result else None
 
     # --- Evals ---

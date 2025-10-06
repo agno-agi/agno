@@ -1,3 +1,4 @@
+import datetime
 from textwrap import dedent
 from typing import List, Literal, Optional, Sequence
 
@@ -55,31 +56,32 @@ def get_session_type(session: Session) -> SessionType:
 
 
 def desurrealize_user_memory(memory_raw: dict) -> dict:
-    id = memory_raw.get("id")
+    copy = memory_raw.copy()
+    id = copy.get("id")
     if isinstance(id, RecordID):
-        memory_raw["memory_id"] = id.id
-        del memory_raw["id"]
+        copy["memory_id"] = id.id
+        del copy["id"]
 
-    user = memory_raw.get("user")
+    user = copy.get("user")
     if isinstance(user, RecordID):
-        memory_raw["user_id"] = user.id
-        del memory_raw["user"]
+        copy["user_id"] = user.id
+        del copy["user"]
 
-    updated_at = memory_raw.get("updated_at")
+    updated_at = copy.get("updated_at")
     if not isinstance(updated_at, str):
-        memory_raw["updated_at"] = str(updated_at)
+        copy["updated_at"] = str(updated_at)
 
-    agent = memory_raw.get("agent")
+    agent = copy.get("agent")
     if isinstance(agent, RecordID):
-        memory_raw["agent_id"] = agent.id
-        del memory_raw["agent"]
+        copy["agent_id"] = agent.id
+        del copy["agent"]
 
-    team = memory_raw.get("team")
+    team = copy.get("team")
     if isinstance(team, RecordID):
-        memory_raw["team_id"] = team.id
-        del memory_raw["team"]
+        copy["team_id"] = team.id
+        del copy["team"]
 
-    return memory_raw
+    return copy
 
 
 def deserialize_user_memory(memory_raw: dict) -> UserMemory:
@@ -102,11 +104,32 @@ def serialize_user_memory(memory: UserMemory, memory_table_name: str, user_table
 
 
 def deserialize_knowledge_row(knowledge_row_raw: dict) -> KnowledgeRow:
-    return KnowledgeRow.model_validate(knowledge_row_raw)
+    copy = knowledge_row_raw.copy()
+
+    # - id
+    id = copy.get("id")
+    if isinstance(id, RecordID):
+        copy["id"] = id.id
+
+    # - created_at
+    created_at = copy.get("created_at")
+    if created_at and isinstance(created_at, datetime.datetime):
+        copy["created_at"] = int(created_at.timestamp())
+
+    # - updated_at
+    updated_at = copy.get("updated_at")
+    if updated_at and isinstance(updated_at, datetime.datetime):
+        copy["updated_at"] = int(updated_at.timestamp())
+
+    # return
+    return KnowledgeRow.model_validate(copy)
 
 
-def serialize_knowledge_row(knowledge_row: KnowledgeRow) -> dict:
-    return knowledge_row.to_dict()
+def serialize_knowledge_row(knowledge_row: KnowledgeRow, knowledge_table_name: str) -> dict:
+    dict_ = knowledge_row.to_dict()
+    if knowledge_row.id is not None:
+        dict_["id"] = RecordID(knowledge_table_name, knowledge_row.id)
+    return dict_
 
 
 def deserialize_eval_run_record(eval_run_record_raw: dict) -> EvalRunRecord:
@@ -123,6 +146,12 @@ def get_schema(table_type: TableType, table_name: str) -> str:
     if table_type == "memories":
         return dedent(f"""
             {define_table}
+            DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            """)
+    elif table_type == "knowledge":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now() READONLY;
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     else:
