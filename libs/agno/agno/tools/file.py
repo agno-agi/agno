@@ -95,11 +95,10 @@ class FileTools(Toolkit):
             log_debug(f"Searching files in {self.base_dir} with pattern {pattern}")
             matching_files = list(self.base_dir.glob(pattern))
 
-            file_paths = [str(file_path) for file_path in matching_files]
+            file_paths = [str(file_path.relative_to(self.basse_dir)) for file_path in matching_files]
 
             result = {
                 "pattern": pattern,
-                "base_directory": str(self.base_dir),
                 "matches_found": len(file_paths),
                 "files": file_paths,
             }
