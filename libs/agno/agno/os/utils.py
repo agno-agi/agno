@@ -106,9 +106,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
                         import json
                         return json.dumps(workflow_input)
                     except (TypeError, ValueError):
-                        # Fallback to workflow name if json.dumps fails
-                        workflow_name = session.get("workflow_data", {}).get("name")
-                        return f"New {workflow_name} Session" if workflow_name else ""
+                        pass
 
                 workflow_name = session.get("workflow_data", {}).get("name")
                 return f"New {workflow_name} Session" if workflow_name else ""
