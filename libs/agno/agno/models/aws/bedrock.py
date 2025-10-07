@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from decimal import Decimal
 from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
@@ -426,10 +427,12 @@ class AwsBedrock(Model):
 
             assistant_message.metrics.start_timer()
 
+            stream_state = self._create_stream_state()
+
             for chunk in self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)[
                 "stream"
             ]:
-                yield self._parse_provider_response_delta(chunk)
+                yield self._parse_provider_response_delta_with_state(chunk, stream_state)
 
             assistant_message.metrics.stop_timer()
 
@@ -525,10 +528,12 @@ class AwsBedrock(Model):
 
             assistant_message.metrics.start_timer()
 
+            stream_state = self._create_stream_state()
+
             async with self.get_async_client() as client:
                 response = await client.converse_stream(modelId=self.id, messages=formatted_messages, **body)
                 async for chunk in response["stream"]:
-                    yield self._parse_provider_response_delta(chunk)
+                    yield self._parse_provider_response_delta_with_state(chunk, stream_state)
 
             assistant_message.metrics.stop_timer()
 
@@ -655,6 +660,10 @@ class AwsBedrock(Model):
                 stream_data.response_tool_calls.extend(response_delta.tool_calls)
                 should_yield = True
 
+            if response_delta.extra:
+                self._merge_stream_extra(stream_data=stream_data, extra=response_delta.extra)
+                should_yield = True
+
             if should_yield:
                 yield response_delta
 
@@ -696,10 +705,34 @@ class AwsBedrock(Model):
                 stream_data.response_tool_calls.extend(response_delta.tool_calls)
                 should_yield = True
 
+            if response_delta.extra:
+                self._merge_stream_extra(stream_data=stream_data, extra=response_delta.extra)
+                should_yield = True
+
             if should_yield:
                 yield response_delta
 
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=response_delta)
+
+    def _create_stream_state(self) -> Dict[str, Any]:
+        return {"current_tool_use": None}
+
+    def _merge_stream_extra(self, stream_data: MessageData, extra: Dict[str, Any]) -> None:
+        if not extra:
+            return
+
+        if stream_data.extra is None:
+            stream_data.extra = {}
+
+        for key, value in extra.items():
+            if isinstance(value, list):
+                existing = stream_data.extra.get(key)
+                if isinstance(existing, list):
+                    existing.extend(value)
+                else:
+                    stream_data.extra[key] = list(value)
+            else:
+                stream_data.extra[key] = value
 
     def _parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:  # type: ignore
         """Parse the provider response delta for streaming.
@@ -710,37 +743,145 @@ class AwsBedrock(Model):
         Returns:
             ModelResponse: The parsed model response delta
         """
+        if not hasattr(self, "_standalone_stream_state"):
+            self._standalone_stream_state = self._create_stream_state()
+
+        return self._parse_provider_response_delta_with_state(response_delta, self._standalone_stream_state)
+
+    def _parse_provider_response_delta_with_state(
+        self, response_delta: Dict[str, Any], stream_state: Dict[str, Any]
+    ) -> ModelResponse:
         model_response = ModelResponse(role="assistant")
 
-        # Handle contentBlockDelta - text content
         if "contentBlockDelta" in response_delta:
-            delta = response_delta["contentBlockDelta"]["delta"]
-            if "text" in delta:
-                model_response.content = delta["text"]
+            delta = response_delta["contentBlockDelta"].get("delta", {})
+            if isinstance(delta, dict):
+                tool_use_delta = delta.get("toolUse")
+                if isinstance(tool_use_delta, dict):
+                    self._append_streaming_tool_input_chunk(tool_use_delta.get("input"), stream_state)
+                if "text" in delta:
+                    model_response.content = delta["text"]
 
-        # Handle contentBlockStart - tool use start
         elif "contentBlockStart" in response_delta:
-            start = response_delta["contentBlockStart"]["start"]
-            if "toolUse" in start:
-                tool_use = start["toolUse"]
-                model_response.tool_calls = [
-                    {
-                        "id": tool_use.get("toolUseId", ""),
-                        "type": "function",
-                        "function": {
-                            "name": tool_use.get("name", ""),
-                            "arguments": "",  # Will be filled in subsequent deltas
-                        },
-                    }
-                ]
+            start = response_delta["contentBlockStart"].get("start", {})
+            tool_use = start.get("toolUse") if isinstance(start, dict) else None
+            if isinstance(tool_use, dict):
+                self._start_streaming_tool_use(tool_use, stream_state)
 
-        # Handle metadata/usage information
+        elif "contentBlockStop" in response_delta:
+            tool_call = self._finalize_streaming_tool_use(stream_state)
+            if tool_call is not None:
+                model_response.tool_calls = [tool_call]
+                tool_id = tool_call.get("id")
+                if tool_id:
+                    model_response.extra = {"tool_ids": [tool_id]}
+
         elif "metadata" in response_delta or "messageStop" in response_delta:
             body = response_delta.get("metadata") or response_delta.get("messageStop") or {}
             if "usage" in body:
                 model_response.response_usage = self._get_metrics(body["usage"])
 
         return model_response
+
+    def _start_streaming_tool_use(self, tool_use: Dict[str, Any], stream_state: Dict[str, Any]) -> None:
+        stream_state["current_tool_use"] = {
+            "toolUseId": tool_use.get("toolUseId", ""),
+            "name": tool_use.get("name", ""),
+            "input_chunks": [],
+            "input_dict": None,
+        }
+
+        initial_input = tool_use.get("input")
+        if initial_input not in (None, ""):
+            if isinstance(initial_input, dict):
+                stream_state["current_tool_use"]["input_dict"] = initial_input
+            else:
+                self._append_streaming_tool_input_chunk(initial_input, stream_state)
+
+    def _append_streaming_tool_input_chunk(self, chunk: Any, stream_state: Dict[str, Any]) -> None:
+        if not chunk:
+            return
+
+        current = stream_state.get("current_tool_use")
+        if not current:
+            return
+
+        if isinstance(chunk, dict):
+            existing = current.get("input_dict") or {}
+            existing.update(chunk)
+            current["input_dict"] = existing
+            return
+
+        if not isinstance(chunk, str):
+            try:
+                chunk = json.dumps(chunk)
+            except (TypeError, ValueError):
+                chunk = str(chunk)
+
+        if chunk:
+            current.setdefault("input_chunks", []).append(chunk)
+
+    def _finalize_streaming_tool_use(self, stream_state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        current = stream_state.get("current_tool_use")
+        if not current:
+            return None
+
+        tool_use_id = current.get("toolUseId", "")
+        tool_name = current.get("name", "")
+
+        tool_input = current.get("input_dict")
+        if tool_input is None:
+            raw_chunks = "".join(current.get("input_chunks", []))
+            tool_input = self._decode_streaming_tool_input(raw_chunks, tool_use_id)
+
+        serialized_arguments = self._serialize_tool_input(tool_input, tool_use_id)
+
+        stream_state["current_tool_use"] = None
+
+        if not tool_name and not tool_use_id and serialized_arguments == "{}":
+            return None
+
+        return {
+            "id": tool_use_id,
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "arguments": serialized_arguments,
+            },
+        }
+
+    def _decode_streaming_tool_input(self, raw_input: str, tool_use_id: str) -> Any:
+        if not raw_input or not raw_input.strip():
+            return {}
+
+        try:
+            return json.loads(raw_input)
+        except json.JSONDecodeError as exc:
+            log_warning(f"Failed to decode Bedrock streaming tool input for tool call {tool_use_id}: {exc}")
+            return {}
+
+    def _serialize_tool_input(self, tool_input: Any, tool_use_id: str) -> str:
+        if tool_input is None:
+            return "{}"
+
+        normalized_input = self._normalize_tool_input(tool_input)
+
+        try:
+            return json.dumps(normalized_input)
+        except (TypeError, ValueError) as exc:
+            log_warning(f"Failed to serialize Bedrock tool input for streaming tool call {tool_use_id}: {exc}")
+            return "{}"
+
+    def _normalize_tool_input(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: self._normalize_tool_input(val) for key, val in value.items()}
+        if isinstance(value, list):
+            return [self._normalize_tool_input(item) for item in value]
+        if isinstance(value, tuple):
+            return [self._normalize_tool_input(item) for item in value]
+        if isinstance(value, Decimal):
+            return float(value)
+        return value
 
     def _get_metrics(self, response_usage: Dict[str, Any]) -> Metrics:
         """
