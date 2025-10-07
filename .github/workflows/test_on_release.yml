@@ -842,18 +842,20 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup
+      - name: Create venv and install dependencies for A2A tests
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
-      - name: Install a2a-sdk and run tests
-        working-directory: ./libs/agno
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          VIRTUAL_ENV=.venv uv pip install -e ./libs/agno[dev,os]
+          VIRTUAL_ENV=.venv uv pip install a2a-sdk sqlalchemy
+      - name: Run A2A integration tests
+        working-directory: .
         env:
           AGNO_TELEMETRY: false
         run: |
-          source ../../.venv/bin/activate
-          pip install a2a-sdk
-          python -m pytest tests/integration/os/interfaces/test_a2a.py
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
 
   # Run remaining integration tests
   test-remaining:
