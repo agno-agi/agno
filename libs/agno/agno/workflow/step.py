@@ -223,7 +223,7 @@ class Step:
                     if inspect.isgeneratorfunction(self.active_executor):
                         content = ""
                         final_response = None
-                        session_state_copy = copy(session_state or {})
+                        session_state_copy = copy(session_state if session_state is not None else {})
                         try:
                             for chunk in self._call_custom_function(
                                 self.active_executor, step_input, session_state_copy
@@ -253,7 +253,7 @@ class Step:
                             response = StepOutput(content=content)
                     else:
                         # Execute function with signature inspection for session_state support
-                        session_state_copy = copy(session_state or {})
+                        session_state_copy = copy(session_state if session_state is not None else {})
                         result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
 
                         # Merge session_state changes back
@@ -395,7 +395,7 @@ class Step:
                     if inspect.isgeneratorfunction(self.active_executor):
                         log_debug("Function returned iterable, streaming events")
                         content = ""
-                        session_state_copy = copy(session_state or {})
+                        session_state_copy = copy(session_state if session_state is not None else {})
                         try:
                             iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
                             for event in iterator:  # type: ignore
@@ -424,7 +424,7 @@ class Step:
                                 final_response = e.value
 
                     else:
-                        session_state_copy = copy(session_state or {})
+                        session_state_copy = copy(session_state if session_state is not None else {})
                         result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
 
                         # Merge session_state changes back
@@ -576,7 +576,7 @@ class Step:
                     ):
                         content = ""
                         final_response = None
-                        session_state_copy = copy(session_state or {})
+                        session_state_copy = copy(session_state if session_state is not None else {})
                         try:
                             if inspect.isgeneratorfunction(self.active_executor):
                                 iterator = self._call_custom_function(
@@ -623,7 +623,7 @@ class Step:
                         else:
                             response = StepOutput(content=content)
                     else:
-                        session_state_copy = copy(session_state or {})
+                        session_state_copy = copy(session_state if session_state is not None else {})
                         if inspect.iscoroutinefunction(self.active_executor):
                             result = await self._acall_custom_function(
                                 self.active_executor, step_input, session_state_copy
@@ -751,7 +751,7 @@ class Step:
                     log_debug(f"Executing async function executor for step: {self.name}")
                     import inspect
 
-                    session_state_copy = copy(session_state or {})
+                    session_state_copy = copy(session_state if session_state is not None else {})
 
                     # Check if the function is an async generator
                     if inspect.isasyncgenfunction(self.active_executor):
