@@ -545,7 +545,6 @@ class AgentOS:
         if knowledge_config.dbs is None:
             knowledge_config.dbs = []
 
-        multiple_knowledge_dbs: bool = len(self.knowledge_dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
         # Only add databases that are actually used for knowledge contents
