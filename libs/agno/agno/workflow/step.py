@@ -292,7 +292,7 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        session_state_copy = copy(session_state)
+                        session_state_copy = copy(session_state if session_state is not None else {})
                         response = self.active_executor.run(  # type: ignore
                             input=message,  # type: ignore
                             images=images,
@@ -414,7 +414,7 @@ class Step:
                                     yield event  # type: ignore[misc]
 
                             # Merge session_state changes back
-                            if session_state_copy and session_state:
+                            if session_state is not None:
                                 merge_dictionaries(session_state, session_state_copy)
 
                             if not final_response:
@@ -462,7 +462,7 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        session_state_copy = copy(session_state)
+                        session_state_copy = copy(session_state if session_state is not None else {})
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             input=message,
                             images=images,
@@ -668,7 +668,7 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        session_state_copy = copy(session_state)
+                        session_state_copy = copy(session_state if session_state is not None else {})
                         response = await self.active_executor.arun(  # type: ignore
                             input=message,  # type: ignore
                             images=images,
@@ -812,7 +812,7 @@ class Step:
                             final_response = StepOutput(content=str(result))
 
                     # Merge session_state changes back
-                    if session_state_copy and session_state:
+                    if session_state is not None:
                         merge_dictionaries(session_state, session_state_copy)
                 else:
                     # For agents and teams, prepare message with context
@@ -840,7 +840,7 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        session_state_copy = copy(session_state)
+                        session_state_copy = copy(session_state if session_state is not None else {})
                         response_stream = self.active_executor.arun(  # type: ignore
                             input=message,
                             images=images,
