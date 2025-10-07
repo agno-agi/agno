@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
@@ -8,6 +9,7 @@ from pydantic import BaseModel
 from agno.media import Audio, File, Image, Video
 from agno.models.metrics import Metrics
 from agno.utils.log import log_warning
+from agno.utils.serialize import json_serializer
 
 
 @dataclass
@@ -443,9 +445,7 @@ class WebSocketHandler:
             else:
                 data = {"type": "message", "content": str(event)}
 
-            import json
-
-            await self.websocket.send_text(self.format_sse_event(json.dumps(data)))
+            await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
 
         except Exception as e:
             log_warning(f"Failed to handle WebSocket event: {e}")
@@ -466,9 +466,7 @@ class WebSocketHandler:
             return
 
         try:
-            import json
-
-            await self.websocket.send_text(self.format_sse_event(json.dumps(data)))
+            await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
         except Exception as e:
             log_warning(f"Failed to send WebSocket dict: {e}")
 
