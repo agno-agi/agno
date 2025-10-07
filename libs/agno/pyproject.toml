@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.1.0"
+version = "2.1.1"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -33,6 +33,7 @@ classifiers = [
 dependencies = [
   "docstring-parser",
   "gitpython",
+  "h11>=0.16.0",
   "httpx",
   "packaging",
   "pydantic-settings",
@@ -159,6 +160,9 @@ chonkie = ["chonkie[st]", "chonkie"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
+
+# Dependencies for A2A integration
+a2a = ["a2a"]
 
 # Dependencies for Embedders
 huggingface = [
@@ -295,6 +299,7 @@ tests = [
     "agno[performance]",
     "agno[cookbooks]",
     "agno[agui]",
+    "agno[a2a]",
     "twine",
     "build",
 ]
@@ -336,6 +341,7 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "a2a.*",
   "ag_ui.*",
   "agentql.*",
   "aioboto3.*",

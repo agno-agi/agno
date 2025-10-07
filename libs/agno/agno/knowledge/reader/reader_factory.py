@@ -36,6 +36,18 @@ class ReaderFactory:
         return CSVReader(**config)
 
     @classmethod
+    def _get_field_labeled_csv_reader(cls, **kwargs) -> Reader:
+        """Get Field Labeled CSV reader instance."""
+        from agno.knowledge.reader.field_labeled_csv_reader import FieldLabeledCSVReader
+
+        config: Dict[str, Any] = {
+            "name": "Field Labeled CSV Reader",
+            "description": "Converts CSV rows to field-labeled text format for enhanced readability and context",
+        }
+        config.update(kwargs)
+        return FieldLabeledCSVReader(**config)
+
+    @classmethod
     def _get_docx_reader(cls, **kwargs) -> Reader:
         """Get Docx reader instance."""
         from agno.knowledge.reader.docx_reader import DocxReader
