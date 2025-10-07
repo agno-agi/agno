@@ -15,6 +15,7 @@ from agno.os.utils import (
     get_run_input,
     get_session_name,
     get_workflow_input_schema_dict,
+    extract_media,
 )
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
@@ -841,6 +842,9 @@ class RunSchema(BaseModel):
     created_at: Optional[datetime]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
+    images: Optional[List[dict]]
+    videos: Optional[List[dict]]
+    audio: Optional[List[dict]]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -862,6 +866,9 @@ class RunSchema(BaseModel):
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
             references=run_dict.get("references", []),
             reasoning_messages=run_dict.get("reasoning_messages", []),
+            images=extract_media(run_dict, "images"),
+            videos=extract_media(run_dict, "videos"),
+            audio=extract_media(run_dict, "audio"),
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
             else None,
@@ -884,6 +891,9 @@ class TeamRunSchema(BaseModel):
     created_at: Optional[datetime]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
+    images: Optional[List[dict]]
+    videos: Optional[List[dict]]
+    audio: Optional[List[dict]]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -907,6 +917,9 @@ class TeamRunSchema(BaseModel):
             else None,
             references=run_dict.get("references", []),
             reasoning_messages=run_dict.get("reasoning_messages", []),
+            images=extract_media(run_dict, "images"),
+            videos=extract_media(run_dict, "videos"),
+            audio=extract_media(run_dict, "audio"),
         )
 
 
@@ -926,6 +939,9 @@ class WorkflowRunSchema(BaseModel):
     reasoning_steps: Optional[List[dict]]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
+    images: Optional[List[dict]]
+    videos: Optional[List[dict]]
+    audio: Optional[List[dict]]
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
@@ -946,6 +962,9 @@ class WorkflowRunSchema(BaseModel):
             reasoning_steps=run_response.get("reasoning_steps", []),
             references=run_response.get("references", []),
             reasoning_messages=run_response.get("reasoning_messages", []),
+            images=extract_media(run_response, "images"),
+            videos=extract_media(run_response, "videos"),
+            audio=extract_media(run_response, "audio"),
         )
 
 

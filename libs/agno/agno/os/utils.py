@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional, Set, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Union, Literal
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -114,6 +114,14 @@ def get_session_name(session: Dict[str, Any]) -> str:
                 if message["role"] == "user":
                     return message["content"]
     return ""
+
+
+def extract_media(run_dict: Dict[str, Any], media_type: Literal["images", "videos", "audio"] = "images"):
+    media=[]
+    for message in run_dict.get("messages", []):
+        if message.get(media_type):
+            media.extend(message.get(media_type, []))
+    return media
 
 
 def process_image(file: UploadFile) -> Image:
