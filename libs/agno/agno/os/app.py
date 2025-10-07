@@ -504,9 +504,7 @@ class AgentOS:
                 session_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=SessionDomainConfig(
-                            display_name=db_id
-                        ),
+                        domain_config=SessionDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -525,9 +523,7 @@ class AgentOS:
                 memory_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=MemoryDomainConfig(
-                            display_name=db_id
-                        ),
+                        domain_config=MemoryDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -547,9 +543,7 @@ class AgentOS:
                 knowledge_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=KnowledgeDomainConfig(
-                            display_name=db_id
-                        ),
+                        domain_config=KnowledgeDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -568,9 +562,7 @@ class AgentOS:
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=MetricsDomainConfig(
-                            display_name=db_id
-                        ),
+                        domain_config=MetricsDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -589,9 +581,7 @@ class AgentOS:
                 evals_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=EvalsDomainConfig(
-                            display_name=db_id
-                        ),
+                        domain_config=EvalsDomainConfig(display_name=db_id),
                     )
                 )
 

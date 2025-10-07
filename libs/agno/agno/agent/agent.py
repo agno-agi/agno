@@ -6421,7 +6421,9 @@ class Agent:
                         break
 
                     if isinstance(reasoning_agent_response.content, str):
-                        log_warning("Reasoning error. Content is a string, not structured output. Continuing regular session...")
+                        log_warning(
+                            "Reasoning error. Content is a string, not structured output. Continuing regular session..."
+                        )
                         break
 
                     if (
@@ -6654,7 +6656,9 @@ class Agent:
                         break
 
                     if isinstance(reasoning_agent_response.content, str):
-                        log_warning("Reasoning error. Content is a string, not structured output. Continuing regular session...")
+                        log_warning(
+                            "Reasoning error. Content is a string, not structured output. Continuing regular session..."
+                        )
                         break
 
                     if reasoning_agent_response.content.reasoning_steps is None:
