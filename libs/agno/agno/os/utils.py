@@ -93,7 +93,14 @@ def get_session_name(session: Dict[str, Any]) -> str:
 
         # For teams, identify the first Team run and avoid using the first member's run
         if session.get("session_type") == "team":
-            run = runs[0] if not runs[0].get("agent_id") else runs[1]
+            run = None
+            for r in runs:
+                if not r.get("agent_id"):  
+                    run = r
+                    break
+            # Fallback to first run if no team run found
+            if run is None and runs:
+                run = runs[0]
 
         elif session.get("session_type") == "workflow":
             try:
