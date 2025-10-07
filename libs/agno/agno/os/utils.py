@@ -107,7 +107,8 @@ def get_session_name(session: Dict[str, Any]) -> str:
                     if isinstance(workflow_input, str):
                         return workflow_input
                     elif isinstance(workflow_input, dict):
-                        return str(workflow_input)
+                        import json
+                        return json.dumps(workflow_input)
                     # Fallback to workflow name
                     workflow_name = session.get("workflow_data", {}).get("name")
                     return f"New {workflow_name} Session" if workflow_name else ""
