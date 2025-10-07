@@ -5900,7 +5900,7 @@ class Team:
                 member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
             # Update the top-level team run_response tool call to have the run_id of the member run
-            if run_response.tools is not None:
+            if run_response.tools is not None and member_agent_run_response is not None:
                 for tool in run_response.tools:
                     if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
                         tool.child_run_id = member_agent_run_response.run_id  # type: ignore
@@ -5913,12 +5913,15 @@ class Team:
                 normalized_task = str(member_agent_task.content)
             else:
                 normalized_task = ""
-            self._add_interaction_to_team_run_context(
-                team_run_context=team_run_context,
-                member_name=member_name,
-                task=normalized_task,
-                run_response=member_agent_run_response,  # type: ignore
-            )
+
+            # Only add to team run context if we have a valid run response
+            if member_agent_run_response is not None:
+                self._add_interaction_to_team_run_context(
+                    team_run_context=team_run_context,
+                    member_name=member_name,
+                    task=normalized_task,
+                    run_response=member_agent_run_response,  # type: ignore
+                )
 
             # Add the member run to the team run response if enabled
             if run_response and member_agent_run_response:
