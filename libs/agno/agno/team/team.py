@@ -4044,6 +4044,10 @@ class Team:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
                         break
 
+                    if isinstance(reasoning_agent_response.content, str):
+                        log_warning("Reasoning error. Content is a string, not structured output. Continuing regular session...")
+                        break
+
                     if reasoning_agent_response.content.reasoning_steps is None:
                         log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
                         break
@@ -4268,6 +4272,12 @@ class Team:
                     )
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
+                        break
+
+                    # Check if content is a string instead of ReasoningSteps object
+                    # This happens when structured output parsing fails
+                    if isinstance(reasoning_agent_response.content, str):
+                        log_warning("Reasoning error. Content is a string, not structured output. Continuing regular session...")
                         break
 
                     if reasoning_agent_response.content.reasoning_steps is None:
