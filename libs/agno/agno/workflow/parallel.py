@@ -280,7 +280,6 @@ class Parallel:
                             ),
                         )
                     )
-                    modified_session_states.append(session_state_copies[index])
 
         if session_state is not None:
             merge_parallel_session_states(session_state, modified_session_states)
@@ -433,7 +432,6 @@ class Parallel:
                     )
                     all_events_with_indices.append((index, [error_event]))
                     step_results.append(error_event)
-                    modified_session_states.append(session_state_copies[index])
 
         # Merge all session_state changes back into the original session_state
         if session_state is not None:
