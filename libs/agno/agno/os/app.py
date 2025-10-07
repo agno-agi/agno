@@ -68,7 +68,6 @@ class AgentOS:
     def __init__(
         self,
         id: Optional[str] = None,
-        os_id: Optional[str] = None,  # Deprecated
         name: Optional[str] = None,
         description: Optional[str] = None,
         version: Optional[str] = None,
@@ -76,16 +75,18 @@ class AgentOS:
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
+        a2a_interface: bool = False,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
-        enable_mcp: bool = False,  # Deprecated
         enable_mcp_server: bool = False,
-        fastapi_app: Optional[FastAPI] = None,  # Deprecated
         base_app: Optional[FastAPI] = None,
-        replace_routes: Optional[bool] = None,  # Deprecated
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         telemetry: bool = True,
+        os_id: Optional[str] = None,  # Deprecated
+        enable_mcp: bool = False,  # Deprecated
+        fastapi_app: Optional[FastAPI] = None,  # Deprecated
+        replace_routes: Optional[bool] = None,  # Deprecated
     ):
         """Initialize AgentOS.
 
@@ -98,6 +99,7 @@ class AgentOS:
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
             interfaces: List of interfaces to include in the OS
+            a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
             lifespan: Optional lifespan context manager for the FastAPI app
@@ -105,6 +107,7 @@ class AgentOS:
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             telemetry: Whether to enable telemetry
+
         """
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
@@ -115,6 +118,7 @@ class AgentOS:
         self.workflows: Optional[List[Workflow]] = workflows
         self.teams: Optional[List[Team]] = teams
         self.interfaces = interfaces or []
+        self.a2a_interface = a2a_interface
 
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
 
@@ -263,9 +267,20 @@ class AgentOS:
         self._add_router(fastapi_app, get_health_router())
         self._add_router(fastapi_app, get_home_router(self))
 
+        has_a2a_interface = False
         for interface in self.interfaces:
+            if not has_a2a_interface and interface.__class__.__name__ == "A2A":
+                has_a2a_interface = True
             interface_router = interface.get_router()
             self._add_router(fastapi_app, interface_router)
+
+        # Add A2A interface if requested and not provided in self.interfaces
+        if self.a2a_interface and not has_a2a_interface:
+            from agno.os.interfaces.a2a import A2A
+
+            a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
+            self.interfaces.append(a2a_interface)
+            self._add_router(fastapi_app, a2a_interface.get_router())
 
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
