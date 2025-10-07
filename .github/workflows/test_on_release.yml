@@ -855,6 +855,7 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
+          pip install a2a-sdk
           python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
 
   # Run remaining integration tests
