@@ -245,7 +245,7 @@ class Step:
                                 final_response = e.value
 
                         # Merge session_state changes back
-                        if session_state:
+                        if session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         if final_response is not None:
@@ -257,7 +257,7 @@ class Step:
                         result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
 
                         # Merge session_state changes back
-                        if session_state:
+                        if session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         # If function returns StepOutput, use it directly
@@ -304,7 +304,7 @@ class Step:
                             **kwargs,
                         )
 
-                        if session_state:
+                        if session_state is not None:
                             # Update workflow session state
                             merge_dictionaries(session_state, session_state_copy)  # type: ignore
 
@@ -416,7 +416,7 @@ class Step:
                                     yield event  # type: ignore[misc]
 
                             # Merge session_state changes back
-                            if session_state:
+                            if session_state is not None:
                                 merge_dictionaries(session_state, session_state_copy)
 
                             if not final_response:
@@ -429,7 +429,7 @@ class Step:
                         result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
 
                         # Merge session_state changes back
-                        if session_state:
+                        if session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         if isinstance(result, StepOutput):
@@ -493,7 +493,7 @@ class Step:
                                 break
                             yield event  # type: ignore[misc]
 
-                        if session_state:
+                        if session_state is not None:
                             # Update workflow session state
                             merge_dictionaries(session_state, session_state_copy)  # type: ignore
 
@@ -618,7 +618,7 @@ class Step:
                                 final_response = e.value
 
                         # Merge session_state changes back
-                        if session_state:
+                        if session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         if final_response is not None:
@@ -634,7 +634,7 @@ class Step:
                             result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
 
                         # Merge session_state changes back
-                        if session_state:
+                        if session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         # If function returns StepOutput, use it directly
@@ -682,7 +682,7 @@ class Step:
                             **kwargs,
                         )
 
-                        if session_state:
+                        if session_state is not None:
                             # Update workflow session state
                             merge_dictionaries(session_state, session_state_copy)  # type: ignore
 
@@ -815,7 +815,7 @@ class Step:
                             final_response = StepOutput(content=str(result))
 
                     # Merge session_state changes back
-                    if session_state:
+                    if session_state is not None:
                         merge_dictionaries(session_state, session_state_copy)
                 else:
                     # For agents and teams, prepare message with context
@@ -873,7 +873,7 @@ class Step:
                                 break
                             yield event  # type: ignore[misc]
 
-                        if session_state:
+                        if session_state is not None:
                             # Update workflow session state
                             merge_dictionaries(session_state, session_state_copy)  # type: ignore
 
