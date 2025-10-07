@@ -95,6 +95,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
         if session.get("session_type") == "team":
             run = None
             for r in runs:
+                # If agent_id is not present, it's a team run
                 if not r.get("agent_id"):  
                     run = r
                     break
