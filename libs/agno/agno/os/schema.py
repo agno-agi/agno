@@ -845,9 +845,8 @@ class RunSchema(BaseModel):
     images: Optional[List[dict]]
     videos: Optional[List[dict]]
     audio: Optional[Any]
-    audio_output: Optional[Any]
     files: Optional[List[dict]]
-    response_audio: Optional[dict]
+    response_audio: Optional[Any]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -871,10 +870,9 @@ class RunSchema(BaseModel):
             reasoning_messages=run_dict.get("reasoning_messages", []),
             images=extract_media(run_dict, "images"),
             videos=extract_media(run_dict, "videos"),
-            audio=extract_media(run_dict, "audio"),
-            audio_output=extract_media(run_dict, "audio_output"),
             files=extract_media(run_dict, "files"),
-            response_audio=run_dict.get("response_audio", {}),
+            audio=extract_media(run_dict, "audio"),
+            response_audio=extract_media(run_dict, "response_audio"),
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
             else None,
@@ -900,9 +898,8 @@ class TeamRunSchema(BaseModel):
     images: Optional[List[dict]]
     videos: Optional[List[dict]]
     audio: Optional[List[dict]]
-    audio_output: Optional[List[dict]]
     files: Optional[List[dict]]
-    response_audio: Optional[dict]
+    response_audio: Optional[Any]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -929,9 +926,8 @@ class TeamRunSchema(BaseModel):
             images=extract_media(run_dict, "images"),
             videos=extract_media(run_dict, "videos"),
             audio=extract_media(run_dict, "audio"),
-            audio_output=extract_media(run_dict, "audio_output"),
             files=extract_media(run_dict, "files"),
-            response_audio=run_dict.get("response_audio", {}),
+            response_audio=extract_media(run_dict, "response_audio"),
         )
 
 
@@ -954,9 +950,8 @@ class WorkflowRunSchema(BaseModel):
     images: Optional[List[dict]]
     videos: Optional[List[dict]]
     audio: Optional[List[dict]]
-    audio_output: Optional[List[dict]]
     files: Optional[List[dict]]
-    response_audio: Optional[dict]
+    response_audio: Optional[Any]
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
@@ -980,9 +975,8 @@ class WorkflowRunSchema(BaseModel):
             images=extract_media(run_response, "images"),
             videos=extract_media(run_response, "videos"),
             audio=extract_media(run_response, "audio"),
-            audio_output=extract_media(run_response, "audio_output"),
             files=extract_media(run_response, "files"),
-            response_audio=run_response.get("response_audio", {}),
+            response_audio=extract_media(run_response, "response_audio"),
         )
 
 
