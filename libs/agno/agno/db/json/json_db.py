@@ -492,10 +492,10 @@ class JsonDb(BaseDb):
 
             # If user_id is provided, filter memory_ids to only those belonging to the user
             if user_id:
-                filtered_memory_ids = []
+                filtered_memory_ids: List[str] = []
                 for memory in memories:
                     if memory.get("memory_id") in memory_ids and memory.get("user_id") == user_id:
-                        filtered_memory_ids.append(memory.get("memory_id"))
+                        filtered_memory_ids.append(memory.get("memory_id"))  # type: ignore
                 memory_ids = filtered_memory_ids
 
             memories = [m for m in memories if m.get("memory_id") not in memory_ids]

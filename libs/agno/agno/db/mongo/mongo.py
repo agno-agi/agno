@@ -776,7 +776,7 @@ class MongoDb(BaseDb):
             if collection is None:
                 return
 
-            query = {"memory_id": {"$in": memory_ids}}
+            query: Dict[str, Any] = {"memory_id": {"$in": memory_ids}}
             if user_id is not None:
                 query["user_id"] = user_id
 

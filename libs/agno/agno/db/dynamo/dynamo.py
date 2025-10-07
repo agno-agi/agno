@@ -638,7 +638,7 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to delete user memories: {e}")
             raise e
 
-    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
+    def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
 
         Args:
@@ -654,10 +654,6 @@ class DynamoDb(BaseDb):
 
             # Build filter expression for user_id if provided
             scan_kwargs = {"TableName": table_name}
-            if user_id:
-                scan_kwargs["FilterExpression"] = "#user_id = :user_id"
-                scan_kwargs["ExpressionAttributeNames"] = {"#user_id": "user_id"}
-                scan_kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
 
             # Scan the table to get memories
             response = self.client.scan(**scan_kwargs)
@@ -849,7 +845,6 @@ class DynamoDb(BaseDb):
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
-        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
@@ -878,10 +873,6 @@ class DynamoDb(BaseDb):
 
             # Build filter expression for user_id if provided
             scan_kwargs = {"TableName": table_name}
-            if user_id:
-                scan_kwargs["FilterExpression"] = "#user_id = :user_id"
-                scan_kwargs["ExpressionAttributeNames"] = {"#user_id": "user_id"}
-                scan_kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
 
             response = self.client.scan(**scan_kwargs)
             items = response.get("Items", [])
