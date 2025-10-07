@@ -122,7 +122,10 @@ def get_session_name(session: Dict[str, Any]) -> str:
 
         # For agents, use the first run
         else:
-            run = runs[0]
+            run = runs[0] if runs else None
+
+        if run is None:
+            return ""
 
         if not isinstance(run, dict):
             run = run.to_dict()
