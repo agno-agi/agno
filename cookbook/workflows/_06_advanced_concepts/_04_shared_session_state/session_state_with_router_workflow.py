@@ -210,22 +210,22 @@ def task_router(step_input: StepInput) -> List[Step]:
 
     # Check for organizing operations first (most specific)
     if any(keyword in message_lower for keyword in organizing_keywords):
-        print(f"🗂️ Organization request detected: Using Task Organizer")
+        print("🗂️ Organization request detected: Using Task Organizer")
         return [organize_tasks_step]
     
     # Check for management operations
     elif any(keyword in message_lower for keyword in management_keywords):
-        print(f"⚙️ Management request detected: Using Task Manager")
+        print("⚙️ Management request detected: Using Task Manager")
         return [manage_tasks_step]
     
     # Check for viewing operations  
     elif any(keyword in message_lower for keyword in viewing_keywords):
-        print(f"👀 Viewing request detected: Using Task Viewer")
+        print("👀 Viewing request detected: Using Task Viewer")
         return [view_tasks_step]
     
     # Default to management for ambiguous requests
     else:
-        print(f"🤔 Ambiguous request: Defaulting to Task Manager")
+        print("🤔 Ambiguous request: Defaulting to Task Manager")
         return [manage_tasks_step]
 
 
