@@ -841,7 +841,6 @@ def get_base_router(
                     "application/pdf",
                     "application/json",
                     "application/x-javascript",
-                    "application/json",
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     "text/javascript",
                     "application/x-python",
