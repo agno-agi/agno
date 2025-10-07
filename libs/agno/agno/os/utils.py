@@ -95,10 +95,21 @@ def get_session_name(session: Dict[str, Any]) -> str:
         if session.get("session_type") == "team":
             run = runs[0] if not runs[0].get("agent_id") else runs[1]
 
-        # For workflows, pass along the first step_executor_run
+        # For workflows, try agent/team steps first, then custom function steps
         elif session.get("session_type") == "workflow":
             try:
-                run = session["runs"][0]["step_executor_runs"][0]
+                workflow_run = runs[0]
+                step_executor_runs = workflow_run.get("step_executor_runs")
+                if step_executor_runs:
+                    run = step_executor_runs[0]
+                else:
+                    workflow_input = workflow_run.get("input")
+                    if isinstance(workflow_input, str):
+                        return workflow_input
+                    
+                    # Fallback to workflow name
+                    workflow_name = session.get("workflow_data", {}).get("name")
+                    return f"New {workflow_name} Session" if workflow_name else ""
             except (KeyError, IndexError, TypeError):
                 return ""
 
