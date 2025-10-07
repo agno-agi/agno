@@ -415,18 +415,12 @@ class AgentOS:
                 self._register_db_with_validation(dbs, agent.db)
             if agent.knowledge and agent.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
-                # Also add to general dbs if it's used for both purposes
-                if agent.knowledge.contents_db.id not in dbs:
-                    self._register_db_with_validation(dbs, agent.knowledge.contents_db)
 
         for team in self.teams or []:
             if team.db:
                 self._register_db_with_validation(dbs, team.db)
             if team.knowledge and team.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, team.knowledge.contents_db)
-                # Also add to general dbs if it's used for both purposes
-                if team.knowledge.contents_db.id not in dbs:
-                    self._register_db_with_validation(dbs, team.knowledge.contents_db)
 
         for workflow in self.workflows or []:
             if workflow.db:
@@ -503,7 +497,6 @@ class AgentOS:
         if session_config.dbs is None:
             session_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in session_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -511,9 +504,7 @@ class AgentOS:
                 session_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=SessionDomainConfig(
-                            display_name="Sessions" if not multiple_dbs else "Sessions in database '" + db_id + "'"
-                        ),
+                        domain_config=SessionDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -525,7 +516,6 @@ class AgentOS:
         if memory_config.dbs is None:
             memory_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in memory_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -533,9 +523,7 @@ class AgentOS:
                 memory_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=MemoryDomainConfig(
-                            display_name="Memory" if not multiple_dbs else "Memory in database '" + db_id + "'"
-                        ),
+                        domain_config=MemoryDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -547,7 +535,6 @@ class AgentOS:
         if knowledge_config.dbs is None:
             knowledge_config.dbs = []
 
-        multiple_knowledge_dbs: bool = len(self.knowledge_dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
         # Only add databases that are actually used for knowledge contents
@@ -556,9 +543,7 @@ class AgentOS:
                 knowledge_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=KnowledgeDomainConfig(
-                            display_name="Knowledge" if not multiple_knowledge_dbs else "Knowledge in database " + db_id
-                        ),
+                        domain_config=KnowledgeDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -570,7 +555,6 @@ class AgentOS:
         if metrics_config.dbs is None:
             metrics_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in metrics_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -578,9 +562,7 @@ class AgentOS:
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=MetricsDomainConfig(
-                            display_name="Metrics" if not multiple_dbs else "Metrics in database '" + db_id + "'"
-                        ),
+                        domain_config=MetricsDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -592,7 +574,6 @@ class AgentOS:
         if evals_config.dbs is None:
             evals_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in evals_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -600,9 +581,7 @@ class AgentOS:
                 evals_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=EvalsDomainConfig(
-                            display_name="Evals" if not multiple_dbs else "Evals in database '" + db_id + "'"
-                        ),
+                        domain_config=EvalsDomainConfig(display_name=db_id),
                     )
                 )
 
