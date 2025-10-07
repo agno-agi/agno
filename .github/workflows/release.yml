@@ -21,6 +21,8 @@ jobs:
 
       - name: Install dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv
           python -m pip install --upgrade pip build
 
       - name: Copy README
@@ -60,6 +62,8 @@ jobs:
 
       - name: Install dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv
           python -m pip install --upgrade pip build
 
       - name: Build package
