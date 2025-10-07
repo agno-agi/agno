@@ -715,6 +715,7 @@ class Model(ABC):
             assistant_message = Message(role=self.assistant_message_role)
             # Create assistant message and stream data
             stream_data = MessageData()
+            model_response = ModelResponse()
             if stream_model_response:
                 # Generate response
                 yield from self.process_response_stream(
@@ -744,7 +745,6 @@ class Model(ABC):
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
             else:
-                model_response = ModelResponse()
                 self._process_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
@@ -784,10 +784,12 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
-                else:
+                elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                        messages=messages, function_call_results=function_call_results, **model_response.extra
                     )
+                else:
+                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
@@ -881,9 +883,10 @@ class Model(ABC):
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
             stream_data = MessageData()
+            model_response = ModelResponse()
             if stream_model_response:
                 # Generate response
-                async for response in self.aprocess_response_stream(
+                async for model_response in self.aprocess_response_stream(
                     messages=messages,
                     assistant_message=assistant_message,
                     stream_data=stream_data,
@@ -892,7 +895,7 @@ class Model(ABC):
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
                 ):
-                    yield response
+                    yield model_response
 
                 # Populate assistant message from stream data
                 if stream_data.response_content:
@@ -909,7 +912,6 @@ class Model(ABC):
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
             else:
-                model_response = ModelResponse()
                 await self._aprocess_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
@@ -950,10 +952,12 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
-                else:
+                elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                     )
+                else:
+                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
@@ -1697,8 +1701,6 @@ class Model(ABC):
                             async_gen_index += 1
 
             updated_session_state = function_execution_result.updated_session_state
-
-            print(f"Updated session state: {updated_session_state}")
 
             # Handle AgentRunException
             if isinstance(function_call_success, AgentRunException):

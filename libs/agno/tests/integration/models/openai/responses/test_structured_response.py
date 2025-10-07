@@ -1,5 +1,5 @@
 import enum
-from typing import Dict, List
+from typing import Dict, List, Literal
 
 import pytest
 from pydantic import BaseModel, Field
@@ -68,7 +68,9 @@ class ResearchSummary(BaseModel):
     topic: str = Field(..., description="Main topic researched")
     key_findings: List[str] = Field(..., description="List of key findings from the research")
     summary: str = Field(..., description="Brief summary of the research")
-    confidence_level: str = Field(..., description="High/Medium/Low confidence in the findings")
+    confidence_level: Literal["High", "Medium", "Low"] = Field(
+        ..., description="High / Medium / Low confidence in the findings"
+    )
 
 
 def test_tool_use_with_structured_output():
@@ -80,7 +82,7 @@ def test_tool_use_with_structured_output():
         telemetry=False,
     )
 
-    response = agent.run("Research Python programming language and provide a summary")
+    response = agent.run("Research the latest trends in machine learning on the internet and provide a summary")
 
     # Verify structured output format (this is what matters for the bug fix)
     assert response.content is not None
@@ -111,7 +113,9 @@ def test_tool_use_with_structured_output_stream():
     )
 
     response_stream = agent.run(
-        "Research machine learning basics and provide a summary", stream=True, stream_intermediate_steps=True
+        "Research the latest trends in machine learning on the internet and provide a summary",
+        stream=True,
+        stream_intermediate_steps=True,
     )
 
     responses = []

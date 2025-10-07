@@ -5244,7 +5244,7 @@ class Agent:
 
         # 3.2.5 Add information about agentic filters if enabled
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
+            valid_filters = self.knowledge.get_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(

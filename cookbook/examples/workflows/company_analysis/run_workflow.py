@@ -118,15 +118,15 @@ if __name__ == "__main__":
         companies=["Tesla", "Ford"],
         category_name="Electric Vehicle Components",
         analyses_requested=[
-            "switching_barriers",
+            # "switching_barriers",
             "pestle",
             "porter",
-            "kraljic",
-            "cost_drivers",
-            "alternative_suppliers",
+            # "kraljic",
+            # "cost_drivers",
+            # "alternative_suppliers",
         ],
         region="Global",
-        annual_spend=50_000_000,
+        annual_spend=50,
         incumbent_suppliers=["CATL", "Panasonic", "LG Energy Solution"],
     )
     procurement_workflow.print_response(

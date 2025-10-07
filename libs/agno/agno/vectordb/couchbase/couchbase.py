@@ -1297,7 +1297,6 @@ class CouchbaseSearch(VectorDb):
             rows = list(result.rows())  # Collect once
 
             for row in rows:
-                print(row)
                 self.collection.remove(row.get("doc_id"))
             log_info(f"Deleted {len(rows)} documents with metadata {metadata}")
             return True
