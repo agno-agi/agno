@@ -211,7 +211,7 @@ class Step:
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
 
-        session_state_copy = copy(session_state if session_state is not None else {})
+        session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
@@ -365,7 +365,7 @@ class Step:
             step_input.previous_step_content = step_input.get_last_step_content()
 
         # Create session_state copy once to avoid duplication
-        session_state_copy = copy(session_state if session_state is not None else {})
+        session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Emit StepStartedEvent
         if stream_intermediate_steps and workflow_run_response:
@@ -565,7 +565,7 @@ class Step:
             step_input.previous_step_content = step_input.get_last_step_content()
 
         # Create session_state copy once to avoid duplication
-        session_state_copy = copy(session_state if session_state is not None else {})
+        session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
@@ -728,7 +728,7 @@ class Step:
             step_input.previous_step_content = step_input.get_last_step_content()
 
         # Create session_state copy once to avoid duplication
-        session_state_copy = copy(session_state if session_state is not None else {})
+        session_state_copy = copy(session_state) if session_state is not None else {}
 
         if stream_intermediate_steps and workflow_run_response:
             # Emit StepStartedEvent
