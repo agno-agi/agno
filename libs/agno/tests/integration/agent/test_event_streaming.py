@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
-from agno.run.agent import RunEvent
+from agno.run.agent import RunEvent, RunInput
 from agno.tools.decorator import tool
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
@@ -360,6 +360,115 @@ def test_intermediate_steps_with_memory(shared_db):
     assert len(events[RunEvent.run_completed]) == 1
     assert len(events[RunEvent.memory_update_started]) == 1
     assert len(events[RunEvent.memory_update_completed]) == 1
+
+
+def test_pre_hook_events_are_emitted(shared_db):
+    """Test that the agent streams events."""
+
+    def pre_hook_1(run_input: RunInput) -> None:
+        run_input.input_content += " (Modified by pre-hook 1)"
+
+    def pre_hook_2(run_input: RunInput) -> None:
+        run_input.input_content += " (Modified by pre-hook 2)"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        pre_hooks=[pre_hook_1, pre_hook_2],
+        telemetry=False,
+    )
+
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.pre_hook_started,
+        RunEvent.pre_hook_completed,
+        RunEvent.run_content,
+        RunEvent.run_completed,
+    }
+
+    assert len(events[RunEvent.run_started]) == 1
+    assert len(events[RunEvent.run_content]) > 1
+    assert len(events[RunEvent.run_completed]) == 1
+    assert len(events[RunEvent.pre_hook_started]) == 2
+    assert len(events[RunEvent.pre_hook_completed]) == 2
+    assert events[RunEvent.pre_hook_started][0].pre_hook_name == "pre_hook_1"
+    assert events[RunEvent.pre_hook_started][0].run_input.input_content == "Hello, how are you?"
+    assert events[RunEvent.pre_hook_completed][0].pre_hook_name == "pre_hook_1"
+    assert (
+        events[RunEvent.pre_hook_completed][0].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
+    )
+    assert (
+        events[RunEvent.pre_hook_started][1].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
+    )
+    assert events[RunEvent.pre_hook_started][1].pre_hook_name == "pre_hook_2"
+    assert events[RunEvent.pre_hook_completed][1].pre_hook_name == "pre_hook_2"
+    assert (
+        events[RunEvent.pre_hook_completed][1].run_input.input_content
+        == "Hello, how are you? (Modified by pre-hook 1) (Modified by pre-hook 2)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_pre_hook_events_are_emitted(shared_db):
+    """Test that the agent streams events."""
+
+    async def pre_hook_1(run_input: RunInput) -> None:
+        run_input.input_content += " (Modified by pre-hook 1)"
+
+    async def pre_hook_2(run_input: RunInput) -> None:
+        run_input.input_content += " (Modified by pre-hook 2)"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        pre_hooks=[pre_hook_1, pre_hook_2],
+        telemetry=False,
+    )
+
+    response_generator = agent.arun("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    async for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.pre_hook_started,
+        RunEvent.pre_hook_completed,
+        RunEvent.run_content,
+        RunEvent.run_completed,
+    }
+
+    assert len(events[RunEvent.run_started]) == 1
+    assert len(events[RunEvent.run_content]) > 1
+    assert len(events[RunEvent.run_completed]) == 1
+    assert len(events[RunEvent.pre_hook_started]) == 2
+    assert len(events[RunEvent.pre_hook_completed]) == 2
+    assert events[RunEvent.pre_hook_started][0].pre_hook_name == "pre_hook_1"
+    assert events[RunEvent.pre_hook_started][0].run_input.input_content == "Hello, how are you?"
+    assert events[RunEvent.pre_hook_completed][0].pre_hook_name == "pre_hook_1"
+    assert (
+        events[RunEvent.pre_hook_completed][0].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
+    )
+    assert (
+        events[RunEvent.pre_hook_started][1].run_input.input_content == "Hello, how are you? (Modified by pre-hook 1)"
+    )
+    assert events[RunEvent.pre_hook_started][1].pre_hook_name == "pre_hook_2"
+    assert events[RunEvent.pre_hook_completed][1].pre_hook_name == "pre_hook_2"
+    assert (
+        events[RunEvent.pre_hook_completed][1].run_input.input_content
+        == "Hello, how are you? (Modified by pre-hook 1) (Modified by pre-hook 2)"
+    )
 
 
 def test_intermediate_steps_with_structured_output(shared_db):

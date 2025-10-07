@@ -90,17 +90,16 @@ class SessionSummaryManager:
         response_format: Union[Dict[str, Any], Type[BaseModel]],
     ) -> Message:
         if self.session_summary_prompt is not None:
-            return Message(role="system", content=self.session_summary_prompt)
-
-        system_prompt = dedent("""\
-        Analyze the following conversation between a user and an assistant, and extract the following details:
-          - Summary (str): Provide a concise summary of the session, focusing on important information that would be helpful for future interactions.
-          - Topics (Optional[List[str]]): List the topics discussed in the session.
-        Keep the summary concise and to the point. Only include relevant information.
-
-        <conversation>
-        """)
+            system_prompt = self.session_summary_prompt
+        else:
+            system_prompt = dedent("""\
+            Analyze the following conversation between a user and an assistant, and extract the following details:
+            - Summary (str): Provide a concise summary of the session, focusing on important information that would be helpful for future interactions.
+            - Topics (Optional[List[str]]): List the topics discussed in the session.
+            Keep the summary concise and to the point. Only include relevant information.
+            """)
         conversation_messages = []
+        system_prompt += "<conversation>"
         for message in conversation:
             if message.role == "user":
                 conversation_messages.append(f"User: {message.content}")

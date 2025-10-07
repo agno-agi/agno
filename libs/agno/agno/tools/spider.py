@@ -42,7 +42,7 @@ class SpiderTools(Toolkit):
 
         tools: List[Any] = []
         if enable_search or all:
-            tools.append(self.search)
+            tools.append(self.search_web)
         if enable_scrape or all:
             tools.append(self.scrape)
         if enable_crawl or all:
@@ -50,7 +50,7 @@ class SpiderTools(Toolkit):
 
         super().__init__(name="spider", tools=tools, **kwargs)
 
-    def search(self, query: str, max_results: int = 5) -> str:
+    def search_web(self, query: str, max_results: int = 5) -> str:
         """Use this function to search the web.
         Args:
             query (str): The query to search the web with.
