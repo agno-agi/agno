@@ -6653,8 +6653,6 @@ class Agent:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
                         break
 
-                    # Check if content is a string instead of ReasoningSteps object
-                    # This happens when structured output parsing fails
                     if isinstance(reasoning_agent_response.content, str):
                         log_warning("Reasoning error. Content is a string, not structured output. Continuing regular session...")
                         break
