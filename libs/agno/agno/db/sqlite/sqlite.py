@@ -1,7 +1,7 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
@@ -24,7 +24,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, Table, and_, func, select, text, update
+    from sqlalchemy import Column, MetaData, Table, and_, func, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -442,11 +442,7 @@ class SqliteDb(BaseDb):
                 if end_timestamp is not None:
                     stmt = stmt.where(table.c.created_at <= end_timestamp)
                 if session_name is not None:
-                    stmt = stmt.where(
-                        func.coalesce(func.json_extract(table.c.session_data, "$.session_name"), "").like(
-                            f"%{session_name}%"
-                        )
-                    )
+                    stmt = stmt.where(table.c.session_data.like(f"%{session_name}%"))
                 if session_type is not None:
                     stmt = stmt.where(table.c.session_type == session_type.value)
 
@@ -468,8 +464,10 @@ class SqliteDb(BaseDb):
                     return [] if deserialize else ([], 0)
 
                 sessions_raw = [deserialize_session_json_fields(dict(record._mapping)) for record in records]
-                if not sessions_raw or not deserialize:
+                if not deserialize:
                     return sessions_raw, total_count
+                if not sessions_raw:
+                    return []
 
             if session_type == SessionType.AGENT:
                 return [AgentSession.from_dict(record) for record in sessions_raw]  # type: ignore
@@ -505,43 +503,20 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during renaming.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
+            # Get the current session as a deserialized object
+            # Get the session record
+            session = self.get_session(session_id, session_type, deserialize=True)
+            if session is None:
                 return None
 
-            with self.Session() as sess, sess.begin():
-                # Update session_name inside the session_data JSON field
-                stmt = (
-                    update(table)
-                    .where(table.c.session_id == session_id)
-                    .values(session_data=func.json_set(table.c.session_data, "$.session_name", session_name))
-                )
-                result = sess.execute(stmt)
+            session = cast(Session, session)
+            # Update the session name
+            if session.session_data is None:
+                session.session_data = {}
+            session.session_data["session_name"] = session_name
 
-                # Check if any rows were affected
-                if result.rowcount == 0:
-                    return None
-
-                # Fetch the updated row
-                select_stmt = select(table).where(table.c.session_id == session_id)
-                row = sess.execute(select_stmt).fetchone()
-
-                if not row:
-                    return None
-
-            session_raw = deserialize_session_json_fields(dict(row._mapping))
-            if not session_raw or not deserialize:
-                return session_raw
-
-            # Return the appropriate session type
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session_raw)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session_raw)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session_raw)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            # Upsert the updated session back to the database
+            return self.upsert_session(session, deserialize=deserialize)
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")

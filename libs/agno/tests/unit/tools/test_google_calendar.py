@@ -318,18 +318,11 @@ class TestUpdateEvent:
 class TestDeleteEvent:
     """Test delete_event method."""
 
-    def setup_method(self):
-        """Set up test fixtures."""
-        with patch("agno.tools.googlecalendar.build"):
-            self.tools = GoogleCalendarTools(access_token="test_token")
-            self.mock_service = Mock()
-            self.tools.service = self.mock_service
-
-    def test_delete_event_success(self):
+    def test_delete_event_success(self, calendar_tools, mock_calendar_service):
         """Test successful event deletion."""
-        self.mock_service.events().delete().execute.return_value = None
+        mock_calendar_service.events().delete().execute.return_value = None
 
-        result = self.tools.delete_event(event_id="test_id")
+        result = calendar_tools.delete_event(event_id="test_id")
         result_data = json.loads(result)
 
         assert result_data["success"] is True
@@ -339,34 +332,27 @@ class TestDeleteEvent:
 class TestFetchAllEvents:
     """Test fetch_all_events method."""
 
-    def setup_method(self):
-        """Set up test fixtures."""
-        with patch("agno.tools.googlecalendar.build"):
-            self.tools = GoogleCalendarTools(access_token="test_token")
-            self.mock_service = Mock()
-            self.tools.service = self.mock_service
-
-    def test_fetch_all_events_success(self):
+    def test_fetch_all_events_success(self, calendar_tools, mock_calendar_service):
         """Test successful fetching of all events."""
         mock_events = [{"id": "1", "summary": "Event 1"}, {"id": "2", "summary": "Event 2"}]
-        self.mock_service.events().list().execute.return_value = {"items": mock_events, "nextPageToken": None}
+        mock_calendar_service.events().list().execute.return_value = {"items": mock_events, "nextPageToken": None}
 
-        result = self.tools.fetch_all_events()
+        result = calendar_tools.fetch_all_events()
         result_data = json.loads(result)
 
         assert result_data == mock_events
 
-    def test_fetch_all_events_with_pagination(self):
+    def test_fetch_all_events_with_pagination(self, calendar_tools, mock_calendar_service):
         """Test fetching events with pagination."""
         page1_events = [{"id": "1", "summary": "Event 1"}]
         page2_events = [{"id": "2", "summary": "Event 2"}]
 
-        self.mock_service.events().list().execute.side_effect = [
+        mock_calendar_service.events().list().execute.side_effect = [
             {"items": page1_events, "nextPageToken": "token2"},
             {"items": page2_events, "nextPageToken": None},
         ]
 
-        result = self.tools.fetch_all_events()
+        result = calendar_tools.fetch_all_events()
         result_data = json.loads(result)
 
         assert len(result_data) == 2
@@ -376,15 +362,9 @@ class TestFetchAllEvents:
 class TestFindAvailableSlots:
     """Test find_available_slots method."""
 
-    def setup_method(self):
-        """Set up test fixtures."""
-        self.tools = GoogleCalendarTools(access_token="test_token")
-        self.mock_service = Mock()
-        self.tools.service = self.mock_service
-
     @patch.object(GoogleCalendarTools, "fetch_all_events")
     @patch.object(GoogleCalendarTools, "_get_working_hours")
-    def test_find_available_slots_success(self, mock_working_hours, mock_fetch):
+    def test_find_available_slots_success(self, mock_working_hours, mock_fetch, calendar_tools):
         """Test successful finding of available slots."""
         # Mock working hours response
         mock_working_hours.return_value = json.dumps(
@@ -394,7 +374,7 @@ class TestFindAvailableSlots:
         # Mock no existing events
         mock_fetch.return_value = json.dumps([])
 
-        result = self.tools.find_available_slots(
+        result = calendar_tools.find_available_slots(
             start_date="2025-07-21", end_date="2025-07-21", duration_minutes=30
         )  # Monday, 30 min
         result_data = json.loads(result)
@@ -406,7 +386,7 @@ class TestFindAvailableSlots:
 
     @patch.object(GoogleCalendarTools, "fetch_all_events")
     @patch.object(GoogleCalendarTools, "_get_working_hours")
-    def test_find_available_slots_with_busy_times(self, mock_working_hours, mock_fetch):
+    def test_find_available_slots_with_busy_times(self, mock_working_hours, mock_fetch, calendar_tools):
         """Test finding available slots with existing events."""
         # Mock working hours response
         mock_working_hours.return_value = json.dumps(
@@ -419,7 +399,9 @@ class TestFindAvailableSlots:
         ]
         mock_fetch.return_value = json.dumps(existing_events)
 
-        result = self.tools.find_available_slots(start_date="2025-07-19", end_date="2025-07-19", duration_minutes=30)
+        result = calendar_tools.find_available_slots(
+            start_date="2025-07-19", end_date="2025-07-19", duration_minutes=30
+        )
         result_data = json.loads(result)
 
         assert "available_slots" in result_data
@@ -431,7 +413,7 @@ class TestFindAvailableSlots:
 
     @patch.object(GoogleCalendarTools, "fetch_all_events")
     @patch.object(GoogleCalendarTools, "_get_working_hours")
-    def test_find_available_slots_guarantees_slots(self, mock_working_hours, mock_fetch):
+    def test_find_available_slots_guarantees_slots(self, mock_working_hours, mock_fetch, calendar_tools):
         """Test finding available slots when there should definitely be some."""
         # Mock working hours response
         mock_working_hours.return_value = json.dumps(
@@ -441,7 +423,7 @@ class TestFindAvailableSlots:
         # Mock no existing events (completely free day)
         mock_fetch.return_value = json.dumps([])
 
-        result = self.tools.find_available_slots(
+        result = calendar_tools.find_available_slots(
             start_date="2025-07-21",
             end_date="2025-07-21",
             duration_minutes=30,  # Monday
