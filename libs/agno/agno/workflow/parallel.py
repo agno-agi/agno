@@ -218,10 +218,10 @@ class Parallel:
         def execute_step_with_index(step_with_index):
             """Execute a single step and preserve its original index"""
             idx, step = step_with_index
+            # Use the individual session_state copy for this step
+            step_session_state = session_state_copies[idx]
+            
             try:
-                # Use the individual session_state copy for this step
-                step_session_state = session_state_copies[idx]
-                
                 step_result = step.execute(
                     step_input,
                     session_id=session_id,
@@ -242,7 +242,7 @@ class Parallel:
                         success=False,
                         error=str(exc),
                     ),
-                    session_state_copies[idx],
+                    step_session_state,
                 )
 
         # Use index to preserve order
@@ -348,11 +348,11 @@ class Parallel:
         def execute_step_stream_with_index(step_with_index):
             """Execute a single step with streaming and preserve its original index"""
             idx, step = step_with_index
+            # Use the individual session_state copy for this step
+            step_session_state = session_state_copies[idx]
+            
             try:
                 step_events = []
-                
-                # Use the individual session_state copy for this step
-                step_session_state = session_state_copies[idx]
 
                 # If step_index is None or integer (main step): create (step_index, sub_index)
                 # If step_index is tuple (child step): all parallel sub-steps get same index
@@ -390,7 +390,7 @@ class Parallel:
                             error=str(exc),
                         )
                     ],
-                    session_state_copies[idx],
+                    step_session_state,
                 )
 
         # Use index to preserve order
@@ -504,10 +504,10 @@ class Parallel:
         async def execute_step_async_with_index(step_with_index):
             """Execute a single step asynchronously and preserve its original index"""
             idx, step = step_with_index
+            # Use the individual session_state copy for this step
+            step_session_state = session_state_copies[idx]
+            
             try:
-                # Use the individual session_state copy for this step
-                step_session_state = session_state_copies[idx]
-                
                 inner_step_result = await step.aexecute(
                     step_input,
                     session_id=session_id,
@@ -528,7 +528,7 @@ class Parallel:
                         success=False,
                         error=str(exc),
                     ),
-                    session_state_copies[idx],  # Return the copy even on failure
+                    step_session_state,
                 )
 
         # Use index to preserve order
@@ -635,11 +635,11 @@ class Parallel:
         async def execute_step_stream_async_with_index(step_with_index):
             """Execute a single step with async streaming and preserve its original index"""
             idx, step = step_with_index
+            # Use the individual session_state copy for this step
+            step_session_state = session_state_copies[idx]
+            
             try:
                 step_events = []
-                
-                # Use the individual session_state copy for this step
-                step_session_state = session_state_copies[idx]
 
                 # If step_index is None or integer (main step): create (step_index, sub_index)
                 # If step_index is tuple (child step): all parallel sub-steps get same index
@@ -677,7 +677,7 @@ class Parallel:
                             error=str(e),
                         )
                     ],
-                    session_state_copies[idx],
+                    step_session_state,
                 )
 
         # Use index to preserve order
