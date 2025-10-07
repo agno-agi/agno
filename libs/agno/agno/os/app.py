@@ -567,7 +567,7 @@ class AgentOS:
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=KnowledgeDomainConfig(
-                            display_name="Knowledge" if not multiple_knowledge_dbs else db_id
+                            display_name=db_id
                         ),
                     )
                 )
