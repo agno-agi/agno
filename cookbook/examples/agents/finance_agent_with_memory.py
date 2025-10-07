@@ -27,7 +27,7 @@ finance_agent_with_memory = Agent(
     name="Finance Agent with Memory",
     id="financial_agent_with_memory",
     model=OpenAIChat(id="gpt-4.1"),
-    tools=[YFinanceTools(enable_all=True), DuckDuckGoTools()],
+    tools=[YFinanceTools(), DuckDuckGoTools()],
     # Let the Agent create and manage user memories
     enable_agentic_memory=True,
     # Uncomment to always create memories from the input

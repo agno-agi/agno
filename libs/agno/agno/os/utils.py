@@ -1,6 +1,7 @@
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi.routing import APIRoute, APIRouter
 from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent.agent import Agent
@@ -8,6 +9,7 @@ from agno.db.base import BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.os.config import AgentOSConfig
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -149,16 +151,16 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
 
 
 def extract_format(file: UploadFile):
-    format = None
+    _format = None
     if file.filename and "." in file.filename:
-        format = file.filename.split(".")[-1].lower()
+        _format = file.filename.split(".")[-1].lower()
     elif file.content_type:
-        format = file.content_type.split("/")[-1]
-    return format
+        _format = file.content_type.split("/")[-1]
+    return _format
 
 
 def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
-    formatted_tools = []
+    formatted_tools: List[Dict] = []
     if agent_tools is not None:
         for tool in agent_tools:
             if isinstance(tool, dict):
@@ -284,7 +286,11 @@ def update_cors_middleware(app: FastAPI, new_origins: list):
     for middleware in app.user_middleware:
         if middleware.cls == CORSMiddleware:
             if hasattr(middleware, "kwargs"):
-                existing_origins = middleware.kwargs.get("allow_origins", [])
+                origins_value = middleware.kwargs.get("allow_origins", [])
+                if isinstance(origins_value, list):
+                    existing_origins = origins_value
+                else:
+                    existing_origins = []
             break
     # Merge origins
     merged_origins = list(set(new_origins + existing_origins))
@@ -296,13 +302,73 @@ def update_cors_middleware(app: FastAPI, new_origins: list):
 
     # Add updated CORS
     app.add_middleware(
-        CORSMiddleware,
+        CORSMiddleware,  # type: ignore
         allow_origins=final_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["*"],
     )
+
+
+def get_existing_route_paths(fastapi_app: FastAPI) -> Dict[str, List[str]]:
+    """Get all existing route paths and methods from the FastAPI app.
+
+    Returns:
+        Dict[str, List[str]]: Dictionary mapping paths to list of HTTP methods
+    """
+    existing_paths: Dict[str, Any] = {}
+    for route in fastapi_app.routes:
+        if isinstance(route, APIRoute):
+            path = route.path
+            methods = list(route.methods) if route.methods else []
+            if path in existing_paths:
+                existing_paths[path].extend(methods)
+            else:
+                existing_paths[path] = methods
+    return existing_paths
+
+
+def find_conflicting_routes(fastapi_app: FastAPI, router: APIRouter) -> List[Dict[str, Any]]:
+    """Find conflicting routes in the FastAPI app.
+
+    Args:
+        fastapi_app: The FastAPI app with all existing routes
+        router: The APIRouter to add
+
+    Returns:
+        List[Dict[str, Any]]: List of conflicting routes
+    """
+    existing_paths = get_existing_route_paths(fastapi_app)
+
+    conflicts = []
+
+    for route in router.routes:
+        if isinstance(route, APIRoute):
+            full_path = route.path
+            route_methods = list(route.methods) if route.methods else []
+
+            if full_path in existing_paths:
+                conflicting_methods: Set[str] = set(route_methods) & set(existing_paths[full_path])
+                if conflicting_methods:
+                    conflicts.append({"path": full_path, "methods": list(conflicting_methods), "route": route})
+    return conflicts
+
+
+def load_yaml_config(config_file_path: str) -> AgentOSConfig:
+    """Load a YAML config file and return the configuration as an AgentOSConfig instance."""
+    from pathlib import Path
+
+    import yaml
+
+    # Validate that the path points to a YAML file
+    path = Path(config_file_path)
+    if path.suffix.lower() not in [".yaml", ".yml"]:
+        raise ValueError(f"Config file must have a .yaml or .yml extension, got: {config_file_path}")
+
+    # Load the YAML file
+    with open(config_file_path, "r") as f:
+        return AgentOSConfig.model_validate(yaml.safe_load(f))
 
 
 def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
