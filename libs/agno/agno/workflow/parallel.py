@@ -1,5 +1,6 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
@@ -13,6 +14,7 @@ from agno.run.workflow import (
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
 )
+from agno.utils.merge_dict import merge_parallel_session_states
 from agno.utils.log import log_debug, logger
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
@@ -205,9 +207,20 @@ class Parallel:
 
         self._prepare_steps()
 
+        # Create individual session_state copies for each step to prevent race conditions
+        session_state_copies = []
+        for _ in range(len(self.steps)):
+            if session_state is not None:
+                session_state_copies.append(deepcopy(session_state))
+            else:
+                session_state_copies.append({})
+
         def execute_step_with_index(step_with_index):
             """Execute a single step and preserve its original index"""
             idx, step = step_with_index
+            # Use the individual session_state copy for this step
+            step_session_state = session_state_copies[idx]
+            
             try:
                 step_result = step.execute(
                     step_input,
@@ -215,9 +228,9 @@ class Parallel:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
-                    session_state=session_state,
+                    session_state=step_session_state,
                 )  # type: ignore[union-attr]
-                return idx, step_result
+                return idx, step_result, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 logger.error(f"Parallel step {parallel_step_name} failed: {exc}")
@@ -229,6 +242,7 @@ class Parallel:
                         success=False,
                         error=str(exc),
                     ),
+                    step_session_state,
                 )
 
         # Use index to preserve order
@@ -241,12 +255,14 @@ class Parallel:
                 for indexed_step in indexed_steps
             }
 
-            # Collect results
+            # Collect results and modified session_state copies
             results_with_indices = []
+            modified_session_states = []
             for future in as_completed(future_to_index):
                 try:
-                    index, result = future.result()
+                    index, result, modified_session_state = future.result()
                     results_with_indices.append((index, result))
+                    modified_session_states.append(modified_session_state)
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
                     log_debug(f"Parallel step {step_name} completed")
                 except Exception as e:
@@ -264,6 +280,9 @@ class Parallel:
                             ),
                         )
                     )
+
+        if session_state is not None:
+            merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort by original index to preserve order
         results_with_indices.sort(key=lambda x: x[0])
@@ -304,6 +323,14 @@ class Parallel:
 
         self._prepare_steps()
 
+        # Create individual session_state copies for each step to prevent race conditions
+        session_state_copies = []
+        for _ in range(len(self.steps)):
+            if session_state is not None:
+                session_state_copies.append(deepcopy(session_state))
+            else:
+                session_state_copies.append({})
+
         if stream_intermediate_steps and workflow_run_response:
             # Yield parallel step started event
             yield ParallelExecutionStartedEvent(
@@ -321,6 +348,9 @@ class Parallel:
         def execute_step_stream_with_index(step_with_index):
             """Execute a single step with streaming and preserve its original index"""
             idx, step = step_with_index
+            # Use the individual session_state copy for this step
+            step_session_state = session_state_copies[idx]
+            
             try:
                 step_events = []
 
@@ -342,11 +372,11 @@ class Parallel:
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
-                    session_state=session_state,
+                    session_state=step_session_state,
                     parent_step_id=parallel_step_id,
                 ):
                     step_events.append(event)
-                return idx, step_events
+                return idx, step_events, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 logger.error(f"Parallel step {parallel_step_name} streaming failed: {exc}")
@@ -360,12 +390,14 @@ class Parallel:
                             error=str(exc),
                         )
                     ],
+                    step_session_state,
                 )
 
         # Use index to preserve order
         indexed_steps = list(enumerate(self.steps))
         all_events_with_indices = []
         step_results = []
+        modified_session_states = []
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks with their original indices
@@ -374,11 +406,12 @@ class Parallel:
                 for indexed_step in indexed_steps
             }
 
-            # Collect results as they complete
+            # Collect results and modified session_state copies
             for future in as_completed(future_to_index):
                 try:
-                    index, events = future.result()
+                    index, events, modified_session_state = future.result()
                     all_events_with_indices.append((index, events))
+                    modified_session_states.append(modified_session_state)
 
                     # Extract StepOutput from events for the final result
                     step_outputs = [event for event in events if isinstance(event, StepOutput)]
@@ -399,6 +432,10 @@ class Parallel:
                     )
                     all_events_with_indices.append((index, [error_event]))
                     step_results.append(error_event)
+
+        # Merge all session_state changes back into the original session_state
+        if session_state is not None:
+            merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort events by original index to preserve order
         all_events_with_indices.sort(key=lambda x: x[0])
@@ -456,9 +493,20 @@ class Parallel:
 
         self._prepare_steps()
 
+        # Create individual session_state copies for each step to prevent race conditions
+        session_state_copies = []
+        for _ in range(len(self.steps)):
+            if session_state is not None:
+                session_state_copies.append(deepcopy(session_state))
+            else:
+                session_state_copies.append({})
+
         async def execute_step_async_with_index(step_with_index):
             """Execute a single step asynchronously and preserve its original index"""
             idx, step = step_with_index
+            # Use the individual session_state copy for this step
+            step_session_state = session_state_copies[idx]
+            
             try:
                 inner_step_result = await step.aexecute(
                     step_input,
@@ -466,9 +514,9 @@ class Parallel:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
-                    session_state=session_state,
+                    session_state=step_session_state,
                 )  # type: ignore[union-attr]
-                return idx, inner_step_result
+                return idx, inner_step_result, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 logger.error(f"Parallel step {parallel_step_name} failed: {exc}")
@@ -480,6 +528,7 @@ class Parallel:
                         success=False,
                         error=str(exc),
                     ),
+                    step_session_state,
                 )
 
         # Use index to preserve order
@@ -493,6 +542,7 @@ class Parallel:
 
         # Process results and handle exceptions, preserving order
         processed_results_with_indices = []
+        modified_session_states = []
         for i, result in enumerate(results_with_indices):
             if isinstance(result, Exception):
                 step_name = getattr(self.steps[i], "name", f"step_{i}")
@@ -508,11 +558,18 @@ class Parallel:
                         ),
                     )
                 )
+                # Still collect the session state copy for failed steps
+                modified_session_states.append(session_state_copies[i])
             else:
-                index, step_result = result  # type: ignore[misc]
+                index, step_result, modified_session_state = result  # type: ignore[misc]
                 processed_results_with_indices.append((index, step_result))
+                modified_session_states.append(modified_session_state)
                 step_name = getattr(self.steps[index], "name", f"step_{index}")
                 log_debug(f"Parallel step {step_name} completed")
+
+        # Smart merge all session_state changes back into the original session_state
+        if session_state is not None:
+            merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort by original index to preserve order
         processed_results_with_indices.sort(key=lambda x: x[0])
@@ -553,6 +610,14 @@ class Parallel:
 
         self._prepare_steps()
 
+        # Create individual session_state copies for each step to prevent race conditions
+        session_state_copies = []
+        for _ in range(len(self.steps)):
+            if session_state is not None:
+                session_state_copies.append(deepcopy(session_state))
+            else:
+                session_state_copies.append({})
+
         if stream_intermediate_steps and workflow_run_response:
             # Yield parallel step started event
             yield ParallelExecutionStartedEvent(
@@ -570,6 +635,9 @@ class Parallel:
         async def execute_step_stream_async_with_index(step_with_index):
             """Execute a single step with async streaming and preserve its original index"""
             idx, step = step_with_index
+            # Use the individual session_state copy for this step
+            step_session_state = session_state_copies[idx]
+            
             try:
                 step_events = []
 
@@ -591,11 +659,11 @@ class Parallel:
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
-                    session_state=session_state,
+                    session_state=step_session_state,
                     parent_step_id=parallel_step_id,
                 ):  # type: ignore[union-attr]
                     step_events.append(event)
-                return idx, step_events
+                return idx, step_events, step_session_state
             except Exception as e:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 logger.error(f"Parallel step {parallel_step_name} async streaming failed: {e}")
@@ -609,12 +677,14 @@ class Parallel:
                             error=str(e),
                         )
                     ],
+                    step_session_state,
                 )
 
         # Use index to preserve order
         indexed_steps = list(enumerate(self.steps))
         all_events_with_indices = []
         step_results = []
+        modified_session_states = []
 
         # Create tasks for all steps with their indices
         tasks = [execute_step_stream_async_with_index(indexed_step) for indexed_step in indexed_steps]
@@ -635,9 +705,11 @@ class Parallel:
                 )
                 all_events_with_indices.append((i, [error_event]))
                 step_results.append(error_event)
+                modified_session_states.append(session_state_copies[i])
             else:
-                index, events = result  # type: ignore[misc]
+                index, events, modified_session_state = result  # type: ignore[misc]
                 all_events_with_indices.append((index, events))
+                modified_session_states.append(modified_session_state)
 
                 # Extract StepOutput from events for the final result
                 step_outputs = [event for event in events if isinstance(event, StepOutput)]
@@ -646,6 +718,10 @@ class Parallel:
 
                 step_name = getattr(self.steps[index], "name", f"step_{index}")
                 log_debug(f"Parallel step {step_name} async streaming completed")
+
+        # Merge all session_state changes back into the original session_state
+        if session_state is not None:
+            merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort events by original index to preserve order
         all_events_with_indices.sort(key=lambda x: x[0])
