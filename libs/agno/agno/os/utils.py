@@ -95,7 +95,6 @@ def get_session_name(session: Dict[str, Any]) -> str:
         if session.get("session_type") == "team":
             run = runs[0] if not runs[0].get("agent_id") else runs[1]
 
-        # For workflows, try agent/team steps first, then custom function steps
         elif session.get("session_type") == "workflow":
             try:
                 workflow_run = runs[0]
@@ -106,7 +105,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
                     try:
                         import json
                         return json.dumps(workflow_input)
-                    except:
+                    except (TypeError, ValueError):
                         # Fallback to workflow name if json.dumps fails
                         workflow_name = session.get("workflow_data", {}).get("name")
                         return f"New {workflow_name} Session" if workflow_name else ""
