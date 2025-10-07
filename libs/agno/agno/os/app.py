@@ -415,18 +415,12 @@ class AgentOS:
                 self._register_db_with_validation(dbs, agent.db)
             if agent.knowledge and agent.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
-                # Also add to general dbs if it's used for both purposes
-                if agent.knowledge.contents_db.id not in dbs:
-                    self._register_db_with_validation(dbs, agent.knowledge.contents_db)
 
         for team in self.teams or []:
             if team.db:
                 self._register_db_with_validation(dbs, team.db)
             if team.knowledge and team.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, team.knowledge.contents_db)
-                # Also add to general dbs if it's used for both purposes
-                if team.knowledge.contents_db.id not in dbs:
-                    self._register_db_with_validation(dbs, team.knowledge.contents_db)
 
         for workflow in self.workflows or []:
             if workflow.db:
