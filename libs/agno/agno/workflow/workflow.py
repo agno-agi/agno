@@ -875,10 +875,10 @@ class Workflow:
             return func(**call_kwargs)
         except TypeError as e:
             # If signature inspection fails, fall back to original method
-            logger.warning(
-                f"Async function signature inspection failed: {e}. Falling back to original calling convention."
+            logger.error(
+                f"Function signature inspection failed: {e}. Falling back to original calling convention."
             )
-            return func(**call_kwargs)
+            return func(**kwargs)
 
     def _execute(
         self,
