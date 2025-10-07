@@ -515,7 +515,6 @@ class AgentOS:
         if session_config.dbs is None:
             session_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in session_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -524,7 +523,7 @@ class AgentOS:
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=SessionDomainConfig(
-                            display_name="Sessions" if not multiple_dbs else db_id
+                            display_name=db_id
                         ),
                     )
                 )
@@ -537,7 +536,6 @@ class AgentOS:
         if memory_config.dbs is None:
             memory_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in memory_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -546,7 +544,7 @@ class AgentOS:
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=MemoryDomainConfig(
-                            display_name="Memory" if not multiple_dbs else db_id
+                            display_name=db_id
                         ),
                     )
                 )
@@ -582,7 +580,6 @@ class AgentOS:
         if metrics_config.dbs is None:
             metrics_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in metrics_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -591,7 +588,7 @@ class AgentOS:
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=MetricsDomainConfig(
-                            display_name="Metrics" if not multiple_dbs else db_id
+                            display_name=db_id
                         ),
                     )
                 )
@@ -604,7 +601,6 @@ class AgentOS:
         if evals_config.dbs is None:
             evals_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in evals_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -613,7 +609,7 @@ class AgentOS:
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=EvalsDomainConfig(
-                            display_name="Evals" if not multiple_dbs else db_id
+                            display_name=db_id
                         ),
                     )
                 )
