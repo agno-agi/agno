@@ -99,19 +99,20 @@ def get_session_name(session: Dict[str, Any]) -> str:
         elif session.get("session_type") == "workflow":
             try:
                 workflow_run = runs[0]
-                step_executor_runs = workflow_run.get("step_executor_runs")
-                if step_executor_runs:
-                    run = step_executor_runs[0]
-                else:
-                    workflow_input = workflow_run.get("input")
-                    if isinstance(workflow_input, str):
-                        return workflow_input
-                    elif isinstance(workflow_input, dict):
+                workflow_input = workflow_run.get("input")
+                if isinstance(workflow_input, str):
+                    return workflow_input
+                elif isinstance(workflow_input, dict):
+                    try:
                         import json
                         return json.dumps(workflow_input)
-                    # Fallback to workflow name
-                    workflow_name = session.get("workflow_data", {}).get("name")
-                    return f"New {workflow_name} Session" if workflow_name else ""
+                    except:
+                        # Fallback to workflow name if json.dumps fails
+                        workflow_name = session.get("workflow_data", {}).get("name")
+                        return f"New {workflow_name} Session" if workflow_name else ""
+
+                workflow_name = session.get("workflow_data", {}).get("name")
+                return f"New {workflow_name} Session" if workflow_name else ""
             except (KeyError, IndexError, TypeError):
                 return ""
 
