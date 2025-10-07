@@ -116,11 +116,17 @@ def get_session_name(session: Dict[str, Any]) -> str:
     return ""
 
 
-def extract_media(run_dict: Dict[str, Any], media_type: Literal["images", "videos", "audio"] = "images"):
-    media=[]
+def extract_media(run_dict: Dict[str, Any], media_type: Literal["images", "videos", "audio", "audio_output", "files", "response_audio"] = "images"):
+    media = []
     for message in run_dict.get("messages", []):
-        if message.get(media_type):
-            media.extend(message.get(media_type, []))
+        value = message.get(media_type)
+        if value is None:
+            continue
+        if isinstance(value, list):
+            media.extend(value)
+        else:
+            # If media is not list and is string or dict, then append it the media list
+            media.append(value)
     return media
 
 
