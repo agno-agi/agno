@@ -93,18 +93,40 @@ def get_session_name(session: Dict[str, Any]) -> str:
 
         # For teams, identify the first Team run and avoid using the first member's run
         if session.get("session_type") == "team":
-            run = runs[0] if not runs[0].get("agent_id") else runs[1]
+            run = None
+            for r in runs:
+                # If agent_id is not present, it's a team run
+                if not r.get("agent_id"):  
+                    run = r
+                    break
+            # Fallback to first run if no team run found
+            if run is None and runs:
+                run = runs[0]
 
-        # For workflows, pass along the first step_executor_run
         elif session.get("session_type") == "workflow":
             try:
-                run = session["runs"][0]["step_executor_runs"][0]
+                workflow_run = runs[0]
+                workflow_input = workflow_run.get("input")
+                if isinstance(workflow_input, str):
+                    return workflow_input
+                elif isinstance(workflow_input, dict):
+                    try:
+                        import json
+                        return json.dumps(workflow_input)
+                    except (TypeError, ValueError):
+                        pass
+
+                workflow_name = session.get("workflow_data", {}).get("name")
+                return f"New {workflow_name} Session" if workflow_name else ""
             except (KeyError, IndexError, TypeError):
                 return ""
 
         # For agents, use the first run
         else:
-            run = runs[0]
+            run = runs[0] if runs else None
+
+        if run is None:
+            return ""
 
         if not isinstance(run, dict):
             run = run.to_dict()
