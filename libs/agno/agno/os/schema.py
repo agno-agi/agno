@@ -137,7 +137,6 @@ class ConfigResponse(BaseModel):
     description: Optional[str] = None
     available_models: Optional[List[str]] = None
     databases: List[str]
-    knowledge_databases: List[str]
     chat: Optional[ChatConfig] = None
 
     session: Optional[SessionConfig] = None
