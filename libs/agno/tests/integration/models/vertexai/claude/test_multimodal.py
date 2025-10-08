@@ -1,5 +1,5 @@
 from agno.agent.agent import Agent
-from agno.media import File, Image
+from agno.media import Image
 from agno.models.vertexai.claude import Claude
 
 
