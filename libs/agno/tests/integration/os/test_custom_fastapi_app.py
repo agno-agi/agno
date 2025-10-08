@@ -12,6 +12,7 @@ from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
 from agno.team.team import Team
+from agno.tools.mcp import MCPTools
 from agno.workflow.workflow import Workflow
 
 
@@ -711,3 +712,127 @@ def test_complex_route_conflict_scenario(test_agent: Agent, test_team: Team, tes
     response = client.post("/agents")
     # Should either work (custom) or have specific AgentOS behavior
     assert response.status_code != 404
+
+
+def test_custom_app_with_mcp_tools_lifespan(test_agent: Agent):
+    """Test that MCP tools work correctly with a custom base_app."""
+    # Track lifespan events
+    base_app_startup_called = False
+    base_app_shutdown_called = False
+    mcp_connect_called = False
+    mcp_close_called = False
+
+    @asynccontextmanager
+    async def base_app_lifespan(app):
+        nonlocal base_app_startup_called, base_app_shutdown_called
+        base_app_startup_called = True
+        yield
+        base_app_shutdown_called = True
+
+    # Create custom FastAPI app with its own lifespan
+    custom_app = FastAPI(title="Custom App", lifespan=base_app_lifespan)
+
+    # Create MCP tools and mock their connect/close methods
+    mcp_tools = MCPTools("npm fake-command")
+
+    # Mock the connect and close methods
+    original_connect = mcp_tools.connect
+    original_close = mcp_tools.close
+
+    async def mock_connect():
+        nonlocal mcp_connect_called
+        mcp_connect_called = True
+        # Call original if it exists and is safe
+        if callable(original_connect):
+            try:
+                await original_connect()
+            except Exception:
+                pass  # Ignore connection errors in tests
+
+    async def mock_close():
+        nonlocal mcp_close_called
+        mcp_close_called = True
+        # Call original if it exists and is safe
+        if callable(original_close):
+            try:
+                await original_close()
+            except Exception:
+                pass  # Ignore close errors in tests
+
+    mcp_tools.connect = mock_connect
+    mcp_tools.close = mock_close
+
+    # Create agent with MCP tools
+    agent = Agent(name="mcp-test-agent", tools=[mcp_tools], db=InMemoryDb())
+
+    # Create AgentOS with custom base_app
+    agent_os = AgentOS(
+        agents=[agent],
+        base_app=custom_app,
+    )
+
+    # Verify MCP tools were registered
+    assert len(agent_os.mcp_tools) == 1
+    assert agent_os.mcp_tools[0] is mcp_tools
+
+    app = agent_os.get_app()
+
+    # Verify lifespan was properly combined
+    assert app.router.lifespan_context is not None
+
+    # Test with TestClient to trigger lifespan events
+    with TestClient(app) as client:
+        # Test that the app is working
+        response = client.get("/health")
+        assert response.status_code == 200
+
+    # Verify all lifespans were called
+    assert base_app_startup_called is True
+    assert base_app_shutdown_called is True
+    assert mcp_connect_called is True
+    assert mcp_close_called is True
+
+
+def test_custom_app_with_enable_mcp_server():
+    """Test that enable_mcp_server=True works with a custom base_app."""
+    # Track lifespan events
+    base_app_startup_called = False
+    base_app_shutdown_called = False
+
+    @asynccontextmanager
+    async def base_app_lifespan(app):
+        nonlocal base_app_startup_called, base_app_shutdown_called
+        base_app_startup_called = True
+        yield
+        base_app_shutdown_called = True
+
+    # Create custom FastAPI app with its own lifespan
+    custom_app = FastAPI(title="Custom App with MCP Server", lifespan=base_app_lifespan)
+
+    # Create a simple agent
+    agent = Agent(name="test-agent", db=InMemoryDb())
+
+    # Create AgentOS with enable_mcp_server=True and custom base_app
+    agent_os = AgentOS(
+        agents=[agent],
+        base_app=custom_app,
+        enable_mcp_server=True,
+    )
+
+    app = agent_os.get_app()
+
+    # Verify MCP server was initialized
+    assert agent_os._mcp_app is not None
+
+    # Verify lifespan was properly combined
+    assert app.router.lifespan_context is not None
+
+    # Test with TestClient to trigger lifespan events
+    with TestClient(app) as client:
+        # Test that the app is working
+        response = client.get("/health")
+        assert response.status_code == 200
+
+    # Verify base app lifespans were called
+    assert base_app_startup_called is True
+    assert base_app_shutdown_called is True
