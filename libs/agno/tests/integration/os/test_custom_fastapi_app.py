@@ -726,7 +726,7 @@ def test_custom_app_with_mcp_tools_lifespan(test_agent: Agent):
         yield
         base_app_shutdown_called = True
 
-    # sETUP custom FastAPI app with custom lifespan
+    # Setup custom FastAPI app with custom lifespan
     custom_app = FastAPI(title="Custom App", lifespan=base_app_lifespan)
 
     # Setup MCP tools with mocked connect/close methods
