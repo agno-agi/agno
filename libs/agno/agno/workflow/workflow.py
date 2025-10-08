@@ -875,9 +875,7 @@ class Workflow:
             return func(**call_kwargs)
         except TypeError as e:
             # If signature inspection fails, fall back to original method
-            logger.error(
-                f"Function signature inspection failed: {e}. Falling back to original calling convention."
-            )
+            logger.error(f"Function signature inspection failed: {e}. Falling back to original calling convention.")
             return func(**kwargs)
 
     def _execute(
@@ -892,7 +890,8 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
-        register_run(workflow_run_response.run_id)  # type: ignore
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
@@ -1346,7 +1345,8 @@ class Workflow:
         workflow_run_response.status = RunStatus.running
 
         # Register run for cancellation tracking
-        register_run(workflow_run_response.run_id)  # type: ignore
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             # Execute the workflow with the custom executor
@@ -1506,6 +1506,10 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
+
+        # Register run for cancellation tracking
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)
 
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
