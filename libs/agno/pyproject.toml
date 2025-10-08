@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.1.1"
+version = "2.1.2"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -162,7 +162,7 @@ chonkie = ["chonkie[st]", "chonkie"]
 agui = ["ag-ui-protocol"]
 
 # Dependencies for A2A integration
-a2a = ["a2a"]
+a2a = ["a2a-sdk"]
 
 # Dependencies for Embedders
 huggingface = [
@@ -190,7 +190,6 @@ models = [
   "agno[azure]",
   "agno[cerebras]",
   "agno[cohere]",
-  "agno[infinity]",
   "agno[google]",
   "agno[groq]",
   "agno[ibm]",
@@ -299,7 +298,6 @@ tests = [
     "agno[performance]",
     "agno[cookbooks]",
     "agno[agui]",
-    "agno[a2a]",
     "twine",
     "build",
 ]
