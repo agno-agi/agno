@@ -4313,6 +4313,7 @@ class Agent:
                 self._rebuild_tools = True
 
             if self.update_knowledge:
+                print("Adding update knowledge tool")
                 agent_tools.append(self.add_to_knowledge)
 
         return agent_tools
