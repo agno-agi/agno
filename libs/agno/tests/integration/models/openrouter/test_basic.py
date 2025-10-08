@@ -101,7 +101,7 @@ def test_output_schema():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id="openai/o4-mini"),
         markdown=True,
         telemetry=False,
         output_schema=MovieScript,
