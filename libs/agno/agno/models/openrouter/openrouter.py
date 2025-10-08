@@ -32,7 +32,7 @@ class OpenRouter(OpenAILike):
     api_key: Optional[str] = field(default_factory=lambda: getenv("OPENROUTER_API_KEY"))
     base_url: str = "https://openrouter.ai/api/v1"
     max_tokens: int = 1024
-    fallback_models: Optional[List[str]] = None
+    models: Optional[List[str]] = None  # Dynamic model routing https://openrouter.ai/docs/features/model-routing
 
     def get_request_params(
         self,
@@ -53,12 +53,12 @@ class OpenRouter(OpenAILike):
         )
 
         # Add fallback models to extra_body if specified
-        if self.fallback_models:
+        if self.models:
             # Get existing extra_body or create new dict
             extra_body = request_params.get("extra_body") or {}
 
             # Merge fallback models into extra_body
-            extra_body["models"] = self.fallback_models
+            extra_body["models"] = self.models
 
             # Update request params
             request_params["extra_body"] = extra_body

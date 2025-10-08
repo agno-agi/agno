@@ -1,26 +1,26 @@
 """
-This example demonstrates how to use fallback models with OpenRouter.
+This example demonstrates how to use dynamic model router with OpenRouter.
 
-Fallback models provide automatic failover when the primary model encounters:
+Dynamic models provide automatic failover when the primary model encounters:
 - Rate limits
 - Timeouts
 - Unavailability
 - Model overload
 
-OpenRouter will automatically try the fallback models in order until one succeeds.
+OpenRouter will automatically try the models defined in order until one succeeds.
 """
 
 from agno.agent import Agent
 from agno.models.openrouter import OpenRouter
 
-# Create an agent with fallback models
-# If the primary model fails, OpenRouter will automatically try the fallback models in order
+# Create an agent with dynamic models
+# If the primary model fails, OpenRouter will automatically try the models defined in order
 agent = Agent(
     model=OpenRouter(
         id="anthropic/claude-sonnet-4",  # Primary model
-        fallback_models=[
-            "deepseek/deepseek-r1",  # First fallback
-            "openai/gpt-4o",  # Second fallback
+        models=[
+            "deepseek/deepseek-r1",  # First fallback model
+            "openai/gpt-4o",  # Second fallback model
         ],
     ),
     markdown=True,
