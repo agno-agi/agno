@@ -417,7 +417,6 @@ async def customer_report_consolidation_step(step_input: StepInput, session_stat
     Consolidate all research findings into comprehensive customer report
     """
     customer_query = step_input.input
-    previous_content = step_input.previous_step_content
     
     # Gather all research findings from session state
     research_data = session_state["customer_research"]
@@ -512,7 +511,6 @@ async def task_recommender_step(step_input: StepInput, session_state: Dict[str, 
     Generate actionable task recommendations based on consolidated research
     """
     customer_query = step_input.input
-    previous_content = step_input.previous_step_content
     
     research_data = session_state["customer_research"]
     workflow_config = session_state["workflow_config"]
