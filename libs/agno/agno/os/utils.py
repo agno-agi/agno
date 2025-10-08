@@ -96,7 +96,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
             run = None
             for r in runs:
                 # If agent_id is not present, it's a team run
-                if not r.get("agent_id"):  
+                if not r.get("agent_id"):
                     run = r
                     break
             # Fallback to first run if no team run found
@@ -112,6 +112,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
                 elif isinstance(workflow_input, dict):
                     try:
                         import json
+
                         return json.dumps(workflow_input)
                     except (TypeError, ValueError):
                         pass
