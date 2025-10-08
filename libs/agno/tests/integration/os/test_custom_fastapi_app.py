@@ -731,28 +731,14 @@ def test_custom_app_with_mcp_tools_lifespan(test_agent: Agent):
 
     # Setup MCP tools with mocked connect/close methods
     mcp_tools = MCPTools("npm fake-command")
-    original_connect = mcp_tools.connect
-    original_close = mcp_tools.close
 
     async def mock_connect():
         nonlocal mcp_connect_called
         mcp_connect_called = True
-        # Call original if it exists and is safe
-        if callable(original_connect):
-            try:
-                await original_connect()
-            except Exception:
-                pass  # Ignore connection errors in tests
 
     async def mock_close():
         nonlocal mcp_close_called
         mcp_close_called = True
-        # Call original if it exists and is safe
-        if callable(original_close):
-            try:
-                await original_close()
-            except Exception:
-                pass  # Ignore close errors in tests
 
     mcp_tools.connect = mock_connect
     mcp_tools.close = mock_close

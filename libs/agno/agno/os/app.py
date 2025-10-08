@@ -64,6 +64,30 @@ async def mcp_lifespan(_, mcp_tools):
         await tool.close()
 
 
+def _combine_app_lifespans(lifespans: list) -> Any:
+    """Combine multiple FastAPI app lifespan context managers into one."""
+    if len(lifespans) == 1:
+        return lifespans[0]
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def combined_lifespan(app):
+        async def _run_nested(index: int):
+            if index >= len(lifespans):
+                yield
+                return
+
+            async with lifespans[index](app):
+                async for _ in _run_nested(index + 1):
+                    yield
+
+        async for _ in _run_nested(0):
+            yield
+
+    return combined_lifespan
+
+
 class AgentOS:
     def __init__(
         self,
@@ -238,57 +262,30 @@ class AgentOS:
         if self.base_app:
             fastapi_app = self.base_app
 
-            # Handle MCP server initialization if enabled
+            # Initialize MCP server if enabled
             if self.enable_mcp_server:
                 from agno.os.mcp import get_mcp_server
 
                 self._mcp_app = get_mcp_server(self)
 
-            # Handle MCP lifespan if MCP tools are present or MCP server is enabled
-            if self.mcp_tools or self.enable_mcp_server:
-                from contextlib import asynccontextmanager
+            # Collect all lifespans that need to be combined
+            lifespans = []
 
-                existing_lifespan = fastapi_app.router.lifespan_context
-                lifespans_to_combine = []
+            if fastapi_app.router.lifespan_context:
+                lifespans.append(fastapi_app.router.lifespan_context)
 
-                # Add existing lifespan if present
-                if existing_lifespan is not None:
-                    lifespans_to_combine.append(existing_lifespan)
+            if self.mcp_tools:
+                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
 
-                # Add MCP tools lifespan if tools are present
-                if self.mcp_tools:
-                    mcp_tools_lifespan = partial(mcp_lifespan, mcp_tools=self.mcp_tools)
-                    lifespans_to_combine.append(mcp_tools_lifespan)
+            if self.enable_mcp_server and self._mcp_app:
+                lifespans.append(self._mcp_app.lifespan)
 
-                # Add MCP server lifespan if enabled
-                if self.enable_mcp_server and self._mcp_app:
-                    lifespans_to_combine.append(self._mcp_app.lifespan)
+            if self.lifespan:
+                lifespans.append(self.lifespan)
 
-                # Add user-provided lifespans if present
-                if self.lifespan is not None:
-                    lifespans_to_combine.append(self.lifespan)
-
-                if len(lifespans_to_combine) == 1:
-                    fastapi_app.router.lifespan_context = lifespans_to_combine[0]  # type: ignore
-
-                # Combine all lifespans
-                elif len(lifespans_to_combine) > 1:
-
-                    @asynccontextmanager
-                    async def combined_lifespan(app: FastAPI):
-                        # Recursively nest all lifespans
-                        async def run_lifespans(index):
-                            if index >= len(lifespans_to_combine):
-                                yield
-                            else:
-                                async with lifespans_to_combine[index](app):  # type: ignore
-                                    async for _ in run_lifespans(index + 1):
-                                        yield
-
-                        async for _ in run_lifespans(0):
-                            yield
-
-                    fastapi_app.router.lifespan_context = combined_lifespan
+            # Combine lifespans and set them in the app
+            if lifespans:
+                fastapi_app.router.lifespan_context = _combine_app_lifespans(lifespans)
 
         else:
             if self.enable_mcp_server:
