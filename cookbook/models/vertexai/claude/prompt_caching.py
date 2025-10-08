@@ -5,6 +5,8 @@ This can significantly reduce processing time and costs.
 Use it when working with a static and large system prompt.
 
 You can check more about prompt caching with Anthropic models here: https://docs.anthropic.com/en/docs/prompt-caching
+
+Note: It takes a few seconds for the cache to be created and used for the second run.
 """
 
 from pathlib import Path
