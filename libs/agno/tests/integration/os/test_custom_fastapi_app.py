@@ -51,11 +51,10 @@ def test_custom_app_with_cors_middleware(test_agent: Agent):
         agents=[test_agent],
         base_app=custom_app,
     )
-
     app = agent_os.get_app()
     client = TestClient(app)
 
-    # Test actual CORS request with origin header (more reliable than OPTIONS)
+    # Ensure the app is running
     response = client.get(
         "/health", headers={"Origin": "https://custom.example.com", "Access-Control-Request-Method": "GET"}
     )
@@ -292,14 +291,13 @@ def test_available_endpoints_with_custom_app(test_agent: Agent, test_team: Team,
     async def custom_endpoint():
         return {"message": "custom"}
 
-    # Create AgentOS with agents, teams, and workflows
+    # Setup AgentOS with custom app
     agent_os = AgentOS(
         agents=[test_agent],
         teams=[test_team],
         workflows=[test_workflow],
         base_app=custom_app,
     )
-
     app = agent_os.get_app()
     client = TestClient(app)
 
@@ -716,7 +714,6 @@ def test_complex_route_conflict_scenario(test_agent: Agent, test_team: Team, tes
 
 def test_custom_app_with_mcp_tools_lifespan(test_agent: Agent):
     """Test that MCP tools work correctly with a custom base_app."""
-    # Track lifespan events
     base_app_startup_called = False
     base_app_shutdown_called = False
     mcp_connect_called = False
@@ -729,13 +726,11 @@ def test_custom_app_with_mcp_tools_lifespan(test_agent: Agent):
         yield
         base_app_shutdown_called = True
 
-    # Create custom FastAPI app with its own lifespan
+    # sETUP custom FastAPI app with custom lifespan
     custom_app = FastAPI(title="Custom App", lifespan=base_app_lifespan)
 
-    # Create MCP tools and mock their connect/close methods
+    # Setup MCP tools with mocked connect/close methods
     mcp_tools = MCPTools("npm fake-command")
-
-    # Mock the connect and close methods
     original_connect = mcp_tools.connect
     original_close = mcp_tools.close
 
@@ -762,10 +757,10 @@ def test_custom_app_with_mcp_tools_lifespan(test_agent: Agent):
     mcp_tools.connect = mock_connect
     mcp_tools.close = mock_close
 
-    # Create agent with MCP tools
+    # Setup agent with MCP tools
     agent = Agent(name="mcp-test-agent", tools=[mcp_tools], db=InMemoryDb())
 
-    # Create AgentOS with custom base_app
+    # Setup AgentOS with custom base_app
     agent_os = AgentOS(
         agents=[agent],
         base_app=custom_app,
@@ -777,16 +772,30 @@ def test_custom_app_with_mcp_tools_lifespan(test_agent: Agent):
 
     app = agent_os.get_app()
 
-    # Verify lifespan was properly combined
+    # Verify lifespans were properly combined
     assert app.router.lifespan_context is not None
 
-    # Test with TestClient to trigger lifespan events
+    # Ensure the app is running and lifespans are called
     with TestClient(app) as client:
-        # Test that the app is working
         response = client.get("/health")
         assert response.status_code == 200
 
-    # Verify all lifespans were called
+        # Verify the agent has access to MCP tools through the API
+        # Get the agent from the OS to check its tools
+        os_agent = agent_os.agents[0]
+        assert os_agent.tools is not None
+        assert len(os_agent.tools) == 1
+        assert os_agent.tools[0] is mcp_tools
+
+        # Verify agent endpoint is accessible and shows agent with tools
+        response = client.get(f"/agents/{os_agent.id}")
+        assert response.status_code == 200
+        agent_data = response.json()
+        assert agent_data["name"] == "mcp-test-agent"
+        # Agent should have tools configured (tools field should be present and non-empty)
+        assert "tools" in agent_data
+        assert agent_data["tools"] is not None
+
     assert base_app_startup_called is True
     assert base_app_shutdown_called is True
     assert mcp_connect_called is True
@@ -794,8 +803,13 @@ def test_custom_app_with_mcp_tools_lifespan(test_agent: Agent):
 
 
 def test_custom_app_with_enable_mcp_server():
-    """Test that enable_mcp_server=True works with a custom base_app."""
-    # Track lifespan events
+    """Test that enable_mcp_server=True works with a custom base_app.
+
+    Note: This test requires a compatible version of fastmcp that exports
+    fastmcp.server.http.StarletteWithLifespan. If this import fails, it indicates
+    a version mismatch that needs to be resolved in agno/os/mcp.py.
+    """
+    # Setup lifespan events
     base_app_startup_called = False
     base_app_shutdown_called = False
 
@@ -806,33 +820,35 @@ def test_custom_app_with_enable_mcp_server():
         yield
         base_app_shutdown_called = True
 
-    # Create custom FastAPI app with its own lifespan
+    # Setup custom FastAPI app with custom lifespan
     custom_app = FastAPI(title="Custom App with MCP Server", lifespan=base_app_lifespan)
 
-    # Create a simple agent
+    # Setup a simple agent
     agent = Agent(name="test-agent", db=InMemoryDb())
 
-    # Create AgentOS with enable_mcp_server=True and custom base_app
+    # Setup AgentOS with enable_mcp_server=True and custom base_app
     agent_os = AgentOS(
         agents=[agent],
         base_app=custom_app,
         enable_mcp_server=True,
     )
-
     app = agent_os.get_app()
 
-    # Verify MCP server was initialized
+    # Verify MCP server was initialized and lifespans were combined
     assert agent_os._mcp_app is not None
-
-    # Verify lifespan was properly combined
     assert app.router.lifespan_context is not None
 
-    # Test with TestClient to trigger lifespan events
+    # Verify MCP server is mounted by checking the app's routes
+    mcp_mounted = False
+    for route in app.routes:
+        if hasattr(route, "app") and route.app == agent_os._mcp_app:  # type: ignore
+            mcp_mounted = True
+            break
+    assert mcp_mounted, "MCP server should be mounted to the base_app"
+
+    # Ensure the app is running and lifespans were called
     with TestClient(app) as client:
-        # Test that the app is working
         response = client.get("/health")
         assert response.status_code == 200
-
-    # Verify base app lifespans were called
     assert base_app_startup_called is True
     assert base_app_shutdown_called is True
