@@ -25,10 +25,10 @@ async def run_agent(message: str) -> None:
             markdown=True,
             exponential_backoff=True,
             forget_tool_calls=True,  # Enable tool call forgetting to manage context
-            num_tool_calls_to_keep=5,  # Keep only the last 5 tool calls in context
+            num_tool_calls_in_context=5,  # Keep only the last 5 tool calls in context
         )
 
-        await agent.aprint_response(input=message,debug_mode=True, stream=True)
+        await agent.aprint_response(input=message, debug_mode=True, stream=True)
 
 
 if __name__ == "__main__":

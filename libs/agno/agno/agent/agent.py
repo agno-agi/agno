@@ -220,8 +220,8 @@ class Agent:
     # If True, remove old tool results beyond the window to reduce context
     forget_tool_calls: bool = False
     # Keep only this many most recent tool results (older ones removed completely)
-    # Example: num_tool_calls_to_keep=5 means keep last 5 tool results, delete older ones
-    num_tool_calls_to_keep: int = 5
+    # num_tool_calls_in_context keeps last N tool results, delete older ones
+    num_tool_calls_in_context: int = 5
 
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
@@ -402,7 +402,7 @@ class Agent:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         forget_tool_calls: bool = False,
-        num_tool_calls_to_keep: Optional[int] = None,
+        num_tool_calls_in_context: Optional[int] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
@@ -507,7 +507,7 @@ class Agent:
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.forget_tool_calls = forget_tool_calls
-        self.num_tool_calls_to_keep = num_tool_calls_to_keep if num_tool_calls_to_keep is not None else 5
+        self.num_tool_calls_in_context = num_tool_calls_in_context if num_tool_calls_in_context is not None else 5
         self.tool_hooks = tool_hooks
 
         # Initialize hooks with backward compatibility
@@ -872,7 +872,7 @@ class Agent:
 
         # Log if forget_tool_calls is enabled
         if self.forget_tool_calls:
-            log_info(f"🗑️  Tool forgetting enabled (window: {self.num_tool_calls_to_keep})")
+            log_info(f"🗑️  Tool forgetting enabled (window: {self.num_tool_calls_in_context})")
 
         model_response: ModelResponse = self.model.response(
             messages=run_messages.messages,
@@ -884,7 +884,7 @@ class Agent:
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
             forget_tool_calls=self.forget_tool_calls,
-            num_tool_calls_to_keep=self.num_tool_calls_to_keep,
+            num_tool_calls_in_context=self.num_tool_calls_in_context,
         )
 
         # Check for cancellation after model call
@@ -1573,7 +1573,9 @@ class Agent:
 
         # Log if forget_tool_calls is enabled
         if self.forget_tool_calls:
-            log_info(f"Tool forgetting enabled (window: {self.num_tool_calls_to_keep})")
+            log_info(
+                f"Tool forgetting enabled with maximum number of tool calls in context: {self.num_tool_calls_in_context})"
+            )
 
         # 5. Generate a response from the Model (includes running function calls)
         model_response: ModelResponse = await self.model.aresponse(
@@ -1585,7 +1587,7 @@ class Agent:
             response_format=response_format,
             send_media_to_model=self.send_media_to_model,
             forget_tool_calls=self.forget_tool_calls,
-            num_tool_calls_to_keep=self.num_tool_calls_to_keep,
+            num_tool_calls_in_context=self.num_tool_calls_in_context,
         )
 
         # Check for cancellation after model call
@@ -2439,7 +2441,7 @@ class Agent:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             forget_tool_calls=self.forget_tool_calls,
-            num_tool_calls_to_keep=self.num_tool_calls_to_keep,
+            num_tool_calls_in_context=self.num_tool_calls_in_context,
         )
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
@@ -2831,7 +2833,9 @@ class Agent:
 
         # Log if forget_tool_calls is enabled
         if self.forget_tool_calls:
-            log_info(f"Tool forgetting enabled (window: {self.num_tool_calls_to_keep})")
+            log_info(
+                f"Tool forgetting enabled with maximum number of tool calls in context: {self.num_tool_calls_in_context})"
+            )
 
         # 2. Generate a response from the Model (includes running function calls)
         model_response: ModelResponse = await self.model.aresponse(
@@ -2842,7 +2846,7 @@ class Agent:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             forget_tool_calls=self.forget_tool_calls,
-            num_tool_calls_to_keep=self.num_tool_calls_to_keep,
+            num_tool_calls_in_context=self.num_tool_calls_in_context,
         )
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
@@ -3657,7 +3661,9 @@ class Agent:
 
         # Log if forget_tool_calls is enabled
         if self.forget_tool_calls:
-            log_info(f"🗑️  Tool forgetting enabled (window: {self.num_tool_calls_to_keep})")
+            log_info(
+                f"Tool forgetting enabled with maximum number of tool calls in context: {self.num_tool_calls_in_context})"
+            )
 
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
@@ -3670,7 +3676,7 @@ class Agent:
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
             forget_tool_calls=self.forget_tool_calls,
-            num_tool_calls_to_keep=self.num_tool_calls_to_keep,
+            num_tool_calls_in_context=self.num_tool_calls_in_context,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -3740,7 +3746,9 @@ class Agent:
 
         # Log if forget_tool_calls is enabled
         if self.forget_tool_calls:
-            log_info(f"Tool forgetting enabled (window: {self.num_tool_calls_to_keep})")
+            log_info(
+                f"Tool forgetting enabled with maximum number of tool calls in context: {self.num_tool_calls_in_context})  "
+            )
 
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
@@ -3753,7 +3761,7 @@ class Agent:
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
             forget_tool_calls=self.forget_tool_calls,
-            num_tool_calls_to_keep=self.num_tool_calls_to_keep,
+            num_tool_calls_in_context=self.num_tool_calls_in_context,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
