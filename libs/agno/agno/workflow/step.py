@@ -365,11 +365,14 @@ class Step:
             event.workflow_run_id = workflow_run_response.run_id
         if hasattr(event, 'step_id'):
             event.step_id = self.step_id
-        if hasattr(event, 'step_name'):
-            event.step_name = self.name
+        if hasattr(event, 'step_name') and self.name is not None:
+            if getattr(event, 'step_name', None) is None:
+                event.step_name = self.name
+        # Only set step_index if it's not already set (preserve parallel.py's tuples)
         if hasattr(event, 'step_index') and step_index is not None:
-            event.step_index = step_index
-            
+            if getattr(event, 'step_index', None) is None:
+                event.step_index = step_index
+                
         return event
 
     def execute_stream(

@@ -711,25 +711,28 @@ class Workflow:
         self, 
         event: Any, 
         workflow_run_response: WorkflowRunOutput, 
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
         step: Optional[Any] = None
     ) -> Any:
         """Enrich any event with workflow context information for frontend tracking"""
-        
+
         step_id = getattr(step, "step_id", None) if step else None
         step_name = getattr(step, "name", None) if step else None
-        
+
         if hasattr(event, 'workflow_id'):
             event.workflow_id = workflow_run_response.workflow_id
         if hasattr(event, 'workflow_run_id'):
             event.workflow_run_id = workflow_run_response.run_id
         if hasattr(event, 'step_id') and step_id:
             event.step_id = step_id
-        if hasattr(event, 'step_name') and step_name:
-            event.step_name = step_name
+        if hasattr(event, 'step_name') and step_name is not None:
+            if getattr(event, 'step_name', None) is None:
+                event.step_name = step_name
+        # Only set step_index if it's not already set (preserve parallel.py's tuples)
         if hasattr(event, 'step_index') and step_index is not None:
-            event.step_index = step_index
-            
+            if getattr(event, 'step_index', None) is None:
+                event.step_index = step_index
+
         return event
 
     def _transform_step_output_to_event(
