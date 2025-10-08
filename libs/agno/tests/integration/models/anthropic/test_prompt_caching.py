@@ -100,7 +100,7 @@ def test_prompt_caching_with_agent():
     print(f"System prompt length: {len(large_system_prompt)} characters")
 
     agent = Agent(
-        model=Claude(id="claude-3-5-sonnet-20241022", cache_system_prompt=True),
+        model=Claude(id="claude-sonnet-4-5-20250929", cache_system_prompt=True),
         system_message=large_system_prompt,
         telemetry=False,
     )
