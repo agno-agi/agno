@@ -111,3 +111,16 @@ def postgres_db_real(postgres_engine) -> PostgresDb:
         eval_table="test_evals",
         knowledge_table="test_knowledge",
     )
+
+
+@pytest.fixture
+def sqlite_db_real(temp_storage_db_file) -> SqliteDb:
+    """Create SQLiteDb with real SQLite engine"""
+    return SqliteDb(
+        session_table="test_sessions",
+        memory_table="test_memories",
+        metrics_table="test_metrics",
+        eval_table="test_evals",
+        knowledge_table="test_knowledge",
+        db_file=temp_storage_db_file,
+    )
