@@ -1,13 +1,12 @@
 """Run `pip install ddgs sqlalchemy anthropic` to install dependencies."""
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.models.vertexai.claude import Claude
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Setup the database
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url=db_url)
+db = SqliteDb(db_file="tmp/data.db")
 
 agent = Agent(
     model=Claude(id="claude-sonnet-4@20250514"),
