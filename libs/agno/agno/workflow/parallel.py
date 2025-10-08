@@ -346,7 +346,7 @@ class Parallel:
             )
 
         import queue
-        event_queue = queue.Queue()
+        event_queue = queue.Queue() # type: ignore
         step_results = []
         modified_session_states = []
         
@@ -638,7 +638,7 @@ class Parallel:
             )
 
         import asyncio
-        event_queue = asyncio.Queue()
+        event_queue = asyncio.Queue() # type: ignore
         step_results = []
         modified_session_states = []
 

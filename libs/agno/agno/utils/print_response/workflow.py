@@ -258,7 +258,7 @@ def print_response_stream(
     step_display_cache = {}  # type: ignore
     
     # Parallel-aware tracking for simultaneous steps
-    parallel_step_states = {}  # track state of each parallel step: {step_index: {"name": str, "content": str, "started": bool, "completed": bool}}
+    parallel_step_states: Dict[Any, Dict[str, Any]] = {}  # track state of each parallel step: {step_index: {"name": str, "content": str, "started": bool, "completed": bool}}
 
     def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
         """Generate clean two-level step numbering: x.y format only"""
@@ -334,7 +334,7 @@ def print_response_stream(
                         continue
                         
                     current_step_name = step_name
-                    current_step_index = step_index
+                    current_step_index = step_index  # type: ignore
                     current_step_content = ""
                     step_started_printed = False
 
@@ -499,7 +499,7 @@ def print_response_stream(
                         for step_result in response.step_results:
                             if step_result.content:
                                 step_result_name = step_result.step_name or "Parallel Step"
-                                formatted_content = format_step_content_for_display(step_result.content)
+                                formatted_content = format_step_content_for_display(step_result.content)  # type: ignore
                                 
                                 # All parallel sub-steps get the same number
                                 parallel_step_panel = create_panel(
@@ -1041,7 +1041,7 @@ async def aprint_response_stream(
     step_display_cache = {}  # type: ignore
     
     # Parallel-aware tracking for simultaneous steps
-    parallel_step_states = {}  # track state of each parallel step: {step_index: {"name": str, "content": str, "started": bool, "completed": bool}}
+    parallel_step_states: Dict[Any, Dict[str, Any]] = {}  # track state of each parallel step: {step_index: {"name": str, "content": str, "started": bool, "completed": bool}}
 
     def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
         """Generate clean two-level step numbering: x.y format only"""
@@ -1117,7 +1117,7 @@ async def aprint_response_stream(
                         continue
                         
                     current_step_name = step_name
-                    current_step_index = step_index
+                    current_step_index = step_index  # type: ignore
                     current_step_content = ""
                     step_started_printed = False
 
@@ -1282,7 +1282,7 @@ async def aprint_response_stream(
                         for step_result in response.step_results:
                             if step_result.content:
                                 step_result_name = step_result.step_name or "Parallel Step"
-                                formatted_content = format_step_content_for_display(step_result.content)
+                                formatted_content = format_step_content_for_display(step_result.content)  # type: ignore
                                 
                                 # All parallel sub-steps get the same number
                                 parallel_step_panel = create_panel(

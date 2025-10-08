@@ -505,14 +505,6 @@ class Step:
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
-                            # Pass workflow context directly via kwargs
-                            workflow_context={
-                                "workflow_id": workflow_run_response.workflow_id if workflow_run_response else None,
-                                "workflow_run_id": workflow_run_response.run_id if workflow_run_response else None,
-                                "step_id": self.step_id,
-                                "step_name": self.name,
-                                "step_index": step_index,
-                            },
                             yield_run_response=True,
                             **kwargs,
                         )
@@ -893,14 +885,6 @@ class Step:
                             session_state=session_state_copy,
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
-                            # Pass workflow context directly via kwargs
-                            workflow_context={
-                                "workflow_id": workflow_run_response.workflow_id if workflow_run_response else None,
-                                "workflow_run_id": workflow_run_response.run_id if workflow_run_response else None,
-                                "step_id": self.step_id,
-                                "step_name": self.name,
-                                "step_index": step_index,
-                            },
                             yield_run_response=True,
                             **kwargs,
                         )
