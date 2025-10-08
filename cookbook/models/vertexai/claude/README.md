@@ -63,7 +63,7 @@ python cookbook/models/vertexai/claude/structured_output.py
 ### 8. Run Agent that uses storage
 
 ```shell
-python cookbook/models/vertexai/claude/storage.py
+python cookbook/models/vertexai/claude/db.py
 ```
 
 ### 9. Run Agent that uses knowledge
@@ -87,7 +87,7 @@ python cookbook/models/vertexai/claude/memory.py
 ### 11. Run Agent that analyzes an image
 
 ```shell
-python cookbook/models/vertexai/claude/image_agent.py
+python cookbook/models/vertexai/claude/image_input_url.py
 ```
 
 ### 12. Run Agent with Thinking enabled
@@ -102,10 +102,4 @@ python cookbook/models/vertexai/claude/thinking.py
 
 ```shell
 python cookbook/models/vertexai/claude/thinking_stream.py
-```
-
-### 13. Run Agent with Interleaved Thinking
-
-```shell
-python cookbook/models/vertexai/claude/financial_analyst_thinking.py
 ```
