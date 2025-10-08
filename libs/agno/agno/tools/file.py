@@ -99,6 +99,7 @@ class FileTools(Toolkit):
 
             result = {
                 "pattern": pattern,
+                "base_directory": str(self.base_dir),
                 "matches_found": len(file_paths),
                 "files": file_paths,
             }
