@@ -1507,6 +1507,10 @@ class Workflow:
 
         workflow_run_response.status = RunStatus.running
 
+        # Register run for cancellation tracking
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)
+
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
