@@ -237,6 +237,9 @@ class MCPTools(Toolkit):
         self._initialized = False
         self._connection_task = None
 
+        # Initialize _functions to store the functions dict from parent
+        self._functions = self.functions
+
         def cleanup():
             """Cancel active connections"""
             if self._connection_task and not self._connection_task.done():
@@ -244,6 +247,19 @@ class MCPTools(Toolkit):
 
         # Setup cleanup logic before the instance is garbage collected
         self._cleanup_finalizer = weakref.finalize(self, cleanup)
+
+    @property
+    def functions(self):
+        """Access functions, triggering connection if not initialized."""
+        # If not initialized and we're in an async context, start connection
+        if not self._initialized and self.session is None:
+            self._start_connection()
+        return self._functions
+
+    @functions.setter
+    def functions(self, value):
+        """Set functions directly."""
+        self._functions = value
 
     async def connect(self):
         """Initialize a MCPTools instance and connect to the contextual MCP server"""
@@ -379,8 +395,8 @@ class MCPTools(Toolkit):
                         skip_entrypoint_processing=True,
                     )
 
-                    # Register the Function with the toolkit
-                    self.functions[f.name] = f
+                    # Register the Function with the toolkit using _functions
+                    self._functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
                     log_error(f"Failed to register tool {tool.name}: {e}")
@@ -503,6 +519,9 @@ class MultiMCPTools(Toolkit):
         self._client = client
         self._initialized = False
         self.allow_partial_failure = allow_partial_failure
+
+        # Initialize _functions to store the functions dict from parent
+        self._functions = self.functions
 
         def cleanup():
             """Cancel active connections"""
@@ -666,8 +685,8 @@ class MultiMCPTools(Toolkit):
                         skip_entrypoint_processing=True,
                     )
 
-                    # Register the Function with the toolkit
-                    self.functions[f.name] = f
+                    # Register the Function with the toolkit using _functions
+                    self._functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
                     log_error(f"Failed to register tool {tool.name}: {e}")

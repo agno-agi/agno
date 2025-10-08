@@ -92,11 +92,11 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
                     all_functions = await self.load_multiple_toolsets(toolset_names=self.toolsets)
                     # Replace functions dict with filtered subset
                     filtered_functions = {func.name: func for func in all_functions}
-                    self.functions = filtered_functions
+                    self._functions = filtered_functions
                 elif self.tool_name is not None:
                     tool = await self.load_tool(tool_name=self.tool_name)
                     # Replace functions dict with just this single tool
-                    self.functions = {tool.name: tool}
+                    self._functions = {tool.name: tool}
         except Exception as e:
             raise RuntimeError(f"Failed to connect to ToolboxClient: {e}") from e
 
