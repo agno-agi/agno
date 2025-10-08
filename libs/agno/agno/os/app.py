@@ -64,6 +64,30 @@ async def mcp_lifespan(_, mcp_tools):
         await tool.close()
 
 
+def _combine_app_lifespans(lifespans: list) -> Any:
+    """Combine multiple FastAPI app lifespan context managers into one."""
+    if len(lifespans) == 1:
+        return lifespans[0]
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def combined_lifespan(app):
+        async def _run_nested(index: int):
+            if index >= len(lifespans):
+                yield
+                return
+
+            async with lifespans[index](app):
+                async for _ in _run_nested(index + 1):
+                    yield
+
+        async for _ in _run_nested(0):
+            yield
+
+    return combined_lifespan
+
+
 class AgentOS:
     def __init__(
         self,
@@ -220,7 +244,7 @@ class AgentOS:
                         async with mcp_tools_lifespan(app):  # type: ignore
                             yield
 
-                app_lifespan = combined_lifespan  # type: ignore
+                app_lifespan = combined_lifespan
             else:
                 app_lifespan = mcp_tools_lifespan
 
@@ -237,6 +261,32 @@ class AgentOS:
     def get_app(self) -> FastAPI:
         if self.base_app:
             fastapi_app = self.base_app
+
+            # Initialize MCP server if enabled
+            if self.enable_mcp_server:
+                from agno.os.mcp import get_mcp_server
+
+                self._mcp_app = get_mcp_server(self)
+
+            # Collect all lifespans that need to be combined
+            lifespans = []
+
+            if fastapi_app.router.lifespan_context:
+                lifespans.append(fastapi_app.router.lifespan_context)
+
+            if self.mcp_tools:
+                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
+
+            if self.enable_mcp_server and self._mcp_app:
+                lifespans.append(self._mcp_app.lifespan)
+
+            if self.lifespan:
+                lifespans.append(self.lifespan)
+
+            # Combine lifespans and set them in the app
+            if lifespans:
+                fastapi_app.router.lifespan_context = _combine_app_lifespans(lifespans)
+
         else:
             if self.enable_mcp_server:
                 from contextlib import asynccontextmanager
@@ -255,7 +305,7 @@ class AgentOS:
                             async with self._mcp_app.lifespan(app):  # type: ignore
                                 yield
 
-                    final_lifespan = combined_lifespan  # type: ignore
+                    final_lifespan = combined_lifespan
 
                 fastapi_app = self._make_app(lifespan=final_lifespan)
             else:
@@ -415,18 +465,12 @@ class AgentOS:
                 self._register_db_with_validation(dbs, agent.db)
             if agent.knowledge and agent.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
-                # Also add to general dbs if it's used for both purposes
-                if agent.knowledge.contents_db.id not in dbs:
-                    self._register_db_with_validation(dbs, agent.knowledge.contents_db)
 
         for team in self.teams or []:
             if team.db:
                 self._register_db_with_validation(dbs, team.db)
             if team.knowledge and team.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, team.knowledge.contents_db)
-                # Also add to general dbs if it's used for both purposes
-                if team.knowledge.contents_db.id not in dbs:
-                    self._register_db_with_validation(dbs, team.knowledge.contents_db)
 
         for workflow in self.workflows or []:
             if workflow.db:
@@ -510,9 +554,7 @@ class AgentOS:
                 session_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=SessionDomainConfig(
-                            display_name=db_id
-                        ),
+                        domain_config=SessionDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -531,9 +573,7 @@ class AgentOS:
                 memory_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=MemoryDomainConfig(
-                            display_name=db_id
-                        ),
+                        domain_config=MemoryDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -553,9 +593,7 @@ class AgentOS:
                 knowledge_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=KnowledgeDomainConfig(
-                            display_name=db_id
-                        ),
+                        domain_config=KnowledgeDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -574,9 +612,7 @@ class AgentOS:
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=MetricsDomainConfig(
-                            display_name=db_id
-                        ),
+                        domain_config=MetricsDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -595,9 +631,7 @@ class AgentOS:
                 evals_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=EvalsDomainConfig(
-                            display_name=db_id
-                        ),
+                        domain_config=EvalsDomainConfig(display_name=db_id),
                     )
                 )
 
