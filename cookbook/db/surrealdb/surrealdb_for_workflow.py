@@ -13,8 +13,8 @@ surreal start -u root -p root
 
 Then:
 
-1. Run: `pip install anthropic ddgs newspaper4k lxml_html_clean surrealdb agno` to install the dependencies
-2. Run: `python cookbook/db/surrealdb/surrealdb_for_workflow.py` to run the team
+1. Run: `pip install anthropic ddgs newspaper4k lxml_html_clean surrealdb agno` to install the dependencies.
+2. Run: `python cookbook/db/surrealdb/surrealdb_for_workflow.py` to run the workflow.
 """
 
 from agno.agent import Agent
@@ -25,10 +25,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
-from dotenv import load_dotenv
-
-# Required to load ANTHROPIC_API_KEY from .env file
-load_dotenv()
 
 # SurrealDB connection parameters
 SURREALDB_URL = "ws://localhost:8000"
@@ -43,14 +39,12 @@ db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABA
 # Define agents
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    # model=OpenAIChat(id="gpt-4o-mini"),
     model=Claude(id="claude-sonnet-4-5-20250929"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
 )
 web_agent = Agent(
     name="Web Agent",
-    # model=OpenAIChat(id="gpt-4o-mini"),
     model=Claude(id="claude-sonnet-4-5-20250929"),
     tools=[DuckDuckGoTools()],
     role="Search the web for the latest news and trends",
@@ -59,7 +53,6 @@ web_agent = Agent(
 # Define research team for complex analysis
 research_team = Team(
     name="Research Team",
-    # model=OpenAIChat(id="gpt-4o"),
     model=Claude(id="claude-sonnet-4-5-20250929"),
     members=[hackernews_agent, web_agent],
     instructions="Research tech topics from Hackernews and the web",
@@ -67,7 +60,6 @@ research_team = Team(
 
 content_planner = Agent(
     name="Content Planner",
-    # model=OpenAIChat(id="gpt-4o"),
     model=Claude(id="claude-sonnet-4-5-20250929"),
     instructions=[
         "Plan a content schedule over 4 weeks for the provided topic and research content",

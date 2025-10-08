@@ -19,13 +19,6 @@ from agno.db.surrealdb.models import (
     serialize_user_memory,
 )
 from agno.db.surrealdb.utils import build_client
-
-try:
-    from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, RecordID
-except ImportError as e:
-    msg = "The `surrealdb` package is not installed. Please install it via `pip install surrealdb`."
-    raise ImportError(msg) from e
-
 from agno.db.base import BaseDb, SessionType
 from agno.db.schemas import UserMemory
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -34,6 +27,11 @@ from agno.db.surrealdb import utils
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
 from agno.session import Session
 from agno.utils.string import generate_id
+
+try:
+    from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, RecordID
+except ImportError:
+    raise ImportError("The `surrealdb` package is not installed. Please install it via `pip install surrealdb`.")
 
 
 class SurrealDb(BaseDb):
@@ -427,7 +425,6 @@ class SurrealDb(BaseDb):
         return list(deserialize_sessions(session_type, sessions_raw))
 
     # --- Memory ---
-
     def clear_memories(self) -> None:
         """Delete all memories from the database.
 
@@ -736,7 +733,6 @@ class SurrealDb(BaseDb):
         raise NotImplementedError
 
     # --- Knowledge ---
-
     def clear_knowledge(self) -> None:
         """Delete all knowledge rows from the database.
 

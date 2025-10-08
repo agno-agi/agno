@@ -20,15 +20,8 @@ uv run cookbook/db/surrealdb/surrealdb_for_agent.py
 
 from agno.agent import Agent
 from agno.db.surrealdb import SurrealDb
-from agno.debug import enable_debug_mode
 from agno.models.anthropic import Claude
 from agno.tools.duckduckgo import DuckDuckGoTools
-from dotenv import load_dotenv
-
-enable_debug_mode()
-
-# Required to load ANTHROPIC_API_KEY from .env file
-load_dotenv()
 
 # SurrealDB connection parameters
 SURREALDB_URL = "ws://localhost:8000"
@@ -42,7 +35,6 @@ db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABA
 
 agent = Agent(
     db=db,
-    # model=OpenAIChat("gpt-4o"),
     model=Claude(id="claude-sonnet-4-5-20250929"),
     tools=[DuckDuckGoTools()],
     add_history_to_context=True,

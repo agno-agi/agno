@@ -25,11 +25,7 @@ from agno.models.anthropic import Claude
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from dotenv import load_dotenv
 from pydantic import BaseModel
-
-# Required to load ANTHROPIC_API_KEY from .env file
-load_dotenv()
 
 # SurrealDB connection parameters
 SURREALDB_URL = "ws://localhost:8000"
@@ -50,7 +46,6 @@ class Article(BaseModel):
 
 hn_researcher = Agent(
     name="HackerNews Researcher",
-    # model=OpenAIChat("gpt-4o"),
     model=Claude(id="claude-sonnet-4-5-20250929"),
     role="Gets top stories from hackernews.",
     tools=[HackerNewsTools()],
@@ -58,7 +53,6 @@ hn_researcher = Agent(
 
 web_searcher = Agent(
     name="Web Searcher",
-    # model=OpenAIChat("gpt-4o"),
     model=Claude(id="claude-sonnet-4-5-20250929"),
     role="Searches the web for information on a topic",
     tools=[DuckDuckGoTools()],
@@ -67,8 +61,7 @@ web_searcher = Agent(
 
 
 hn_team = Team(
-    name="HackerNews Team",
-    # model=OpenAIChat("gpt-4o"),
+    name="HackerNews Team", 
     model=Claude(id="claude-sonnet-4-5-20250929"),
     members=[hn_researcher, web_searcher],
     db=db,
