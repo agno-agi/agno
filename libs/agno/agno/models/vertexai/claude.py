@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from agno.models.anthropic import Claude as AnthropicClaude
 
@@ -23,26 +23,12 @@ class Claude(AnthropicClaude):
 
     id: str = "claude-sonnet-4@20250514"
     name: str = "Claude"
-    provider: str = "AnthropicVertex"
-
-    # Request parameters
-    max_tokens: Optional[int] = 4096
-    thinking: Optional[Dict[str, Any]] = None
-    temperature: Optional[float] = None
-    stop_sequences: Optional[List[str]] = None
-    top_p: Optional[float] = None
-    top_k: Optional[int] = None
-    cache_system_prompt: Optional[bool] = False
-    extended_cache_time: Optional[bool] = False
-    request_params: Optional[Dict[str, Any]] = None
+    provider: str = "VertexAI"
 
     # Client parameters
     region: Optional[str] = None
     project_id: Optional[str] = None
     base_url: Optional[str] = None
-    default_headers: Optional[Dict[str, Any]] = None
-    timeout: Optional[float] = None
-    client_params: Optional[Dict[str, Any]] = None
 
     # Anthropic clients
     client: Optional[AnthropicClient] = None
