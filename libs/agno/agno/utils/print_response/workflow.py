@@ -256,9 +256,11 @@ def print_response_stream(
     # Smart step hierarchy tracking
     current_primitive_context = None  # Current primitive being executed (parallel, loop, etc.)
     step_display_cache = {}  # type: ignore
-    
+
     # Parallel-aware tracking for simultaneous steps
-    parallel_step_states: Dict[Any, Dict[str, Any]] = {}  # track state of each parallel step: {step_index: {"name": str, "content": str, "started": bool, "completed": bool}}
+    parallel_step_states: Dict[
+        Any, Dict[str, Any]
+    ] = {}  # track state of each parallel step: {step_index: {"name": str, "content": str, "started": bool, "completed": bool}}
 
     def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
         """Generate clean two-level step numbering: x.y format only"""
@@ -326,13 +328,15 @@ def print_response_stream(
                 elif isinstance(response, StepStartedEvent):
                     step_name = response.step_name or "Unknown"
                     step_index = response.step_index or 0  # type: ignore
-                    
+
                     # Skip parallel sub-step started events - they're handled in ParallelExecutionCompletedEvent
-                    if (current_primitive_context and 
-                        current_primitive_context["type"] == "parallel" and 
-                        isinstance(step_index, tuple)):
+                    if (
+                        current_primitive_context
+                        and current_primitive_context["type"] == "parallel"
+                        and isinstance(step_index, tuple)
+                    ):
                         continue
-                        
+
                     current_step_name = step_name
                     current_step_index = step_index  # type: ignore
                     current_step_content = ""
@@ -348,9 +352,11 @@ def print_response_stream(
                     step_index = response.step_index or 0
 
                     # Skip parallel sub-step completed events - they're handled in ParallelExecutionCompletedEvent
-                    if (current_primitive_context and 
-                        current_primitive_context["type"] == "parallel" and 
-                        isinstance(step_index, tuple)):
+                    if (
+                        current_primitive_context
+                        and current_primitive_context["type"] == "parallel"
+                        and isinstance(step_index, tuple)
+                    ):
                         continue
 
                     # Generate smart step number for completion (will use cached value)
@@ -487,20 +493,20 @@ def print_response_stream(
                     step_index = response.step_index or 0
 
                     status.update(f"Completed parallel execution: {step_name}")
-                    
+
                     # Display individual parallel step results immediately
                     if show_step_details and response.step_results:
                         live_log.update(status, refresh=True)
-                        
+
                         # Get the parallel container's display number for consistent numbering
                         parallel_step_display = get_step_display_number(step_index, step_name)
-                        
+
                         # Show each parallel step with the same number (1.1, 1.1)
                         for step_result in response.step_results:
                             if step_result.content:
                                 step_result_name = step_result.step_name or "Parallel Step"
                                 formatted_content = format_step_content_for_display(step_result.content)  # type: ignore
-                                
+
                                 # All parallel sub-steps get the same number
                                 parallel_step_panel = create_panel(
                                     content=Markdown(formatted_content) if markdown else formatted_content,
@@ -712,9 +718,11 @@ def print_response_stream(
                     response_str = format_step_content_for_display(response_str)  # type: ignore
 
                     # Skip streaming content from parallel sub-steps - they're handled in ParallelExecutionCompletedEvent
-                    if (current_primitive_context and 
-                        current_primitive_context["type"] == "parallel" and 
-                        isinstance(current_step_index, tuple)):
+                    if (
+                        current_primitive_context
+                        and current_primitive_context["type"] == "parallel"
+                        and isinstance(current_step_index, tuple)
+                    ):
                         continue
 
                     # Filter out empty responses and add to current step content
@@ -1039,9 +1047,11 @@ async def aprint_response_stream(
     # Smart step hierarchy tracking
     current_primitive_context = None  # Current primitive being executed (parallel, loop, etc.)
     step_display_cache = {}  # type: ignore
-    
+
     # Parallel-aware tracking for simultaneous steps
-    parallel_step_states: Dict[Any, Dict[str, Any]] = {}  # track state of each parallel step: {step_index: {"name": str, "content": str, "started": bool, "completed": bool}}
+    parallel_step_states: Dict[
+        Any, Dict[str, Any]
+    ] = {}  # track state of each parallel step: {step_index: {"name": str, "content": str, "started": bool, "completed": bool}}
 
     def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
         """Generate clean two-level step numbering: x.y format only"""
@@ -1109,13 +1119,15 @@ async def aprint_response_stream(
                 elif isinstance(response, StepStartedEvent):
                     step_name = response.step_name or "Unknown"
                     step_index = response.step_index or 0  # type: ignore
-                    
+
                     # Skip parallel sub-step started events - they're handled in ParallelExecutionCompletedEvent
-                    if (current_primitive_context and 
-                        current_primitive_context["type"] == "parallel" and 
-                        isinstance(step_index, tuple)):
+                    if (
+                        current_primitive_context
+                        and current_primitive_context["type"] == "parallel"
+                        and isinstance(step_index, tuple)
+                    ):
                         continue
-                        
+
                     current_step_name = step_name
                     current_step_index = step_index  # type: ignore
                     current_step_content = ""
@@ -1131,9 +1143,11 @@ async def aprint_response_stream(
                     step_index = response.step_index or 0
 
                     # Skip parallel sub-step completed events - they're handled in ParallelExecutionCompletedEvent
-                    if (current_primitive_context and 
-                        current_primitive_context["type"] == "parallel" and 
-                        isinstance(step_index, tuple)):
+                    if (
+                        current_primitive_context
+                        and current_primitive_context["type"] == "parallel"
+                        and isinstance(step_index, tuple)
+                    ):
                         continue
 
                     # Generate smart step number for completion (will use cached value)
@@ -1270,20 +1284,20 @@ async def aprint_response_stream(
                     step_index = response.step_index or 0
 
                     status.update(f"Completed parallel execution: {step_name}")
-                    
+
                     # Display individual parallel step results immediately
                     if show_step_details and response.step_results:
                         live_log.update(status, refresh=True)
-                        
+
                         # Get the parallel container's display number for consistent numbering
                         parallel_step_display = get_step_display_number(step_index, step_name)
-                        
+
                         # Show each parallel step with the same number (1.1, 1.1)
                         for step_result in response.step_results:
                             if step_result.content:
                                 step_result_name = step_result.step_name or "Parallel Step"
                                 formatted_content = format_step_content_for_display(step_result.content)  # type: ignore
-                                
+
                                 # All parallel sub-steps get the same number
                                 parallel_step_panel = create_panel(
                                     content=Markdown(formatted_content) if markdown else formatted_content,
@@ -1499,9 +1513,11 @@ async def aprint_response_stream(
                     response_str = format_step_content_for_display(response_str)  # type: ignore
 
                     # Skip streaming content from parallel sub-steps - they're handled in ParallelExecutionCompletedEvent
-                    if (current_primitive_context and 
-                        current_primitive_context["type"] == "parallel" and 
-                        isinstance(current_step_index, tuple)):
+                    if (
+                        current_primitive_context
+                        and current_primitive_context["type"] == "parallel"
+                        and isinstance(current_step_index, tuple)
+                    ):
                         continue
 
                     # Filter out empty responses and add to current step content

@@ -14,8 +14,8 @@ from agno.run.workflow import (
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
 )
-from agno.utils.merge_dict import merge_parallel_session_states
 from agno.utils.log import log_debug, logger
+from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
@@ -220,7 +220,7 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
-            
+
             try:
                 step_result = step.execute(
                     step_input,
@@ -346,16 +346,17 @@ class Parallel:
             )
 
         import queue
-        event_queue = queue.Queue() # type: ignore
+
+        event_queue = queue.Queue()  # type: ignore
         step_results = []
         modified_session_states = []
-        
+
         def execute_step_stream_with_index(step_with_index):
             """Execute a single step with streaming and put events in queue immediately"""
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
-            
+
             try:
                 step_outputs = []
 
@@ -381,12 +382,12 @@ class Parallel:
                     parent_step_id=parallel_step_id,
                 ):
                     # Put event immediately in queue
-                    event_queue.put(('event', idx, event))
+                    event_queue.put(("event", idx, event))
                     if isinstance(event, StepOutput):
                         step_outputs.append(event)
-                        
+
                 # Signal completion for this step
-                event_queue.put(('complete', idx, step_outputs, step_session_state))
+                event_queue.put(("complete", idx, step_outputs, step_session_state))
                 return idx, step_outputs, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
@@ -397,8 +398,8 @@ class Parallel:
                     success=False,
                     error=str(exc),
                 )
-                event_queue.put(('event', idx, error_event))
-                event_queue.put(('complete', idx, [error_event], step_session_state))
+                event_queue.put(("event", idx, error_event))
+                event_queue.put(("complete", idx, [error_event], step_session_state))
                 return idx, [error_event], step_session_state
 
         # Submit all parallel tasks
@@ -406,32 +407,31 @@ class Parallel:
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks
-            futures = [executor.submit(execute_step_stream_with_index, indexed_step) 
-                      for indexed_step in indexed_steps]
+            futures = [executor.submit(execute_step_stream_with_index, indexed_step) for indexed_step in indexed_steps]
 
             # Process events from queue as they arrive
             completed_steps = 0
             total_steps = len(self.steps)
-            
+
             while completed_steps < total_steps:
                 try:
                     message_type, step_idx, *data = event_queue.get(timeout=1.0)
-                    
-                    if message_type == 'event':
+
+                    if message_type == "event":
                         event = data[0]
                         # Yield events immediately as they arrive (except StepOutputs)
                         if not isinstance(event, StepOutput):
                             yield event
-                            
-                    elif message_type == 'complete':
+
+                    elif message_type == "complete":
                         step_outputs, step_session_state = data
                         step_results.extend(step_outputs)
                         modified_session_states.append(step_session_state)
                         completed_steps += 1
-                        
+
                         step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
                         log_debug(f"Parallel step {step_name} streaming completed")
-                        
+
                 except queue.Empty:
                     for i, future in enumerate(futures):
                         if future.done() and future.exception():
@@ -478,7 +478,7 @@ class Parallel:
                 step_name=self.name,
                 step_index=step_index,
                 parallel_step_count=len(self.steps),
-                step_results=flattened_step_results, 
+                step_results=flattened_step_results,
                 step_id=parallel_step_id,
                 parent_step_id=parent_step_id,
             )
@@ -511,7 +511,7 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
-            
+
             try:
                 inner_step_result = await step.aexecute(
                     step_input,
@@ -638,7 +638,8 @@ class Parallel:
             )
 
         import asyncio
-        event_queue = asyncio.Queue() # type: ignore
+
+        event_queue = asyncio.Queue()  # type: ignore
         step_results = []
         modified_session_states = []
 
@@ -647,7 +648,7 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
-            
+
             try:
                 step_outputs = []
 
@@ -673,12 +674,12 @@ class Parallel:
                     parent_step_id=parallel_step_id,
                 ):  # type: ignore[union-attr]
                     # Yield events immediately to the queue
-                    await event_queue.put(('event', idx, event))
+                    await event_queue.put(("event", idx, event))
                     if isinstance(event, StepOutput):
                         step_outputs.append(event)
-                        
+
                 # Signal completion for this step
-                await event_queue.put(('complete', idx, step_outputs, step_session_state))
+                await event_queue.put(("complete", idx, step_outputs, step_session_state))
                 return idx, step_outputs, step_session_state
             except Exception as e:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
@@ -689,37 +690,38 @@ class Parallel:
                     success=False,
                     error=str(e),
                 )
-                await event_queue.put(('event', idx, error_event))
-                await event_queue.put(('complete', idx, [error_event], step_session_state))
+                await event_queue.put(("event", idx, error_event))
+                await event_queue.put(("complete", idx, [error_event], step_session_state))
                 return idx, [error_event], step_session_state
 
         # Start all parallel tasks
         indexed_steps = list(enumerate(self.steps))
-        tasks = [asyncio.create_task(execute_step_stream_async_with_index(indexed_step)) 
-                for indexed_step in indexed_steps]
+        tasks = [
+            asyncio.create_task(execute_step_stream_async_with_index(indexed_step)) for indexed_step in indexed_steps
+        ]
 
         # Process events as they arrive and track completion
         completed_steps = 0
         total_steps = len(self.steps)
-        
+
         while completed_steps < total_steps:
             try:
                 message_type, step_idx, *data = await event_queue.get()
-                
-                if message_type == 'event':
+
+                if message_type == "event":
                     event = data[0]
                     if not isinstance(event, StepOutput):
                         yield event
-                        
-                elif message_type == 'complete':
+
+                elif message_type == "complete":
                     step_outputs, step_session_state = data
                     step_results.extend(step_outputs)
                     modified_session_states.append(step_session_state)
                     completed_steps += 1
-                    
+
                     step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
                     log_debug(f"Parallel step {step_name} async streaming completed")
-                    
+
             except Exception as e:
                 logger.error(f"Error processing parallel step events: {e}")
                 completed_steps += 1
@@ -756,7 +758,7 @@ class Parallel:
                 step_name=self.name,
                 step_index=step_index,
                 parallel_step_count=len(self.steps),
-                step_results=flattened_step_results,  
+                step_results=flattened_step_results,
                 step_id=parallel_step_id,
                 parent_step_id=parent_step_id,
             )

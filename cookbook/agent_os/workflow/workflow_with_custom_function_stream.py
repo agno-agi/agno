@@ -1,18 +1,16 @@
-from agno.agent.agent import Agent
 from typing import AsyncIterator, Union
+
+from agno.agent.agent import Agent
+from agno.db.in_memory import InMemoryDb
 
 # Import the workflows
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
 from agno.os import AgentOS
-from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.step import Step
-from agno.workflow.step import StepInput
 from agno.team import Team
-from agno.workflow.step import StepOutput
-from agno.workflow.step import WorkflowRunOutputEvent
-from agno.db.in_memory import InMemoryDb
 from agno.tools.googlesearch import GoogleSearchTools
+from agno.tools.hackernews import HackerNewsTools
+from agno.workflow.step import Step, StepInput, StepOutput, WorkflowRunOutputEvent
 from agno.workflow.workflow import Workflow
 
 # Define agents
@@ -53,9 +51,9 @@ async def custom_content_planning_function(
 ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Custom function that does intelligent content planning with context awareness.
-    
-    Note: This function calls content_planner.arun() internally, and all events 
-    from that agent call will automatically get workflow context injected by 
+
+    Note: This function calls content_planner.arun() internally, and all events
+    from that agent call will automatically get workflow context injected by
     the workflow execution system - no manual intervention required!
     """
     message = step_input.input
@@ -127,17 +125,17 @@ content_planning_step = Step(
 )
 
 streaming_content_workflow = Workflow(
-        name="Streaming Content Creation Workflow",
-        description="Automated content creation with streaming custom execution functions",
-        db=SqliteDb(
-            session_table="workflow_session",
-            db_file="tmp/workflow.db",
-        ),
-        steps=[
-            research_step,
-            content_planning_step,
-        ],
-    )
+    name="Streaming Content Creation Workflow",
+    description="Automated content creation with streaming custom execution functions",
+    db=SqliteDb(
+        session_table="workflow_session",
+        db_file="tmp/workflow.db",
+    ),
+    steps=[
+        research_step,
+        content_planning_step,
+    ],
+)
 
 
 # Initialize the AgentOS with the workflows

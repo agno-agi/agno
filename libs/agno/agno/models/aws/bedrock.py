@@ -360,7 +360,7 @@ class AwsBedrock(Model):
             formatted_messages, system_message = self._format_messages(messages)
 
             tool_config = None
-            if tools: 
+            if tools:
                 tool_config = {"tools": self._format_tools_for_request(tools)}
 
             body = {

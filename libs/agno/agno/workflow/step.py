@@ -349,30 +349,30 @@ class Step:
             return False
 
     def _enrich_event_with_context(
-        self, 
-        event: Any, 
+        self,
+        event: Any,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
-        step_index: Optional[Union[int, tuple]] = None
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> Any:
         """Enrich event with step and workflow context information"""
         if workflow_run_response is None:
             return event
-            
+
         # Set workflow context
-        if hasattr(event, 'workflow_id'):
+        if hasattr(event, "workflow_id"):
             event.workflow_id = workflow_run_response.workflow_id
-        if hasattr(event, 'workflow_run_id'):
+        if hasattr(event, "workflow_run_id"):
             event.workflow_run_id = workflow_run_response.run_id
-        if hasattr(event, 'step_id'):
+        if hasattr(event, "step_id"):
             event.step_id = self.step_id
-        if hasattr(event, 'step_name') and self.name is not None:
-            if getattr(event, 'step_name', None) is None:
+        if hasattr(event, "step_name") and self.name is not None:
+            if getattr(event, "step_name", None) is None:
                 event.step_name = self.name
         # Only set step_index if it's not already set (preserve parallel.py's tuples)
-        if hasattr(event, 'step_index') and step_index is not None:
-            if getattr(event, 'step_index', None) is None:
+        if hasattr(event, "step_index") and step_index is not None:
+            if getattr(event, "step_index", None) is None:
                 event.step_index = step_index
-                
+
         return event
 
     def execute_stream(
