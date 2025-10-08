@@ -88,7 +88,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     async def get_sessions(
         request: Request,
         session_type: SessionType = Query(
-            default=SessionType.AGENT,
+            default=None,
             alias="type",
             description="Type of sessions to retrieve (agent, team, or workflow)",
         ),
@@ -363,7 +363,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         request: Request,
         session_id: str = Path(description="Session ID to get runs from"),
         session_type: SessionType = Query(
-            default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
+            default=None, description="Session type (agent, team, or workflow)", alias="type"
         ),
         user_id: Optional[str] = Query(default=None, description="User ID to query runs from"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
@@ -380,6 +380,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         runs = session.get("runs")  # type: ignore
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
+
+        session_type = session.get("session_type")
 
         if session_type == SessionType.AGENT:
             return [RunSchema.from_dict(run) for run in runs]
