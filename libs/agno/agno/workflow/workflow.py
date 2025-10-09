@@ -726,11 +726,11 @@ class Workflow:
         if hasattr(event, "step_id") and step_id:
             event.step_id = step_id
         if hasattr(event, "step_name") and step_name is not None:
-            if getattr(event, "step_name", None) is None:
+            if event.step_name is None:
                 event.step_name = step_name
         # Only set step_index if it's not already set (preserve parallel.py's tuples)
         if hasattr(event, "step_index") and step_index is not None:
-            if getattr(event, "step_index", None) is None:
+            if event.step_index is None:
                 event.step_index = step_index
 
         return event

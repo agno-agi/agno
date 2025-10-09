@@ -365,7 +365,7 @@ class Step:
                 event.step_name = self.name
         # Only set step_index if it's not already set (preserve parallel.py's tuples)
         if hasattr(event, "step_index") and step_index is not None:
-            if getattr(event, "step_index", None) is None:
+            if event.step_index is None:
                 event.step_index = step_index
 
         return event

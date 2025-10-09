@@ -1,11 +1,12 @@
 from typing import AsyncIterator, Union
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.run.workflow import WorkflowRunOutputEvent
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step, StepInput, StepOutput
@@ -17,13 +18,15 @@ hackernews_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[HackerNewsTools()],
     instructions="Extract key insights and content from Hackernews posts",
+    db=InMemoryDb(),
 )
 
 web_agent = Agent(
     name="Web Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[GoogleSearchTools()],
     instructions="Search the web for the latest news and trends",
+    db=InMemoryDb(),
 )
 
 content_planner = Agent(
@@ -33,6 +36,7 @@ content_planner = Agent(
         "Plan a content schedule over 4 weeks for the provided topic and research content",
         "Ensure that I have posts for 3 posts per week",
     ],
+    db=InMemoryDb(),
 )
 
 
