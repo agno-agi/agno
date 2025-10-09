@@ -1266,6 +1266,7 @@ class Workflow:
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore
             metadata=workflow_run_response.metadata,
+            run_input=workflow_run_response.input,
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
@@ -1737,6 +1738,7 @@ class Workflow:
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore[arg-type]
             metadata=workflow_run_response.metadata,
+            run_input=workflow_run_response.input,
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
@@ -1852,6 +1854,7 @@ class Workflow:
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
+        run_input: Optional[Any] = None,
         stream_intermediate_steps: bool = False,
         websocket_handler: Optional[WebSocketHandler] = None,
         **kwargs: Any,

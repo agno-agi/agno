@@ -131,6 +131,7 @@ class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
     # Store actual step execution results as StepOutput objects
     step_results: List[StepOutput] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
+    run_input: Optional[Any] = None
 
 
 @dataclass
