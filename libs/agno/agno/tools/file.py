@@ -75,7 +75,9 @@ class FileTools(Toolkit):
         """
         try:
             log_info(f"Reading files in : {self.base_dir}")
-            return json.dumps([str(file_path) for file_path in self.base_dir.iterdir()], indent=4)
+            return json.dumps(
+                [str(file_path.relative_to(self.base_dir)) for file_path in self.base_dir.iterdir()], indent=4
+            )
         except Exception as e:
             log_error(f"Error reading files: {e}")
             return f"Error reading files: {e}"
@@ -93,7 +95,7 @@ class FileTools(Toolkit):
             log_debug(f"Searching files in {self.base_dir} with pattern {pattern}")
             matching_files = list(self.base_dir.glob(pattern))
 
-            file_paths = [str(file_path) for file_path in matching_files]
+            file_paths = [str(file_path.relative_to(self.base_dir)) for file_path in matching_files]
 
             result = {
                 "pattern": pattern,

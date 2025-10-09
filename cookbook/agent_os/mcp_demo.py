@@ -5,7 +5,7 @@ from agno.tools.mcp import MCPTools
 
 agent = Agent(
     name="Agno Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-5"),
     tools=[MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")],
 )
 
