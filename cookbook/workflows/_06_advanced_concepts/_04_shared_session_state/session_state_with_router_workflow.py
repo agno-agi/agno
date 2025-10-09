@@ -1,8 +1,8 @@
 from typing import List
 
 from agno.agent.agent import Agent
-from agno.models.openai.chat import OpenAIChat
 from agno.db.sqlite import SqliteDb
+from agno.models.openai.chat import OpenAIChat
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput
@@ -22,15 +22,14 @@ def add_task(session_state, task: str, priority: str = "medium") -> str:
 
     # Check if task already exists (case-insensitive)
     existing_tasks = [
-        existing_task["name"].lower()
-        for existing_task in session_state["task_list"]
+        existing_task["name"].lower() for existing_task in session_state["task_list"]
     ]
     if task.lower() not in existing_tasks:
         task_item = {
             "name": task,
             "priority": priority,
             "status": "pending",
-            "id": len(session_state["task_list"]) + 1
+            "id": len(session_state["task_list"]) + 1,
         }
         session_state["task_list"].append(task_item)
         return f"Added task '{task}' with {priority} priority to the task list."
@@ -92,7 +91,7 @@ def list_tasks(session_state, status_filter: str = "all") -> str:
         return "Task list is empty."
 
     tasks = session_state["task_list"]
-    
+
     if status_filter != "all":
         tasks = [task for task in tasks if task["status"] == status_filter]
         if not tasks:
@@ -102,10 +101,12 @@ def list_tasks(session_state, status_filter: str = "all") -> str:
     priority_order = {"high": 1, "medium": 2, "low": 3}
     tasks = sorted(tasks, key=lambda x: (priority_order.get(x["priority"], 3), x["id"]))
 
-    tasks_str = "\n".join([
-        f"- [{task['status'].upper()}] {task['name']} (Priority: {task['priority']})"
-        for task in tasks
-    ])
+    tasks_str = "\n".join(
+        [
+            f"- [{task['status'].upper()}] {task['name']} (Priority: {task['priority']})"
+            for task in tasks
+        ]
+    )
     return f"Task list ({status_filter}):\n{tasks_str}"
 
 
@@ -117,11 +118,10 @@ def clear_completed_tasks(session_state) -> str:
 
     original_count = len(session_state["task_list"])
     session_state["task_list"] = [
-        task for task in session_state["task_list"]
-        if task["status"] != "completed"
+        task for task in session_state["task_list"] if task["status"] != "completed"
     ]
     completed_count = original_count - len(session_state["task_list"])
-    
+
     return f"Removed {completed_count} completed tasks from the list."
 
 
@@ -171,7 +171,7 @@ manage_tasks_step = Step(
 )
 
 view_tasks_step = Step(
-    name="view_tasks", 
+    name="view_tasks",
     description="View and display task lists with filtering",
     agent=task_viewer,
 )
@@ -194,35 +194,59 @@ def task_router(step_input: StepInput) -> List[Step]:
 
     # Keywords for different types of task operations
     management_keywords = [
-        "add", "create", "new task", "complete", "finish", "done", 
-        "mark as", "priority", "urgent", "important", "update"
+        "add",
+        "create",
+        "new task",
+        "complete",
+        "finish",
+        "done",
+        "mark as",
+        "priority",
+        "urgent",
+        "important",
+        "update",
     ]
-    
+
     viewing_keywords = [
-        "show", "list", "display", "view", "see", "what tasks", 
-        "current", "pending", "completed", "status"
+        "show",
+        "list",
+        "display",
+        "view",
+        "see",
+        "what tasks",
+        "current",
+        "pending",
+        "completed",
+        "status",
     ]
-    
+
     organizing_keywords = [
-        "clean", "organize", "clear", "remove completed", "reorganize",
-        "cleanup", "tidy", "sort", "arrange"
+        "clean",
+        "organize",
+        "clear",
+        "remove completed",
+        "reorganize",
+        "cleanup",
+        "tidy",
+        "sort",
+        "arrange",
     ]
 
     # Check for organizing operations first (most specific)
     if any(keyword in message_lower for keyword in organizing_keywords):
         print("🗂️ Organization request detected: Using Task Organizer")
         return [organize_tasks_step]
-    
+
     # Check for management operations
     elif any(keyword in message_lower for keyword in management_keywords):
         print("⚙️ Management request detected: Using Task Manager")
         return [manage_tasks_step]
-    
-    # Check for viewing operations  
+
+    # Check for viewing operations
     elif any(keyword in message_lower for keyword in viewing_keywords):
         print("👀 Viewing request detected: Using Task Viewer")
         return [view_tasks_step]
-    
+
     # Default to management for ambiguous requests
     else:
         print("🤔 Ambiguous request: Defaulting to Task Manager")
@@ -255,17 +279,13 @@ if __name__ == "__main__":
 
     # Example 2: View tasks (should route to Task Viewer)
     print("\n=== Example 2: Viewing Tasks ===")
-    task_workflow.print_response(
-        input="Show me all my current tasks"
-    )
+    task_workflow.print_response(input="Show me all my current tasks")
 
     print("Workflow session state:", task_workflow.get_session_state())
 
     # Example 3: Complete a task (should route to Task Manager)
     print("\n=== Example 3: Completing Tasks ===")
-    task_workflow.print_response(
-        input="Mark 'Buy groceries' as completed"
-    )
+    task_workflow.print_response(input="Mark 'Buy groceries' as completed")
 
     print("Workflow session state:", task_workflow.get_session_state())
 
@@ -279,8 +299,6 @@ if __name__ == "__main__":
 
     # Example 5: View only pending tasks (should route to Task Viewer)
     print("\n=== Example 5: Filtered View ===")
-    task_workflow.print_response(
-        input="Show me only my pending tasks"
-    )
+    task_workflow.print_response(input="Show me only my pending tasks")
 
     print("\nFinal workflow session state:", task_workflow.get_session_state())

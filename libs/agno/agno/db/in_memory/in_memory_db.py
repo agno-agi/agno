@@ -359,8 +359,7 @@ class InMemoryDb(BaseDb):
             # If user_id is provided, verify ownership before deleting
             if user_id is not None:
                 self._memories = [
-                    m for m in self._memories
-                    if not (m.get("memory_id") == memory_id and m.get("user_id") == user_id)
+                    m for m in self._memories if not (m.get("memory_id") == memory_id and m.get("user_id") == user_id)
                 ]
             else:
                 self._memories = [m for m in self._memories if m.get("memory_id") != memory_id]
@@ -388,8 +387,7 @@ class InMemoryDb(BaseDb):
             # If user_id is provided, verify ownership before deleting
             if user_id is not None:
                 self._memories = [
-                    m for m in self._memories
-                    if not (m.get("memory_id") in memory_ids and m.get("user_id") == user_id)
+                    m for m in self._memories if not (m.get("memory_id") in memory_ids and m.get("user_id") == user_id)
                 ]
             else:
                 self._memories = [m for m in self._memories if m.get("memory_id") not in memory_ids]
@@ -532,7 +530,11 @@ class InMemoryDb(BaseDb):
 
                 if memory_user_id:
                     if memory_user_id not in user_stats:
-                        user_stats[memory_user_id] = {"user_id": memory_user_id, "total_memories": 0, "last_memory_updated_at": 0}
+                        user_stats[memory_user_id] = {
+                            "user_id": memory_user_id,
+                            "total_memories": 0,
+                            "last_memory_updated_at": 0,
+                        }
                     user_stats[memory_user_id]["total_memories"] += 1
                     updated_at = memory.get("updated_at", 0)
                     if updated_at > user_stats[memory_user_id]["last_memory_updated_at"]:

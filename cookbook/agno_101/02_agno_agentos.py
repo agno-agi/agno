@@ -5,8 +5,8 @@ from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools import tool
-from agno.tools.mcp import MCPTools
 from agno.tools.exa import ExaTools
+from agno.tools.mcp import MCPTools
 
 
 # ************* Create Tool that requires confirmation. *************
