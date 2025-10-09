@@ -1123,18 +1123,18 @@ class Agent:
                 user_id=user_id,
             )
 
-            # 6. Update Agent Memory
+            # 6. Add RunOutput to Agent Session
+            session.upsert_run(run=run_response)
+
+            # 7. Update Agent Memory
             yield from self._make_memories_and_summaries(
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-            # 7. Create the run completed event
+            # 8. Create the run completed event
             completed_event = self._handle_event(
                 create_run_completed_event(from_run_response=run_response), run_response, workflow_context
             )
-
-            # 8. Add RunOutput to Agent Session
-            session.upsert_run(run=run_response)
 
             # 9. Save session to storage
             self.save_session(session=session)
@@ -1824,19 +1824,19 @@ class Agent:
                 user_id=user_id,
             )
 
-            # 7. Update Agent Memory
+            # 7. Add RunOutput to Agent Session
+            session.upsert_run(run=run_response)
+
+            # 8. Update Agent Memory
             async for event in self._amake_memories_and_summaries(
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             ):
                 yield event
 
-            # 8. Create the run completed event
+            # 9. Create the run completed event
             completed_event = self._handle_event(
                 create_run_completed_event(from_run_response=run_response), run_response, workflow_context
             )
-
-            # 9. Add RunOutput to Agent Session
-            session.upsert_run(run=run_response)
 
             # 10. Save session to storage
             self.save_session(session=session)
@@ -2536,16 +2536,16 @@ class Agent:
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
-        # 5. Update Agent Memory
+        # 5. Add the run to memory
+        session.upsert_run(run=run_response)
+
+        # 6. Update Agent Memory
         yield from self._make_memories_and_summaries(
             run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
         )
 
-        # 6. Create the run completed event
+        # 7. Create the run completed event
         completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
-
-        # 7. Add the run to memory
-        session.upsert_run(run=run_response)
 
         # 8. Save session to storage
         self.save_session(session=session)
@@ -2938,17 +2938,17 @@ class Agent:
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
-        # 5. Update Agent Memory
+        # 5. Add the run to memory
+        session.upsert_run(run=run_response)
+
+        # 6. Update Agent Memory
         async for event in self._amake_memories_and_summaries(
             run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
         ):
             yield event
 
-        # 6. Create the run completed event
+        # 7. Create the run completed event
         completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
-
-        # 7. Add the run to memory
-        session.upsert_run(run=run_response)
 
         # 8. Save session to storage
         self.save_session(session=session)

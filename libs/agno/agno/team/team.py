@@ -1393,7 +1393,10 @@ class Team:
 
             # TODO: For now we don't run post-hooks during streaming
 
-            # 5. Update Team Memory
+            # 5. Add the run to Team Session
+            session.upsert_run(run_response=run_response)
+
+            # 6. Update Team Memory
             yield from self._make_memories_and_summaries(
                 run_response=run_response,
                 run_messages=run_messages,
@@ -1401,7 +1404,7 @@ class Team:
                 user_id=user_id,
             )
 
-            # 6. Create the run completed event
+            # 7. Create the run completed event
             completed_event = self._handle_event(
                 create_team_run_completed_event(
                     from_run_response=run_response,
@@ -1409,9 +1412,6 @@ class Team:
                 run_response,
                 workflow_context,
             )
-
-            # 7. Add the run to Team Session
-            session.upsert_run(run_response=run_response)
 
             # 8. Calculate session metrics
             self._update_session_metrics(session=session)
@@ -2108,7 +2108,10 @@ class Team:
             if run_response.metrics:
                 run_response.metrics.stop_timer()
 
-            # 5. Update Team Memory
+            # 5. Add the run to Team Session
+            session.upsert_run(run_response=run_response)
+
+            # 6. Update Team Memory
             async for event in self._amake_memories_and_summaries(
                 run_response=run_response,
                 session=session,
@@ -2117,13 +2120,10 @@ class Team:
             ):
                 yield event
 
-            # 6. Create the run completed event
+            # 7. Create the run completed event
             completed_event = self._handle_event(
                 create_team_run_completed_event(from_run_response=run_response), run_response, workflow_context
             )
-
-            # 7. Add the run to Team Session
-            session.upsert_run(run_response=run_response)
 
             # 8. Calculate session metrics
             self._update_session_metrics(session=session)
