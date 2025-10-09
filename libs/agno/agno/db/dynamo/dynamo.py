@@ -1458,13 +1458,13 @@ class DynamoDb(BaseDb):
         for key, value in data.items():
             if value is not None:
                 if isinstance(value, bool):
-                    item[key] = {"BOOL": str(value)}
+                    item[key] = {"BOOL": value}
                 elif isinstance(value, (int, float)):
                     item[key] = {"N": str(value)}
                 elif isinstance(value, str):
                     item[key] = {"S": str(value)}
                 elif isinstance(value, (dict, list)):
-                    item[key] = {"S": json.dumps(str(value))}
+                    item[key] = {"S": json.dumps(value)}
                 else:
                     item[key] = {"S": str(value)}
         return item
@@ -1803,14 +1803,16 @@ class DynamoDb(BaseDb):
 
             if filter_type is not None:
                 if filter_type == EvalFilterType.AGENT:
-                    filter_expressions.append("agent_id IS NOT NULL")
+                    filter_expressions.append("attribute_exists(agent_id)")
                 elif filter_type == EvalFilterType.TEAM:
-                    filter_expressions.append("team_id IS NOT NULL")
+                    filter_expressions.append("attribute_exists(team_id)")
                 elif filter_type == EvalFilterType.WORKFLOW:
-                    filter_expressions.append("workflow_id IS NOT NULL")
+                    filter_expressions.append("attribute_exists(workflow_id)")
 
             if filter_expressions:
                 scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
+            
+            if expression_values:
                 scan_kwargs["ExpressionAttributeValues"] = expression_values  # type: ignore
 
             # Execute scan
