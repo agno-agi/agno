@@ -307,7 +307,7 @@ def _create_completion_events(
         )
         events_to_emit.append(assistant_start_event)
 
-        # Add any text content if present
+        # Add any text content if present for the assistant message
         if chunk.content:
             content_event = TextMessageContentEvent(
                 type=EventType.TEXT_MESSAGE_CONTENT,
