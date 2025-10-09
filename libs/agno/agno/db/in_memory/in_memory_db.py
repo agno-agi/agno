@@ -343,10 +343,26 @@ class InMemoryDb(BaseDb):
             return []
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
+        """Delete a user memory from in-memory storage.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user. If provided, verifies the memory belongs to this user before deletion.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
             original_count = len(self._memories)
-            self._memories = [m for m in self._memories if m.get("memory_id") != memory_id]
+
+            # If user_id is provided, verify ownership before deleting
+            if user_id is not None:
+                self._memories = [
+                    m for m in self._memories if not (m.get("memory_id") == memory_id and m.get("user_id") == user_id)
+                ]
+            else:
+                self._memories = [m for m in self._memories if m.get("memory_id") != memory_id]
 
             if len(self._memories) < original_count:
                 log_debug(f"Successfully deleted user memory id: {memory_id}")
@@ -357,10 +373,24 @@ class InMemoryDb(BaseDb):
             log_error(f"Error deleting memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
-        """Delete multiple user memories from in-memory storage."""
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+        """Delete multiple user memories from in-memory storage.
+
+        Args:
+            memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user. If provided, only deletes memories belonging to this user.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
-            self._memories = [m for m in self._memories if m.get("memory_id") not in memory_ids]
+            # If user_id is provided, verify ownership before deleting
+            if user_id is not None:
+                self._memories = [
+                    m for m in self._memories if not (m.get("memory_id") in memory_ids and m.get("user_id") == user_id)
+                ]
+            else:
+                self._memories = [m for m in self._memories if m.get("memory_id") not in memory_ids]
             log_debug(f"Successfully deleted {len(memory_ids)} user memories")
 
         except Exception as e:
@@ -368,6 +398,14 @@ class InMemoryDb(BaseDb):
             raise e
 
     def get_all_memory_topics(self) -> List[str]:
+        """Get all memory topics from in-memory storage.
+
+        Returns:
+            List[str]: List of unique topics.
+
+        Raises:
+            Exception: If an error occurs while reading topics.
+        """
         try:
             topics = set()
             for memory in self._memories:
@@ -381,11 +419,28 @@ class InMemoryDb(BaseDb):
             raise e
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
+        """Get a user memory from in-memory storage.
+
+        Args:
+            memory_id (str): The ID of the memory to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user. If provided, only returns the memory if it belongs to this user.
+
+        Returns:
+            Optional[Union[UserMemory, Dict[str, Any]]]: The memory object or dictionary, or None if not found.
+
+        Raises:
+            Exception: If an error occurs while reading the memory.
+        """
         try:
             for memory_data in self._memories:
                 if memory_data.get("memory_id") == memory_id:
+                    # Filter by user_id if provided
+                    if user_id is not None and memory_data.get("user_id") != user_id:
+                        continue
+
                     memory_data_copy = deepcopy(memory_data)
                     if not deserialize:
                         return memory_data_copy
@@ -455,19 +510,35 @@ class InMemoryDb(BaseDb):
     def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get user memory statistics."""
+        """Get user memory statistics.
+
+        Args:
+            limit (Optional[int]): Maximum number of stats to return.
+            page (Optional[int]): Page number for pagination.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: List of user memory statistics and total count.
+
+        Raises:
+            Exception: If an error occurs while getting stats.
+        """
         try:
             user_stats = {}
 
             for memory in self._memories:
-                user_id = memory.get("user_id")
-                if user_id:
-                    if user_id not in user_stats:
-                        user_stats[user_id] = {"user_id": user_id, "total_memories": 0, "last_memory_updated_at": 0}
-                    user_stats[user_id]["total_memories"] += 1
+                memory_user_id = memory.get("user_id")
+
+                if memory_user_id:
+                    if memory_user_id not in user_stats:
+                        user_stats[memory_user_id] = {
+                            "user_id": memory_user_id,
+                            "total_memories": 0,
+                            "last_memory_updated_at": 0,
+                        }
+                    user_stats[memory_user_id]["total_memories"] += 1
                     updated_at = memory.get("updated_at", 0)
-                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = updated_at
+                    if updated_at > user_stats[memory_user_id]["last_memory_updated_at"]:
+                        user_stats[memory_user_id]["last_memory_updated_at"] = updated_at
 
             stats_list = list(user_stats.values())
             stats_list.sort(key=lambda x: x["last_memory_updated_at"], reverse=True)

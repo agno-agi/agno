@@ -120,10 +120,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     )
     async def delete_memory(
         memory_id: str = Path(description="Memory ID to delete"),
+        user_id: Optional[str] = Query(default=None, description="User ID to delete memory for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
     ) -> None:
         db = get_db(dbs, db_id)
-        db.delete_user_memory(memory_id=memory_id)
+        db.delete_user_memory(memory_id=memory_id, user_id=user_id)
 
     @router.delete(
         "/memories",
@@ -145,7 +146,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
     ) -> None:
         db = get_db(dbs, db_id)
-        db.delete_user_memories(memory_ids=request.memory_ids)
+        db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
 
     @router.get(
         "/memories",
@@ -249,10 +250,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     )
     async def get_memory(
         memory_id: str = Path(description="Memory ID to retrieve"),
+        user_id: Optional[str] = Query(default=None, description="User ID to query memory for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query memory from"),
     ) -> UserMemorySchema:
         db = get_db(dbs, db_id)
-        user_memory = db.get_user_memory(memory_id=memory_id, deserialize=False)
+        user_memory = db.get_user_memory(memory_id=memory_id, user_id=user_id, deserialize=False)
         if not user_memory:
             raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
 
