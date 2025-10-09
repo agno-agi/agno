@@ -1130,7 +1130,7 @@ class Agent:
 
             # 9. Create the run completed event
             completed_event = self._handle_event(
-                create_run_completed_event(from_run_response=run_response), run_response, workflow_context
+                create_run_completed_event(from_run_response=run_response), run_response
             )
 
             # 10. Save session to storage
@@ -1824,7 +1824,7 @@ class Agent:
 
             # 9. Create the run completed event
             completed_event = self._handle_event(
-                create_run_completed_event(from_run_response=run_response), run_response, workflow_context
+                create_run_completed_event(from_run_response=run_response), run_response
             )
 
             # 10. Save session to storage
