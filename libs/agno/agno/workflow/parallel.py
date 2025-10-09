@@ -14,8 +14,8 @@ from agno.run.workflow import (
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
 )
-from agno.utils.merge_dict import merge_parallel_session_states
 from agno.utils.log import log_debug, logger
+from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
@@ -220,7 +220,7 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
-            
+
             try:
                 step_result = step.execute(
                     step_input,
@@ -350,7 +350,7 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
-            
+
             try:
                 step_events = []
 
@@ -506,7 +506,7 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
-            
+
             try:
                 inner_step_result = await step.aexecute(
                     step_input,
@@ -637,7 +637,7 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
-            
+
             try:
                 step_events = []
 

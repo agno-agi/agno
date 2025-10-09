@@ -27,7 +27,7 @@ def merge_parallel_session_states(original_state: Dict[str, Any], modified_state
     """
     if not original_state or not modified_states:
         return
-    
+
     # Collect all actual changes (keys where value differs from original)
     all_changes = {}
     for modified_state in modified_states:
@@ -35,7 +35,7 @@ def merge_parallel_session_states(original_state: Dict[str, Any], modified_state
             for key, value in modified_state.items():
                 if key not in original_state or original_state[key] != value:
                     all_changes[key] = value
-    
+
     # Apply all collected changes to the original state
     for key, value in all_changes.items():
         original_state[key] = value

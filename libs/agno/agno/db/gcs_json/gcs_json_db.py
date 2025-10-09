@@ -472,7 +472,8 @@ class GcsJsonDb(BaseDb):
 
             # Filter out the memory, with optional user_id verification
             memories = [
-                m for m in memories
+                m
+                for m in memories
                 if not (m.get("memory_id") == memory_id and (user_id is None or m.get("user_id") == user_id))
             ]
 
@@ -499,7 +500,8 @@ class GcsJsonDb(BaseDb):
 
             # Filter out memories, with optional user_id verification
             memories = [
-                m for m in memories
+                m
+                for m in memories
                 if not (m.get("memory_id") in memory_ids and (user_id is None or m.get("user_id") == user_id))
             ]
 
@@ -642,7 +644,7 @@ class GcsJsonDb(BaseDb):
                         user_stats[memory_user_id] = {
                             "user_id": memory_user_id,
                             "total_memories": 0,
-                            "last_memory_updated_at": 0
+                            "last_memory_updated_at": 0,
                         }
                     user_stats[memory_user_id]["total_memories"] += 1
                     updated_at = memory.get("updated_at", 0)
