@@ -1244,9 +1244,9 @@ class Team:
         2. Prepare run messages
         3. Reason about the task(s) if reasoning is enabled
         4. Get a response from the model
-        5. Update Team Memory
-        6. Create the run completed event
-        7. Add the run to Team Session
+        5. Add the run to Team Session
+        6. Update Team Memory
+        7. Create the run completed event
         8. Calculate session metrics
         9. Save session to storage
         """
@@ -1957,9 +1957,9 @@ class Team:
         2. Prepare run messages
         3. Reason about the task(s) if reasoning is enabled
         4. Get a response from the model
-        5. Update Team Memory
-        6. Create the run completed event
-        7. Add the run to Team Session
+        5. Add the run to Team Session
+        6. Update Team Memory
+        7. Create the run completed event
         8. Calculate session metrics
         9. Save session to storage
         """
