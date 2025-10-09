@@ -6,10 +6,8 @@ from agno.utils.log import logger
 
 try:
     import numpy as np
-
 except ImportError:
     raise ImportError("numpy not installed, use `pip install numpy`")
-
 
 try:
     from fastembed import TextEmbedding  # type: ignore
@@ -23,11 +21,36 @@ class FastEmbedEmbedder(Embedder):
     """Using BAAI/bge-small-en-v1.5 model, more models available: https://qdrant.github.io/fastembed/examples/Supported_Models/"""
 
     id: str = "BAAI/bge-small-en-v1.5"
-    dimensions: int = 384
+    dimensions: Optional[int] = None
+    _model: Optional["TextEmbedding"] = None
+
+    def __post_init__(self):
+        """Initialize the model and auto-detect dimensions if not specified."""
+        if self._model is None:
+            self._model = TextEmbedding(model_name=self.id)
+
+        # Auto-detect dimensions from the model if not specified
+        if self.dimensions is None:
+            # Get a sample embedding to determine dimensions
+            sample_embedding = list(self._model.embed(["sample text"]))[0]
+            self.dimensions = len(sample_embedding)
+            logger.info(f"Auto-detected dimensions for model {self.id}: {self.dimensions}")
+        else:
+            # Validate that specified dimensions match the model
+            sample_embedding = list(self._model.embed(["sample text"]))[0]
+            actual_dimensions = len(sample_embedding)
+            if self.dimensions != actual_dimensions:
+                logger.warning(
+                    f"Specified dimensions ({self.dimensions}) don't match model's actual dimensions ({actual_dimensions}). "
+                    f"Using model's actual dimensions: {actual_dimensions}"
+                )
+                self.dimensions = actual_dimensions
 
     def get_embedding(self, text: str) -> List[float]:
-        model = TextEmbedding(model_name=self.id)
-        embeddings = model.embed(text)
+        if self._model is None:
+            self._model = TextEmbedding(model_name=self.id)
+
+        embeddings = self._model.embed(text)
         embedding_list = list(embeddings)[0]
         if isinstance(embedding_list, np.ndarray):
             return embedding_list.tolist()
