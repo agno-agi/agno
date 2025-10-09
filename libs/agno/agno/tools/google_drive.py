@@ -12,7 +12,7 @@ Required Environment Variables:
 - GOOGLE_CLIENT_SECRET: Google OAuth client secret
 - GOOGLE_PROJECT_ID: Google Cloud project ID
 - GOOGLE_REDIRECT_URI: Google OAuth redirect URI (default: http://localhost)
-
+- GOOGLE_CLOUD_QUOTA_PROJECT_ID: Google Cloud quota project ID
 
 How to Get These Credentials:
 ---------------------------
@@ -46,6 +46,7 @@ How to Get These Credentials:
    export GOOGLE_PROJECT_ID=your_project_id_here
    export GOOGLE_REDIRECT_URI=http://localhost/  # Default value
    export GOOGLE_AUTHENTICATION_PORT=5050  # Port for OAuth redirect
+   export GOOGLE_CLOUD_QUOTA_PROJECT_ID=your_quota_project_id_here
    ``
 
 ---
@@ -89,7 +90,11 @@ def authenticate(func):
         if not self.creds or not self.creds.valid:
             self._auth()
         if not self.service:
-            self.service = build("drive", "v3", credentials=self.creds)
+            # Set quota project on credentials if available
+            creds_to_use = self.creds
+            if hasattr(self, "quota_project_id") and self.quota_project_id:
+                creds_to_use = self.creds.with_quota_project(self.quota_project_id)
+            self.service = build("drive", "v3", credentials=creds_to_use)
         return func(self, *args, **kwargs)
 
     return wrapper
@@ -99,18 +104,23 @@ class GoogleDriveTools(Toolkit):
     # Default scopes for Google Drive API access
     DEFAULT_SCOPES = ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive.readonly"]
 
-    def __init__(self,auth_port:int,
-                  creds: Optional[Credentials] = None, 
-                  scopes: Optional[List[str]] = None, 
-                  creds_path: Optional[str] = None,
-                  token_path: Optional[str] = None,
-                  **kwargs):
+    def __init__(
+        self,
+        auth_port: int,
+        creds: Optional[Credentials] = None,
+        scopes: Optional[List[str]] = None,
+        creds_path: Optional[str] = None,
+        token_path: Optional[str] = None,
+        quota_project_id: Optional[str] = None,
+        **kwargs,
+    ):
         self.creds: Optional[Credentials] = creds
         self.service: Optional[Resource] = None
         self.credentials_path = creds_path
         self.token_path = token_path
         self.scopes = scopes or []
         self.scopes.extend(self.DEFAULT_SCOPES)
+        self.quota_project_id = quota_project_id or getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
         self.auth_port: int = int(getenv("GOOGLE_AUTH_PORT", str(auth_port)))
         tools: List[Any] = [
             self.list_files,
@@ -131,7 +141,6 @@ class GoogleDriveTools(Toolkit):
         if self.creds and self.creds.valid:
             # Already authenticated
             return
-        
 
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
@@ -161,6 +170,7 @@ class GoogleDriveTools(Toolkit):
                 # Opens up a browser window for OAuth authentication
                 self.creds = flow.run_local_server(port=self.auth_port)
             token_file.write_text(self.creds.to_json()) if self.creds else None
+
     @authenticate
     def list_files(self, query: Optional[str] = None, page_size: int = 10) -> List[dict]:
         """
