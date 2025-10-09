@@ -180,22 +180,19 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
-    def _filter_messages(self, messages: List[Message], num_tool_calls_in_context: int) -> int:
+    def _filter_messages(self, messages: List[Message], num_tool_calls_in_context: int) -> None:
         """
-        Filter messages to keep only the most recent N tool calls.
+        Filter messages (in-place) to keep only the most recent N tool calls.
 
         Args:
             messages: List of messages
             num_tool_calls_in_context: Number of recent tool calls to keep
-
-        Returns:
-            Number of tool calls filtered out
         """
         # Count total tool calls (not messages) - each tool result = 1 tool call
         total_tool_calls = sum(1 for m in messages if m.role == "tool")
 
         if total_tool_calls <= num_tool_calls_in_context:
-            return 0
+            return
 
         # Collect tool_call_ids to keep (most recent N)
         tool_call_ids_list: List[str] = []
@@ -245,13 +242,11 @@ class Model(ABC):
         # Replace messages list in-place
         messages[:] = filtered_messages
 
-        # Return number filtered
+        # Debug log 
         num_filtered = total_tool_calls - len(tool_call_ids_to_keep)
-        if num_filtered > 0:
-            log_info(
-                f"Keeping last {num_tool_calls_in_context} tool call cycles (filtered out {num_filtered} older tool calls)"
-            )
-        return num_filtered
+        log_debug(
+            f"Keeping last {num_tool_calls_in_context} tool call cycles (filtered out {num_filtered} older tool calls)",
+        )
 
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
@@ -439,8 +434,7 @@ class Model(ABC):
 
                 # Apply message filtering if forget_tool_calls is enabled (sliding window)
                 # This filters AFTER tool results are added, BEFORE next API call
-                if forget_tool_calls and num_tool_calls_in_context is not None:
-                    # maybe add the condition to filter here itselg]f
+                if forget_tool_calls:
                     self._filter_messages(messages, num_tool_calls_in_context)
 
                 # Continue loop to get next response
@@ -592,7 +586,7 @@ class Model(ABC):
 
                 # Apply message filtering if forget_tool_calls is enabled (sliding window)
                 # This filters AFTER tool results are added, BEFORE next API call
-                if forget_tool_calls and num_tool_calls_in_context is not None:
+                if forget_tool_calls:
                     self._filter_messages(messages, num_tool_calls_in_context)
 
                 # Continue loop to get next response
@@ -966,7 +960,7 @@ class Model(ABC):
 
                 # Apply message filtering if forget_tool_calls is enabled (sliding window)
                 # This filters AFTER tool results are added, BEFORE next API call
-                if forget_tool_calls and num_tool_calls_in_context is not None:
+                if forget_tool_calls:
                     self._filter_messages(messages, num_tool_calls_in_context)
 
                 # Continue loop to get next response
@@ -1143,7 +1137,7 @@ class Model(ABC):
 
                 # Apply message filtering if forget_tool_calls is enabled (sliding window)
                 # This filters AFTER tool results are added, BEFORE next API call
-                if forget_tool_calls and num_tool_calls_in_context is not None:
+                if forget_tool_calls:
                     self._filter_messages(messages, num_tool_calls_in_context)
 
                 # Continue loop to get next response
