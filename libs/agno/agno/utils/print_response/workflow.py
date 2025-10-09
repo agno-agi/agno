@@ -329,14 +329,6 @@ def print_response_stream(
                     step_name = response.step_name or "Unknown"
                     step_index = response.step_index or 0  # type: ignore
 
-                    # Skip parallel sub-step started events - they're handled in ParallelExecutionCompletedEvent
-                    if (
-                        current_primitive_context
-                        and current_primitive_context["type"] == "parallel"
-                        and isinstance(step_index, tuple)
-                    ):
-                        continue
-
                     current_step_name = step_name
                     current_step_index = step_index  # type: ignore
                     current_step_content = ""
@@ -351,7 +343,7 @@ def print_response_stream(
                     step_name = response.step_name or "Unknown"
                     step_index = response.step_index or 0
 
-                    # Skip parallel sub-step completed events - they're handled in ParallelExecutionCompletedEvent
+                    # Skip parallel sub-step completed events - they're handled in ParallelExecutionCompletedEvent (avoid duplication)
                     if (
                         current_primitive_context
                         and current_primitive_context["type"] == "parallel"
@@ -1120,14 +1112,6 @@ async def aprint_response_stream(
                     step_name = response.step_name or "Unknown"
                     step_index = response.step_index or 0  # type: ignore
 
-                    # Skip parallel sub-step started events - they're handled in ParallelExecutionCompletedEvent
-                    if (
-                        current_primitive_context
-                        and current_primitive_context["type"] == "parallel"
-                        and isinstance(step_index, tuple)
-                    ):
-                        continue
-
                     current_step_name = step_name
                     current_step_index = step_index  # type: ignore
                     current_step_content = ""
@@ -1142,7 +1126,7 @@ async def aprint_response_stream(
                     step_name = response.step_name or "Unknown"
                     step_index = response.step_index or 0
 
-                    # Skip parallel sub-step completed events - they're handled in ParallelExecutionCompletedEvent
+                    # Skip parallel sub-step completed events - they're handled in ParallelExecutionCompletedEvent (avoid duplication)
                     if (
                         current_primitive_context
                         and current_primitive_context["type"] == "parallel"
