@@ -114,11 +114,8 @@ research_agent = Agent(
     """),
     markdown=True,
     add_datetime_to_context=True,
-    # Enable tool call forgetting for long research sessions with 10+ searches
-    # This keeps only the most recent 5 search results in context
     forget_tool_calls=True,
-    num_tool_calls_to_keep=3,
-    debug_mode=True,
+    num_tool_calls_in_context=3,
 )
 
 # Example usage with detailed research request
