@@ -261,13 +261,10 @@ def _create_events_from_chunk(
     elif chunk.event == RunEvent.reasoning_completed:
         step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
         events_to_emit.append(step_finished_event)
+
     # Handle custom events
     elif chunk.event == RunEvent.custom_event:
-        custom_event = CustomEvent(
-            type=EventType.CUSTOM_EVENT,
-            name=chunk.event.get("name", "custom_event"),
-            data=chunk.event.__dict__,
-        )
+        custom_event = CustomEvent(name=chunk.event, value=chunk.content)
         events_to_emit.append(custom_event)
 
     return events_to_emit, message_started, message_id
