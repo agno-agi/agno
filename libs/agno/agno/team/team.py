@@ -1244,9 +1244,10 @@ class Team:
         2. Prepare run messages
         3. Reason about the task(s) if reasoning is enabled
         4. Get a response from the model
-        5. Add RunOutput to Team Session
-        6. Calculate session metrics
-        7. Update Team Memory
+        5. Calculate session metrics
+        6. Update Team Memory
+        7. Create the run completed event
+        8. Add the run to Team Session
         8. Save session to storage
         """
         # Register run for cancellation tracking
@@ -1392,12 +1393,18 @@ class Team:
 
             # TODO: For now we don't run post-hooks during streaming
 
-            # 5. Add the run to Team Session
-            session.upsert_run(run_response=run_response)
-
-            # 6. Calculate session metrics
+            # 5. Calculate session metrics
             self._update_session_metrics(session=session)
 
+            # 6. Update Team Memory
+            yield from self._make_memories_and_summaries(
+                run_response=run_response,
+                run_messages=run_messages,
+                session=session,
+                user_id=user_id,
+            )
+
+            # 7. Create the run completed event
             completed_event = self._handle_event(
                 create_team_run_completed_event(
                     from_run_response=run_response,
@@ -1406,15 +1413,10 @@ class Team:
                 workflow_context,
             )
 
-            # 7. Update Team Memory
-            yield from self._make_memories_and_summaries(
-                run_response=run_response,
-                run_messages=run_messages,
-                session=session,
-                user_id=user_id,
-            )
+            # 8. Add the run to Team Session
+            session.upsert_run(run_response=run_response)
 
-            # 8. Save session to storage
+            # 9. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1955,10 +1957,11 @@ class Team:
         2. Prepare run messages
         3. Reason about the task(s) if reasoning is enabled
         4. Get a response from the model
-        5. Update Team Memory
-        6. Add RunOutput to Team Session
-        7. Calculate session metrics
-        8. Save session to storage
+        5. Calculate session metrics
+        6. Update Team Memory
+        7. Create the run completed event
+        8. Add the run to Team Session
+        9. Save session to storage
         """
 
         # 1. Resolve callable dependencies if present
@@ -2105,8 +2108,8 @@ class Team:
             if run_response.metrics:
                 run_response.metrics.stop_timer()
 
-            # 5. Add the run to Team Session
-            session.upsert_run(run_response=run_response)
+            # 5. Calculate session metrics
+            self._update_session_metrics(session=session)
 
             # 6. Update Team Memory
             async for event in self._amake_memories_and_summaries(
@@ -2117,14 +2120,15 @@ class Team:
             ):
                 yield event
 
-            # 7. Calculate session metrics
-            self._update_session_metrics(session=session)
-
+            # 7. Create the run completed event
             completed_event = self._handle_event(
                 create_team_run_completed_event(from_run_response=run_response), run_response, workflow_context
             )
 
-            # 8. Save session to storage
+            # 8. Add the run to Team Session
+            session.upsert_run(run_response=run_response)
+
+            # 9. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
