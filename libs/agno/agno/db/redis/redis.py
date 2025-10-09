@@ -627,11 +627,12 @@ class RedisDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from Redis.
 
         Args:
             memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user. If provided, verifies the memory belongs to this user before deleting.
 
         Returns:
             bool: True if the memory was deleted, False otherwise.
@@ -640,6 +641,16 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while deleting the memory.
         """
         try:
+            # If user_id is provided, verify ownership before deleting
+            if user_id is not None:
+                memory = self._get_record("memories", memory_id)
+                if memory is None:
+                    log_debug(f"No user memory found with id: {memory_id}")
+                    return
+                if memory.get("user_id") != user_id:
+                    log_debug(f"Memory {memory_id} does not belong to user {user_id}")
+                    return
+
             if self._delete_record(
                 "memories", memory_id, index_fields=["user_id", "agent_id", "team_id", "workflow_id"]
             ):
@@ -651,15 +662,25 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting user memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from Redis.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user. If provided, only deletes memories belonging to this user.
         """
         try:
             # TODO: cant we optimize this?
             for memory_id in memory_ids:
+                # If user_id is provided, verify ownership before deleting
+                if user_id is not None:
+                    memory = self._get_record("memories", memory_id)
+                    if memory is None:
+                        continue
+                    if memory.get("user_id") != user_id:
+                        log_debug(f"Memory {memory_id} does not belong to user {user_id}, skipping deletion")
+                        continue
+
                 self._delete_record(
                     "memories",
                     memory_id,
@@ -692,12 +713,14 @@ class RedisDb(BaseDb):
             raise e
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from Redis.
 
         Args:
             memory_id (str): The ID of the memory to get.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user. If provided, only returns the memory if it belongs to this user.
 
         Returns:
             Optional[UserMemory]: The memory data if found, None otherwise.
@@ -705,6 +728,10 @@ class RedisDb(BaseDb):
         try:
             memory_raw = self._get_record("memories", memory_id)
             if memory_raw is None:
+                return None
+
+            # Filter by user_id if provided
+            if user_id is not None and memory_raw.get("user_id") != user_id:
                 return None
 
             if not deserialize:
@@ -812,21 +839,21 @@ class RedisDb(BaseDb):
             # Group by user_id
             user_stats = {}
             for memory in all_memories:
-                user_id = memory.get("user_id")
-                if user_id is None:
+                memory_user_id = memory.get("user_id")
+                if memory_user_id is None:
                     continue
 
-                if user_id not in user_stats:
-                    user_stats[user_id] = {
-                        "user_id": user_id,
+                if memory_user_id not in user_stats:
+                    user_stats[memory_user_id] = {
+                        "user_id": memory_user_id,
                         "total_memories": 0,
                         "last_memory_updated_at": 0,
                     }
 
-                user_stats[user_id]["total_memories"] += 1
+                user_stats[memory_user_id]["total_memories"] += 1
                 updated_at = memory.get("updated_at", 0)
-                if updated_at > user_stats[user_id]["last_memory_updated_at"]:
-                    user_stats[user_id]["last_memory_updated_at"] = updated_at
+                if updated_at > user_stats[memory_user_id]["last_memory_updated_at"]:
+                    user_stats[memory_user_id]["last_memory_updated_at"] = updated_at
 
             stats_list = list(user_stats.values())
 
