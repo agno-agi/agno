@@ -1351,6 +1351,7 @@ class Agent:
             user_id=user_id,
             agent_name=self.name,
             metadata=metadata,
+            session_state=session_state,
             input=run_input,
         )
 
@@ -2050,6 +2051,7 @@ class Agent:
             user_id=user_id,
             agent_name=self.name,
             metadata=metadata,
+            session_state=session_state,
             input=run_input,
         )
 

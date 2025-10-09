@@ -1631,6 +1631,7 @@ class Team:
             team_id=self.id,
             team_name=self.name,
             metadata=metadata,
+            session_state=session_state,
             input=run_input,
         )
 
@@ -2337,6 +2338,7 @@ class Team:
             team_id=self.id,
             team_name=self.name,
             metadata=metadata,
+            session_state=session_state,
             input=run_input,
         )
 
