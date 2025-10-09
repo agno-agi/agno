@@ -972,7 +972,8 @@ class Agent:
         6. Optional: Save output to file if save_response_to_file is set
         7. Add the RunOutput to the Agent Session
         8. Update Agent Memory
-        9. Save session to storage
+        9. Create the run completed event
+        10. Save session to storage
         """
 
         # Register run for cancellation tracking
@@ -1111,9 +1112,6 @@ class Agent:
             # 5. Calculate session metrics
             self._update_session_metrics(session=session, run_response=run_response)
 
-            completed_event = self._handle_event(
-                create_run_completed_event(from_run_response=run_response), run_response
-            )
             # 6. Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
                 run_response=run_response,
@@ -1130,7 +1128,12 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-            # 9. Save session to storage
+            # 9. Create the run completed event
+            completed_event = self._handle_event(
+                create_run_completed_event(from_run_response=run_response), run_response, workflow_context
+            )
+
+            # 10. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1657,7 +1660,8 @@ class Agent:
         6. Calculate session metrics
         7. Add RunOutput to Agent Session
         8. Update Agent Memory
-        9. Save session to storage
+        9. Create the run completed event
+        10. Save session to storage
         """
 
         # 1. Resolving here for async requirement
@@ -1798,10 +1802,6 @@ class Agent:
             if run_response.metrics:
                 run_response.metrics.stop_timer()
 
-            completed_event = self._handle_event(
-                create_run_completed_event(from_run_response=run_response), run_response
-            )
-
             # 6. Calculate session metrics
             self._update_session_metrics(session=session, run_response=run_response)
 
@@ -1822,7 +1822,12 @@ class Agent:
             ):
                 yield event
 
-            # 9. Save session to storage
+            # 9. Create the run completed event
+            completed_event = self._handle_event(
+                create_run_completed_event(from_run_response=run_response), run_response, workflow_context
+            )
+
+            # 10. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -2465,11 +2470,12 @@ class Agent:
         Steps:
         1. Handle any updated tools
         2. Generate a response from the Model
-        3. Update Agent Memory
-        4. Calculate session metrics
-        5. Save output to file if save_response_to_file is set
-        6. Add RunOutput to Agent Session
-        7. Save session to storage
+        3. Calculate session metrics
+        4. Save output to file if save_response_to_file is set
+        5. Add the run to memory
+        6. Update Agent Memory
+        7. Create the run completed event
+        8. Save session to storage
         """
 
         if dependencies is not None:
@@ -2504,8 +2510,6 @@ class Agent:
 
         run_response.status = RunStatus.completed
 
-        completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
-
         # Set the run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
@@ -2523,7 +2527,10 @@ class Agent:
             run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
         )
 
-        # 7. Save session to storage
+        # 7. Create the run completed event
+        completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
+
+        # 8. Save session to storage
         self.save_session(session=session)
 
         if stream_intermediate_steps:
@@ -2863,11 +2870,12 @@ class Agent:
         Steps:
         1. Handle any updated tools
         2. Generate a response from the Model
-        3. Add the run to memory
-        4. Update Agent Memory
-        5. Calculate session metrics
-        6. Save output to file if save_response_to_file is set
-        7. Save session to storage
+        3. Calculate session metrics
+        4. Save output to file if save_response_to_file is set
+        5. Add the run to memory
+        6. Update Agent Memory
+        7. Create the run completed event
+        8. Save session to storage
         """
         # Resolve dependencies
         if dependencies is not None:
@@ -2904,8 +2912,6 @@ class Agent:
 
         run_response.status = RunStatus.completed
 
-        completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
-
         # Set the run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
@@ -2924,7 +2930,10 @@ class Agent:
         ):
             yield event
 
-        # 7. Save session to storage
+        # 7. Create the run completed event
+        completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
+
+        # 8. Save session to storage
         self.save_session(session=session)
 
         if stream_intermediate_steps:
