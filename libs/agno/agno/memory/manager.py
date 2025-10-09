@@ -236,8 +236,11 @@ class MemoryManager:
             memory_id (str): The id of the memory to delete
             user_id (Optional[str]): The user id to delete the memory from. If not provided, the memory is deleted from the "default" user.
         """
+        if user_id is None:
+            user_id = "default"
+
         if self.db:
-            self._delete_db_memory(memory_id=memory_id)
+            self._delete_db_memory(memory_id=memory_id, user_id=user_id)
         else:
             log_warning("Memory DB not provided.")
             return None
@@ -420,12 +423,16 @@ class MemoryManager:
             log_warning(f"Error storing memory in db: {e}")
             return f"Error adding memory: {e}"
 
-    def _delete_db_memory(self, memory_id: str) -> str:
+    def _delete_db_memory(self, memory_id: str, user_id: Optional[str] = None) -> str:
         """Use this function to delete a memory from the database."""
         try:
             if not self.db:
                 raise ValueError("Memory db not initialized")
-            self.db.delete_user_memory(memory_id=memory_id)
+
+            if user_id is None:
+                user_id = "default"
+
+            self.db.delete_user_memory(memory_id=memory_id, user_id=user_id)
             return "Memory deleted successfully"
         except Exception as e:
             log_warning(f"Error deleting memory in db: {e}")
@@ -1027,6 +1034,7 @@ class MemoryManager:
                         memory_id=memory_id,
                         memory=memory,
                         topics=topics,
+                        user_id=user_id,
                         input=input_string,
                     )
                 )
@@ -1044,7 +1052,7 @@ class MemoryManager:
                 str: A message indicating if the memory was deleted successfully or not.
             """
             try:
-                db.delete_user_memory(memory_id=memory_id)
+                db.delete_user_memory(memory_id=memory_id, user_id=user_id)
                 log_debug("Memory deleted")
                 return "Memory deleted successfully"
             except Exception as e:

@@ -112,7 +112,8 @@ class WebsiteReader(Reader):
             if tag.name in ["article", "main", "section"]:
                 return True
 
-            classes = tag.get("class", [])
+            classes_attr = tag.get("class")
+            classes: List[str] = classes_attr if isinstance(classes_attr, list) else []
             content_classes = ["content", "main-content", "post-content", "entry-content", "article-body"]
             if any(cls in content_classes for cls in classes):
                 return True
@@ -126,7 +127,7 @@ class WebsiteReader(Reader):
 
         # Try to find main content element
         element = soup.find(match)
-        if element:
+        if element and hasattr(element, "find_all"):
             # Remove common unwanted elements from the found content
             for unwanted in element.find_all(["script", "style", "nav", "header", "footer"]):
                 unwanted.decompose()

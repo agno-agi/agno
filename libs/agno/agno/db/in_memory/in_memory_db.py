@@ -1,4 +1,5 @@
 import time
+from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
@@ -56,7 +57,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
-            return False
+            raise e
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from in-memory storage.
@@ -73,6 +74,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
+            raise e
 
     def get_session(
         self,
@@ -106,15 +108,17 @@ class InMemoryDb(BaseDb):
                     if session_data.get("session_type") != session_type_value:
                         continue
 
+                    session_data_copy = deepcopy(session_data)
+
                     if not deserialize:
-                        return session_data
+                        return session_data_copy
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session_data)
+                        return AgentSession.from_dict(session_data_copy)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session_data)
+                        return TeamSession.from_dict(session_data_copy)
                     else:
-                        return WorkflowSession.from_dict(session_data)
+                        return WorkflowSession.from_dict(session_data_copy)
 
             return None
 
@@ -123,7 +127,7 @@ class InMemoryDb(BaseDb):
 
             traceback.print_exc()
             log_error(f"Exception reading session: {e}")
-            return None
+            raise e
 
     def get_sessions(
         self,
@@ -187,7 +191,7 @@ class InMemoryDb(BaseDb):
                 if session_data.get("session_type") != session_type_value:
                     continue
 
-                filtered_sessions.append(session_data)
+                filtered_sessions.append(deepcopy(session_data))
 
             total_count = len(filtered_sessions)
 
@@ -215,7 +219,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading sessions: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -232,21 +236,22 @@ class InMemoryDb(BaseDb):
 
                     log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
+                    session_copy = deepcopy(session)
                     if not deserialize:
-                        return session
+                        return session_copy
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session)
+                        return AgentSession.from_dict(session_copy)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session)
+                        return TeamSession.from_dict(session_copy)
                     else:
-                        return WorkflowSession.from_dict(session)
+                        return WorkflowSession.from_dict(session_copy)
 
             return None
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
-            return None
+            raise e
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -268,26 +273,30 @@ class InMemoryDb(BaseDb):
                 if existing_session.get("session_id") == session_dict.get("session_id") and self._matches_session_key(
                     existing_session, session
                 ):
-                    # Update existing session
                     session_dict["updated_at"] = int(time.time())
-                    self._sessions[i] = session_dict
+                    self._sessions[i] = deepcopy(session_dict)
                     session_updated = True
                     break
 
             if not session_updated:
-                # Add new session
                 session_dict["created_at"] = session_dict.get("created_at", int(time.time()))
                 session_dict["updated_at"] = session_dict.get("created_at")
-                self._sessions.append(session_dict)
+                self._sessions.append(deepcopy(session_dict))
 
+            session_dict_copy = deepcopy(session_dict)
             if not deserialize:
-                return session_dict
+                return session_dict_copy
 
-            return session
+            if session_dict_copy["session_type"] == SessionType.AGENT:
+                return AgentSession.from_dict(session_dict_copy)
+            elif session_dict_copy["session_type"] == SessionType.TEAM:
+                return TeamSession.from_dict(session_dict_copy)
+            else:
+                return WorkflowSession.from_dict(session_dict_copy)
 
         except Exception as e:
             log_error(f"Exception upserting session: {e}")
-            return None
+            raise e
 
     def _matches_session_key(self, existing_session: Dict[str, Any], session: Session) -> bool:
         """Check if existing session matches the key for the session type."""
@@ -334,10 +343,26 @@ class InMemoryDb(BaseDb):
             return []
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
+        """Delete a user memory from in-memory storage.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user. If provided, verifies the memory belongs to this user before deletion.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
             original_count = len(self._memories)
-            self._memories = [m for m in self._memories if m.get("memory_id") != memory_id]
+
+            # If user_id is provided, verify ownership before deleting
+            if user_id is not None:
+                self._memories = [
+                    m for m in self._memories if not (m.get("memory_id") == memory_id and m.get("user_id") == user_id)
+                ]
+            else:
+                self._memories = [m for m in self._memories if m.get("memory_id") != memory_id]
 
             if len(self._memories) < original_count:
                 log_debug(f"Successfully deleted user memory id: {memory_id}")
@@ -346,17 +371,41 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting memory: {e}")
+            raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
-        """Delete multiple user memories from in-memory storage."""
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+        """Delete multiple user memories from in-memory storage.
+
+        Args:
+            memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user. If provided, only deletes memories belonging to this user.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
-            self._memories = [m for m in self._memories if m.get("memory_id") not in memory_ids]
+            # If user_id is provided, verify ownership before deleting
+            if user_id is not None:
+                self._memories = [
+                    m for m in self._memories if not (m.get("memory_id") in memory_ids and m.get("user_id") == user_id)
+                ]
+            else:
+                self._memories = [m for m in self._memories if m.get("memory_id") not in memory_ids]
             log_debug(f"Successfully deleted {len(memory_ids)} user memories")
 
         except Exception as e:
             log_error(f"Error deleting memories: {e}")
+            raise e
 
     def get_all_memory_topics(self) -> List[str]:
+        """Get all memory topics from in-memory storage.
+
+        Returns:
+            List[str]: List of unique topics.
+
+        Raises:
+            Exception: If an error occurs while reading topics.
+        """
         try:
             topics = set()
             for memory in self._memories:
@@ -367,23 +416,41 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory storage: {e}")
-            return []
+            raise e
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
+        """Get a user memory from in-memory storage.
+
+        Args:
+            memory_id (str): The ID of the memory to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user. If provided, only returns the memory if it belongs to this user.
+
+        Returns:
+            Optional[Union[UserMemory, Dict[str, Any]]]: The memory object or dictionary, or None if not found.
+
+        Raises:
+            Exception: If an error occurs while reading the memory.
+        """
         try:
             for memory_data in self._memories:
                 if memory_data.get("memory_id") == memory_id:
+                    # Filter by user_id if provided
+                    if user_id is not None and memory_data.get("user_id") != user_id:
+                        continue
+
+                    memory_data_copy = deepcopy(memory_data)
                     if not deserialize:
-                        return memory_data
-                    return UserMemory.from_dict(memory_data)
+                        return memory_data_copy
+                    return UserMemory.from_dict(memory_data_copy)
 
             return None
 
         except Exception as e:
             log_error(f"Exception reading from memory storage: {e}")
-            return None
+            raise e
 
     def get_user_memories(
         self,
@@ -417,7 +484,7 @@ class InMemoryDb(BaseDb):
                     if search_content.lower() not in memory_content.lower():
                         continue
 
-                filtered_memories.append(memory_data)
+                filtered_memories.append(deepcopy(memory_data))
 
             total_count = len(filtered_memories)
 
@@ -438,24 +505,40 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory storage: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get user memory statistics."""
+        """Get user memory statistics.
+
+        Args:
+            limit (Optional[int]): Maximum number of stats to return.
+            page (Optional[int]): Page number for pagination.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: List of user memory statistics and total count.
+
+        Raises:
+            Exception: If an error occurs while getting stats.
+        """
         try:
             user_stats = {}
 
             for memory in self._memories:
-                user_id = memory.get("user_id")
-                if user_id:
-                    if user_id not in user_stats:
-                        user_stats[user_id] = {"user_id": user_id, "total_memories": 0, "last_memory_updated_at": 0}
-                    user_stats[user_id]["total_memories"] += 1
+                memory_user_id = memory.get("user_id")
+
+                if memory_user_id:
+                    if memory_user_id not in user_stats:
+                        user_stats[memory_user_id] = {
+                            "user_id": memory_user_id,
+                            "total_memories": 0,
+                            "last_memory_updated_at": 0,
+                        }
+                    user_stats[memory_user_id]["total_memories"] += 1
                     updated_at = memory.get("updated_at", 0)
-                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = updated_at
+                    if updated_at > user_stats[memory_user_id]["last_memory_updated_at"]:
+                        user_stats[memory_user_id]["last_memory_updated_at"] = updated_at
 
             stats_list = list(user_stats.values())
             stats_list.sort(key=lambda x: x["last_memory_updated_at"], reverse=True)
@@ -473,7 +556,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting user memory stats: {e}")
-            return [], 0
+            raise e
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -496,13 +579,15 @@ class InMemoryDb(BaseDb):
             if not memory_updated:
                 self._memories.append(memory_dict)
 
+            memory_dict_copy = deepcopy(memory_dict)
             if not deserialize:
-                return memory_dict
-            return UserMemory.from_dict(memory_dict)
+                return memory_dict_copy
+
+            return UserMemory.from_dict(memory_dict_copy)
 
         except Exception as e:
             log_warning(f"Exception upserting user memory: {e}")
-            return None
+            raise e
 
     def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True
@@ -550,6 +635,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception deleting all memories: {e}")
+            raise e
 
     # -- Metrics methods --
     def calculate_metrics(self) -> Optional[list[dict]]:
@@ -613,7 +699,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception refreshing metrics: {e}")
-            return None
+            raise e
 
     def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
@@ -653,8 +739,8 @@ class InMemoryDb(BaseDb):
                 # Only include necessary fields for metrics
                 filtered_session = {
                     "user_id": session.get("user_id"),
-                    "session_data": session.get("session_data"),
-                    "runs": session.get("runs"),
+                    "session_data": deepcopy(session.get("session_data")),
+                    "runs": deepcopy(session.get("runs")),
                     "created_at": session.get("created_at"),
                     "session_type": session.get("session_type"),
                 }
@@ -664,7 +750,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading sessions for metrics: {e}")
-            return []
+            raise e
 
     def get_metrics(
         self,
@@ -684,7 +770,7 @@ class InMemoryDb(BaseDb):
                 if ending_date and metric_date > ending_date:
                     continue
 
-                filtered_metrics.append(metric)
+                filtered_metrics.append(deepcopy(metric))
 
                 updated_at = metric.get("updated_at")
                 if updated_at and (latest_updated_at is None or updated_at > latest_updated_at):
@@ -694,7 +780,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting metrics: {e}")
-            return [], None
+            raise e
 
     # -- Knowledge methods --
 
@@ -712,6 +798,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {e}")
+            raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from in-memory storage.
@@ -734,7 +821,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge content: {e}")
-            return None
+            raise e
 
     def get_knowledge_contents(
         self,
@@ -758,7 +845,7 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            knowledge_items = self._knowledge.copy()
+            knowledge_items = [deepcopy(item) for item in self._knowledge]
 
             total_count = len(knowledge_items)
 
@@ -776,7 +863,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge contents: {e}")
-            return [], 0
+            raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content.
@@ -808,7 +895,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge row: {e}")
-            return None
+            raise e
 
     # -- Eval methods --
 
@@ -828,7 +915,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error creating eval run: {e}")
-            return None
+            raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from in-memory storage."""
@@ -844,6 +931,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            raise e
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -852,15 +940,16 @@ class InMemoryDb(BaseDb):
         try:
             for run_data in self._eval_runs:
                 if run_data.get("run_id") == eval_run_id:
+                    run_data_copy = deepcopy(run_data)
                     if not deserialize:
-                        return run_data
-                    return EvalRunRecord.model_validate(run_data)
+                        return run_data_copy
+                    return EvalRunRecord.model_validate(run_data_copy)
 
             return None
 
         except Exception as e:
             log_error(f"Exception getting eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_runs(
         self,
@@ -900,7 +989,7 @@ class InMemoryDb(BaseDb):
                     elif filter_type == EvalFilterType.WORKFLOW and run_data.get("workflow_id") is None:
                         continue
 
-                filtered_runs.append(run_data)
+                filtered_runs.append(deepcopy(run_data))
 
             total_count = len(filtered_runs)
 
@@ -924,7 +1013,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -939,13 +1028,14 @@ class InMemoryDb(BaseDb):
 
                     log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
 
+                    run_data_copy = deepcopy(run_data)
                     if not deserialize:
-                        return run_data
+                        return run_data_copy
 
-                    return EvalRunRecord.model_validate(run_data)
+                    return EvalRunRecord.model_validate(run_data_copy)
 
             return None
 
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {e}")
-            return None
+            raise e

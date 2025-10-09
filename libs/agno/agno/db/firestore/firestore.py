@@ -205,7 +205,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
-            return False
+            raise e
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from the database.
@@ -230,6 +230,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
+            raise e
 
     def get_session(
         self,
@@ -288,7 +289,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading session: {e}")
-            return None
+            raise e
 
     def get_sessions(
         self,
@@ -402,7 +403,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading sessions: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -457,7 +458,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
-            return None
+            raise e
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -554,7 +555,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception upserting session: {e}")
-            return None
+            raise e
 
     def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True
@@ -595,11 +596,12 @@ class FirestoreDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Returns:
             bool: True if the memory was deleted, False otherwise.
@@ -609,27 +611,41 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
-            docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
 
-            deleted_count = 0
-            for doc in docs:
-                doc.reference.delete()
-                deleted_count += 1
-
-            success = deleted_count > 0
-            if success:
-                log_debug(f"Successfully deleted user memory id: {memory_id}")
+            # If user_id is provided, verify the memory belongs to the user before deleting
+            if user_id:
+                docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
+                for doc in docs:
+                    data = doc.to_dict()
+                    if data.get("user_id") != user_id:
+                        log_debug(f"Memory {memory_id} does not belong to user {user_id}")
+                        return
+                    doc.reference.delete()
+                    log_debug(f"Successfully deleted user memory id: {memory_id}")
+                    return
             else:
-                log_debug(f"No user memory found with id: {memory_id}")
+                docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
+                deleted_count = 0
+                for doc in docs:
+                    doc.reference.delete()
+                    deleted_count += 1
+
+                success = deleted_count > 0
+                if success:
+                    log_debug(f"Successfully deleted user memory id: {memory_id}")
+                else:
+                    log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
+            raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Raises:
             Exception: If there is an error deleting the memories.
@@ -639,11 +655,21 @@ class FirestoreDb(BaseDb):
             batch = self.db_client.batch()
             deleted_count = 0
 
-            for memory_id in memory_ids:
-                docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
-                for doc in docs:
-                    batch.delete(doc.reference)
-                    deleted_count += 1
+            # If user_id is provided, filter memory_ids to only those belonging to the user
+            if user_id:
+                for memory_id in memory_ids:
+                    docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
+                    for doc in docs:
+                        data = doc.to_dict()
+                        if data.get("user_id") == user_id:
+                            batch.delete(doc.reference)
+                            deleted_count += 1
+            else:
+                for memory_id in memory_ids:
+                    docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
+                    for doc in docs:
+                        batch.delete(doc.reference)
+                        deleted_count += 1
 
             batch.commit()
 
@@ -654,6 +680,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting memories: {e}")
+            raise e
 
     def get_all_memory_topics(self, create_collection_if_not_found: Optional[bool] = True) -> List[str]:
         """Get all memory topics from the database.
@@ -681,15 +708,18 @@ class FirestoreDb(BaseDb):
             return [topic for topic in all_topics if topic]
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
-            return []
+            log_error(f"Exception getting all memory topics: {e}")
+            raise e
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[UserMemory]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Returns:
             Optional[UserMemory]:
@@ -708,14 +738,21 @@ class FirestoreDb(BaseDb):
                 result = doc.to_dict()
                 break
 
-            if result is None or not deserialize:
+            if result is None:
+                return None
+
+            # Filter by user_id if provided
+            if user_id and result.get("user_id") != user_id:
+                return None
+
+            if not deserialize:
                 return result
 
             return UserMemory.from_dict(result)
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
-            return None
+            log_error(f"Exception getting user memory: {e}")
+            raise e
 
     def get_user_memories(
         self,
@@ -793,8 +830,8 @@ class FirestoreDb(BaseDb):
             return [UserMemory.from_dict(record) for record in records]
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
-            return []
+            log_error(f"Exception getting user memories: {e}")
+            raise e
 
     def get_user_memory_stats(
         self,
@@ -815,23 +852,26 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
-            docs = collection_ref.where(filter=FieldFilter("user_id", "!=", None)).stream()
+
+            query = collection_ref.where(filter=FieldFilter("user_id", "!=", None))
+
+            docs = query.stream()
 
             user_stats = {}
             for doc in docs:
                 data = doc.to_dict()
-                user_id = data.get("user_id")
-                if user_id:
-                    if user_id not in user_stats:
-                        user_stats[user_id] = {
-                            "user_id": user_id,
+                current_user_id = data.get("user_id")
+                if current_user_id:
+                    if current_user_id not in user_stats:
+                        user_stats[current_user_id] = {
+                            "user_id": current_user_id,
                             "total_memories": 0,
                             "last_memory_updated_at": 0,
                         }
-                    user_stats[user_id]["total_memories"] += 1
+                    user_stats[current_user_id]["total_memories"] += 1
                     updated_at = data.get("updated_at", 0)
-                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = updated_at
+                    if updated_at > user_stats[current_user_id]["last_memory_updated_at"]:
+                        user_stats[current_user_id]["last_memory_updated_at"] = updated_at
 
             # Convert to list and sort
             formatted_results = list(user_stats.values())
@@ -850,7 +890,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting user memory stats: {e}")
-            return [], 0
+            raise e
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -896,7 +936,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception upserting user memory: {e}")
-            return None
+            raise e
 
     def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True
@@ -965,9 +1005,8 @@ class FirestoreDb(BaseDb):
                 batch.commit()
 
         except Exception as e:
-            from agno.utils.log import log_warning
-
-            log_warning(f"Exception deleting all memories: {e}")
+            log_error(f"Exception deleting all memories: {e}")
+            raise e
 
     # -- Metrics methods --
 
@@ -1001,8 +1040,8 @@ class FirestoreDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception reading from sessions collection: {e}")
-            return []
+            log_error(f"Exception getting all sessions for metrics calculation: {e}")
+            raise e
 
     def _get_metrics_calculation_starting_date(self, collection_ref) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
@@ -1034,7 +1073,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting metrics calculation starting date: {e}")
-            return None
+            raise e
 
     def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics."""
@@ -1126,7 +1165,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting metrics: {e}")
-            return [], None
+            raise e
 
     # -- Knowledge methods --
 
@@ -1147,7 +1186,8 @@ class FirestoreDb(BaseDb):
                 doc.reference.delete()
 
         except Exception as e:
-            log_error(f"Error deleting knowledge source: {e}")
+            log_error(f"Error deleting knowledge content: {e}")
+            raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -1172,8 +1212,8 @@ class FirestoreDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error getting knowledge source: {e}")
-            return None
+            log_error(f"Error getting knowledge content: {e}")
+            raise e
 
     def get_knowledge_contents(
         self,
@@ -1221,8 +1261,8 @@ class FirestoreDb(BaseDb):
             return knowledge_rows, total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge sources: {e}")
-            return [], 0
+            log_error(f"Error getting knowledge contents: {e}")
+            raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
@@ -1252,8 +1292,8 @@ class FirestoreDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge document: {e}")
-            return None
+            log_error(f"Error upserting knowledge content: {e}")
+            raise e
 
     # -- Eval methods --
 
@@ -1276,7 +1316,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error creating eval run: {e}")
-            return None
+            raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
         """Delete an eval run from the database."""
@@ -1296,7 +1336,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting eval run {eval_run_id}: {e}")
-            raise
+            raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the database.
@@ -1327,7 +1367,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
-            raise
+            raise e
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -1365,7 +1405,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_runs(
         self,
@@ -1466,7 +1506,7 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -1512,4 +1552,4 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error updating eval run name {eval_run_id}: {e}")
-            raise
+            raise e

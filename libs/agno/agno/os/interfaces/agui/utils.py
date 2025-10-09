@@ -8,6 +8,7 @@ from typing import AsyncIterator, List, Set, Tuple, Union
 
 from ag_ui.core import (
     BaseEvent,
+    CustomEvent,
     EventType,
     RunFinishedEvent,
     StepFinishedEvent,
@@ -260,6 +261,11 @@ def _create_events_from_chunk(
     elif chunk.event == RunEvent.reasoning_completed:
         step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
         events_to_emit.append(step_finished_event)
+
+    # Handle custom events
+    elif chunk.event == RunEvent.custom_event:
+        custom_event = CustomEvent(name=chunk.event, value=chunk.content)
+        events_to_emit.append(custom_event)
 
     return events_to_emit, message_started, message_id
 

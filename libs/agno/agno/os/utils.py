@@ -1,6 +1,7 @@
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi.routing import APIRoute, APIRouter
 from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent.agent import Agent
@@ -8,6 +9,7 @@ from agno.db.base import BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.os.config import AgentOSConfig
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -57,7 +59,7 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
     if is_workflow_run:
         step_executor_runs = run_dict.get("step_executor_runs", [])
         if step_executor_runs:
-            for message in step_executor_runs[0].get("messages", []):
+            for message in reversed(step_executor_runs[0].get("messages", [])):
                 if message.get("role") == "user":
                     return message.get("content", "")
 
@@ -70,7 +72,7 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
                 return str(input_value)
 
     if run_dict.get("messages") is not None:
-        for message in run_dict["messages"]:
+        for message in reversed(run_dict["messages"]):
             if message.get("role") == "user":
                 return message.get("content", "")
 
@@ -91,18 +93,41 @@ def get_session_name(session: Dict[str, Any]) -> str:
 
         # For teams, identify the first Team run and avoid using the first member's run
         if session.get("session_type") == "team":
-            run = runs[0] if not runs[0].get("agent_id") else runs[1]
+            run = None
+            for r in runs:
+                # If agent_id is not present, it's a team run
+                if not r.get("agent_id"):
+                    run = r
+                    break
+            # Fallback to first run if no team run found
+            if run is None and runs:
+                run = runs[0]
 
-        # For workflows, pass along the first step_executor_run
         elif session.get("session_type") == "workflow":
             try:
-                run = session["runs"][0]["step_executor_runs"][0]
+                workflow_run = runs[0]
+                workflow_input = workflow_run.get("input")
+                if isinstance(workflow_input, str):
+                    return workflow_input
+                elif isinstance(workflow_input, dict):
+                    try:
+                        import json
+
+                        return json.dumps(workflow_input)
+                    except (TypeError, ValueError):
+                        pass
+
+                workflow_name = session.get("workflow_data", {}).get("name")
+                return f"New {workflow_name} Session" if workflow_name else ""
             except (KeyError, IndexError, TypeError):
                 return ""
 
         # For agents, use the first run
         else:
-            run = runs[0]
+            run = runs[0] if runs else None
+
+        if run is None:
+            return ""
 
         if not isinstance(run, dict):
             run = run.to_dict()
@@ -148,17 +173,21 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         return None
 
 
-def extract_format(file: UploadFile):
-    format = None
+def extract_format(file: UploadFile) -> Optional[str]:
+    """Extract the File format from file name or content_type."""
+    # Get the format from the filename
     if file.filename and "." in file.filename:
-        format = file.filename.split(".")[-1].lower()
-    elif file.content_type:
-        format = file.content_type.split("/")[-1]
-    return format
+        return file.filename.split(".")[-1].lower()
+
+    # Fallback to the file content_type
+    if file.content_type:
+        return file.content_type.strip().split("/")[-1]
+
+    return None
 
 
 def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
-    formatted_tools = []
+    formatted_tools: List[Dict] = []
     if agent_tools is not None:
         for tool in agent_tools:
             if isinstance(tool, dict):
@@ -284,7 +313,11 @@ def update_cors_middleware(app: FastAPI, new_origins: list):
     for middleware in app.user_middleware:
         if middleware.cls == CORSMiddleware:
             if hasattr(middleware, "kwargs"):
-                existing_origins = middleware.kwargs.get("allow_origins", [])
+                origins_value = middleware.kwargs.get("allow_origins", [])
+                if isinstance(origins_value, list):
+                    existing_origins = origins_value
+                else:
+                    existing_origins = []
             break
     # Merge origins
     merged_origins = list(set(new_origins + existing_origins))
@@ -296,10 +329,168 @@ def update_cors_middleware(app: FastAPI, new_origins: list):
 
     # Add updated CORS
     app.add_middleware(
-        CORSMiddleware,
+        CORSMiddleware,  # type: ignore
         allow_origins=final_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["*"],
     )
+
+
+def get_existing_route_paths(fastapi_app: FastAPI) -> Dict[str, List[str]]:
+    """Get all existing route paths and methods from the FastAPI app.
+
+    Returns:
+        Dict[str, List[str]]: Dictionary mapping paths to list of HTTP methods
+    """
+    existing_paths: Dict[str, Any] = {}
+    for route in fastapi_app.routes:
+        if isinstance(route, APIRoute):
+            path = route.path
+            methods = list(route.methods) if route.methods else []
+            if path in existing_paths:
+                existing_paths[path].extend(methods)
+            else:
+                existing_paths[path] = methods
+    return existing_paths
+
+
+def find_conflicting_routes(fastapi_app: FastAPI, router: APIRouter) -> List[Dict[str, Any]]:
+    """Find conflicting routes in the FastAPI app.
+
+    Args:
+        fastapi_app: The FastAPI app with all existing routes
+        router: The APIRouter to add
+
+    Returns:
+        List[Dict[str, Any]]: List of conflicting routes
+    """
+    existing_paths = get_existing_route_paths(fastapi_app)
+
+    conflicts = []
+
+    for route in router.routes:
+        if isinstance(route, APIRoute):
+            full_path = route.path
+            route_methods = list(route.methods) if route.methods else []
+
+            if full_path in existing_paths:
+                conflicting_methods: Set[str] = set(route_methods) & set(existing_paths[full_path])
+                if conflicting_methods:
+                    conflicts.append({"path": full_path, "methods": list(conflicting_methods), "route": route})
+    return conflicts
+
+
+def load_yaml_config(config_file_path: str) -> AgentOSConfig:
+    """Load a YAML config file and return the configuration as an AgentOSConfig instance."""
+    from pathlib import Path
+
+    import yaml
+
+    # Validate that the path points to a YAML file
+    path = Path(config_file_path)
+    if path.suffix.lower() not in [".yaml", ".yml"]:
+        raise ValueError(f"Config file must have a .yaml or .yml extension, got: {config_file_path}")
+
+    # Load the YAML file
+    with open(config_file_path, "r") as f:
+        return AgentOSConfig.model_validate(yaml.safe_load(f))
+
+
+def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
+    """Recursively collect MCP tools from a team and its members."""
+    # Check the team tools
+    if team.tools:
+        for tool in team.tools:
+            type_name = type(tool).__name__
+            if type_name in ("MCPTools", "MultiMCPTools"):
+                if tool not in mcp_tools:
+                    mcp_tools.append(tool)
+
+    # Recursively check team members
+    if team.members:
+        for member in team.members:
+            if isinstance(member, Agent):
+                if member.tools:
+                    for tool in member.tools:
+                        type_name = type(tool).__name__
+                        if type_name in ("MCPTools", "MultiMCPTools"):
+                            if tool not in mcp_tools:
+                                mcp_tools.append(tool)
+
+            elif isinstance(member, Team):
+                # Recursively check nested team
+                collect_mcp_tools_from_team(member, mcp_tools)
+
+
+def collect_mcp_tools_from_workflow(workflow: Workflow, mcp_tools: List[Any]) -> None:
+    """Recursively collect MCP tools from a workflow and its steps."""
+    from agno.workflow.steps import Steps
+
+    # Recursively check workflow steps
+    if workflow.steps:
+        if isinstance(workflow.steps, list):
+            # Handle list of steps
+            for step in workflow.steps:
+                collect_mcp_tools_from_workflow_step(step, mcp_tools)
+
+        elif isinstance(workflow.steps, Steps):
+            # Handle Steps container
+            if steps := workflow.steps.steps:
+                for step in steps:
+                    collect_mcp_tools_from_workflow_step(step, mcp_tools)
+
+        elif callable(workflow.steps):
+            pass
+
+
+def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> None:
+    """Collect MCP tools from a single workflow step."""
+    from agno.workflow.condition import Condition
+    from agno.workflow.loop import Loop
+    from agno.workflow.parallel import Parallel
+    from agno.workflow.router import Router
+    from agno.workflow.step import Step
+    from agno.workflow.steps import Steps
+
+    if isinstance(step, Step):
+        # Check step's agent
+        if step.agent:
+            if step.agent.tools:
+                for tool in step.agent.tools:
+                    type_name = type(tool).__name__
+                    if type_name in ("MCPTools", "MultiMCPTools"):
+                        if tool not in mcp_tools:
+                            mcp_tools.append(tool)
+        # Check step's team
+        if step.team:
+            collect_mcp_tools_from_team(step.team, mcp_tools)
+
+    elif isinstance(step, Steps):
+        if steps := step.steps:
+            for step in steps:
+                collect_mcp_tools_from_workflow_step(step, mcp_tools)
+
+    elif isinstance(step, (Parallel, Loop, Condition, Router)):
+        # These contain other steps - recursively check them
+        if hasattr(step, "steps") and step.steps:
+            for sub_step in step.steps:
+                collect_mcp_tools_from_workflow_step(sub_step, mcp_tools)
+
+    elif isinstance(step, Agent):
+        # Direct agent in workflow steps
+        if step.tools:
+            for tool in step.tools:
+                type_name = type(tool).__name__
+                if type_name in ("MCPTools", "MultiMCPTools"):
+                    if tool not in mcp_tools:
+                        mcp_tools.append(tool)
+
+    elif isinstance(step, Team):
+        # Direct team in workflow steps
+        collect_mcp_tools_from_team(step, mcp_tools)
+
+    elif isinstance(step, Workflow):
+        # Nested workflow
+        collect_mcp_tools_from_workflow(step, mcp_tools)

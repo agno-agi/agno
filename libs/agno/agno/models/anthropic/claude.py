@@ -59,7 +59,7 @@ class Claude(Model):
     For more information, see: https://docs.anthropic.com/en/api/messages
     """
 
-    id: str = "claude-3-5-sonnet-20241022"
+    id: str = "claude-sonnet-4-5-20250929"
     name: str = "Claude"
     provider: str = "Anthropic"
 
@@ -78,6 +78,7 @@ class Claude(Model):
     # Client parameters
     api_key: Optional[str] = None
     default_headers: Optional[Dict[str, Any]] = None
+    timeout: Optional[float] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # Anthropic clients
@@ -93,6 +94,8 @@ class Claude(Model):
 
         # Add API key to client parameters
         client_params["api_key"] = self.api_key
+        if self.timeout is not None:
+            client_params["timeout"] = self.timeout
 
         # Add additional client parameters
         if self.client_params is not None:
@@ -420,26 +423,6 @@ class Claude(Model):
         except Exception as e:
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-
-    def format_function_call_results(self, messages: List[Message], function_call_results: List[Message]) -> None:
-        """
-        Handle the results of function calls.
-
-        Args:
-            messages (List[Message]): The list of conversation messages.
-            function_call_results (List[Message]): The results of the function calls.
-        """
-        if len(function_call_results) > 0:
-            fc_responses: List = []
-            for _fc_message in function_call_results:
-                fc_responses.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": _fc_message.tool_call_id,
-                        "content": str(_fc_message.content),
-                    }
-                )
-            messages.append(Message(role="user", content=fc_responses))
 
     def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
         if tools is not None and len(tools) > 0:

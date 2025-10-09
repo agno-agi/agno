@@ -19,7 +19,7 @@ agent = Agent(
         default_headers={"anthropic-beta": "interleaved-thinking-2025-05-14"},
     ),
     tools=[
-        CalculatorTools(enable_all=True),
+        CalculatorTools(),
         YFinanceTools(),
     ],
     instructions=[

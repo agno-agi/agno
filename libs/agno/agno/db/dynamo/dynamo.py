@@ -232,6 +232,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to delete sessions: {e}")
+            raise e
 
     def get_session(
         self,
@@ -290,7 +291,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get session {session_id}: {e}")
-            return None
+            raise e
 
     def get_sessions(
         self,
@@ -410,7 +411,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get sessions: {e}")
-            return []
+            raise e
 
     def rename_session(
         self,
@@ -478,7 +479,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to rename session {session_id}: {e}")
-            return None
+            raise e
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -520,7 +521,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to upsert session {session.session_id}: {e}")
-            return None
+            raise e
 
     def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True
@@ -561,17 +562,31 @@ class DynamoDb(BaseDb):
 
     # --- User Memory ---
 
-    def delete_user_memory(self, memory_id: str) -> None:
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         """
         Delete a user memory from the database.
 
         Args:
             memory_id: The ID of the memory to delete.
+            user_id: The ID of the user (optional, for filtering).
 
         Raises:
             Exception: If any error occurs while deleting the user memory.
         """
         try:
+            # If user_id is provided, verify the memory belongs to the user before deleting
+            if user_id:
+                response = self.client.get_item(
+                    TableName=self.memory_table_name,
+                    Key={"memory_id": {"S": memory_id}},
+                )
+                item = response.get("Item")
+                if item:
+                    memory_data = deserialize_from_dynamodb_item(item)
+                    if memory_data.get("user_id") != user_id:
+                        log_debug(f"Memory {memory_id} does not belong to user {user_id}")
+                        return
+
             self.client.delete_item(
                 TableName=self.memory_table_name,
                 Key={"memory_id": {"S": memory_id}},
@@ -580,19 +595,36 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to delete user memory {memory_id}: {e}")
+            raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """
         Delete user memories from the database in batches.
 
         Args:
             memory_ids: List of memory IDs to delete
+            user_id: The ID of the user (optional, for filtering).
 
         Raises:
             Exception: If any error occurs while deleting the user memories.
         """
 
         try:
+            # If user_id is provided, filter memory_ids to only those belonging to the user
+            if user_id:
+                filtered_memory_ids = []
+                for memory_id in memory_ids:
+                    response = self.client.get_item(
+                        TableName=self.memory_table_name,
+                        Key={"memory_id": {"S": memory_id}},
+                    )
+                    item = response.get("Item")
+                    if item:
+                        memory_data = deserialize_from_dynamodb_item(item)
+                        if memory_data.get("user_id") == user_id:
+                            filtered_memory_ids.append(memory_id)
+                memory_ids = filtered_memory_ids
+
             for i in range(0, len(memory_ids), DYNAMO_BATCH_SIZE_LIMIT):
                 batch = memory_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
 
@@ -604,9 +636,13 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to delete user memories: {e}")
+            raise e
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id: The ID of the user (optional, for filtering).
 
         Returns:
             List[str]: List of unique memory topics.
@@ -616,13 +652,17 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return []
 
-            # Scan the entire table to get all memories
-            response = self.client.scan(TableName=table_name)
+            # Build filter expression for user_id if provided
+            scan_kwargs = {"TableName": table_name}
+
+            # Scan the table to get memories
+            response = self.client.scan(**scan_kwargs)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
-                response = self.client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.scan(**scan_kwargs)
                 items.extend(response.get("Items", []))
 
             # Extract topics from all memories
@@ -636,16 +676,21 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            return []
+            raise e
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self,
+        memory_id: str,
+        deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """
         Get a user memory from the database as a UserMemory object.
 
         Args:
             memory_id: The ID of the memory to get.
+            deserialize: Whether to deserialize the memory.
+            user_id: The ID of the user (optional, for filtering).
 
         Returns:
             Optional[UserMemory]: The user memory data if found, None otherwise.
@@ -662,6 +707,11 @@ class DynamoDb(BaseDb):
                 return None
 
             item = deserialize_from_dynamodb_item(item)
+
+            # Filter by user_id if provided
+            if user_id and item.get("user_id") != user_id:
+                return None
+
             if not deserialize:
                 return item
 
@@ -669,7 +719,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get user memory {memory_id}: {e}")
-            return None
+            raise e
 
     def get_user_memories(
         self,
@@ -789,7 +839,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get user memories: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def get_user_memory_stats(
         self,
@@ -801,6 +851,7 @@ class DynamoDb(BaseDb):
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -820,29 +871,33 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("memories")
 
-            response = self.client.scan(TableName=table_name)
+            # Build filter expression for user_id if provided
+            scan_kwargs = {"TableName": table_name}
+
+            response = self.client.scan(**scan_kwargs)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
-                response = self.client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.scan(**scan_kwargs)
                 items.extend(response.get("Items", []))
 
             # Aggregate stats by user_id
             user_stats = {}
             for item in items:
                 memory_data = deserialize_from_dynamodb_item(item)
-                user_id = memory_data.get("user_id")
+                current_user_id = memory_data.get("user_id")
 
-                if user_id:
-                    if user_id not in user_stats:
-                        user_stats[user_id] = {
-                            "user_id": user_id,
+                if current_user_id:
+                    if current_user_id not in user_stats:
+                        user_stats[current_user_id] = {
+                            "user_id": current_user_id,
                             "total_memories": 0,
                             "last_memory_updated_at": None,
                         }
 
-                    user_stats[user_id]["total_memories"] += 1
+                    user_stats[current_user_id]["total_memories"] += 1
 
                     updated_at = memory_data.get("updated_at")
                     if updated_at:
@@ -850,10 +905,10 @@ class DynamoDb(BaseDb):
                         updated_at_timestamp = int(updated_at_dt.timestamp())
 
                         if updated_at_timestamp and (
-                            user_stats[user_id]["last_memory_updated_at"] is None
-                            or updated_at_timestamp > user_stats[user_id]["last_memory_updated_at"]
+                            user_stats[current_user_id]["last_memory_updated_at"] is None
+                            or updated_at_timestamp > user_stats[current_user_id]["last_memory_updated_at"]
                         ):
-                            user_stats[user_id]["last_memory_updated_at"] = updated_at_timestamp
+                            user_stats[current_user_id]["last_memory_updated_at"] = updated_at_timestamp
 
             # Convert to list and apply sorting
             stats_list = list(user_stats.values())
@@ -875,7 +930,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get user memory stats: {e}")
-            return [], 0
+            raise e
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -904,7 +959,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to upsert user memory: {e}")
-            return None
+            raise e
 
     def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True
@@ -982,6 +1037,7 @@ class DynamoDb(BaseDb):
             from agno.utils.log import log_warning
 
             log_warning(f"Exception deleting all memories: {e}")
+            raise e
 
     # --- Metrics ---
 
@@ -1059,7 +1115,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to calculate metrics: {e}")
-            return None
+            raise e
 
     def _get_metrics_calculation_starting_date(self) -> Optional[date]:
         """Get the first date for which metrics calculation is needed:
@@ -1145,7 +1201,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get metrics calculation starting date: {e}")
-            return None
+            raise e
 
     def _get_all_sessions_for_metrics_calculation(
         self, start_timestamp: int, end_timestamp: int
@@ -1203,7 +1259,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get sessions for metrics calculation: {e}")
-            return []
+            raise e
 
     def _bulk_upsert_metrics(self, metrics_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Bulk upsert metrics records into DynamoDB with proper deduplication.
@@ -1231,7 +1287,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to bulk upsert metrics: {e}")
-            return []
+            raise e
 
     def _upsert_single_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Upsert a single metrics record, checking for existing records with the same date.
@@ -1263,7 +1319,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to upsert single metrics record: {e}")
-            return None
+            raise e
 
     def _get_existing_metrics_record(self, table_name: str, date_str: str) -> Optional[Dict[str, Any]]:
         """Get existing metrics record for a given date.
@@ -1296,7 +1352,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get existing metrics record for date {date_str}: {e}")
-            return None
+            raise e
 
     def _update_existing_metrics_record(
         self,
@@ -1330,7 +1386,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to update existing metrics record: {e}")
-            return None
+            raise e
 
     def _create_new_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a new metrics record.
@@ -1354,7 +1410,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to create new metrics record: {e}")
-            return None
+            raise e
 
     def _prepare_metrics_record_for_dynamo(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """Prepare a metrics record for DynamoDB serialization by converting all data types properly.
@@ -1477,7 +1533,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get metrics: {e}")
-            return [], 0
+            raise e
 
     # --- Knowledge methods ---
 
@@ -1499,6 +1555,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to delete knowledge content {id}: {e}")
+            raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -1521,7 +1578,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get knowledge content {id}: {e}")
-            return None
+            raise e
 
     def get_knowledge_contents(
         self,
@@ -1593,7 +1650,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get knowledge contents: {e}")
-            return [], 0
+            raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
@@ -1614,7 +1671,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to upsert knowledge content {knowledge_row.id}: {e}")
-            return None
+            raise e
 
     # --- Eval ---
 
@@ -1644,7 +1701,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to create eval run: {e}")
-            return None
+            raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         if not eval_run_ids or not self.eval_table_name:
@@ -1662,6 +1719,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to delete eval runs: {e}")
+            raise e
 
     def get_eval_run_raw(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[Dict[str, Any]]:
         if not self.eval_table_name:
@@ -1677,7 +1735,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_run(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[EvalRunRecord]:
         if not self.eval_table_name:
@@ -1693,7 +1751,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_runs(
         self,
@@ -1794,7 +1852,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -1826,4 +1884,4 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to rename eval run {eval_run_id}: {e}")
-            return None
+            raise e

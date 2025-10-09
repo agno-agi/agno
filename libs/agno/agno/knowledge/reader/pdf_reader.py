@@ -117,6 +117,10 @@ def _clean_page_numbers(
     page_numbers = [find_page_number(content) for content in page_content_list]
     if all(x is None or x > 5 for x in page_numbers):
         # This approach won't work reliably for higher page numbers.
+        page_content_list = [
+            f"\n{page_content_list[i]}\n{extra_content[i]}" if extra_content else page_content_list[i]
+            for i in range(len(page_content_list))
+        ]
         return page_content_list, None
 
     # Possible range shifts to detect page numbering
@@ -214,6 +218,19 @@ class BasePDFReader(Reader):
             chunked_documents.extend(self.chunk_document(document))
         return chunked_documents
 
+    def _get_doc_name(self, pdf_source: Union[str, Path, IO[Any]], name: Optional[str] = None) -> str:
+        """Determines the document name from the source or a provided name."""
+        try:
+            if name:
+                return name
+            if isinstance(pdf_source, str):
+                return pdf_source.split("/")[-1].split(".")[0].replace(" ", "_")
+            # Assumes a file-like object with a .name attribute
+            return pdf_source.name.split(".")[0]
+        except Exception:
+            # The original code had a bug here, it should check `name` first.
+            return name or "pdf"
+
     def _decrypt_pdf(self, doc_reader: DocumentReader, doc_name: str, password: Optional[str] = None) -> bool:
         if not doc_reader.is_encrypted:
             return True
@@ -261,7 +278,6 @@ class BasePDFReader(Reader):
 
         if self.chunk:
             return self._build_chunked_documents(documents)
-
         return documents
 
     def _pdf_reader_to_documents(
@@ -329,32 +345,7 @@ class PDFReader(BasePDFReader):
     def read(
         self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None, password: Optional[str] = None
     ) -> List[Document]:
-        try:
-            if name:
-                doc_name = name
-            elif isinstance(pdf, str):
-                doc_name = pdf.split("/")[-1].split(".")[0].replace(" ", "_")
-            else:
-                doc_name = pdf.name.split(".")[0]
-        except Exception:
-            doc_name = "pdf"
-
-        log_info(f"Reading: {doc_name}")
-
-        try:
-            DocumentReader(pdf)
-        except PdfStreamError as e:
-            logger.error(f"Error reading PDF: {e}")
-            return []
-
-        try:
-            if isinstance(pdf, str):
-                doc_name = name or pdf.split("/")[-1].split(".")[0].replace(" ", "_")
-            else:
-                doc_name = name or pdf.name.split(".")[0]
-        except Exception:
-            doc_name = name or "pdf"
-
+        doc_name = self._get_doc_name(pdf, name)
         log_info(f"Reading: {doc_name}")
 
         try:
@@ -362,7 +353,6 @@ class PDFReader(BasePDFReader):
         except PdfStreamError as e:
             logger.error(f"Error reading PDF: {e}")
             return []
-
         # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
@@ -379,15 +369,7 @@ class PDFReader(BasePDFReader):
         if pdf is None:
             log_error("No pdf provided")
             return []
-
-        try:
-            if isinstance(pdf, str):
-                doc_name = name or pdf.split("/")[-1].split(".")[0].replace(" ", "_")
-            else:
-                doc_name = pdf.name.split(".")[0]
-        except Exception:
-            doc_name = name or "pdf"
-
+        doc_name = self._get_doc_name(pdf, name)
         log_info(f"Reading: {doc_name}")
 
         try:
@@ -413,16 +395,13 @@ class PDFImageReader(BasePDFReader):
         if not pdf:
             raise ValueError("No pdf provided")
 
-        try:
-            if isinstance(pdf, str):
-                doc_name = name or pdf.split("/")[-1].split(".")[0].replace(" ", "_")
-            else:
-                doc_name = pdf.name.split(".")[0]
-        except Exception:
-            doc_name = "pdf"
-
+        doc_name = self._get_doc_name(pdf, name)
         log_info(f"Reading: {doc_name}")
-        pdf_reader = DocumentReader(pdf)
+        try:
+            pdf_reader = DocumentReader(pdf)
+        except PdfStreamError as e:
+            logger.error(f"Error reading PDF: {e}")
+            return []
 
         # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
@@ -437,16 +416,14 @@ class PDFImageReader(BasePDFReader):
         if not pdf:
             raise ValueError("No pdf provided")
 
-        try:
-            if isinstance(pdf, str):
-                doc_name = name or pdf.split("/")[-1].split(".")[0].replace(" ", "_")
-            else:
-                doc_name = pdf.name.split(".")[0]
-        except Exception:
-            doc_name = "pdf"
-
+        doc_name = self._get_doc_name(pdf, name)
         log_info(f"Reading: {doc_name}")
-        pdf_reader = DocumentReader(pdf)
+
+        try:
+            pdf_reader = DocumentReader(pdf)
+        except PdfStreamError as e:
+            logger.error(f"Error reading PDF: {e}")
+            return []
 
         # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
