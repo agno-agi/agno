@@ -707,6 +707,34 @@ class Workflow:
 
         return event
 
+    def _enrich_event_with_workflow_context(
+        self,
+        event: Any,
+        workflow_run_response: WorkflowRunOutput,
+        step_index: Optional[Union[int, tuple]] = None,
+        step: Optional[Any] = None,
+    ) -> Any:
+        """Enrich any event with workflow context information for frontend tracking"""
+
+        step_id = getattr(step, "step_id", None) if step else None
+        step_name = getattr(step, "name", None) if step else None
+
+        if hasattr(event, "workflow_id"):
+            event.workflow_id = workflow_run_response.workflow_id
+        if hasattr(event, "workflow_run_id"):
+            event.workflow_run_id = workflow_run_response.run_id
+        if hasattr(event, "step_id") and step_id:
+            event.step_id = step_id
+        if hasattr(event, "step_name") and step_name is not None:
+            if event.step_name is None:
+                event.step_name = step_name
+        # Only set step_index if it's not already set (preserve parallel.py's tuples)
+        if hasattr(event, "step_index") and step_index is not None:
+            if event.step_index is None:
+                event.step_index = step_index
+
+        return event
+
     def _transform_step_output_to_event(
         self, step_output: StepOutput, workflow_run_response: WorkflowRunOutput, step_index: Optional[int] = None
     ) -> StepOutputEvent:
@@ -1171,11 +1199,18 @@ class Workflow:
                                 yield step_output_event
 
                         elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
-                            yield self._handle_event(event, workflow_run_response)  # type: ignore
+                            # Enrich event with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                         else:
-                            # Yield other internal events
-                            yield self._handle_event(event, workflow_run_response)  # type: ignore
+                            # Enrich other events with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -1638,11 +1673,22 @@ class Workflow:
                                 yield step_output_event
 
                         elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
-                            yield self._handle_event(event, workflow_run_response, websocket_handler=websocket_handler)  # type: ignore
+                            # Enrich event with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(
+                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
+                            )  # type: ignore
 
                         else:
-                            # Yield other internal events
-                            yield self._handle_event(event, workflow_run_response, websocket_handler=websocket_handler)  # type: ignore
+                            # Enrich other events with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(
+                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
+                            )  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
