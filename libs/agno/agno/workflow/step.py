@@ -348,6 +348,28 @@ class Step:
         except Exception:
             return False
 
+    def _enrich_event_with_context(
+        self,
+        event: Any,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        step_index: Optional[Union[int, tuple]] = None,
+    ) -> Any:
+        """Enrich event with step and workflow context information"""
+        if workflow_run_response is None:
+            return event
+            
+        if hasattr(event, "step_id"):
+            event.step_id = self.step_id
+        if hasattr(event, "step_name") and self.name is not None:
+            if getattr(event, "step_name", None) is None:
+                event.step_name = self.name
+        # Only set step_index if it's not already set (preserve parallel.py's tuples)
+        if hasattr(event, "step_index") and step_index is not None:
+            if event.step_index is None:
+                event.step_index = step_index
+
+        return event
+
     def execute_stream(
         self,
         step_input: StepInput,
@@ -413,7 +435,11 @@ class Step:
                                     final_response = event
                                     break
                                 else:
-                                    yield event  # type: ignore[misc]
+                                    # Enrich event with workflow context before yielding
+                                    enriched_event = self._enrich_event_with_context(
+                                        event, workflow_run_response, step_index
+                                    )
+                                    yield enriched_event  # type: ignore[misc]
 
                             # Merge session_state changes back
                             if session_state is not None:
@@ -474,14 +500,6 @@ class Step:
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
-                            # Pass workflow context directly via kwargs
-                            workflow_context={
-                                "workflow_id": workflow_run_response.workflow_id if workflow_run_response else None,
-                                "workflow_run_id": workflow_run_response.run_id if workflow_run_response else None,
-                                "step_id": self.step_id,
-                                "step_name": self.name,
-                                "step_index": step_index,
-                            },
                             yield_run_response=True,
                             **kwargs,
                         )
@@ -776,7 +794,11 @@ class Step:
                                 final_response = event
                                 break
                             else:
-                                yield event  # type: ignore[misc]
+                                # Enrich event with workflow context before yielding
+                                enriched_event = self._enrich_event_with_context(
+                                    event, workflow_run_response, step_index
+                                )
+                                yield enriched_event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
                     elif inspect.iscoroutinefunction(self.active_executor):
@@ -803,7 +825,11 @@ class Step:
                                 final_response = event
                                 break
                             else:
-                                yield event  # type: ignore[misc]
+                                # Enrich event with workflow context before yielding
+                                enriched_event = self._enrich_event_with_context(
+                                    event, workflow_run_response, step_index
+                                )
+                                yield enriched_event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
                     else:
@@ -854,14 +880,6 @@ class Step:
                             session_state=session_state_copy,
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
-                            # Pass workflow context directly via kwargs
-                            workflow_context={
-                                "workflow_id": workflow_run_response.workflow_id if workflow_run_response else None,
-                                "workflow_run_id": workflow_run_response.run_id if workflow_run_response else None,
-                                "step_id": self.step_id,
-                                "step_name": self.name,
-                                "step_index": step_index,
-                            },
                             yield_run_response=True,
                             **kwargs,
                         )
