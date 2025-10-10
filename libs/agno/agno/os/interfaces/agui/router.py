@@ -25,7 +25,7 @@ from agno.team.team import Team
 logger = logging.getLogger(__name__)
 
 
-async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+async def run_agent(agent: Agent, run_input: RunAgentInput, user_id, dependencies: dict) -> AsyncIterator[BaseEvent]:
     """Run the contextual Agent, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = run_input.run_id or str(uuid.uuid4())
 
@@ -34,11 +34,6 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
         messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
-        # Look for user_id in run_input.forwarded_props
-        user_id = None
-        if run_input.forwarded_props and isinstance(run_input.forwarded_props, dict):
-            user_id = run_input.forwarded_props.get("user_id")
-
         # Request streaming response from agent
         response_stream = agent.arun(
             input=messages,
@@ -46,6 +41,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
             stream=True,
             stream_intermediate_steps=True,
             user_id=user_id,
+            dependencies=dependencies,
         )
 
         # Stream the response content in AG-UI format
@@ -62,18 +58,13 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+async def run_team(team: Team, input: RunAgentInput, user_id, dependencies: dict) -> AsyncIterator[BaseEvent]:
     """Run the contextual Team, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = input.run_id or str(uuid.uuid4())
     try:
         # Extract the last user message for team execution
         messages = convert_agui_messages_to_agno_messages(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
-
-        # Look for user_id in input.forwarded_props
-        user_id = None
-        if input.forwarded_props and isinstance(input.forwarded_props, dict):
-            user_id = input.forwarded_props.get("user_id")
 
         # Request streaming response from team
         response_stream = team.arun(
@@ -82,6 +73,7 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
             stream=True,
             stream_intermediate_steps=True,
             user_id=user_id,
+            dependencies=dependencies,
         )
 
         # Stream the response content in AG-UI format
@@ -95,7 +87,13 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
+def attach_routes(
+    router: APIRouter,
+    agent: Optional[Agent] = None,
+    team: Optional[Team] = None,
+    user_id_claim: Optional[str] = None,
+    dependencies_claims: Optional[list[str]] = None,
+) -> APIRouter:
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")
 
@@ -103,13 +101,24 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
 
     @router.post("/agui")
     async def run_agent_agui(run_input: RunAgentInput):
+        # Get user_id from input.forwarded_props as defined by user_id_claim
+        user_id = None
+        if run_input.forwarded_props and isinstance(run_input.forwarded_props, dict):
+            user_id = run_input.forwarded_props.get(user_id_claim)
+
+        # Extract dependencies from input.forwarded_props
+        dependencies = {}
+        for claim in dependencies_claims or []:
+            if claim in run_input.forwarded_props:
+                dependencies[claim] = run_input.forwarded_props[claim]
+
         async def event_generator():
             if agent:
-                async for event in run_agent(agent, run_input):
+                async for event in run_agent(agent, run_input, user_id, dependencies):
                     encoded_event = encoder.encode(event)
                     yield encoded_event
             elif team:
-                async for event in run_team(team, run_input):
+                async for event in run_team(team, run_input, user_id, dependencies):
                     encoded_event = encoder.encode(event)
                     yield encoded_event
 
