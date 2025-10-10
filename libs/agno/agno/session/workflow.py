@@ -81,7 +81,7 @@ class WorkflowSession:
         Args:
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
-        if not self or not self.runs:
+        if not self.runs:
             return []
 
         from agno.run.base import RunStatus
