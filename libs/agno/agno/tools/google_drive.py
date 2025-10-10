@@ -106,7 +106,7 @@ class GoogleDriveTools(Toolkit):
 
     def __init__(
         self,
-        auth_port: int,
+        auth_port: Optional[int] = 5050,
         creds: Optional[Credentials] = None,
         scopes: Optional[List[str]] = None,
         creds_path: Optional[str] = None,
@@ -120,8 +120,15 @@ class GoogleDriveTools(Toolkit):
         self.token_path = token_path
         self.scopes = scopes or []
         self.scopes.extend(self.DEFAULT_SCOPES)
+
         self.quota_project_id = quota_project_id or getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
+        if not self.quota_project_id:
+            raise ValueError("GOOGLE_CLOUD_QUOTA_PROJECT_ID is not set")
+
         self.auth_port: int = int(getenv("GOOGLE_AUTH_PORT", str(auth_port)))
+        if not self.auth_port:
+            raise ValueError("GOOGLE_AUTH_PORT is not set")
+
         tools: List[Any] = [
             self.list_files,
         ]
@@ -168,7 +175,8 @@ class GoogleDriveTools(Toolkit):
                 else:
                     flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
                 # Opens up a browser window for OAuth authentication
-                self.creds = flow.run_local_server(port=self.auth_port)
+                self.creds = flow.run_local_server(port=self.auth_port)  # type: ignore
+
             token_file.write_text(self.creds.to_json()) if self.creds else None
 
     @authenticate
@@ -187,7 +195,7 @@ class GoogleDriveTools(Toolkit):
             raise ValueError("Google Drive service is not initialized. Please authenticate first.")
         try:
             results = (
-                self.service.files()
+                self.service.files()  # type: ignore
                 .list(q=query, pageSize=page_size, fields="nextPageToken, files(id, name, mimeType, modifiedTime)")
                 .execute()
             )
@@ -224,7 +232,7 @@ class GoogleDriveTools(Toolkit):
 
         try:
             uploaded_file = (
-                self.service.files()
+                self.service.files()  # type: ignore
                 .create(body=file_metadata, media_body=media, fields="id, name, mimeType, modifiedTime")
                 .execute()
             )
@@ -249,7 +257,7 @@ class GoogleDriveTools(Toolkit):
             raise ValueError("Google Drive service is not initialized. Please authenticate first.")
         dest_path = Path(dest_path)
         try:
-            request = self.service.files().get_media(fileId=file_id)
+            request = self.service.files().get_media(fileId=file_id)  # type: ignore
             with open(dest_path, "wb") as fh:
                 downloader = MediaIoBaseDownload(fh, request)
                 done = False
