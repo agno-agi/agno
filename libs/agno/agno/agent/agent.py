@@ -1050,6 +1050,7 @@ class Agent:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -1065,6 +1066,7 @@ class Agent:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
@@ -1744,6 +1746,7 @@ class Agent:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -1759,6 +1762,7 @@ class Agent:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
@@ -2497,6 +2501,7 @@ class Agent:
             run_messages=run_messages,
             response_format=response_format,
             stream_intermediate_steps=stream_intermediate_steps,
+            session_state=run_response.session_state,
         ):
             yield event
 
@@ -2898,6 +2903,7 @@ class Agent:
             run_messages=run_messages,
             response_format=response_format,
             stream_intermediate_steps=stream_intermediate_steps,
+            session_state=run_response.session_state,
         ):
             yield event
 
@@ -3574,6 +3580,12 @@ class Agent:
         # Update the run_response created_at with the model response created_at
         run_response.created_at = model_response.created_at
 
+        # Update session_state with changes from model response
+        if model_response.updated_session_state is not None and run_response.session_state is not None:
+            from agno.utils.merge_dict import merge_dictionaries
+
+            merge_dictionaries(run_response.session_state, model_response.updated_session_state)
+
         # Build a list of messages that should be added to the RunOutput
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         # Update the RunOutput messages
@@ -3600,6 +3612,7 @@ class Agent:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
     ) -> Iterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
@@ -3633,6 +3646,7 @@ class Agent:
                 reasoning_state=reasoning_state,
                 parse_structured_output=self.should_parse_structured_output,
                 stream_intermediate_steps=stream_intermediate_steps,
+                session_state=session_state,
             )
 
         # Determine reasoning completed
@@ -3675,6 +3689,7 @@ class Agent:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
@@ -3710,6 +3725,7 @@ class Agent:
                 reasoning_state=reasoning_state,
                 parse_structured_output=self.should_parse_structured_output,
                 stream_intermediate_steps=stream_intermediate_steps,
+                session_state=session_state,
             ):
                 yield event
 
@@ -3754,6 +3770,7 @@ class Agent:
         reasoning_state: Optional[Dict[str, Any]] = None,
         parse_structured_output: bool = False,
         stream_intermediate_steps: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
     ) -> Iterator[RunOutputEvent]:
         if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunOutputEvent))
@@ -3945,10 +3962,15 @@ class Agent:
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
-                if model_response_event.updated_session_state is not None and session.session_data is not None:
-                    merge_dictionaries(
-                        session.session_data["session_state"], model_response_event.updated_session_state
-                    )
+                if model_response_event.updated_session_state is not None:
+                    # update the session_state for RunOutput
+                    if session_state is not None:
+                        merge_dictionaries(session_state, model_response_event.updated_session_state)
+                    # update the DB session
+                    if session.session_data is not None:
+                        merge_dictionaries(
+                            session.session_data["session_state"], model_response_event.updated_session_state
+                        )
 
                 if model_response_event.images is not None:
                     for image in model_response_event.images:
