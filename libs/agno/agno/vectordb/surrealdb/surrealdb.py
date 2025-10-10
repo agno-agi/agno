@@ -107,6 +107,8 @@ class SurrealDb(VectorDb):
         m: int = 12,
         search_ef: int = 40,
         embedder: Optional[Embedder] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
     ):
         """Initialize SurrealDB connection.
 
@@ -131,7 +133,8 @@ class SurrealDb(VectorDb):
         self.embedder: Embedder = embedder
         self.dimensions = self.embedder.dimensions
         self.collection = collection
-
+        self.name: Optional[str] = name
+        self.description: Optional[str] = description
         # Convert Distance enum to SurrealDB distance type
         self.distance = {Distance.cosine: "COSINE", Distance.l2: "EUCLIDEAN", Distance.max_inner_product: "DOT"}[
             distance
@@ -671,3 +674,7 @@ class SurrealDb(VectorDb):
         except Exception as e:
             log_error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # SurrealDb doesn't use SearchType enum

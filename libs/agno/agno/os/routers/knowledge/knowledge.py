@@ -18,7 +18,10 @@ from agno.os.routers.knowledge.schemas import (
     ContentStatus,
     ContentStatusResponse,
     ContentUpdateSchema,
+    DocumentSearchResult,
     ReaderSchema,
+    SearchResponseSchema,
+    VectorDbSchema,
 )
 from agno.os.schema import (
     BadRequestResponse,
@@ -34,6 +37,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.utils.log import log_debug, log_info
 from agno.utils.string import generate_id
+from agno.knowledge.document import Document
 
 logger = logging.getLogger(__name__)
 
@@ -514,6 +518,63 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         return ContentStatusResponse(status=status, status_message=status_message or "")
 
     @router.get(
+        "/knowledge/search",
+        status_code=200,
+        operation_id="search_knowledge",
+        summary="Search Knowledge",
+        description="Search the knowledge base for relevant content.",
+        response_model=SearchResponseSchema,
+        responses={
+            200: {
+                "description": "Search results retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "query": "Jordan Mitchell skills", 
+                            "documents": [
+                                {
+                                    "id": "doc_123",
+                                    "content": "Jordan Mitchell - Software Engineer with skills in JavaScript, React, Python",
+                                    "name": "cv_1",
+                                    "meta_data": {"page": 1, "chunk": 1},
+                                    "usage": {"total_tokens": 14},
+                                    "reranking_score": 0.95,
+                                    "content_id": "content_456"
+                                }
+                            ],
+                            "total_results": 7,
+                            "search_time_ms": 45.2
+                        }
+                    }
+                }
+            },
+            400: {"description": "Invalid search parameters"},
+            404: {"description": "No documents found"}
+        }
+    )
+    def search_knowledge(
+        query: str,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        search_type: Optional[str] = Query(default=None, description="The type of search to perform"),
+    ) -> SearchResponseSchema:
+        import time
+        
+        start_time = time.time()
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        results = knowledge.search(query=query, search_type=search_type)
+        search_time_ms = (time.time() - start_time) * 1000
+        
+        # Convert Document objects to serializable format
+        document_results = [DocumentSearchResult.from_document(doc) for doc in results]
+        
+        return SearchResponseSchema(
+            query=query,
+            documents=document_results,
+            total_results=len(document_results),
+            search_time_ms=round(search_time_ms, 2)
+        )
+
+    @router.get(
         "/knowledge/config",
         status_code=200,
         operation_id="get_knowledge_config",
@@ -735,6 +796,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                     "description": "A chunking strategy that splits markdown based on structure like headers, paragraphs and sections",
                                 },
                             },
+                            "vector_dbs": [
+                                {
+                                    "id": "vector_db_1",
+                                    "name": "Vector DB 1",
+                                    "description": "Vector DB 1 description",
+                                    "search_types": ["vector", "keyword", "hybrid"],
+                                }
+                            ],
                             "filters": ["filter_tag_1", "filter_tag2"],
                         }
                     }
@@ -793,8 +862,15 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                     key=chunker_key, name=chunker_info.get("name"), description=chunker_info.get("description")
                 )
 
+        vector_dbs = []
+        if knowledge.vector_db:
+            search_types = knowledge.vector_db.get_supported_search_types()
+            name = knowledge.vector_db.name or knowledge.vector_db.__class__.__name__
+            vector_dbs.append(VectorDbSchema(id=generate_id(name), name=name, description=knowledge.vector_db.description, search_types=search_types))
+
         return ConfigResponseSchema(
             readers=reader_schemas,
+            vector_dbs=vector_dbs,
             readersForType=types_of_readers,
             chunkers=chunkers_dict,
             filters=knowledge.get_filters(),

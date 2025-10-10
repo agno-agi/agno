@@ -32,6 +32,8 @@ class SingleStore(VectorDb):
         embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         reranker: Optional[Reranker] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         # index: Optional[Union[Ivfflat, HNSW]] = HNSW(),
     ):
         _engine: Optional[Engine] = db_engine
@@ -46,7 +48,8 @@ class SingleStore(VectorDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = _engine
         self.metadata: MetaData = MetaData(schema=self.schema)
-
+        self.name: Optional[str] = name
+        self.description: Optional[str] = description
         if embedder is None:
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
@@ -748,3 +751,7 @@ class SingleStore(VectorDb):
         except Exception as e:
             log_error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # SingleStore doesn't use SearchType enum

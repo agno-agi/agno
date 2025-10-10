@@ -33,6 +33,8 @@ class MongoDb(VectorDb):
     def __init__(
         self,
         collection_name: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         db_url: Optional[str] = "mongodb://localhost:27017/",
         database: str = "agno",
         embedder: Optional[Embedder] = None,
@@ -56,6 +58,8 @@ class MongoDb(VectorDb):
 
         Args:
             collection_name (str): Name of the MongoDB collection.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             db_url (Optional[str]): MongoDB connection string.
             database (str): Database name.
             embedder (Embedder): Embedder instance for generating embeddings.
@@ -79,6 +83,8 @@ class MongoDb(VectorDb):
         if not database:
             raise ValueError("Database name must not be empty.")
         self.collection_name = collection_name
+        self.name: Optional[str] = name
+        self.description: Optional[str] = description
         self.database = database
         self.search_index_name = search_index_name
         self.cosmos_compatibility = cosmos_compatibility
@@ -1382,3 +1388,7 @@ class MongoDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.hybrid]

@@ -41,6 +41,8 @@ class Weaviate(VectorDb):
         local: bool = False,
         # Collection params
         collection: str = "default",
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         vector_index: VectorIndex = VectorIndex.HNSW,
         distance: Distance = Distance.COSINE,
         # Search/Embedding params
@@ -58,6 +60,8 @@ class Weaviate(VectorDb):
 
         # Collection setup
         self.collection = collection
+        self.name: Optional[str] = name
+        self.description: Optional[str] = description
         self.vector_index = vector_index
         self.distance = distance
 
@@ -968,3 +972,7 @@ class Weaviate(VectorDb):
         except Exception as e:
             logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
             return False
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.keyword, SearchType.hybrid]

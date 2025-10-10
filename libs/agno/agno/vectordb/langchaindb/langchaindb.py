@@ -11,18 +11,24 @@ class LangChainVectorDb(VectorDb):
         vectorstore: Optional[Any] = None,
         search_kwargs: Optional[dict] = None,
         knowledge_retriever: Optional[Any] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
     ):
         """
         Initialize LangChainVectorDb.
 
         Args:
             vectorstore: The LangChain vectorstore instance
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             search_kwargs: Additional search parameters for the retriever
             knowledge_retriever: An optional LangChain retriever instance
         """
         self.vectorstore = vectorstore
         self.search_kwargs = search_kwargs
         self.knowledge_retriever = knowledge_retriever
+        self.name: Optional[str] = name
+        self.description: Optional[str] = description
 
     def create(self) -> None:
         raise NotImplementedError
@@ -141,3 +147,7 @@ class LangChainVectorDb(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         raise NotImplementedError("update_metadata not supported for LangChain vectorstores")
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # LangChainVectorDb doesn't use SearchType enum
