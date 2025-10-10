@@ -847,8 +847,7 @@ class FunctionCall(BaseModel):
             if exception_to_raise is not None:
                 raise exception_to_raise
 
-            if execution_result is not None:
-                return execution_result
+            return execution_result  # type: ignore[return-value]
 
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
@@ -1054,8 +1053,7 @@ class FunctionCall(BaseModel):
             if exception_to_raise is not None:
                 raise exception_to_raise
 
-            if execution_result is not None:
-                return execution_result
+            return execution_result  # type: ignore[return-value]
 
 
 class ToolResult(BaseModel):
