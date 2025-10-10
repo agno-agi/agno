@@ -842,16 +842,13 @@ class FunctionCall(BaseModel):
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
         finally:
-            # Execute post-hook regardless of success/failure
             self._handle_post_hook()
 
-        # Re-raise AgentRunException after post-hook has executed
-        if exception_to_raise is not None:
-            raise exception_to_raise
+            if exception_to_raise is not None:
+                raise exception_to_raise
 
-        # execution_result is guaranteed to be set here (either in try block or except Exception block)
-        assert execution_result is not None
-        return execution_result
+            if execution_result is not None:
+                return execution_result
 
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
@@ -1049,19 +1046,16 @@ class FunctionCall(BaseModel):
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
         finally:
-            # Execute post-hook regardless of success/failure
             if iscoroutinefunction(self.function.post_hook):
                 await self._handle_post_hook_async()
             else:
                 self._handle_post_hook()
 
-        # Re-raise AgentRunException after post-hook has executed
-        if exception_to_raise is not None:
-            raise exception_to_raise
+            if exception_to_raise is not None:
+                raise exception_to_raise
 
-        # execution_result is guaranteed to be set here (either in try block or except Exception block)
-        assert execution_result is not None
-        return execution_result
+            if execution_result is not None:
+                return execution_result
 
 
 class ToolResult(BaseModel):
