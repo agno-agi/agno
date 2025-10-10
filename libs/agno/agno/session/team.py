@@ -140,6 +140,7 @@ class TeamSession:
             skip_status = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
 
         session_runs = self.runs
+
         # Filter by agent_id and team_id
         if agent_id:
             session_runs = [run for run in session_runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
@@ -149,7 +150,6 @@ class TeamSession:
         if not member_runs:
             # Filter for the main team runs
             session_runs = [run for run in session_runs if run.parent_run_id is None]  # type: ignore
-
         # Filter by status
         session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_status]  # type: ignore
 
@@ -157,6 +157,7 @@ class TeamSession:
         runs_to_process = session_runs[-last_n:] if last_n is not None else session_runs
         messages_from_history = []
         system_message = None
+
         for run_response in runs_to_process:
             if not (run_response and run_response.messages):
                 continue

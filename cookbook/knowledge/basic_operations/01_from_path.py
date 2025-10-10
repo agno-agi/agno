@@ -15,8 +15,10 @@ contents_db = PostgresDb(
 )
 
 vector_db = PgVector(
-    table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+    table_name="vectors",
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
 )
+
 # Create Knowledge Instance
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
@@ -24,6 +26,7 @@ knowledge = Knowledge(
     vector_db=vector_db,
     contents_db=contents_db,
 )
+
 
 asyncio.run(
     knowledge.add_content_async(

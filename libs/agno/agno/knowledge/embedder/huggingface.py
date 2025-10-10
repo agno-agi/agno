@@ -3,12 +3,12 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_warning
 
 try:
     from huggingface_hub import AsyncInferenceClient, InferenceClient
 except ImportError:
-    logger.error("`huggingface-hub` not installed, please run `pip install huggingface-hub`")
+    log_error("`huggingface-hub` not installed, please run `pip install huggingface-hub`")
     raise
 
 
@@ -21,6 +21,11 @@ class HuggingfaceCustomEmbedder(Embedder):
     client_params: Optional[Dict[str, Any]] = None
     huggingface_client: Optional[InferenceClient] = None
     async_client: Optional[AsyncInferenceClient] = None
+
+    def __post_init__(self):
+        if self.enable_batch:
+            log_warning("HuggingfaceEmbedder does not support batch embeddings, setting enable_batch to False")
+            self.enable_batch = False
 
     @property
     def client(self) -> InferenceClient:
@@ -61,7 +66,7 @@ class HuggingfaceCustomEmbedder(Embedder):
             else:
                 return list(response)
         except Exception as e:
-            logger.warning(f"Failed to process embeddings: {e}")
+            log_warning(f"Failed to process embeddings: {e}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -80,7 +85,7 @@ class HuggingfaceCustomEmbedder(Embedder):
             else:
                 return list(response)
         except Exception as e:
-            logger.warning(f"Failed to process embeddings: {e}")
+            log_warning(f"Failed to process embeddings: {e}")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

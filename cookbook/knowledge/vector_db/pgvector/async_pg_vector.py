@@ -18,7 +18,7 @@ if __name__ == "__main__":
     # Comment out after first run
     asyncio.run(
         knowledge_base.add_content_async(
-            url="https://docs.agno.com/introduction/agents.md"
+            url="https://docs.agno.com/concepts/agents/introduction.md"
         )
     )
 

@@ -54,7 +54,7 @@ def get_mcp_server(
     )  # type: ignore
     async def config() -> ConfigResponse:
         return ConfigResponse(
-            os_id=os.os_id or "AgentOS",
+            os_id=os.id or "AgentOS",
             description=os.description,
             available_models=os.config.available_models if os.config else [],
             databases=[db.id for db in os.dbs.values()],
@@ -68,7 +68,7 @@ def get_mcp_server(
             teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
             workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
             interfaces=[
-                InterfaceResponse(type=interface.type, version=interface.version, route=interface.router_prefix)
+                InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces
             ],
         )
@@ -78,21 +78,21 @@ def get_mcp_server(
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise Exception(f"Agent {agent_id} not found")
-        return agent.run(message)
+        return await agent.arun(message)
 
     @mcp.tool(name="run_team", description="Run a team", tags={"core"})  # type: ignore
     async def run_team(team_id: str, message: str) -> TeamRunOutput:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise Exception(f"Team {team_id} not found")
-        return team.run(message)
+        return await team.arun(message)
 
     @mcp.tool(name="run_workflow", description="Run a workflow", tags={"core"})  # type: ignore
     async def run_workflow(workflow_id: str, message: str) -> WorkflowRunOutput:
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise Exception(f"Workflow {workflow_id} not found")
-        return workflow.run(message)
+        return await workflow.arun(message)
 
     # Session Management Tools
     @mcp.tool(name="get_sessions_for_agent", description="Get list of sessions for an agent", tags={"session"})  # type: ignore

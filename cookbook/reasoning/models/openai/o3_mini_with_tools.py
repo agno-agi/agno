@@ -4,7 +4,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
     model=OpenAIChat(id="o3-mini"),
-    tools=[DuckDuckGoTools(search=True)],
+    tools=[DuckDuckGoTools(enable_search=True)],
     instructions="Use tables to display data.",
     markdown=True,
 )

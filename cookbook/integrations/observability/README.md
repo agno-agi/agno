@@ -21,6 +21,9 @@ pip install agentops
 # Langfuse via OpenInference  
 pip install langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
 
+# Opik via OpenInference
+pip install opik opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
+
 # Weave
 pip install weave
 
@@ -59,11 +62,13 @@ pip install opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrume
 | Platform | Description | Additional Dependencies |
 |----------|-------------|------------------------|
 | **Langfuse** | Comprehensive tracing and analytics | `pip install langfuse` |
+| **Opik** | Open-source tracing, evaluations, optimization and debugging for LLM/agent workflows | `pip install opik` |
 | **Arize Phoenix** | Open-source observability with real-time monitoring | `pip install arize-phoenix` |
 | **LangSmith** | LangChain's monitoring and debugging platform | `pip install langsmith` |
 
 **Files:**
 - **[Langfuse via OpenInference](./langfuse_via_openinference.py)** - Langfuse integration
+- **[Opik via OpenInference](./opik_via_openinference.py)** - Opik integration
 - **[Arize Phoenix via OpenInference](./arize_phoenix_via_openinference.py)** - Phoenix integration  
 - **[LangSmith via OpenInference](./langsmith_via_openinference.py)** - LangSmith integration
 

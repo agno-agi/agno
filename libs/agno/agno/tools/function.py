@@ -389,6 +389,9 @@ class Function(BaseModel):
         if not params_set_by_user:
             self.parameters = parameters
 
+        if strict:
+            self.process_schema_for_strict()
+
         try:
             self.entrypoint = self._wrap_callable(self.entrypoint)
         except Exception as e:
@@ -422,7 +425,45 @@ class Function(BaseModel):
             return wrapped
 
     def process_schema_for_strict(self):
-        self.parameters["additionalProperties"] = False
+        """Process the schema to make it strict mode compliant."""
+
+        def make_nested_strict(schema):
+            """Recursively ensure all object schemas have additionalProperties: false"""
+            if not isinstance(schema, dict):
+                return schema
+
+            # Make a copy to avoid modifying the original
+            result = schema.copy()
+
+            # If this is an object schema, ensure additionalProperties: false
+            if result.get("type") == "object" or "properties" in result:
+                result["additionalProperties"] = False
+
+            # If schema has no type but has other schema properties, give it a type
+            if "type" not in result:
+                if "properties" in result:
+                    result["type"] = "object"
+                    result["additionalProperties"] = False
+                elif result.get("title") and not any(
+                    key in result for key in ["properties", "items", "anyOf", "oneOf", "allOf", "enum"]
+                ):
+                    result["type"] = "string"
+
+            # Recursively process nested schemas
+            for key, value in result.items():
+                if key == "properties" and isinstance(value, dict):
+                    result[key] = {k: make_nested_strict(v) for k, v in value.items()}
+                elif key == "items" and isinstance(value, dict):
+                    # This handles array items like List[KnowledgeFilter]
+                    result[key] = make_nested_strict(value)
+                elif isinstance(value, dict):
+                    result[key] = make_nested_strict(value)
+
+            return result
+
+        # Apply strict mode to the entire schema
+        self.parameters = make_nested_strict(self.parameters)
+
         self.parameters["required"] = [
             name
             for name in self.parameters["properties"]
@@ -432,6 +473,7 @@ class Function(BaseModel):
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name and arguments."""
+        import json
         from hashlib import md5
 
         copy_entrypoint_args = entrypoint_args.copy()
@@ -452,7 +494,8 @@ class Function(BaseModel):
             del copy_entrypoint_args["files"]
         if "dependencies" in copy_entrypoint_args:
             del copy_entrypoint_args["dependencies"]
-        args_str = str(copy_entrypoint_args)
+        # Use json.dumps with sort_keys=True to ensure consistent ordering regardless of dict key order
+        args_str = json.dumps(copy_entrypoint_args, sort_keys=True, default=str)
 
         kwargs_str = str(sorted((call_args or {}).items()))
         key_str = f"{self.name}:{args_str}:{kwargs_str}"
@@ -648,7 +691,6 @@ class FunctionCall(BaseModel):
             entrypoint_args["audios"] = self.function._audios
         if "files" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["files"] = self.function._files
-
         return entrypoint_args
 
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -759,6 +801,9 @@ class FunctionCall(BaseModel):
                 return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
+        execution_result = None
+        exception_to_raise = None
+
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
@@ -782,22 +827,27 @@ class FunctionCall(BaseModel):
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
 
+            execution_result = FunctionExecutionResult(
+                status="success", result=self.result, updated_session_state=updated_session_state
+            )
+
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
-            raise
+            exception_to_raise = e
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return FunctionExecutionResult(status="failure", error=str(e))
+            execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
-        # Execute post-hook if it exists
-        self._handle_post_hook()
+        finally:
+            self._handle_post_hook()
 
-        return FunctionExecutionResult(
-            status="success", result=self.result, updated_session_state=updated_session_state
-        )
+            if exception_to_raise is not None:
+                raise exception_to_raise
+
+            return execution_result  # type: ignore[return-value]
 
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
@@ -951,6 +1001,9 @@ class FunctionCall(BaseModel):
                 return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
+        execution_result = None
+        exception_to_raise = None
+
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
@@ -977,25 +1030,30 @@ class FunctionCall(BaseModel):
             if entrypoint_args.get("session_state") is not None:
                 updated_session_state = entrypoint_args.get("session_state")
 
+            execution_result = FunctionExecutionResult(
+                status="success", result=self.result, updated_session_state=updated_session_state
+            )
+
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
-            raise
+            exception_to_raise = e
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return FunctionExecutionResult(status="failure", error=str(e))
+            execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
-        # Execute post-hook if it exists
-        if iscoroutinefunction(self.function.post_hook):
-            await self._handle_post_hook_async()
-        else:
-            self._handle_post_hook()
+        finally:
+            if iscoroutinefunction(self.function.post_hook):
+                await self._handle_post_hook_async()
+            else:
+                self._handle_post_hook()
 
-        return FunctionExecutionResult(
-            status="success", result=self.result, updated_session_state=updated_session_state
-        )
+            if exception_to_raise is not None:
+                raise exception_to_raise
+
+            return execution_result  # type: ignore[return-value]
 
 
 class ToolResult(BaseModel):

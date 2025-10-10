@@ -28,7 +28,14 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.db.base import BaseDb, SessionType, UserMemory
-from agno.exceptions import ModelProviderError, RunCancelledException, StopAgentRun
+from agno.exceptions import (
+    InputCheckError,
+    ModelProviderError,
+    OutputCheckError,
+    RunCancelledException,
+    StopAgentRun,
+)
+from agno.guardrails import BaseGuardrail
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
@@ -64,6 +71,8 @@ from agno.utils.events import (
     create_memory_update_started_event,
     create_parser_model_response_completed_event,
     create_parser_model_response_started_event,
+    create_pre_hook_completed_event,
+    create_pre_hook_started_event,
     create_reasoning_completed_event,
     create_reasoning_started_event,
     create_reasoning_step_event,
@@ -77,6 +86,7 @@ from agno.utils.events import (
     create_tool_call_completed_event,
     create_tool_call_started_event,
 )
+from agno.utils.hooks import filter_hook_args, normalize_hooks
 from agno.utils.knowledge import get_agentic_or_user_search_filters
 from agno.utils.log import (
     log_debug,
@@ -208,6 +218,12 @@ class Agent:
 
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
+
+    # --- Agent Hooks ---
+    # Functions called right after agent-session is loaded, before processing starts
+    pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
+    # Functions called after output is generated but before the response is returned
+    post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
 
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
@@ -379,6 +395,8 @@ class Agent:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
+        pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
+        post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -481,6 +499,10 @@ class Agent:
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
 
+        # Initialize hooks with backward compatibility
+        self.pre_hooks = pre_hooks
+        self.post_hooks = post_hooks
+
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
         self.reasoning_agent = reasoning_agent
@@ -552,6 +574,8 @@ class Agent:
         self._rebuild_tools: bool = True
 
         self._formatter: Optional[SafeFormatter] = None
+
+        self._hooks_normalised = False
 
     def set_id(self) -> None:
         if self.id is None:
@@ -742,35 +766,97 @@ class Agent:
     def _run(
         self,
         run_response: RunOutput,
-        run_messages: RunMessages,
         session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
     ) -> RunOutput:
         """
         Run the Agent and return the RunOutput.
         Steps:
-        1. Reason about the task if reasoning is enabled
-        2. Generate a response from the Model (includes running function calls)
-        3. Update the RunOutput with the model response
-        4. Update Agent Memory
-        5. Calculate session metrics
-        6. Add RunOutput to Agent Session
-        7. Save session to storage
+        1. Execute pre-hooks
+        2. Prepare run messages
+        3. Reason about the task if reasoning is enabled
+        4. Generate a response from the Model (includes running function calls)
+        5. Update the RunOutput with the model response
+        6. Execute post-hooks
+        7. Calculate session metrics
         8. Optional: Save output to file if save_response_to_file is set
+        9. Add RunOutput to Agent Session
+        10. Update Agent Memory
+        11. Save session to storage
         """
-        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
-        # 1. Reason about the task
+        # 1. Execute pre-hooks
+        run_input = cast(RunInput, run_response.input)
+        self.model = cast(Model, self.model)
+        if self.pre_hooks is not None:
+            # Can modify the run input
+            pre_hook_iterator = self._execute_pre_hooks(
+                hooks=self.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+            # Consume the generator without yielding
+            deque(pre_hook_iterator, maxlen=0)
+
+        self._determine_tools_for_model(
+            model=self.model,
+            run_response=run_response,
+            session=session,
+            session_state=session_state,
+            dependencies=dependencies,
+            user_id=user_id,
+            async_mode=False,
+            knowledge_filters=knowledge_filters,
+        )
+
+        # 2. Prepare run messages
+        run_messages: RunMessages = self._get_run_messages(
+            run_response=run_response,
+            input=run_input.input_content,
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            **kwargs,
+        )
+        if len(run_messages.messages) == 0:
+            log_error("No messages to be sent to the model.")
+
+        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
+        # 3. Reason about the task
         self._handle_reasoning(run_response=run_response, run_messages=run_messages)
 
         # Check for cancellation before model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # 2. Generate a response from the Model (includes running function calls)
+        # 4. Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
         model_response: ModelResponse = self.model.response(
             messages=run_messages.messages,
@@ -792,7 +878,7 @@ class Agent:
         # If a parser model is provided, structure the response separately
         self._parse_response_with_parser_model(model_response, run_messages)
 
-        # 3. Update the RunOutput with the model response
+        # 5. Update the RunOutput with the model response
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         if self.store_media:
@@ -806,9 +892,6 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-        # 4. Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
-
         run_response.status = RunStatus.completed
 
         # Convert the response to the structured format if needed
@@ -818,22 +901,36 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # 5. Optional: Save output to file if save_response_to_file is set
+        # 6. Execute post-hooks after output is generated but before response is returned
+        if self.post_hooks is not None:
+            self._execute_post_hooks(
+                hooks=self.post_hooks,  # type: ignore
+                run_output=run_response,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+
+        # 7. Calculate session metrics
+        self._update_session_metrics(session=session, run_response=run_response)
+
+        # 8. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
-        # 6. Add the RunOutput to Agent Session
+        # 9. Add the RunOutput to Agent Session
         session.upsert_run(run=run_response)
 
-        # 7. Update Agent Memory
+        # 10. Update Agent Memory
         response_iterator = self._make_memories_and_summaries(
             run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
         )
         # Consume the response iterator to ensure the memory is updated before the run is completed
         deque(response_iterator, maxlen=0)
 
-        # 8. Save session to memory
+        # 11. Save session to memory
         self.save_session(session=session)
 
         # Log Agent Telemetry
@@ -849,42 +946,103 @@ class Agent:
     def _run_stream(
         self,
         run_response: RunOutput,
-        run_messages: RunMessages,
         session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
         yield_run_response: bool = False,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
         """Run the Agent and yield the RunOutput.
 
         Steps:
-        1. Reason about the task if reasoning is enabled
-        2. Generate a response from the Model (includes running function calls)
-        3. Update Agent Memory
-        4. Calculate session metrics
-        5. Save session to storage
+        1. Execute pre-hooks
+        2. Prepare run messages
+        3. Reason about the task if reasoning is enabled
+        4. Generate a response from the Model (includes running function calls)
+        5. Calculate session metrics
         6. Optional: Save output to file if save_response_to_file is set
         7. Add the RunOutput to the Agent Session
+        8. Update Agent Memory
+        9. Create the run completed event
+        10. Save session to storage
         """
-        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
+        # 1. Execute pre-hooks
+        run_input = cast(RunInput, run_response.input)
+        self.model = cast(Model, self.model)
+        if self.pre_hooks is not None:
+            # Can modify the run input
+            pre_hook_iterator = self._execute_pre_hooks(
+                hooks=self.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+            for event in pre_hook_iterator:
+                yield event
+
+        self._determine_tools_for_model(
+            model=self.model,
+            run_response=run_response,
+            session=session,
+            session_state=session_state,
+            dependencies=dependencies,
+            user_id=user_id,
+            async_mode=False,
+            knowledge_filters=knowledge_filters,
+        )
+
+        # 2. Prepare run messages
+        run_messages: RunMessages = self._get_run_messages(
+            run_response=run_response,
+            input=run_input.input_content,
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            **kwargs,
+        )
+        if len(run_messages.messages) == 0:
+            log_error("No messages to be sent to the model.")
+
+        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
         try:
             # Start the Run by yielding a RunStarted event
             if stream_intermediate_steps:
-                yield self._handle_event(create_run_started_event(run_response), run_response, workflow_context)
+                yield self._handle_event(create_run_started_event(run_response), run_response)
 
-            # 1. Reason about the task if reasoning is enabled
+            # 3. Reason about the task if reasoning is enabled
             yield from self._handle_reasoning_stream(run_response=run_response, run_messages=run_messages)
 
             # Check for cancellation before model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 2. Process model response
+            # 4. Process model response
             if self.output_model is None:
                 for event in self._handle_model_response_stream(
                     session=session,
@@ -892,7 +1050,6 @@ class Agent:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -908,7 +1065,6 @@ class Agent:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
@@ -926,7 +1082,6 @@ class Agent:
                     run_response=run_response,
                     run_messages=run_messages,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -946,20 +1101,18 @@ class Agent:
                 )
                 return
 
-            # 3. Calculate session metrics
-            self._update_session_metrics(session=session, run_response=run_response)
-
             run_response.status = RunStatus.completed
-
-            completed_event = self._handle_event(
-                create_run_completed_event(from_run_response=run_response), run_response, workflow_context
-            )
 
             # Set the run duration
             if run_response.metrics:
                 run_response.metrics.stop_timer()
 
-            # 4. Optional: Save output to file if save_response_to_file is set
+            # TODO: For now we don't run post-hooks during streaming
+
+            # 5. Calculate session metrics
+            self._update_session_metrics(session=session, run_response=run_response)
+
+            # 6. Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
                 run_response=run_response,
                 input=run_messages.user_message,
@@ -967,15 +1120,20 @@ class Agent:
                 user_id=user_id,
             )
 
-            # 5. Add RunOutput to Agent Session
+            # 7. Add RunOutput to Agent Session
             session.upsert_run(run=run_response)
 
-            # 6. Update Agent Memory
+            # 8. Update Agent Memory
             yield from self._make_memories_and_summaries(
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-            # 7. Save session to storage
+            # 9. Create the run completed event
+            completed_event = self._handle_event(
+                create_run_completed_event(from_run_response=run_response), run_response
+            )
+
+            # 10. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -999,7 +1157,6 @@ class Agent:
             yield self._handle_event(
                 create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                 run_response,
-                workflow_context,
             )
 
             # Add the RunOutput to Agent Session even when cancelled
@@ -1092,6 +1249,14 @@ class Agent:
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
 
+        # Normalise hook & guardails
+        if not self._hooks_normalised:
+            if self.pre_hooks:
+                self.pre_hooks = normalize_hooks(self.pre_hooks)
+            if self.post_hooks:
+                self.post_hooks = normalize_hooks(self.post_hooks)
+            self._hooks_normalised = True
+
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
         )
@@ -1105,7 +1270,7 @@ class Agent:
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input,
+            input_content=validated_input,
             images=image_artifacts,
             videos=video_artifacts,
             audios=audio_artifacts,
@@ -1134,9 +1299,6 @@ class Agent:
             else self.add_session_state_to_context
         )
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
-        # Extract workflow context from kwargs if present
-        workflow_context = kwargs.pop("workflow_context", None)
 
         # Initialize Knowledge Filters
         effective_filters = knowledge_filters
@@ -1191,17 +1353,6 @@ class Agent:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        self._determine_tools_for_model(
-            model=self.model,
-            run_response=run_response,
-            session=agent_session,
-            session_state=session_state,
-            dependencies=run_dependencies,
-            user_id=user_id,
-            async_mode=False,
-            knowledge_filters=effective_filters,
-        )
-
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
 
@@ -1210,48 +1361,45 @@ class Agent:
 
         for attempt in range(num_attempts):
             try:
-                # Prepare run messages
-                run_messages: RunMessages = self._get_run_messages(
-                    run_response=run_response,
-                    input=validated_input,
-                    session=agent_session,
-                    session_state=session_state,
-                    user_id=user_id,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
-                    knowledge_filters=effective_filters,
-                    add_history_to_context=add_history,
-                    dependencies=run_dependencies,
-                    add_dependencies_to_context=add_dependencies,
-                    add_session_state_to_context=add_session_state,
-                    **kwargs,
-                )
-                if len(run_messages.messages) == 0:
-                    log_error("No messages to be sent to the model.")
-
                 if stream:
                     response_iterator = self._run_stream(
                         run_response=run_response,
-                        run_messages=run_messages,
-                        user_id=user_id,
                         session=agent_session,
+                        session_state=session_state,
+                        user_id=user_id,
+                        knowledge_filters=effective_filters,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        metadata=metadata,
+                        dependencies=run_dependencies,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
-                        workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
+                        debug_mode=debug_mode,
+                        **kwargs,
                     )
                     return response_iterator
                 else:
                     response = self._run(
                         run_response=run_response,
-                        run_messages=run_messages,
-                        user_id=user_id,
                         session=agent_session,
+                        session_state=session_state,
+                        user_id=user_id,
+                        knowledge_filters=effective_filters,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        metadata=metadata,
+                        dependencies=run_dependencies,
                         response_format=response_format,
+                        debug_mode=debug_mode,
+                        **kwargs,
                     )
                     return response
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                raise e
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -1304,14 +1452,9 @@ class Agent:
     async def _arun(
         self,
         run_response: RunOutput,
-        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         session: AgentSession,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1319,36 +1462,72 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput:
         """Run the Agent and yield the RunOutput.
 
         Steps:
         1. Resolve dependencies
-        2. Prepare run messages
-        3. Reason about the task if reasoning is enabled
-        4. Generate a response from the Model (includes running function calls)
-        5. Update the RunOutput with the model response
-        6. Update Agent Memory
-        7. Calculate session metrics
-        8. Add RunOutput to Agent Session
-        9. Save session to storage
+        2. Execute pre-hooks
+        3. Prepare run messages
+        4. Reason about the task if reasoning is enabled
+        5. Generate a response from the Model (includes running function calls)
+        6. Update the RunOutput with the model response
+        7. Execute post-hooks
+        8. Calculate session metrics
+        9. Save output to file
+        10. Add RunOutput to Agent Session
+        11. Update Agent Memory
+        12. Save session to storage
         """
+        # Register run for cancellation tracking
+        register_run(run_response.run_id)  # type: ignore
+
         # 1. Resolving here for async requirement
         if dependencies is not None:
             await self._aresolve_run_dependencies(dependencies)
 
-        # 2. Prepare run messages
+        # 2. Execute pre-hooks
+        run_input = cast(RunInput, run_response.input)
+        self.model = cast(Model, self.model)
+        if self.pre_hooks is not None:
+            # Can modify the run input
+            pre_hook_iterator = self._aexecute_pre_hooks(
+                hooks=self.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+            # Consume the async iterator without yielding
+            async for _ in pre_hook_iterator:
+                pass
+
+        self._determine_tools_for_model(
+            model=self.model,
+            run_response=run_response,
+            session=session,
+            session_state=session_state,
+            dependencies=dependencies,
+            user_id=user_id,
+            async_mode=True,
+            knowledge_filters=knowledge_filters,
+        )
+
+        # 3. Prepare run messages
         run_messages: RunMessages = self._get_run_messages(
             run_response=run_response,
-            input=input,
+            input=run_input.input_content,
             session=session,
             session_state=session_state,
             user_id=user_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -1362,17 +1541,13 @@ class Agent:
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
-
-        self.model = cast(Model, self.model)
-        # 3. Reason about the task if reasoning is enabled
+        # 4. Reason about the task if reasoning is enabled
         await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
         # Check for cancellation before model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # 4. Generate a response from the Model (includes running function calls)
+        # 5. Generate a response from the Model (includes running function calls)
         model_response: ModelResponse = await self.model.aresponse(
             messages=run_messages.messages,
             tools=self._tools_for_model,
@@ -1392,7 +1567,7 @@ class Agent:
         # If a parser model is provided, structure the response separately
         await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
 
-        # 5. Update the RunOutput with the model response
+        # 6. Update the RunOutput with the model response
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         if self.store_media:
@@ -1406,9 +1581,6 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-        # 6. Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
-
         run_response.status = RunStatus.completed
 
         # Convert the response to the structured format if needed
@@ -1418,21 +1590,35 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # Optional: Save output to file if save_response_to_file is set
+        # 7. Execute post-hooks after output is generated but before response is returned
+        if self.post_hooks is not None:
+            await self._aexecute_post_hooks(
+                hooks=self.post_hooks,  # type: ignore
+                run_output=run_response,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+
+        # 8. Calculate session metrics
+        self._update_session_metrics(session=session, run_response=run_response)
+
+        # 9. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
-        # 7. Add RunOutput to Agent Session
+        # 10. Add RunOutput to Agent Session
         session.upsert_run(run=run_response)
 
-        # 8. Update Agent Memory
+        # 11. Update Agent Memory
         async for _ in self._amake_memories_and_summaries(
             run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
         ):
             pass
 
-        # 9. Save session to storage
+        # 12. Save session to storage
         self.save_session(session=session)
 
         # Log Agent Telemetry
@@ -1449,52 +1635,79 @@ class Agent:
         self,
         run_response: RunOutput,
         session: AgentSession,
-        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         session_state: Optional[Dict[str, Any]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
+        user_id: Optional[str] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
         yield_run_response: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
         """Run the Agent and yield the RunOutput.
 
         Steps:
         1. Resolve dependencies
-        2. Prepare run messages
-        3. Reason about the task if reasoning is enabled
-        4. Generate a response from the Model (includes running function calls)
-        5. Update Agent Memory
+        2. Execute pre-hooks
+        3. Prepare run messages
+        4. Reason about the task if reasoning is enabled
+        5. Generate a response from the Model (includes running function calls)
         6. Calculate session metrics
         7. Add RunOutput to Agent Session
-        8. Save session to storage
+        8. Update Agent Memory
+        9. Create the run completed event
+        10. Save session to storage
         """
+
         # 1. Resolving here for async requirement
         if dependencies is not None:
             await self._aresolve_run_dependencies(dependencies=dependencies)
 
-        # 2. Prepare run messages
+        # 2. Execute pre-hooks
+        run_input = cast(RunInput, run_response.input)
+        self.model = cast(Model, self.model)
+
+        if self.pre_hooks is not None:
+            # Can modify the run input
+            pre_hook_iterator = self._aexecute_pre_hooks(
+                hooks=self.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+            async for event in pre_hook_iterator:
+                yield event
+
+        self._determine_tools_for_model(
+            model=self.model,
+            run_response=run_response,
+            session=session,
+            session_state=session_state,
+            dependencies=dependencies,
+            user_id=user_id,
+            async_mode=True,
+            knowledge_filters=knowledge_filters,
+        )
+
+        # 3. Prepare run messages
         run_messages: RunMessages = self._get_run_messages(
             run_response=run_response,
-            input=input,
+            input=run_input.input_content,
             session=session,
             session_state=session_state,
             user_id=user_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -1512,9 +1725,9 @@ class Agent:
         try:
             # Start the Run by yielding a RunStarted event
             if stream_intermediate_steps:
-                yield self._handle_event(create_run_started_event(run_response), run_response, workflow_context)
+                yield self._handle_event(create_run_started_event(run_response), run_response)
 
-            # 3. Reason about the task if reasoning is enabled
+            # 4. Reason about the task if reasoning is enabled
             async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
                 raise_if_cancelled(run_response.run_id)  # type: ignore
                 yield item
@@ -1522,7 +1735,7 @@ class Agent:
             # Check for cancellation before model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 4. Generate a response from the Model
+            # 5. Generate a response from the Model
             if self.output_model is None:
                 async for event in self._ahandle_model_response_stream(
                     session=session,
@@ -1530,7 +1743,6 @@ class Agent:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -1546,7 +1758,6 @@ class Agent:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
@@ -1563,7 +1774,6 @@ class Agent:
                     session=session,
                     run_response=run_response,
                     run_messages=run_messages,
-                    workflow_context=workflow_context,
                     stream_intermediate_steps=stream_intermediate_steps,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1586,18 +1796,14 @@ class Agent:
                     yield item
                 return
 
-            # 5. Calculate session metrics
-            self._update_session_metrics(session=session, run_response=run_response)
-
             run_response.status = RunStatus.completed
-
-            completed_event = self._handle_event(
-                create_run_completed_event(from_run_response=run_response), run_response, workflow_context
-            )
 
             # Set the run duration
             if run_response.metrics:
                 run_response.metrics.stop_timer()
+
+            # 6. Calculate session metrics
+            self._update_session_metrics(session=session, run_response=run_response)
 
             # Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
@@ -1607,16 +1813,21 @@ class Agent:
                 user_id=user_id,
             )
 
-            # 6. Add RunOutput to Agent Session
+            # 7. Add RunOutput to Agent Session
             session.upsert_run(run=run_response)
 
-            # 7. Update Agent Memory
+            # 8. Update Agent Memory
             async for event in self._amake_memories_and_summaries(
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             ):
                 yield event
 
-            # 8. Save session to storage
+            # 9. Create the run completed event
+            completed_event = self._handle_event(
+                create_run_completed_event(from_run_response=run_response), run_response
+            )
+
+            # 10. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1640,7 +1851,6 @@ class Agent:
             yield self._handle_event(
                 create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                 run_response,
-                workflow_context,
             )
 
             # Add the RunOutput to Agent Session even when cancelled
@@ -1732,6 +1942,14 @@ class Agent:
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
 
+        # Normalise hook & guardails
+        if not self._hooks_normalised:
+            if self.pre_hooks:
+                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)
+            if self.post_hooks:
+                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)
+            self._hooks_normalised = True
+
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
         )
@@ -1745,7 +1963,7 @@ class Agent:
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input,
+            input_content=validated_input,
             images=image_artifacts,
             videos=video_artifacts,
             audios=audio_artifacts,
@@ -1771,9 +1989,6 @@ class Agent:
             else self.add_session_state_to_context
         )
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
-        # Extract workflow context from kwargs if present
-        workflow_context = kwargs.pop("workflow_context", None)
 
         effective_filters = knowledge_filters
         # When filters are passed manually
@@ -1807,6 +2022,9 @@ class Agent:
             else:
                 merge_dictionaries(metadata, self.metadata)
 
+        # If no retries are set, use the agent's default retries
+        retries = retries if retries is not None else self.retries
+
         # Create a new run_response for this attempt
         run_response = RunOutput(
             run_id=run_id,
@@ -1825,20 +2043,6 @@ class Agent:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        self._determine_tools_for_model(
-            model=self.model,
-            run_response=run_response,
-            session=agent_session,
-            session_state=session_state,
-            dependencies=run_dependencies,
-            user_id=user_id,
-            async_mode=True,
-            knowledge_filters=effective_filters,
-        )
-
-        # If no retries are set, use the agent's default retries
-        retries = retries if retries is not None else self.retries
-
         last_exception = None
         num_attempts = retries + 1
 
@@ -1848,37 +2052,27 @@ class Agent:
                 if stream:
                     return self._arun_stream(  # type: ignore
                         run_response=run_response,
-                        input=validated_input,
-                        user_id=user_id,
                         session=agent_session,
+                        user_id=user_id,
                         session_state=session_state,
-                        audio=audio,
-                        images=images,
-                        videos=videos,
-                        files=files,
-                        knowledge_filters=knowledge_filters,
+                        knowledge_filters=effective_filters,
                         add_history_to_context=add_history,
                         add_dependencies_to_context=add_dependencies,
                         add_session_state_to_context=add_session_state,
                         metadata=metadata,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
-                        workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
                         dependencies=run_dependencies,
+                        debug_mode=debug_mode,
                         **kwargs,
                     )  # type: ignore[assignment]
                 else:
                     return self._arun(  # type: ignore
                         run_response=run_response,
-                        input=validated_input,
                         user_id=user_id,
                         session=agent_session,
                         session_state=session_state,
-                        audio=audio,
-                        images=images,
-                        videos=videos,
-                        files=files,
                         knowledge_filters=knowledge_filters,
                         add_history_to_context=add_history,
                         add_dependencies_to_context=add_dependencies,
@@ -1886,11 +2080,15 @@ class Agent:
                         metadata=metadata,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
-                        workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
                         dependencies=run_dependencies,
+                        debug_mode=debug_mode,
                         **kwargs,
                     )
+
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                raise e
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -1988,6 +2186,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        **kwargs,
     ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
         """Continue a previous run.
 
@@ -2086,6 +2285,7 @@ class Agent:
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
+            dependencies=run_dependencies,
             user_id=user_id,
             async_mode=False,
             knowledge_filters=effective_filters,
@@ -2124,6 +2324,8 @@ class Agent:
                         user_id=user_id,
                         session=agent_session,
                         response_format=response_format,
+                        debug_mode=debug_mode,
+                        **kwargs,
                     )
                     return response
             except ModelProviderError as e:
@@ -2170,6 +2372,8 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs,
     ) -> RunOutput:
         """Continue a previous run.
 
@@ -2218,6 +2422,16 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
+        if self.post_hooks is not None:
+            self._execute_post_hooks(
+                hooks=self.post_hooks,  # type: ignore
+                run_output=run_response,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+
         # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
@@ -2256,11 +2470,12 @@ class Agent:
         Steps:
         1. Handle any updated tools
         2. Generate a response from the Model
-        3. Update Agent Memory
-        4. Calculate session metrics
-        5. Save output to file if save_response_to_file is set
-        6. Add RunOutput to Agent Session
-        7. Save session to storage
+        3. Calculate session metrics
+        4. Save output to file if save_response_to_file is set
+        5. Add the run to memory
+        6. Update Agent Memory
+        7. Create the run completed event
+        8. Save session to storage
         """
 
         if dependencies is not None:
@@ -2295,8 +2510,6 @@ class Agent:
 
         run_response.status = RunStatus.completed
 
-        completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
-
         # Set the run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
@@ -2314,7 +2527,10 @@ class Agent:
             run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
         )
 
-        # 7. Save session to storage
+        # 7. Create the run completed event
+        completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
+
+        # 8. Save session to storage
         self.save_session(session=session)
 
         if stream_intermediate_steps:
@@ -2373,6 +2589,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        **kwargs,
     ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
         """Continue a previous run.
 
@@ -2412,10 +2629,6 @@ class Agent:
         session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
         run_dependencies = dependencies if dependencies is not None else self.dependencies
-
-        # Resolve dependencies
-        if run_dependencies is not None:
-            self._resolve_run_dependencies(dependencies=run_dependencies)
 
         effective_filters = knowledge_filters
 
@@ -2508,6 +2721,8 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         dependencies=run_dependencies,
+                        debug_mode=debug_mode,
+                        **kwargs,
                     )
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -2553,6 +2768,8 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs,
     ) -> RunOutput:
         """Continue a previous run.
 
@@ -2604,6 +2821,16 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
+        if self.post_hooks is not None:
+            await self._aexecute_post_hooks(
+                hooks=self.post_hooks,  # type: ignore
+                run_output=run_response,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+
         # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
@@ -2643,18 +2870,16 @@ class Agent:
         Steps:
         1. Handle any updated tools
         2. Generate a response from the Model
-        3. Add the run to memory
-        4. Update Agent Memory
-        5. Calculate session metrics
-        6. Save output to file if save_response_to_file is set
-        7. Save session to storage
+        3. Calculate session metrics
+        4. Save output to file if save_response_to_file is set
+        5. Add the run to memory
+        6. Update Agent Memory
+        7. Create the run completed event
+        8. Save session to storage
         """
-        # Resolving here for async requirement
-        run_dependencies = dependencies if dependencies is not None else self.dependencies
-
         # Resolve dependencies
-        if run_dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=run_dependencies)
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=dependencies)
 
         # Start the Run by yielding a RunContinued event
         if stream_intermediate_steps:
@@ -2687,8 +2912,6 @@ class Agent:
 
         run_response.status = RunStatus.completed
 
-        completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
-
         # Set the run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
@@ -2707,7 +2930,10 @@ class Agent:
         ):
             yield event
 
-        # 7. Save session to storage
+        # 7. Create the run completed event
+        completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
+
+        # 8. Save session to storage
         self.save_session(session=session)
 
         if stream_intermediate_steps:
@@ -2717,6 +2943,202 @@ class Agent:
         await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+
+    def _execute_pre_hooks(
+        self,
+        hooks: Optional[List[Callable[..., Any]]],
+        run_response: RunOutput,
+        run_input: RunInput,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> Iterator[RunOutputEvent]:
+        """Execute multiple pre-hook functions in succession."""
+        if hooks is None:
+            return
+
+        # Prepare all possible arguments once
+        all_args = {
+            "run_input": run_input,
+            "agent": self,
+            "session": session,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
+        all_args.update(kwargs)
+
+        for i, hook in enumerate(hooks):
+            yield self._handle_event(
+                run_response=run_response,
+                event=create_pre_hook_started_event(
+                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                ),
+            )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+                yield self._handle_event(
+                    run_response=run_response,
+                    event=create_pre_hook_completed_event(
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    ),
+                )
+
+            except (InputCheckError, OutputCheckError) as e:
+                raise e
+            except Exception as e:
+                log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
+                log_exception(e)
+            finally:
+                # Reset global log mode incase an agent in the pre-hook changed it
+                self._set_debug(debug_mode=debug_mode)
+
+        # Update the input on the run_response
+        run_response.input = run_input
+
+    async def _aexecute_pre_hooks(
+        self,
+        hooks: Optional[List[Callable[..., Any]]],
+        run_response: RunOutput,
+        run_input: RunInput,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[RunOutputEvent]:
+        """Execute multiple pre-hook functions in succession (async version)."""
+        if hooks is None:
+            return
+
+        # Prepare all possible arguments once
+        all_args = {
+            "run_input": run_input,
+            "agent": self,
+            "session": session,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
+        all_args.update(kwargs)
+
+        for i, hook in enumerate(hooks):
+            yield self._handle_event(
+                run_response=run_response,
+                event=create_pre_hook_started_event(
+                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                ),
+            )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                if asyncio.iscoroutinefunction(hook):
+                    await hook(**filtered_args)
+                else:
+                    # Synchronous function
+                    hook(**filtered_args)
+
+                yield self._handle_event(
+                    run_response=run_response,
+                    event=create_pre_hook_completed_event(
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    ),
+                )
+
+            except (InputCheckError, OutputCheckError) as e:
+                raise e
+            except Exception as e:
+                log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
+                log_exception(e)
+            finally:
+                # Reset global log mode incase an agent in the pre-hook changed it
+                self._set_debug(debug_mode=debug_mode)
+
+        # Update the input on the run_response
+        run_response.input = run_input
+
+    def _execute_post_hooks(
+        self,
+        hooks: Optional[List[Callable[..., Any]]],
+        run_output: RunOutput,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Execute multiple post-hook functions in succession."""
+        if hooks is None:
+            return
+
+        # Prepare all possible arguments once
+        all_args = {
+            "run_output": run_output,
+            "agent": self,
+            "session": session,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
+        all_args.update(kwargs)
+
+        for i, hook in enumerate(hooks):
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+            except (InputCheckError, OutputCheckError) as e:
+                raise e
+            except Exception as e:
+                log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
+                log_exception(e)
+            finally:
+                # Reset global log mode incase an agent in the pre-hook changed it
+                self._set_debug(debug_mode=debug_mode)
+
+    async def _aexecute_post_hooks(
+        self,
+        hooks: Optional[List[Callable[..., Any]]],
+        run_output: RunOutput,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Execute multiple post-hook functions in succession (async version)."""
+        if hooks is None:
+            return
+
+        # Prepare all possible arguments once
+        all_args = {
+            "run_output": run_output,
+            "agent": self,
+            "session": session,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
+        all_args.update(kwargs)
+
+        for i, hook in enumerate(hooks):
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                if asyncio.iscoroutinefunction(hook):
+                    await hook(**filtered_args)
+                else:
+                    hook(**filtered_args)
+
+            except (InputCheckError, OutputCheckError) as e:
+                raise e
+            except Exception as e:
+                log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
+                log_exception(e)
+            finally:
+                # Reset global log mode incase an agent in the pre-hook changed it
+                self._set_debug(debug_mode=debug_mode)
 
     def _handle_agent_run_paused(
         self,
@@ -3176,7 +3598,6 @@ class Agent:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
     ) -> Iterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
@@ -3210,7 +3631,6 @@ class Agent:
                 reasoning_state=reasoning_state,
                 parse_structured_output=self.should_parse_structured_output,
                 stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
             )
 
         # Determine reasoning completed
@@ -3253,7 +3673,6 @@ class Agent:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
     ) -> AsyncIterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
@@ -3289,7 +3708,6 @@ class Agent:
                 reasoning_state=reasoning_state,
                 parse_structured_output=self.should_parse_structured_output,
                 stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
             ):
                 yield event
 
@@ -3334,7 +3752,6 @@ class Agent:
         reasoning_state: Optional[Dict[str, Any]] = None,
         parse_structured_output: bool = False,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
     ) -> Iterator[RunOutputEvent]:
         if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunOutputEvent))
@@ -3398,7 +3815,6 @@ class Agent:
                             content_type=content_type,
                         ),
                         run_response,
-                        workflow_context=workflow_context,
                     )
                 elif (
                     model_response_event.content is not None
@@ -3417,7 +3833,6 @@ class Agent:
                             model_provider_data=model_response_event.provider_data,
                         ),
                         run_response,
-                        workflow_context=workflow_context,
                     )
 
                 # Process audio
@@ -3478,7 +3893,6 @@ class Agent:
                             response_audio=run_response.response_audio,
                         ),
                         run_response,
-                        workflow_context=workflow_context,
                     )
 
                 if model_response_event.images is not None:
@@ -3488,7 +3902,6 @@ class Agent:
                             image=model_response_event.images[-1],
                         ),
                         run_response,
-                        workflow_context=workflow_context,
                     )
 
                     if model_response.images is None:
@@ -4812,7 +5225,7 @@ class Agent:
 
         # 3.2.5 Add information about agentic filters if enabled
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
+            valid_filters = self.knowledge.get_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
@@ -5988,6 +6401,12 @@ class Agent:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
                         break
 
+                    if isinstance(reasoning_agent_response.content, str):
+                        log_warning(
+                            "Reasoning error. Content is a string, not structured output. Continuing regular session..."
+                        )
+                        break
+
                     if (
                         reasoning_agent_response.content.reasoning_steps is None
                         or len(reasoning_agent_response.content.reasoning_steps) == 0
@@ -6215,6 +6634,12 @@ class Agent:
                     )
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
+                        break
+
+                    if isinstance(reasoning_agent_response.content, str):
+                        log_warning(
+                            "Reasoning error. Content is a string, not structured output. Continuing regular session..."
+                        )
                         break
 
                     if reasoning_agent_response.content.reasoning_steps is None:
@@ -6448,7 +6873,6 @@ class Agent:
         run_response: RunOutput,
         run_messages: RunMessages,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
     ):
         """Parse the model response using the output model."""
         from agno.utils.events import (
@@ -6472,7 +6896,6 @@ class Agent:
                 run_response=run_response,
                 model_response=model_response,
                 model_response_event=model_response_event,
-                workflow_context=workflow_context,
                 stream_intermediate_steps=stream_intermediate_steps,
             )
 
@@ -6501,7 +6924,6 @@ class Agent:
         run_response: RunOutput,
         run_messages: RunMessages,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
     ):
         """Parse the model response using the output model."""
         from agno.utils.events import (
@@ -6527,7 +6949,6 @@ class Agent:
                 run_response=run_response,
                 model_response=model_response,
                 model_response_event=model_response_event,
-                workflow_context=workflow_context,
                 stream_intermediate_steps=stream_intermediate_steps,
             ):
                 yield event
@@ -6542,14 +6963,7 @@ class Agent:
         # Update the RunResponse metrics
         run_response.metrics = self._calculate_run_metrics(messages_for_run_response)
 
-    def _handle_event(self, event: RunOutputEvent, run_response: RunOutput, workflow_context: Optional[Dict] = None):
-        if workflow_context:
-            event.workflow_id = workflow_context.get("workflow_id")
-            event.workflow_run_id = workflow_context.get("workflow_run_id")
-            event.step_id = workflow_context.get("step_id")
-            event.step_name = workflow_context.get("step_name")
-            event.step_index = workflow_context.get("step_index")
-
+    def _handle_event(self, event: RunOutputEvent, run_response: RunOutput):
         # We only store events that are not run_response_content events
         events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
         if self.store_events and event.event not in events_to_skip:
@@ -6947,7 +7361,6 @@ class Agent:
             markdown = self.markdown
 
         if self.output_schema is not None:
-            markdown = False
             markdown = False
 
         if stream is None:

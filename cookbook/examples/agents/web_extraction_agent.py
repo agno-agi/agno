@@ -40,7 +40,7 @@ class PageInformation(BaseModel):
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4.1"),
-    tools=[FirecrawlTools(scrape=True, crawl=True)],
+    tools=[FirecrawlTools(enable_scrape=True, enable_crawl=True)],
     instructions=dedent("""
         You are an expert web researcher and content extractor. Extract comprehensive, structured information
         from the provided webpage. Focus on:
