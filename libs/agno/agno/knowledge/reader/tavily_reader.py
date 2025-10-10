@@ -95,8 +95,11 @@ class TavilyReader(Reader):
         extract_params = {
             "urls": [url],
             "depth": self.extract_depth,
-            **self.params,
         }
+
+        # Add optional params if provided
+        if self.params:
+            extract_params.update(self.params)
 
         try:
             # Call Tavily Extract API
