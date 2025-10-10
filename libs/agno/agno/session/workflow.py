@@ -88,7 +88,11 @@ class WorkflowSession:
 
         # Get completed runs only (exclude current/pending run)
         completed_runs = [run for run in self.runs if run.status == RunStatus.completed]
-        recent_runs = completed_runs[-num_runs:] if num_runs is not None and len(completed_runs) > num_runs else completed_runs
+        
+        if num_runs is not None and len(completed_runs) > num_runs:
+            recent_runs = completed_runs[-num_runs:]
+        else:
+            recent_runs = completed_runs
 
         if not recent_runs:
             return []
