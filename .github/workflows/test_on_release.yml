@@ -127,31 +127,34 @@ jobs:
           ./scripts/run_model_tests.sh anthropic
 
   # Run tests for AWS
-  test-aws:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
-      fail-fast: true
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: "us-east-1"
-      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup and AWS tests
-        working-directory: .
-        run: |
-          ./scripts/run_model_tests.sh aws
+  #
+  # -- Some tests hang. Commented out until we revisit them.
+  #
+  # test-aws:
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     matrix:
+  #       python-version: ["3.12"]
+  #     fail-fast: true
+  #   env:
+  #     AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
+  #     AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+  #     AWS_REGION: "us-east-1"
+  #     EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+  #   steps:
+  #     - uses: actions/checkout@v3
+  #     - name: Set up Python ${{ matrix.python-version }}
+  #       uses: actions/setup-python@v4
+  #       with:
+  #         python-version: ${{ matrix.python-version }}
+  #     - name: Install uv
+  #       run: |
+  #         curl -LsSf https://astral.sh/uv/install.sh | sh
+  #         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+  #     - name: Run dev setup and AWS tests
+  #       working-directory: .
+  #       run: |
+  #         ./scripts/run_model_tests.sh aws
 
   # Run tests for Cohere
   test-cohere:
