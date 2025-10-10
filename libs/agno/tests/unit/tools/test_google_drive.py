@@ -31,7 +31,8 @@ def drive_tools(mock_creds, mock_service):
         patch.object(GoogleDriveTools, "_auth", return_value=None),
     ):
         mock_build.return_value = mock_service
-        tools = GoogleDriveTools(creds=mock_creds)
+        # Provide an auth_port so the constructor doesn't fail during tests
+        tools = GoogleDriveTools(creds=mock_creds, auth_port=5050)
         tools.service = mock_service
         return tools
 
