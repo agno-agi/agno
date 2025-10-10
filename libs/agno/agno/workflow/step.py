@@ -358,6 +358,10 @@ class Step:
         if workflow_run_response is None:
             return event
             
+        if hasattr(event, 'workflow_id'):
+            event.workflow_id = workflow_run_response.workflow_id
+        if hasattr(event, 'workflow_run_id'):
+            event.workflow_run_id = workflow_run_response.run_id
         if hasattr(event, "step_id"):
             event.step_id = self.step_id
         if hasattr(event, "step_name") and self.name is not None:
@@ -509,7 +513,10 @@ class Step:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 break
-                            yield event  # type: ignore[misc]
+                            enriched_event = self._enrich_event_with_context(
+                                event, workflow_run_response, step_index
+                            )
+                            yield enriched_event  # type: ignore[misc]
 
                         if session_state is not None:
                             # Update workflow session state
@@ -889,7 +896,10 @@ class Step:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 break
-                            yield event  # type: ignore[misc]
+                            enriched_event = self._enrich_event_with_context(
+                                event, workflow_run_response, step_index
+                            )
+                            yield enriched_event  # type: ignore[misc]
 
                         if session_state is not None:
                             # Update workflow session state
