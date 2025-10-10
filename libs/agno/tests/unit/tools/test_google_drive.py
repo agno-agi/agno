@@ -32,7 +32,7 @@ def drive_tools(mock_creds, mock_service):
     ):
         mock_build.return_value = mock_service
         # Provide an auth_port so the constructor doesn't fail during tests
-        tools = GoogleDriveTools(creds=mock_creds, auth_port=5050)
+        tools = GoogleDriveTools(creds=mock_creds, auth_port=5050, quota_project_id="test-project-id")
         tools.service = mock_service
         return tools
 
