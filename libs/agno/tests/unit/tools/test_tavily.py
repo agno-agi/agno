@@ -1,6 +1,5 @@
 """Unit tests for TavilyTools class."""
 
-import json
 import os
 from unittest.mock import Mock, patch
 
