@@ -562,17 +562,31 @@ class DynamoDb(BaseDb):
 
     # --- User Memory ---
 
-    def delete_user_memory(self, memory_id: str) -> None:
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         """
         Delete a user memory from the database.
 
         Args:
             memory_id: The ID of the memory to delete.
+            user_id: The ID of the user (optional, for filtering).
 
         Raises:
             Exception: If any error occurs while deleting the user memory.
         """
         try:
+            # If user_id is provided, verify the memory belongs to the user before deleting
+            if user_id:
+                response = self.client.get_item(
+                    TableName=self.memory_table_name,
+                    Key={"memory_id": {"S": memory_id}},
+                )
+                item = response.get("Item")
+                if item:
+                    memory_data = deserialize_from_dynamodb_item(item)
+                    if memory_data.get("user_id") != user_id:
+                        log_debug(f"Memory {memory_id} does not belong to user {user_id}")
+                        return
+
             self.client.delete_item(
                 TableName=self.memory_table_name,
                 Key={"memory_id": {"S": memory_id}},
@@ -583,18 +597,34 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to delete user memory {memory_id}: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """
         Delete user memories from the database in batches.
 
         Args:
             memory_ids: List of memory IDs to delete
+            user_id: The ID of the user (optional, for filtering).
 
         Raises:
             Exception: If any error occurs while deleting the user memories.
         """
 
         try:
+            # If user_id is provided, filter memory_ids to only those belonging to the user
+            if user_id:
+                filtered_memory_ids = []
+                for memory_id in memory_ids:
+                    response = self.client.get_item(
+                        TableName=self.memory_table_name,
+                        Key={"memory_id": {"S": memory_id}},
+                    )
+                    item = response.get("Item")
+                    if item:
+                        memory_data = deserialize_from_dynamodb_item(item)
+                        if memory_data.get("user_id") == user_id:
+                            filtered_memory_ids.append(memory_id)
+                memory_ids = filtered_memory_ids
+
             for i in range(0, len(memory_ids), DYNAMO_BATCH_SIZE_LIMIT):
                 batch = memory_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
 
@@ -611,6 +641,9 @@ class DynamoDb(BaseDb):
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
 
+        Args:
+            user_id: The ID of the user (optional, for filtering).
+
         Returns:
             List[str]: List of unique memory topics.
         """
@@ -619,13 +652,17 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return []
 
-            # Scan the entire table to get all memories
-            response = self.client.scan(TableName=table_name)
+            # Build filter expression for user_id if provided
+            scan_kwargs = {"TableName": table_name}
+
+            # Scan the table to get memories
+            response = self.client.scan(**scan_kwargs)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
-                response = self.client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.scan(**scan_kwargs)
                 items.extend(response.get("Items", []))
 
             # Extract topics from all memories
@@ -642,13 +679,18 @@ class DynamoDb(BaseDb):
             raise e
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self,
+        memory_id: str,
+        deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """
         Get a user memory from the database as a UserMemory object.
 
         Args:
             memory_id: The ID of the memory to get.
+            deserialize: Whether to deserialize the memory.
+            user_id: The ID of the user (optional, for filtering).
 
         Returns:
             Optional[UserMemory]: The user memory data if found, None otherwise.
@@ -665,6 +707,11 @@ class DynamoDb(BaseDb):
                 return None
 
             item = deserialize_from_dynamodb_item(item)
+
+            # Filter by user_id if provided
+            if user_id and item.get("user_id") != user_id:
+                return None
+
             if not deserialize:
                 return item
 
@@ -804,6 +851,7 @@ class DynamoDb(BaseDb):
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -823,29 +871,33 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("memories")
 
-            response = self.client.scan(TableName=table_name)
+            # Build filter expression for user_id if provided
+            scan_kwargs = {"TableName": table_name}
+
+            response = self.client.scan(**scan_kwargs)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
-                response = self.client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.scan(**scan_kwargs)
                 items.extend(response.get("Items", []))
 
             # Aggregate stats by user_id
             user_stats = {}
             for item in items:
                 memory_data = deserialize_from_dynamodb_item(item)
-                user_id = memory_data.get("user_id")
+                current_user_id = memory_data.get("user_id")
 
-                if user_id:
-                    if user_id not in user_stats:
-                        user_stats[user_id] = {
-                            "user_id": user_id,
+                if current_user_id:
+                    if current_user_id not in user_stats:
+                        user_stats[current_user_id] = {
+                            "user_id": current_user_id,
                             "total_memories": 0,
                             "last_memory_updated_at": None,
                         }
 
-                    user_stats[user_id]["total_memories"] += 1
+                    user_stats[current_user_id]["total_memories"] += 1
 
                     updated_at = memory_data.get("updated_at")
                     if updated_at:
@@ -853,10 +905,10 @@ class DynamoDb(BaseDb):
                         updated_at_timestamp = int(updated_at_dt.timestamp())
 
                         if updated_at_timestamp and (
-                            user_stats[user_id]["last_memory_updated_at"] is None
-                            or updated_at_timestamp > user_stats[user_id]["last_memory_updated_at"]
+                            user_stats[current_user_id]["last_memory_updated_at"] is None
+                            or updated_at_timestamp > user_stats[current_user_id]["last_memory_updated_at"]
                         ):
-                            user_stats[user_id]["last_memory_updated_at"] = updated_at_timestamp
+                            user_stats[current_user_id]["last_memory_updated_at"] = updated_at_timestamp
 
             # Convert to list and apply sorting
             stats_list = list(user_stats.values())
@@ -1402,17 +1454,17 @@ class DynamoDb(BaseDb):
         """
         import json
 
-        item = {}
+        item: Dict[str, Any] = {}
         for key, value in data.items():
             if value is not None:
                 if isinstance(value, bool):
-                    item[key] = {"BOOL": str(value)}
+                    item[key] = {"BOOL": value}
                 elif isinstance(value, (int, float)):
                     item[key] = {"N": str(value)}
                 elif isinstance(value, str):
                     item[key] = {"S": str(value)}
                 elif isinstance(value, (dict, list)):
-                    item[key] = {"S": json.dumps(str(value))}
+                    item[key] = {"S": json.dumps(value)}
                 else:
                     item[key] = {"S": str(value)}
         return item
@@ -1751,14 +1803,16 @@ class DynamoDb(BaseDb):
 
             if filter_type is not None:
                 if filter_type == EvalFilterType.AGENT:
-                    filter_expressions.append("agent_id IS NOT NULL")
+                    filter_expressions.append("attribute_exists(agent_id)")
                 elif filter_type == EvalFilterType.TEAM:
-                    filter_expressions.append("team_id IS NOT NULL")
+                    filter_expressions.append("attribute_exists(team_id)")
                 elif filter_type == EvalFilterType.WORKFLOW:
-                    filter_expressions.append("workflow_id IS NOT NULL")
+                    filter_expressions.append("attribute_exists(workflow_id)")
 
             if filter_expressions:
                 scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
+
+            if expression_values:
                 scan_kwargs["ExpressionAttributeValues"] = expression_values  # type: ignore
 
             # Execute scan

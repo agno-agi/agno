@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.exceptions import RunCancelledException
+from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
@@ -54,6 +54,7 @@ from agno.team.team import Team
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.log import (
     log_debug,
+    log_error,
     log_warning,
     logger,
     set_log_level_to_debug,
@@ -904,6 +905,34 @@ class Workflow:
 
         return event
 
+    def _enrich_event_with_workflow_context(
+        self,
+        event: Any,
+        workflow_run_response: WorkflowRunOutput,
+        step_index: Optional[Union[int, tuple]] = None,
+        step: Optional[Any] = None,
+    ) -> Any:
+        """Enrich any event with workflow context information for frontend tracking"""
+
+        step_id = getattr(step, "step_id", None) if step else None
+        step_name = getattr(step, "name", None) if step else None
+
+        if hasattr(event, "workflow_id"):
+            event.workflow_id = workflow_run_response.workflow_id
+        if hasattr(event, "workflow_run_id"):
+            event.workflow_run_id = workflow_run_response.run_id
+        if hasattr(event, "step_id") and step_id:
+            event.step_id = step_id
+        if hasattr(event, "step_name") and step_name is not None:
+            if event.step_name is None:
+                event.step_name = step_name
+        # Only set step_index if it's not already set (preserve parallel.py's tuples)
+        if hasattr(event, "step_index") and step_index is not None:
+            if event.step_index is None:
+                event.step_index = step_index
+
+        return event
+
     def _transform_step_output_to_event(
         self, step_output: StepOutput, workflow_run_response: WorkflowRunOutput, step_index: Optional[int] = None
     ) -> StepOutputEvent:
@@ -1072,10 +1101,8 @@ class Workflow:
             return func(**call_kwargs)
         except TypeError as e:
             # If signature inspection fails, fall back to original method
-            logger.warning(
-                f"Async function signature inspection failed: {e}. Falling back to original calling convention."
-            )
-            return func(**call_kwargs)
+            logger.error(f"Function signature inspection failed: {e}. Falling back to original calling convention.")
+            return func(**kwargs)
 
     def _execute(
         self,
@@ -1089,7 +1116,8 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
-        register_run(workflow_run_response.run_id)  # type: ignore
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
@@ -1198,8 +1226,14 @@ class Workflow:
                 workflow_run_response.audio = output_audio
                 workflow_run_response.status = RunStatus.completed
 
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                # Store error response
+                workflow_run_response.status = RunStatus.error
+                workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
+
+                raise e
             except RunCancelledException as e:
-                # Handle run cancellation
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.content = str(e)
@@ -1211,6 +1245,7 @@ class Workflow:
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
+                raise e
 
             finally:
                 self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
@@ -1362,11 +1397,18 @@ class Workflow:
                                 yield step_output_event
 
                         elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
-                            yield self._handle_event(event, workflow_run_response)  # type: ignore
+                            # Enrich event with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                         else:
-                            # Yield other internal events
-                            yield self._handle_event(event, workflow_run_response)  # type: ignore
+                            # Enrich other events with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -1397,6 +1439,24 @@ class Workflow:
                 workflow_run_response.audio = output_audio
                 workflow_run_response.status = RunStatus.completed
 
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+
+                from agno.run.workflow import WorkflowErrorEvent
+
+                error_event = WorkflowErrorEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session.session_id,
+                    error=str(e),
+                )
+
+                yield error_event
+
+                # Update workflow_run_response with error
+                workflow_run_response.content = error_event.error
+                workflow_run_response.status = RunStatus.error
             except RunCancelledException as e:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
@@ -1428,6 +1488,7 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
+                raise e
 
         # Yield workflow completed event
         workflow_completed_event = WorkflowCompletedEvent(
@@ -1517,7 +1578,8 @@ class Workflow:
         workflow_run_response.status = RunStatus.running
 
         # Register run for cancellation tracking
-        register_run(workflow_run_response.run_id)  # type: ignore
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             # Execute the workflow with the custom executor
@@ -1634,6 +1696,13 @@ class Workflow:
                 workflow_run_response.audio = output_audio
                 workflow_run_response.status = RunStatus.completed
 
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                # Store error response
+                workflow_run_response.status = RunStatus.error
+                workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
+
+                raise e
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
@@ -1642,6 +1711,7 @@ class Workflow:
                 logger.error(f"Workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
+                raise e
 
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
@@ -1672,6 +1742,11 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
+
+        # Register run for cancellation tracking
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)
+
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
@@ -1799,11 +1874,22 @@ class Workflow:
                                 yield step_output_event
 
                         elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
-                            yield self._handle_event(event, workflow_run_response, websocket_handler=websocket_handler)  # type: ignore
+                            # Enrich event with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(
+                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
+                            )  # type: ignore
 
                         else:
-                            # Yield other internal events
-                            yield self._handle_event(event, workflow_run_response, websocket_handler=websocket_handler)  # type: ignore
+                            # Enrich other events with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(
+                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
+                            )  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -1834,6 +1920,24 @@ class Workflow:
                 workflow_run_response.audio = output_audio
                 workflow_run_response.status = RunStatus.completed
 
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+
+                from agno.run.workflow import WorkflowErrorEvent
+
+                error_event = WorkflowErrorEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session.session_id,
+                    error=str(e),
+                )
+
+                yield error_event
+
+                # Update workflow_run_response with error
+                workflow_run_response.content = error_event.error
+                workflow_run_response.status = RunStatus.error
             except RunCancelledException as e:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
@@ -1869,6 +1973,7 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
+                raise e
 
         # Yield workflow completed event
         workflow_completed_event = WorkflowCompletedEvent(
@@ -2345,6 +2450,7 @@ class Workflow:
                     additional_data=additional_data,
                     user_id=user_id,
                     session_id=session_id,
+                    session_state=session_state,
                     audio=audio,
                     images=images,
                     videos=videos,
@@ -2363,6 +2469,7 @@ class Workflow:
                     additional_data=additional_data,
                     user_id=user_id,
                     session_id=session_id,
+                    session_state=session_state,
                     audio=audio,
                     images=images,
                     videos=videos,

@@ -3,7 +3,7 @@ import math
 from typing import List, Optional, Union, cast
 from uuid import uuid4
 
-from fastapi import Depends, HTTPException, Path, Query
+from fastapi import Depends, HTTPException, Path, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -82,9 +82,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         },
     )
     async def create_memory(
+        request: Request,
         payload: UserMemoryCreateSchema,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for memory storage"),
     ) -> UserMemorySchema:
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+            payload.user_id = user_id
+
+        if payload.user_id is None:
+            raise HTTPException(status_code=400, detail="User ID is required")
+
         db = get_db(dbs, db_id)
 
         if isinstance(db, AsyncBaseDb):
@@ -128,14 +136,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
     )
     async def delete_memory(
         memory_id: str = Path(description="Memory ID to delete"),
+        user_id: Optional[str] = Query(default=None, description="User ID to delete memory for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
     ) -> None:
         db = get_db(dbs, db_id)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_user_memory(memory_id=memory_id)
+            await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
         else:
-            db.delete_user_memory(memory_id=memory_id)
+            db.delete_user_memory(memory_id=memory_id, user_id=user_id)
 
     @router.delete(
         "/memories",
@@ -159,9 +168,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         db = get_db(dbs, db_id)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_user_memories(memory_ids=request.memory_ids)
+            await db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
         else:
-            db.delete_user_memories(memory_ids=request.memory_ids)
+            db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
 
     @router.get(
         "/memories",
@@ -197,6 +206,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         },
     )
     async def get_memories(
+        request: Request,
         user_id: Optional[str] = Query(default=None, description="Filter memories by user ID"),
         agent_id: Optional[str] = Query(default=None, description="Filter memories by agent ID"),
         team_id: Optional[str] = Query(default=None, description="Filter memories by team ID"),
@@ -209,6 +219,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         db_id: Optional[str] = Query(default=None, description="Database ID to query memories from"),
     ) -> PaginatedResponse[UserMemorySchema]:
         db = get_db(dbs, db_id)
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -276,15 +289,21 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         },
     )
     async def get_memory(
+        request: Request,
         memory_id: str = Path(description="Memory ID to retrieve"),
+        user_id: Optional[str] = Query(default=None, description="User ID to query memory for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query memory from"),
     ) -> UserMemorySchema:
         db = get_db(dbs, db_id)
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            user_memory = await db.get_user_memory(memory_id=memory_id, deserialize=False)
+            user_memory = await db.get_user_memory(memory_id=memory_id, user_id=user_id, deserialize=False)
         else:
-            user_memory = db.get_user_memory(memory_id=memory_id, deserialize=False)
+            user_memory = db.get_user_memory(memory_id=memory_id, user_id=user_id, deserialize=False)
         if not user_memory:
             raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
 
@@ -365,11 +384,20 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         },
     )
     async def update_memory(
+        request: Request,
         payload: UserMemoryCreateSchema,
         memory_id: str = Path(description="Memory ID to update"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for update"),
     ) -> UserMemorySchema:
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+            payload.user_id = user_id
+
+        if payload.user_id is None:
+            raise HTTPException(status_code=400, detail="User ID is required")
+
         db = get_db(dbs, db_id)
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             user_memory = await db.upsert_user_memory(

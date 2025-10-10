@@ -262,7 +262,10 @@ def test_condition_error_handling(shared_db):
         steps=[Condition(name="failing_check", evaluator=failing_evaluator, steps=[research_step])],
     )
 
-    response = workflow.run(input="test")
+    with pytest.raises(ValueError):
+        response = workflow.run(input="test")
+
+    response = workflow.get_last_run_output()
     assert isinstance(response, WorkflowRunOutput)
     assert response.status == RunStatus.error
     assert "Evaluator failed" in response.content

@@ -23,7 +23,7 @@ def serialize_to_dynamo_item(data: Dict[str, Any]) -> Dict[str, Any]:
         A DynamoDB-ready dict with the serialized data
 
     """
-    item = {}
+    item: Dict[str, Any] = {}
     for key, value in data.items():
         if value is not None:
             if isinstance(value, (int, float)):
@@ -31,7 +31,7 @@ def serialize_to_dynamo_item(data: Dict[str, Any]) -> Dict[str, Any]:
             elif isinstance(value, str):
                 item[key] = {"S": value}
             elif isinstance(value, bool):
-                item[key] = {"BOOL": str(value)}
+                item[key] = {"BOOL": value}
             elif isinstance(value, (dict, list)):
                 item[key] = {"S": json.dumps(value)}
             else:
