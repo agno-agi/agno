@@ -32,6 +32,7 @@ from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.search import SearchType
 
+from agno.utils.string import generate_id
 
 class PgVector(VectorDb):
     """
@@ -84,6 +85,13 @@ class PgVector(VectorDb):
         if not table_name:
             raise ValueError("Table name must be provided.")
 
+        if name is None:
+            name = table_name
+        self.name: str = name
+
+        self.id = generate_id(name)
+
+
         if db_engine is None and db_url is None:
             raise ValueError("Either 'db_url' or 'db_engine' must be provided.")
 
@@ -108,6 +116,8 @@ class PgVector(VectorDb):
         # Database settings
         self.table_name: str = table_name
         self.schema: str = schema
+        self.name: str = name
+        self.description: Optional[str] = description
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = db_engine
         self.metadata: MetaData = MetaData(schema=self.schema)

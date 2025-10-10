@@ -20,8 +20,11 @@ from agno.os.routers.knowledge.schemas import (
     ContentUpdateSchema,
     ReaderSchema,
     VectorDbSchema,
+<<<<<<< HEAD
     VectorSearchRequestSchema,
     VectorSearchResult,
+=======
+>>>>>>> 0a307f6c3 (feat: Multi vectordb in Knowledge)
 )
 from agno.os.schema import (
     BadRequestResponse,
@@ -103,6 +106,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         reader_id: Optional[str] = Form(None, description="ID of the reader to use for content processing"),
         chunker: Optional[str] = Form(None, description="Chunking strategy to apply during processing"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
+        vector_db_id: Optional[str] = Form(default=None, description="Vector DB ID to use for content storage"),
     ):
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         log_info(f"Adding content: {name}, {description}, {url}, {metadata}")
@@ -172,7 +176,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         content.content_hash = content_hash
         content.id = generate_id(content_hash)
 
-        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker)
+        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker, vector_db_id)
 
         response = ContentResponseSchema(
             id=content.id,
@@ -229,6 +233,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         metadata: Optional[str] = Form(None, description="Content metadata as JSON string"),
         reader_id: Optional[str] = Form(None, description="ID of the reader to use for processing"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        vector_db_id: Optional[str] = Query(default=None, description="The ID of the vector database to use"),
     ) -> Optional[ContentResponseSchema]:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
 
@@ -835,11 +840,17 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                             },
                             "vector_dbs": [
                                 {
+<<<<<<< HEAD
                                     "id": "vector_db_1",
                                     "name": "Vector DB 1",
                                     "description": "Vector DB 1 description",
                                     "search_types": ["vector", "keyword", "hybrid"],
                                 }
+=======
+                                    "id": "vectors1",
+                                    "name": "My Vector Collection",
+                                },
+>>>>>>> 0a307f6c3 (feat: Multi vectordb in Knowledge)
                             ],
                             "filters": ["filter_tag_1", "filter_tag2"],
                         }
@@ -899,6 +910,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                     key=chunker_key, name=chunker_info.get("name"), description=chunker_info.get("description")
                 )
 
+<<<<<<< HEAD
         vector_dbs = []
         if knowledge.vector_db:
             search_types = knowledge.vector_db.get_supported_search_types()
@@ -912,12 +924,19 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                     search_types=search_types,
                 )
             )
+=======
+
+        vector_dbs = []
+        for vector_db in knowledge.vector_dbs:
+            vector_dbs.append(VectorDbSchema(id=vector_db.id, name=vector_db.name))
+>>>>>>> 0a307f6c3 (feat: Multi vectordb in Knowledge)
 
         return ConfigResponseSchema(
             readers=reader_schemas,
             vector_dbs=vector_dbs,
             readersForType=types_of_readers,
             chunkers=chunkers_dict,
+            vector_dbs=vector_dbs,
             filters=knowledge.get_filters(),
         )
 
@@ -929,9 +948,9 @@ async def process_content(
     content: Content,
     reader_id: Optional[str] = None,
     chunker: Optional[str] = None,
+    vector_db_id: Optional[str] = None,
 ):
     """Background task to process the content"""
-
     try:
         if reader_id:
             reader = None
@@ -955,7 +974,13 @@ async def process_content(
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
-        await knowledge._load_content(content, upsert=False, skip_if_exists=True)
+        print(f"Processing content: {content.id}")
+
+        vector_db = None
+        print(f"Vector DB ID: {vector_db_id}")
+        if vector_db_id:
+            vector_db = knowledge.get_vector_db_by_id(vector_db_id)
+        await knowledge._load_content(content, upsert=False, skip_if_exists=True, vector_db=vector_db)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content: {e}")
@@ -965,7 +990,7 @@ async def process_content(
 
             content.status = KnowledgeContentStatus.FAILED
             content.status_message = str(e)
-            knowledge.patch_content(content)
+            knowledge.patch_content(content, vector_db)
         except Exception:
             # Swallow any secondary errors to avoid crashing the background task
             pass

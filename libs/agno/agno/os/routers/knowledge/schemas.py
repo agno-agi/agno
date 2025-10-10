@@ -110,6 +110,10 @@ class ChunkerSchema(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
 
+class VectorDbSchema(BaseModel):
+    id: str
+    name: Optional[str] = None
+
 
 class VectorDbSchema(BaseModel):
     id: str
@@ -171,5 +175,6 @@ class ConfigResponseSchema(BaseModel):
     readers: Optional[Dict[str, ReaderSchema]] = None
     readersForType: Optional[Dict[str, List[str]]] = None
     chunkers: Optional[Dict[str, ChunkerSchema]] = None
+    vector_dbs: Optional[List[VectorDbSchema]] = None
     filters: Optional[List[str]] = None
     vector_dbs: Optional[List[VectorDbSchema]] = None

@@ -96,16 +96,30 @@ instructions = dedent(
 )
 # *******************************
 
+vector_db_1=PgVector(
+    db_url=db_url,
+    name="Collection 1",
+    table_name="agno_assist_knowledge_1",
+    search_type=SearchType.hybrid,
+    embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+)
+
+vector_db_2=PgVector(
+    db_url=db_url,
+    name="Collection 2",
+    table_name="agno_assist_knowledge_2",
+    search_type=SearchType.hybrid,
+    embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+)
 
 knowledge = Knowledge(
-    name="Agno Assist Knowledge",
-    description="A knowledge base for the Agno Assist agent",
-    vector_db=PgVector(
-        db_url=db_url,
-        table_name="agno_assist_knowledge",
-        search_type=SearchType.hybrid,
-        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-    ),
+    # vector_db=PgVector(
+    #     db_url=db_url,
+    #     table_name="agno_assist_knowledge",
+    #     search_type=SearchType.hybrid,
+    #     embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    # ),
+    vector_dbs=[vector_db_1, vector_db_2],
     contents_db=db,
 )
 
@@ -134,5 +148,5 @@ agno_assist = Agent(
 )
 
 if __name__ == "__main__":
-    knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
-    # agno_assist.print_response("What is Agno?")
+    # knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
+    agno_assist.print_response("Hello")

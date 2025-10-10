@@ -5161,7 +5161,6 @@ class Agent:
         run_input: Optional[RunInput] = None,
     ) -> Optional[Sequence[File]]:
         """Collect files from input and session history."""
-        from agno.utils.log import log_debug
 
         joint_files: List[File] = []
 
@@ -6205,6 +6204,8 @@ class Agent:
         # 3.2.5 Add information about agentic filters if enabled
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
             valid_filters = self.knowledge.get_valid_filters()
+            # Create list of dicts containing vector db names and descriptions
+            
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
@@ -6228,7 +6229,53 @@ class Agent:
                 """
                     )
                 )
+        
+        # 3.2.6 Add information about vector databases if provided
+        vector_dbs = []
+        if self.knowledge.vector_dbs:
+            for vdb in self.knowledge.vector_dbs:
+                vector_dbs.append({
+                    'name': getattr(vdb, 'name', None) or getattr(vdb, 'table_name', 'Unknown'),
+                    'description': getattr(vdb, 'description', None) or f"Vector database: {getattr(vdb, 'name', getattr(vdb, 'table_name', 'Unknown'))}"
+                })
+        elif self.knowledge.vector_db:
+            vector_dbs.append({
+                'name': getattr(self.knowledge.vector_db, 'name', None) or getattr(self.knowledge.vector_db, 'table_name', 'Unknown'),
+                'description': getattr(self.knowledge.vector_db, 'description', None) or f"Vector database: {getattr(self.knowledge.vector_db, 'name', getattr(self.knowledge.vector_db, 'table_name', 'Unknown'))}"
+            })
+        
+        if vector_dbs:
+            # Format vector databases as a clean list with descriptions
+            if len(vector_dbs) == 1:
+                vdb = vector_dbs[0]
+                if vdb['description'] and not vdb['description'].startswith('Vector database:'):
+                    vector_dbs_str = f"'{vdb['name']}' ({vdb['description']})"
+                else:
+                    vector_dbs_str = f"'{vdb['name']}'"
+            else:
+                vector_db_entries = []
+                for vdb in vector_dbs:
+                    if vdb['description'] and not vdb['description'].startswith('Vector database:'):
+                        vector_db_entries.append(f"'{vdb['name']}' ({vdb['description']})")
+                    else:
+                        vector_db_entries.append(f"'{vdb['name']}'")
+                vector_dbs_str = ", ".join(vector_db_entries[:-1]) + f" and {vector_db_entries[-1]}"
+            
+            additional_information.append(
+                dedent(f"""
+                The knowledge base contains {len(vector_dbs)} vector database{'s' if len(vector_dbs) > 1 else ''}: {vector_dbs_str}.
+                
+                When searching knowledge, you can:
+                - Search a specific database by passing the database name to the search_knowledge_base tool
+                - Search all databases by not specifying a database name (default behavior)
+                
+                Available databases: {', '.join([vdb['name'] for vdb in vector_dbs])}
+                """
+            ))
 
+        print(f"System message content: {additional_information}")
+
+        
         # 3.3 Build the default system message for the Agent.
         system_message_content: str = ""
         # 3.3.1 First add the Agent description if provided
@@ -7414,11 +7461,7 @@ class Agent:
         return messages
 
     def get_relevant_docs_from_knowledge(
-        self,
-        query: str,
-        num_documents: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None,
-        **kwargs,
+        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, vector_db: Optional[str] = None, **kwargs
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant docs from the knowledge base to answer a query.
 
@@ -7426,6 +7469,7 @@ class Agent:
             query (str): The query to search for.
             num_documents (Optional[int]): Number of documents to return.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            vector_db (Optional[str]): Vector database to use for the search.
             **kwargs: Additional keyword arguments.
 
         Returns:
@@ -7438,12 +7482,10 @@ class Agent:
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
             valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
-
             # Warn about invalid filter keys
             if invalid_keys:
                 # type: ignore
                 log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
 
                 # Only use valid filters
                 filters = valid_filters
@@ -7452,7 +7494,6 @@ class Agent:
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import signature
-
             try:
                 sig = signature(self.knowledge_retriever)
                 knowledge_retriever_kwargs: Dict[str, Any] = {}
@@ -7460,6 +7501,8 @@ class Agent:
                     knowledge_retriever_kwargs = {"agent": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "vector_db" in sig.parameters:
+                    knowledge_retriever_kwargs["vector_db"] = vector_db
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.knowledge_retriever(**knowledge_retriever_kwargs)
             except Exception as e:
@@ -7470,17 +7513,19 @@ class Agent:
         try:
             if self.knowledge is None or (
                 (getattr(self.knowledge, "vector_db", None)) is None
+                and getattr(self.knowledge, "vector_dbs", None) is None
                 and getattr(self.knowledge, "knowledge_retriever", None) is None
             ):
+
                 return None
 
             if num_documents is None:
                 if isinstance(self.knowledge, Knowledge):
                     num_documents = self.knowledge.max_results
 
-            log_debug(f"Searching knowledge base with filters: {filters}")
+            log_info(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = self.knowledge.search(
-                query=query, max_results=num_documents, filters=filters
+                query=query, max_results=num_documents, filters=filters, vector_db=vector_db
             )
 
             if not relevant_docs or len(relevant_docs) == 0:
@@ -7493,11 +7538,7 @@ class Agent:
             raise e
 
     async def aget_relevant_docs_from_knowledge(
-        self,
-        query: str,
-        num_documents: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None,
-        **kwargs,
+        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, vector_db: Optional[str] = None, **kwargs
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.knowledge.document import Document
@@ -7529,6 +7570,8 @@ class Agent:
                     knowledge_retriever_kwargs = {"agent": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "vector_db" in sig.parameters:
+                    knowledge_retriever_kwargs["vector_db"] = vector_db
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 result = self.knowledge_retriever(**knowledge_retriever_kwargs)
 
@@ -7553,7 +7596,7 @@ class Agent:
 
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = await self.knowledge.async_search(
-                query=query, max_results=num_documents, filters=filters
+                query=query, max_results=num_documents, filters=filters, vector_db=vector_db
             )
 
             if not relevant_docs or len(relevant_docs) == 0:
@@ -8832,11 +8875,12 @@ class Agent:
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
-        def search_knowledge_base(query: str) -> str:
+        def search_knowledge_base(query: str, vector_db: Optional[str] = None) -> str:
             """Use this function to search the knowledge base for information about a query.
 
             Args:
                 query: The query to search for.
+                vector_db (optional): The vector database to use for the search.
 
             Returns:
                 str: A string containing the response from the knowledge base.
@@ -8845,7 +8889,7 @@ class Agent:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters, vector_db=vector_db)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -8857,7 +8901,6 @@ class Agent:
                     run_response.references = []
                 run_response.references.append(references)
             retrieval_timer.stop()
-            from agno.utils.log import log_debug
 
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -8865,18 +8908,19 @@ class Agent:
                 return "No documents found"
             return self._convert_documents_to_string(docs_from_knowledge)
 
-        async def asearch_knowledge_base(query: str) -> str:
+        async def asearch_knowledge_base(query: str, vector_db: Optional[str] = None) -> str:
             """Use this function to search the knowledge base for information about a query asynchronously.
 
             Args:
                 query: The query to search for.
+                vector_db (optional): The vector database to use for the search.
 
             Returns:
                 str: A string containing the response from the knowledge base.
             """
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters, vector_db=vector_db)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -8908,12 +8952,13 @@ class Agent:
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
-        def search_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None) -> str:
+        def search_knowledge_base(query: str, filters: Optional[List[KnowledgeFilter]] = None, vector_db: Optional[str] = None) -> str:
             """Use this function to search the knowledge base for information about a query.
 
             Args:
                 query: The query to search for.
                 filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
+                vector_db (optional): The vector database to use for the search.
 
             Returns:
                 str: A string containing the response from the knowledge base.
@@ -8924,7 +8969,7 @@ class Agent:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters, vector_db=vector_db)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -8936,7 +8981,6 @@ class Agent:
                     run_response.references = []
                 run_response.references.append(references)
             retrieval_timer.stop()
-            from agno.utils.log import log_debug
 
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -8950,6 +8994,7 @@ class Agent:
             Args:
                 query: The query to search for.
                 filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
+                vector_db (optional): The vector database to use for the search.
 
             Returns:
                 str: A string containing the response from the knowledge base.
@@ -8959,7 +9004,7 @@ class Agent:
 
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters, vector_db=vector_db)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
