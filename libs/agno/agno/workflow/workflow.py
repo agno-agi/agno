@@ -707,6 +707,34 @@ class Workflow:
 
         return event
 
+    def _enrich_event_with_workflow_context(
+        self,
+        event: Any,
+        workflow_run_response: WorkflowRunOutput,
+        step_index: Optional[Union[int, tuple]] = None,
+        step: Optional[Any] = None,
+    ) -> Any:
+        """Enrich any event with workflow context information for frontend tracking"""
+
+        step_id = getattr(step, "step_id", None) if step else None
+        step_name = getattr(step, "name", None) if step else None
+
+        if hasattr(event, "workflow_id"):
+            event.workflow_id = workflow_run_response.workflow_id
+        if hasattr(event, "workflow_run_id"):
+            event.workflow_run_id = workflow_run_response.run_id
+        if hasattr(event, "step_id") and step_id:
+            event.step_id = step_id
+        if hasattr(event, "step_name") and step_name is not None:
+            if event.step_name is None:
+                event.step_name = step_name
+        # Only set step_index if it's not already set (preserve parallel.py's tuples)
+        if hasattr(event, "step_index") and step_index is not None:
+            if event.step_index is None:
+                event.step_index = step_index
+
+        return event
+
     def _transform_step_output_to_event(
         self, step_output: StepOutput, workflow_run_response: WorkflowRunOutput, step_index: Optional[int] = None
     ) -> StepOutputEvent:
@@ -875,10 +903,8 @@ class Workflow:
             return func(**call_kwargs)
         except TypeError as e:
             # If signature inspection fails, fall back to original method
-            logger.warning(
-                f"Async function signature inspection failed: {e}. Falling back to original calling convention."
-            )
-            return func(**call_kwargs)
+            logger.error(f"Function signature inspection failed: {e}. Falling back to original calling convention.")
+            return func(**kwargs)
 
     def _execute(
         self,
@@ -892,7 +918,8 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
-        register_run(workflow_run_response.run_id)  # type: ignore
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
@@ -1172,11 +1199,18 @@ class Workflow:
                                 yield step_output_event
 
                         elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
-                            yield self._handle_event(event, workflow_run_response)  # type: ignore
+                            # Enrich event with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                         else:
-                            # Yield other internal events
-                            yield self._handle_event(event, workflow_run_response)  # type: ignore
+                            # Enrich other events with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -1346,7 +1380,8 @@ class Workflow:
         workflow_run_response.status = RunStatus.running
 
         # Register run for cancellation tracking
-        register_run(workflow_run_response.run_id)  # type: ignore
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             # Execute the workflow with the custom executor
@@ -1507,6 +1542,10 @@ class Workflow:
 
         workflow_run_response.status = RunStatus.running
 
+        # Register run for cancellation tracking
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)
+
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
@@ -1634,11 +1673,22 @@ class Workflow:
                                 yield step_output_event
 
                         elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
-                            yield self._handle_event(event, workflow_run_response, websocket_handler=websocket_handler)  # type: ignore
+                            # Enrich event with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(
+                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
+                            )  # type: ignore
 
                         else:
-                            # Yield other internal events
-                            yield self._handle_event(event, workflow_run_response, websocket_handler=websocket_handler)  # type: ignore
+                            # Enrich other events with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(
+                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
+                            )  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -2158,6 +2208,7 @@ class Workflow:
                     additional_data=additional_data,
                     user_id=user_id,
                     session_id=session_id,
+                    session_state=session_state,
                     audio=audio,
                     images=images,
                     videos=videos,
@@ -2176,6 +2227,7 @@ class Workflow:
                     additional_data=additional_data,
                     user_id=user_id,
                     session_id=session_id,
+                    session_state=session_state,
                     audio=audio,
                     images=images,
                     videos=videos,
