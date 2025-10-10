@@ -801,6 +801,9 @@ class FunctionCall(BaseModel):
                 return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
+        execution_result = None
+        exception_to_raise = None
+
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
@@ -824,22 +827,27 @@ class FunctionCall(BaseModel):
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
 
+            execution_result = FunctionExecutionResult(
+                status="success", result=self.result, updated_session_state=updated_session_state
+            )
+
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
-            raise
+            exception_to_raise = e
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return FunctionExecutionResult(status="failure", error=str(e))
+            execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
-        # Execute post-hook if it exists
-        self._handle_post_hook()
+        finally:
+            self._handle_post_hook()
 
-        return FunctionExecutionResult(
-            status="success", result=self.result, updated_session_state=updated_session_state
-        )
+            if exception_to_raise is not None:
+                raise exception_to_raise
+
+            return execution_result  # type: ignore[return-value]
 
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
@@ -993,6 +1001,9 @@ class FunctionCall(BaseModel):
                 return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
+        execution_result = None
+        exception_to_raise = None
+
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
@@ -1019,25 +1030,30 @@ class FunctionCall(BaseModel):
             if entrypoint_args.get("session_state") is not None:
                 updated_session_state = entrypoint_args.get("session_state")
 
+            execution_result = FunctionExecutionResult(
+                status="success", result=self.result, updated_session_state=updated_session_state
+            )
+
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
-            raise
+            exception_to_raise = e
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return FunctionExecutionResult(status="failure", error=str(e))
+            execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
-        # Execute post-hook if it exists
-        if iscoroutinefunction(self.function.post_hook):
-            await self._handle_post_hook_async()
-        else:
-            self._handle_post_hook()
+        finally:
+            if iscoroutinefunction(self.function.post_hook):
+                await self._handle_post_hook_async()
+            else:
+                self._handle_post_hook()
 
-        return FunctionExecutionResult(
-            status="success", result=self.result, updated_session_state=updated_session_state
-        )
+            if exception_to_raise is not None:
+                raise exception_to_raise
+
+            return execution_result  # type: ignore[return-value]
 
 
 class ToolResult(BaseModel):
