@@ -219,6 +219,9 @@ class AgentOS:
 
         if self.workflows:
             for workflow in self.workflows:
+                # Required for the built-in routes to work
+                workflow.store_events = True
+
                 # Track MCP tools recursively in workflow members
                 collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
                 if not workflow.id:
