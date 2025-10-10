@@ -57,21 +57,21 @@ class ShellTools(Toolkit):
         self.timeout: int = timeout
         self.os_type: str = platform.system()
 
-        tools = []
+        tools: List = []
         if all or enable_run_shell_command:
-            tools.append(self.run_shell_command)
+            tools.append(self.run_shell_command)  # type: ignore
 
         if all or enable_change_directory:
-            tools.append(self.change_directory)
+            tools.append(self.change_directory)  # type: ignore
 
         if all or enable_get_current_directory:
-            tools.append(self.get_current_directory)
+            tools.append(self.get_current_directory)  # type: ignore
 
         if all or enable_list_files:
-            tools.append(self.list_files)
+            tools.append(self.list_files)  # type: ignore
 
         if all or enable_get_os_info:
-            tools.append(self.get_os_info)
+            tools.append(self.get_os_info)  # type: ignore
 
         super().__init__(name="shell_tools", tools=tools, **kwargs)
 
@@ -354,7 +354,13 @@ class ShellTools(Toolkit):
             if self.os_type == "Windows":
                 info["windows_version"] = platform.win32_ver()[0]
             elif self.os_type == "Linux":
-                info["linux_distribution"] = platform.freedesktop_os_release().get("PRETTY_NAME", "Unknown")
+                try:
+                    if hasattr(platform, "freedesktop_os_release"):
+                        info["linux_distribution"] = platform.freedesktop_os_release().get("PRETTY_NAME", "Unknown")  # type: ignore
+                    else:
+                        info["linux_distribution"] = "Unknown"
+                except Exception:
+                    info["linux_distribution"] = "Unknown"
             elif self.os_type == "Darwin":
                 info["mac_version"] = platform.mac_ver()[0]
 
