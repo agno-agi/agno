@@ -70,7 +70,7 @@ class Milvus(VectorDb):
         self.collection: str = collection
         self.name: Optional[str] = name
         self.description: Optional[str] = description
-        
+
         if embedder is None:
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 

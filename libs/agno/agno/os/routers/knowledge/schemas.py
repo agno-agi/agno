@@ -110,6 +110,7 @@ class ChunkerSchema(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
 
+
 class VectorDbSchema(BaseModel):
     id: str
     name: Optional[str] = None
@@ -119,6 +120,7 @@ class VectorDbSchema(BaseModel):
 
 class DocumentSearchResult(BaseModel):
     """Schema for search result documents."""
+
     id: str
     content: str
     name: Optional[str] = None
@@ -135,18 +137,19 @@ class DocumentSearchResult(BaseModel):
         return cls(
             id=document.id,
             content=document.content,
-            name=getattr(document, 'name', None),
-            meta_data=getattr(document, 'meta_data', None),
-            usage=getattr(document, 'usage', None),
-            reranking_score=getattr(document, 'reranking_score', None),
-            content_id=getattr(document, 'content_id', None),
-            content_origin=getattr(document, 'content_origin', None),
-            size=getattr(document, 'size', None),
+            name=getattr(document, "name", None),
+            meta_data=getattr(document, "meta_data", None),
+            usage=getattr(document, "usage", None),
+            reranking_score=getattr(document, "reranking_score", None),
+            content_id=getattr(document, "content_id", None),
+            content_origin=getattr(document, "content_origin", None),
+            size=getattr(document, "size", None),
         )
 
 
 class SearchResponseSchema(BaseModel):
     """Schema for search results response."""
+
     query: str
     documents: List[DocumentSearchResult]
     total_results: int
@@ -159,4 +162,3 @@ class ConfigResponseSchema(BaseModel):
     chunkers: Optional[Dict[str, ChunkerSchema]] = None
     filters: Optional[List[str]] = None
     vector_dbs: Optional[List[VectorDbSchema]] = None
-

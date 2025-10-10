@@ -2023,9 +2023,7 @@ class Team:
         try:
             # Start the Run by yielding a RunStarted event
             if stream_intermediate_steps:
-                yield self._handle_event(
-                    create_team_run_started_event(from_run_response=run_response), run_response
-                )
+                yield self._handle_event(create_team_run_started_event(from_run_response=run_response), run_response)
 
             # 3. Reason about the task(s) if reasoning is enabled
             async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):

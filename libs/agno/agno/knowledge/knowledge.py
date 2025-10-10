@@ -23,7 +23,6 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 from agno.vectordb import VectorDb
 
-
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
 
 
@@ -46,7 +45,6 @@ class Knowledge:
     readers: Optional[Dict[str, Reader]] = None
 
     def __post_init__(self):
-
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db and not self.vector_db.exists():
             self.vector_db.create()
@@ -367,7 +365,6 @@ class Knowledge:
         Returns:
             bool: True if should skip processing, False if should continue
         """
-        
 
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db and self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
@@ -384,8 +381,6 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
     ):
-        
-
         self.vector_db = cast(VectorDb, self.vector_db)
 
         log_info(f"Adding content from path, {content.id}, {content.name}, {content.path}, {content.description}")
@@ -484,8 +479,6 @@ class Knowledge:
         3. Read the content
         4. Prepare and insert the content in the vector database
         """
-
-        
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
@@ -598,8 +591,6 @@ class Knowledge:
         upsert: bool = True,
         skip_if_exists: bool = False,
     ):
-        
-
         self.vector_db = cast(VectorDb, self.vector_db)
 
         if content.name:
@@ -694,8 +685,6 @@ class Knowledge:
         upsert: bool,
         skip_if_exists: bool,
     ):
-        
-
         self.vector_db = cast(VectorDb, self.vector_db)
         log_info(f"Adding content from topics: {content.topics}")
 
@@ -930,8 +919,6 @@ class Knowledge:
             await self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
     async def _handle_vector_db_insert(self, content: Content, read_documents, upsert):
-        
-
         self.vector_db = cast(VectorDb, self.vector_db)
 
         if not self.vector_db:
@@ -1106,8 +1093,6 @@ class Knowledge:
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
     def _update_content(self, content: Content) -> Optional[Dict[str, Any]]:
-        
-
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.contents_db:
             if not content.id:
@@ -1158,8 +1143,6 @@ class Knowledge:
             return None
 
     async def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
-        
-
         self.vector_db = cast(VectorDb, self.vector_db)
 
         self._add_to_contents_db(content)
@@ -1315,15 +1298,22 @@ class Knowledge:
                 return
 
     def search(
-        self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, search_type: Optional[str] = None
+        self,
+        query: str,
+        max_results: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        search_type: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
-        print("query", query)
         from agno.vectordb.search import SearchType
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
-        if hasattr(self.vector_db, "search_type") and isinstance(self.vector_db.search_type, SearchType) and search_type:
+        if (
+            hasattr(self.vector_db, "search_type")
+            and isinstance(self.vector_db.search_type, SearchType)
+            and search_type
+        ):
             self.vector_db.search_type = SearchType(search_type)
         try:
             if self.vector_db is None:
@@ -1338,16 +1328,21 @@ class Knowledge:
             return []
 
     async def async_search(
-        self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, search_type: Optional[str] = None
+        self,
+        query: str,
+        max_results: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        search_type: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
-        print("query", query)
-
         from agno.vectordb.search import SearchType
-        
 
         self.vector_db = cast(VectorDb, self.vector_db)
-        if hasattr(self.vector_db, "search_type") and isinstance(self.vector_db.search_type, SearchType) and search_type:
+        if (
+            hasattr(self.vector_db, "search_type")
+            and isinstance(self.vector_db.search_type, SearchType)
+            and search_type
+        ):
             self.vector_db.search_type = SearchType(search_type)
         try:
             if self.vector_db is None:
@@ -1419,8 +1414,6 @@ class Knowledge:
         return valid_filters
 
     def remove_vector_by_id(self, id: str) -> bool:
-        
-
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db is None:
             log_warning("No vector DB provided")
@@ -1428,8 +1421,6 @@ class Knowledge:
         return self.vector_db.delete_by_id(id)
 
     def remove_vectors_by_name(self, name: str) -> bool:
-        
-
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db is None:
             log_warning("No vector DB provided")
@@ -1437,8 +1428,6 @@ class Knowledge:
         return self.vector_db.delete_by_name(name)
 
     def remove_vectors_by_metadata(self, metadata: Dict[str, Any]) -> bool:
-        
-
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db is None:
             log_warning("No vector DB provided")
@@ -1526,8 +1515,6 @@ class Knowledge:
         return status, content_row.status_message
 
     def remove_content_by_id(self, content_id: str):
-        
-
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":

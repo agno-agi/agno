@@ -58,8 +58,6 @@ class CouchbaseSearch(VectorDb):
         bucket_name: str,
         scope_name: str,
         collection_name: str,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
         couchbase_connection_string: str,
         cluster_options: ClusterOptions,
         search_index: Union[str, SearchIndex],
@@ -68,6 +66,8 @@ class CouchbaseSearch(VectorDb):
         is_global_level_index: bool = False,
         wait_until_index_ready: float = 0,
         batch_limit: int = 500,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         **kwargs,
     ):
         """

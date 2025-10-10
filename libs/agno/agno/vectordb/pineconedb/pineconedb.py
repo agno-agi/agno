@@ -69,10 +69,10 @@ class PineconeDb(VectorDb):
  
         dimension: int,
         spec: Union[Dict, ServerlessSpec, PodSpec],
+        name: Optional[str]=None,
+        description: Optional[str]=None,
         embedder: Optional[Embedder] = None,
         metric: Optional[str] = "cosine",
-        name: Optional[str],
-        description: Optional[str],
         additional_headers: Optional[Dict[str, str]] = None,
         pool_threads: Optional[int] = 1,
         namespace: Optional[str] = None,

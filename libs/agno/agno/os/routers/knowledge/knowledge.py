@@ -37,7 +37,6 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.utils.log import log_debug, log_info
 from agno.utils.string import generate_id
-from agno.knowledge.document import Document
 
 logger = logging.getLogger(__name__)
 
@@ -530,7 +529,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                 "content": {
                     "application/json": {
                         "example": {
-                            "query": "Jordan Mitchell skills", 
+                            "query": "Jordan Mitchell skills",
                             "documents": [
                                 {
                                     "id": "doc_123",
@@ -539,18 +538,18 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                     "meta_data": {"page": 1, "chunk": 1},
                                     "usage": {"total_tokens": 14},
                                     "reranking_score": 0.95,
-                                    "content_id": "content_456"
+                                    "content_id": "content_456",
                                 }
                             ],
                             "total_results": 7,
-                            "search_time_ms": 45.2
+                            "search_time_ms": 45.2,
                         }
                     }
-                }
+                },
             },
             400: {"description": "Invalid search parameters"},
-            404: {"description": "No documents found"}
-        }
+            404: {"description": "No documents found"},
+        },
     )
     def search_knowledge(
         query: str,
@@ -558,20 +557,20 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         search_type: Optional[str] = Query(default=None, description="The type of search to perform"),
     ) -> SearchResponseSchema:
         import time
-        
+
         start_time = time.time()
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         results = knowledge.search(query=query, search_type=search_type)
         search_time_ms = (time.time() - start_time) * 1000
-        
+
         # Convert Document objects to serializable format
         document_results = [DocumentSearchResult.from_document(doc) for doc in results]
-        
+
         return SearchResponseSchema(
             query=query,
             documents=document_results,
             total_results=len(document_results),
-            search_time_ms=round(search_time_ms, 2)
+            search_time_ms=round(search_time_ms, 2),
         )
 
     @router.get(
@@ -866,7 +865,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         if knowledge.vector_db:
             search_types = knowledge.vector_db.get_supported_search_types()
             name = knowledge.vector_db.name or knowledge.vector_db.__class__.__name__
-            vector_dbs.append(VectorDbSchema(id=generate_id(name), name=name, description=knowledge.vector_db.description, search_types=search_types))
+            vector_dbs.append(
+                VectorDbSchema(
+                    id=generate_id(name),
+                    name=name,
+                    description=knowledge.vector_db.description,
+                    search_types=search_types,
+                )
+            )
 
         return ConfigResponseSchema(
             readers=reader_schemas,

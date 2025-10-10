@@ -66,7 +66,7 @@ class LanceDb(VectorDb):
         # Database metadata
         self.name: Optional[str] = name
         self.description: Optional[str] = description
-        
+
         # Embedder for embedding the document contents
         if embedder is None:
             from agno.knowledge.embedder.openai import OpenAIEmbedder

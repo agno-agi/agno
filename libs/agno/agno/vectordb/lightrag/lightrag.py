@@ -30,7 +30,7 @@ class LightRag(VectorDb):
         self.auth_header_format = auth_header_format
         self.name: Optional[str] = name
         self.description: Optional[str] = description
-        
+
     def _get_headers(self) -> Dict[str, str]:
         """Get headers with optional API key authentication."""
         headers = {"Content-Type": "application/json"}

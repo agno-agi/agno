@@ -500,11 +500,11 @@ class ChromaDb(VectorDb):
         # Build search results
         search_results: List[Document] = []
 
-        ids_list = result.get("ids", [[]])
-        metadata_list = result.get("metadatas", [[{}]])
-        documents_list = result.get("documents", [[]])
-        embeddings_list = result.get("embeddings")
-        distances_list = result.get("distances", [[]])
+        ids_list = result.get("ids", [[]]) # type: ignore
+        metadata_list = result.get("metadatas", [[{}]]) # type: ignore
+        documents_list = result.get("documents", [[]]) # type: ignore
+        embeddings_list = result.get("embeddings") # type: ignore
+        distances_list = result.get("distances", [[]]) # type: ignore
 
         if not ids_list or not metadata_list or not documents_list or embeddings_list is None or not distances_list:
             return search_results

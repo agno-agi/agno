@@ -6,6 +6,8 @@ class VectorDb(ABC):
     """Base class for Vector Databases"""
 
     from agno.knowledge.document import Document
+    name: Optional[str] = None
+    description: Optional[str] = None
 
     @abstractmethod
     def create(self) -> None:
