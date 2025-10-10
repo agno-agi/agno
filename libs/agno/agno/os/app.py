@@ -207,9 +207,6 @@ class AgentOS:
 
                 team.initialize_team()
 
-                # Required for the built-in routes to work
-                team.store_events = True
-
                 for member in team.members:
                     if isinstance(member, Agent):
                         member.team_id = None
@@ -217,12 +214,19 @@ class AgentOS:
                     elif isinstance(member, Team):
                         member.initialize_team()
 
+                # Required for the built-in routes to work
+                team.store_events = True
+
         if self.workflows:
             for workflow in self.workflows:
                 # Track MCP tools recursively in workflow members
                 collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
+
                 if not workflow.id:
                     workflow.id = generate_id_from_name(workflow.name)
+
+                # Required for the built-in routes to work
+                workflow.store_events = True
 
         if self.telemetry:
             from agno.api.os import OSLaunch, log_os_telemetry
