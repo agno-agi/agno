@@ -29,7 +29,7 @@ from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEve
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
 
@@ -61,6 +61,41 @@ def _log_messages(messages: List[Message]) -> None:
     for m in messages:
         # Don't log metrics for input messages
         m.log(metrics=False)
+
+
+def _log_messages_sent_to_api(messages: List[Message]) -> None:
+    """
+    Log message structure being sent to API, with focus on tool_calls.
+    This helps verify that forgotten tool calls are properly removed.
+    """
+    log_info("=" * 80)
+    log_info("📤 MESSAGES BEING SENT TO MODEL API")
+    log_info("=" * 80)
+
+    for i, msg in enumerate(messages):
+        role_info = f"[{i}] {msg.role.upper()}"
+
+        if msg.role == "assistant" and msg.tool_calls:
+            tool_call_ids = [tc.get("id", "no-id") for tc in msg.tool_calls]
+            log_info(f"{role_info} (tool_calls: {len(msg.tool_calls)}) IDs: {tool_call_ids}")
+        elif msg.role == "tool":
+            log_info(f"{role_info} (tool_call_id: {msg.tool_call_id})")
+        else:
+            content_preview = str(msg.content)[:60] if msg.content else "(empty)"
+            log_info(f"{role_info}: {content_preview}...")
+
+    # Summary
+    assistant_msgs = [m for m in messages if m.role == "assistant"]
+    tool_result_msgs = [m for m in messages if m.role == "tool"]
+    total_tool_calls = sum(len(m.tool_calls or []) for m in assistant_msgs)
+
+    log_info("-" * 80)
+    log_info(
+        f"📊 Summary: {len(messages)} messages | "
+        f"{total_tool_calls} tool_use blocks | "
+        f"{len(tool_result_msgs)} tool_result blocks"
+    )
+    log_info("=" * 80)
 
 
 def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional[List[Message]] = None) -> None:
@@ -145,6 +180,73 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
+    def _filter_messages(self, messages: List[Message], num_tool_calls_in_context: int) -> None:
+        """
+        Filter messages (in-place) to keep only the most recent N tool calls.
+
+        Args:
+            messages: List of messages
+            num_tool_calls_in_context: Number of recent tool calls to keep
+        """
+        # Count total tool calls (not messages) - each tool result = 1 tool call
+        total_tool_calls = sum(1 for m in messages if m.role == "tool")
+
+        if total_tool_calls <= num_tool_calls_in_context:
+            return
+
+        # Collect tool_call_ids to keep (most recent N)
+        tool_call_ids_list: List[str] = []
+        for msg in reversed(messages):
+            if msg.role == "tool" and len(tool_call_ids_list) < num_tool_calls_in_context:
+                if msg.tool_call_id:
+                    tool_call_ids_list.append(msg.tool_call_id)
+
+        tool_call_ids_to_keep: set[str] = set(tool_call_ids_list)
+
+        # Filter messages in-place
+        filtered_messages = []
+        for msg in messages:
+            if msg.role == "tool":
+                # Keep only tool results in our window
+                if msg.tool_call_id in tool_call_ids_to_keep:
+                    filtered_messages.append(msg)
+            elif msg.role == "assistant" and msg.tool_calls:
+                # Filter tool_calls within the assistant message
+                # Use deepcopy to ensure complete isolation of the filtered message
+                import copy
+
+                filtered_msg = copy.deepcopy(msg)
+                total_tool_calls = 0
+                # Filter tool_calls, checking for None IDs defensively
+                if filtered_msg.tool_calls is not None:
+                    total_tool_calls = len(filtered_msg.tool_calls)
+                    filtered_msg.tool_calls = [
+                        tc
+                        for tc in filtered_msg.tool_calls
+                        if tc.get("id") is not None and tc.get("id") in tool_call_ids_to_keep
+                    ]
+
+                if filtered_msg.tool_calls:
+                    # Has tool_calls remaining, keep it
+                    removed_count = total_tool_calls - len(filtered_msg.tool_calls)
+                    if removed_count > 0:
+                        log_debug(f"Filtered {removed_count} tool call(s) from assistant message")
+                    filtered_messages.append(filtered_msg)
+                # skip empty messages
+                elif filtered_msg.content:
+                    filtered_msg.tool_calls = None
+                    filtered_messages.append(filtered_msg)
+            else:
+                filtered_messages.append(msg)
+
+        # Replace messages list in-place
+        messages[:] = filtered_messages
+
+        # Log filtering information
+        num_filtered = total_tool_calls - len(tool_call_ids_to_keep)
+        if num_filtered > 0:
+            log_debug(f"Forgot {num_filtered} tool call results from a total of {num_tool_calls_in_context} tool calls")
+
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
         pass
@@ -197,6 +299,8 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
+        forget_tool_calls: bool = False,
+        num_tool_calls_in_context: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -311,6 +415,11 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
+                # Apply message filtering if forget_tool_calls is enabled and limit exceeded
+                # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
+                if forget_tool_calls and num_tool_calls_in_context is not None:
+                    self._filter_messages(messages, num_tool_calls_in_context)
+
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -345,6 +454,8 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         send_media_to_model: bool = True,
+        forget_tool_calls: bool = False,
+        num_tool_calls_in_context: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -456,6 +567,11 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
+                # Apply message filtering if forget_tool_calls is enabled and limit exceeded
+                # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
+                if forget_tool_calls and num_tool_calls_in_context is not None:
+                    self._filter_messages(messages, num_tool_calls_in_context)
+
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -497,6 +613,9 @@ class Model(ABC):
         Returns:
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
+        # Log messages being sent to API (helps verify tool call forgetting)
+        _log_messages_sent_to_api(messages)
+
         # Generate response
         provider_response = self.invoke(
             assistant_message=assistant_message,
@@ -550,6 +669,9 @@ class Model(ABC):
         Returns:
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
+        # Log messages being sent to API (helps verify tool call forgetting)
+        _log_messages_sent_to_api(messages)
+
         # Generate response
         provider_response = await self.ainvoke(
             messages=messages,
@@ -587,6 +709,17 @@ class Model(ABC):
                 model_response.extra = {}
             model_response.extra.update(provider_response.extra)
 
+    # Generate a unique ID for each tool call if missing. Mostly for Ollama
+    # id is required for forget_tool_calls feature
+    def _ensure_tool_call_ids(self, tool_calls: List[Dict[str, Any]]) -> None:
+        """Ensure all tool calls have unique IDs. Generate UUIDs if missing."""
+        from uuid import uuid4
+
+        for tc in tool_calls:
+            if not tc.get("id"):
+                # Generate a unique ID in the same format as OpenAI
+                tc["id"] = f"call_{uuid4().hex[:24]}"
+
     def _populate_assistant_message(
         self,
         assistant_message: Message,
@@ -612,6 +745,8 @@ class Model(ABC):
 
         # Add tool calls to assistant message
         if provider_response.tool_calls is not None and len(provider_response.tool_calls) > 0:
+            # Ensure all tool calls have IDs (required for forget_tool_calls and tool result matching)
+            self._ensure_tool_call_ids(provider_response.tool_calls)
             assistant_message.tool_calls = provider_response.tool_calls
 
         # Add audio to assistant message
@@ -700,6 +835,8 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
+        forget_tool_calls: bool = False,
+        num_tool_calls_in_context: Optional[int] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -743,6 +880,8 @@ class Model(ABC):
                     assistant_message.audio_output = stream_data.response_audio
                 if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+                    # Ensure all tool calls have IDs (required for forget_tool_calls)
+                    self._ensure_tool_call_ids(assistant_message.tool_calls)
 
             else:
                 self._process_model_response(
@@ -801,6 +940,11 @@ class Model(ABC):
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
+
+                # Apply message filtering if forget_tool_calls is enabled and limit exceeded
+                # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
+                if forget_tool_calls and num_tool_calls_in_context is not None:
+                    self._filter_messages(messages, num_tool_calls_in_context)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -868,6 +1012,8 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
+        forget_tool_calls: bool = False,
+        num_tool_calls_in_context: Optional[int] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -910,6 +1056,8 @@ class Model(ABC):
                     assistant_message.audio_output = stream_data.response_audio
                 if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+                    # Ensure all tool calls have IDs (required for forget_tool_calls)
+                    self._ensure_tool_call_ids(assistant_message.tool_calls)
 
             else:
                 await self._aprocess_model_response(
@@ -969,6 +1117,11 @@ class Model(ABC):
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
+
+                # Apply message filtering if forget_tool_calls is enabled and limit exceeded
+                # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
+                if forget_tool_calls and num_tool_calls_in_context is not None:
+                    self._filter_messages(messages, num_tool_calls_in_context)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
