@@ -23,7 +23,7 @@ class FastEmbedEmbedder(Embedder):
     """Using BAAI/bge-small-en-v1.5 model, more models available: https://qdrant.github.io/fastembed/examples/Supported_Models/"""
 
     id: str = "BAAI/bge-small-en-v1.5"
-    dimensions: int = 384
+    dimensions: Optional[int] = 384
 
     def get_embedding(self, text: str) -> List[float]:
         model = TextEmbedding(model_name=self.id)
