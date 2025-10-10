@@ -242,11 +242,10 @@ class Model(ABC):
         # Replace messages list in-place
         messages[:] = filtered_messages
 
-        # Debug log 
+        # Log filtering information
         num_filtered = total_tool_calls - len(tool_call_ids_to_keep)
-        log_debug(
-            f"Keeping last {num_tool_calls_in_context} tool call cycles (filtered out {num_filtered} older tool calls)",
-        )
+        if num_filtered > 0:
+            log_debug(f"Forgot {num_filtered} tool call results from a total of {num_tool_calls_in_context} tool calls")
 
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
@@ -416,6 +415,11 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
+                # Apply message filtering if forget_tool_calls is enabled and limit exceeded
+                # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
+                if forget_tool_calls and num_tool_calls_in_context is not None:
+                    self._filter_messages(messages, num_tool_calls_in_context)
+
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -431,11 +435,6 @@ class Model(ABC):
                 # If we have any tool calls that require user input, break the loop
                 if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                     break
-
-                # Apply message filtering if forget_tool_calls is enabled (sliding window)
-                # This filters AFTER tool results are added, BEFORE next API call
-                if forget_tool_calls:
-                    self._filter_messages(messages, num_tool_calls_in_context)
 
                 # Continue loop to get next response
                 continue
@@ -568,6 +567,11 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
+                # Apply message filtering if forget_tool_calls is enabled and limit exceeded
+                # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
+                if forget_tool_calls and num_tool_calls_in_context is not None:
+                    self._filter_messages(messages, num_tool_calls_in_context)
+
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -583,11 +587,6 @@ class Model(ABC):
                 # If we have any tool calls that require user input, break the loop
                 if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                     break
-
-                # Apply message filtering if forget_tool_calls is enabled (sliding window)
-                # This filters AFTER tool results are added, BEFORE next API call
-                if forget_tool_calls:
-                    self._filter_messages(messages, num_tool_calls_in_context)
 
                 # Continue loop to get next response
                 continue
@@ -942,6 +941,11 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
+                # Apply message filtering if forget_tool_calls is enabled and limit exceeded
+                # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
+                if forget_tool_calls and num_tool_calls_in_context is not None:
+                    self._filter_messages(messages, num_tool_calls_in_context)
+
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -957,11 +961,6 @@ class Model(ABC):
                 # If we have any tool calls that require user input, break the loop
                 if any(fc.function.requires_user_input for fc in function_calls_to_run):
                     break
-
-                # Apply message filtering if forget_tool_calls is enabled (sliding window)
-                # This filters AFTER tool results are added, BEFORE next API call
-                if forget_tool_calls:
-                    self._filter_messages(messages, num_tool_calls_in_context)
 
                 # Continue loop to get next response
                 continue
@@ -1119,6 +1118,11 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
+                # Apply message filtering if forget_tool_calls is enabled and limit exceeded
+                # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
+                if forget_tool_calls and num_tool_calls_in_context is not None:
+                    self._filter_messages(messages, num_tool_calls_in_context)
+
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -1134,11 +1138,6 @@ class Model(ABC):
                 # If we have any tool calls that require user input, break the loop
                 if any(fc.function.requires_user_input for fc in function_calls_to_run):
                     break
-
-                # Apply message filtering if forget_tool_calls is enabled (sliding window)
-                # This filters AFTER tool results are added, BEFORE next API call
-                if forget_tool_calls:
-                    self._filter_messages(messages, num_tool_calls_in_context)
 
                 # Continue loop to get next response
                 continue

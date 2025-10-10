@@ -1,8 +1,7 @@
 import asyncio
-import os
-
 from agno.agent import Agent
 from agno.models.anthropic import Claude
+from agno.models.google import Gemini
 from agno.tools.mcp import MCPTools
 from mcp import StdioServerParameters
 
@@ -19,7 +18,7 @@ async def run_agent(message: str) -> None:
         server_params=server_params, include_tools=["browser_navigate", "browser_click"]
     ) as mcp_tools:
         agent = Agent(
-            model=Claude(id="claude-3-7-sonnet-latest"),
+            model=Gemini(id="gemini-2.5-pro", vertexai=True),
             tools=[mcp_tools],
             role="Your task is to use your web browsing capabilities to find information and take actions on the web.",
             markdown=True,
