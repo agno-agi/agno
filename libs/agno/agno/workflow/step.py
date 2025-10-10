@@ -357,7 +357,7 @@ class Step:
         """Enrich event with step and workflow context information"""
         if workflow_run_response is None:
             return event
-            
+
         if hasattr(event, "step_id"):
             event.step_id = self.step_id
         if hasattr(event, "step_name") and self.name is not None:
