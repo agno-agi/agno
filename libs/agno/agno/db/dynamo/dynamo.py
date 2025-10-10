@@ -1454,7 +1454,7 @@ class DynamoDb(BaseDb):
         """
         import json
 
-        item = {}
+        item: Dict[str, Any] = {}
         for key, value in data.items():
             if value is not None:
                 if isinstance(value, bool):

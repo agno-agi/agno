@@ -15,6 +15,7 @@ from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 from phoenix.otel import register
+from pydantic import BaseModel
 
 os.environ["PHOENIX_API_KEY"] = os.getenv("PHOENIX_API_KEY")
 os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = (
@@ -25,8 +26,6 @@ tracer_provider = register(
     project_name="default",  # Default is 'default'
     auto_instrument=True,  # Automatically use the installed OpenInference instrumentation
 )
-
-from pydantic import BaseModel
 
 
 class StockPrice(BaseModel):

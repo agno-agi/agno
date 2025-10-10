@@ -89,7 +89,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
 
     # Otherwise use the original user message
     else:
-        runs = session.get("runs", [])
+        runs = session.get("runs", []) or []
 
         # For teams, identify the first Team run and avoid using the first member's run
         if session.get("session_type") == "team":
@@ -99,6 +99,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
                 if not r.get("agent_id"):
                     run = r
                     break
+
             # Fallback to first run if no team run found
             if run is None and runs:
                 run = runs[0]
