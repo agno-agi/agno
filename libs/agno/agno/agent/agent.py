@@ -3753,8 +3753,12 @@ class Agent:
         parse_structured_output: bool = False,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunOutputEvent]:
-        if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
-            model_response_event, tuple(get_args(TeamRunOutputEvent))
+        from agno.run.workflow import WorkflowRunOutputEvent
+
+        if (
+            isinstance(model_response_event, tuple(get_args(RunOutputEvent)))
+            or isinstance(model_response_event, tuple(get_args(TeamRunOutputEvent)))
+            or isinstance(model_response_event, tuple(get_args(WorkflowRunOutputEvent)))
         ):
             if model_response_event.event == RunEvent.custom_event:  # type: ignore
                 model_response_event.agent_id = self.id  # type: ignore
