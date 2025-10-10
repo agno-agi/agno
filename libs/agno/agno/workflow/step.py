@@ -753,8 +753,6 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
-                        session_state_copy = copy(session_state)
-
                         response = await self.active_executor.arun(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -955,8 +953,6 @@ class Step:
                             history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
-
-                        session_state_copy = copy(session_state)
 
                         response_stream = self.active_executor.arun(  # type: ignore
                             input=final_message,
