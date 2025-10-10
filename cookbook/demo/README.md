@@ -1,6 +1,11 @@
-# AgentOS Demo
+# Agno Demo Suite - Client Showcase
 
-This cookbook contains a collection of demo agents that showcase the capabilities of AgentOS.
+This cookbook contains comprehensive demonstrations of Agno's capabilities for client presentations, including both basic functionality and enterprise-grade advanced features.
+
+## 📁 Demo Files
+
+- **`real_world_showcase.py`** - 10 production-ready use cases (5 agents + 4 teams + 1 workflow)
+- **`run.py`** - AgentOS production setup with agents, teams, and workflows
 
 > Note: Fork and clone the repository if needed
 
@@ -73,12 +78,75 @@ export GOOGLE_API_KEY=***
 export GROQ_API_KEY=***
 ```
 
-### 6. Run the OS demo
+### 6. Run demos
+
+**Option A: Real-World Showcase Demo (production-ready use cases)**
 
 ```shell
+# Activate your virtual environment
+source venv/bin/activate
+
+# Export API keys
+export OPENAI_API_KEY='your-openai-key'
+export ANTHROPIC_API_KEY='your-anthropic-key'
+
+# Run real-world showcase (serves 10 use cases: 5 agents + 4 teams + 1 workflow)
+python cookbook/demo/real_world_showcase.py
+```
+
+Then open [os.agno.com](https://os.agno.com/) and connect to http://localhost:7780 to interact with real-world use cases.
+
+**Option B: Full AgentOS production setup**
+
+```shell
+# Run full AgentOS with more agents, teams, and workflows
 python cookbook/demo/run.py
 ```
 
-- Open [os.agno.com](https://os.agno.com/) and connect to your running OS to chat with the demo agents.
+Then open [os.agno.com](https://os.agno.com/) to connect and interact with the demo agents.
+
+---
+
+## 🎯 Demo Files Overview
+
+### 🟡 `real_world_showcase.py` - Production-Ready Use Cases
+
+**10 Real-World Applications:**
+1. **Customer Support AI Team** - Intelligent ticket classification & resolution
+2. **Content Creation Pipeline** - Automated research, writing & editing workflow
+3. **Personal Finance Manager** - Investment analysis & financial advice
+4. **Legal Document Analyzer** - Contract review with RAG knowledge base
+5. **HR Recruitment Assistant** - Resume screening & candidate evaluation
+6. **E-commerce Product Recommender** - Personalized shopping assistant
+7. **Healthcare Symptom Checker** - Educational health information team
+8. **Business Intelligence Team** - Data analysis & strategic insights
+9. **Education Tutor** - Adaptive personalized learning with RAG
+10. **Travel Planning Assistant** - Comprehensive trip planning
+
+**Key Features Demonstrated:**
+- 📋 Multi-Agent Teams (4 teams with specialized roles)
+- 🔄 Complex Workflows (Research → Write → Edit pipeline)
+- 💾 Memory & Knowledge (RAG with legal, medical, education knowledge bases)
+- ✅ Structured Outputs (Pydantic schemas for all responses)
+- 🔒 Validation & Safety (Pre-hooks for input validation, emergency detection)
+- 🎯 Real-World Scenarios (Customer support, finance, healthcare, etc.)
+
+**Run AgentOS:**
+```bash
+# Start the Real-World Showcase server
+python cookbook/demo/real_world_showcase.py
+
+# Then connect to https://os.agno.com to interact with all use cases
+# API available at http://localhost:7780
+# Full documentation: cookbook/demo/REAL_WORLD_SHOWCASE.md
+```
+
+---
+
+## 📚 Additional Documentation
+
+- **[REAL_WORLD_SHOWCASE.md](./REAL_WORLD_SHOWCASE.md)** - Comprehensive documentation for all 10 real-world use cases
+
+---
 
 ### 7. Message us on [discord](https://agno.link/discord) if you have any questions
