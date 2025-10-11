@@ -11,8 +11,7 @@ agent_all = Agent(tools=[TavilyTools(all=True)])
 context_agent = Agent(
     tools=[
         TavilyTools(
-            enable_web_search_using_tavily=False,
-            enable_web_search_with_tavily=True,
+            enable_search=True,
         )
     ]
 )
