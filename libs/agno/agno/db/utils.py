@@ -6,6 +6,7 @@ from uuid import UUID
 
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.utils.log import log_warning
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -20,8 +21,24 @@ class CustomJSONEncoder(json.JSONEncoder):
             return obj.to_dict()
         elif isinstance(obj, Metrics):
             return obj.to_dict()
+        elif isinstance(obj, set):
+            return list(obj)
+        elif isinstance(obj, bytes):
+            return obj.decode("utf-8")
 
-        return super().default(obj)
+        # Warn and skip encoding for callable objects
+        elif callable(obj):
+            log_warning(
+                f"Callable object {obj.__class__.__name__} is not JSON serializable and won't be stored in the database."
+            )
+            return None
+        try:
+            return super().default(obj)
+
+        # If no encoding approach worked, warn and skip
+        except Exception as e:
+            log_warning(f"Error serializing object {obj}: {e}")
+            return None
 
 
 def serialize_session_json_fields(session: dict) -> dict:
@@ -34,7 +51,7 @@ def serialize_session_json_fields(session: dict) -> dict:
         dict: The dictionary with JSON fields serialized.
     """
     if session.get("session_data") is not None:
-        session["session_data"] = json.dumps(session["session_data"])
+        session["session_data"] = json.dumps(session["session_data"], cls=CustomJSONEncoder)
     if session.get("agent_data") is not None:
         session["agent_data"] = json.dumps(session["agent_data"])
     if session.get("team_data") is not None:
