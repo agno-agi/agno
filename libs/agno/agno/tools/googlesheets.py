@@ -55,6 +55,7 @@ from agno.tools import Toolkit
 try:
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
+    from google.oauth2.service_account import Credentials as ServiceAccountCredentials
     from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import Resource, build
 except ImportError:
@@ -91,7 +92,7 @@ class GoogleSheetsTools(Toolkit):
         scopes: Optional[List[str]] = None,
         spreadsheet_id: Optional[str] = None,
         spreadsheet_range: Optional[str] = None,
-        creds: Optional[Credentials] = None,
+        creds: Optional[Credentials | ServiceAccountCredentials] = None,
         creds_path: Optional[str] = None,
         token_path: Optional[str] = None,
         oauth_port: int = 0,
@@ -100,6 +101,7 @@ class GoogleSheetsTools(Toolkit):
         enable_update_sheet: bool = False,
         enable_create_duplicate_sheet: bool = False,
         all: bool = False,
+        service_account_path: Optional[str] = None,
         **kwargs,
     ):
         """Initialize GoogleSheetsTools with the specified configuration.
@@ -108,7 +110,7 @@ class GoogleSheetsTools(Toolkit):
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses write scope by default.
             spreadsheet_id (Optional[str]): ID of the target spreadsheet.
             spreadsheet_range (Optional[str]): Range within the spreadsheet.
-            creds (Optional[Credentials]): Pre-existing credentials.
+            creds (Optional[Credentials | ServiceAccountCredentials]): Pre-existing credentials.
             creds_path (Optional[str]): Path to credentials file.
             token_path (Optional[str]): Path to token file.
             oauth_port (int): Port to use for OAuth authentication. Defaults to 0.
@@ -126,6 +128,7 @@ class GoogleSheetsTools(Toolkit):
         self.token_path = token_path
         self.oauth_port = oauth_port
         self.service: Optional[Resource] = None
+        self.service_account_path = service_account_path
 
         # Determine required scopes based on operations if no custom scopes provided
         if scopes is None:
@@ -169,6 +172,17 @@ class GoogleSheetsTools(Toolkit):
         Authenticate with Google Sheets API
         """
         if self.creds and self.creds.valid:
+            return
+
+        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+
+        if service_account_path:
+            self.creds = ServiceAccountCredentials.from_service_account_file(
+                service_account_path,
+                scopes=self.scopes,
+            )
+            if self.creds.expired:
+                self.creds.refresh(Request())
             return
 
         token_file = Path(self.token_path or "token.json")
