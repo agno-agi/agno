@@ -853,99 +853,120 @@ class Agent:
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
-        # 3. Reason about the task
-        self._handle_reasoning(run_response=run_response, run_messages=run_messages)
+        # Start memory creation on a separate thread (runs concurrently with the main execution loop)
+        from concurrent.futures import ThreadPoolExecutor
 
-        # Check for cancellation before model call
-        raise_if_cancelled(run_response.run_id)  # type: ignore
+        memory_future = None
+        memory_executor = None
+        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+            log_debug("Starting memory creation in background thread.")
+            memory_executor = ThreadPoolExecutor(max_workers=1)
+            memory_future = memory_executor.submit(self._make_memories, run_messages=run_messages, user_id=user_id)
 
-        # 4. Generate a response from the Model (includes running function calls)
-        self.model = cast(Model, self.model)
-        model_response: ModelResponse = self.model.response(
-            messages=run_messages.messages,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
-            tool_choice=self.tool_choice,
-            tool_call_limit=self.tool_call_limit,
-            response_format=response_format,
-            run_response=run_response,
-            send_media_to_model=self.send_media_to_model,
-        )
+        try:
+            # 3. Reason about the task
+            self._handle_reasoning(run_response=run_response, run_messages=run_messages)
 
-        # Check for cancellation after model call
-        raise_if_cancelled(run_response.run_id)  # type: ignore
+            # Check for cancellation before model call
+            raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # If an output model is provided, generate output using the output model
-        self._generate_response_with_output_model(model_response, run_messages)
-
-        # If a parser model is provided, structure the response separately
-        self._parse_response_with_parser_model(model_response, run_messages)
-
-        # 5. Update the RunOutput with the model response
-        self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
-
-        if self.store_media:
-            self._store_media(run_response, model_response)
-        else:
-            self._scrub_media_from_run_output(run_response)
-
-        # We should break out of the run function
-        if any(tool_call.is_paused for tool_call in run_response.tools or []):
-            return self._handle_agent_run_paused(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+            # 4. Generate a response from the Model (includes running function calls)
+            self.model = cast(Model, self.model)
+            model_response: ModelResponse = self.model.response(
+                messages=run_messages.messages,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+                response_format=response_format,
+                run_response=run_response,
+                send_media_to_model=self.send_media_to_model,
             )
 
-        run_response.status = RunStatus.completed
+            # Check for cancellation after model call
+            raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
+            # If an output model is provided, generate output using the output model
+            self._generate_response_with_output_model(model_response, run_messages)
 
-        # Stop the timer for the Run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
+            # If a parser model is provided, structure the response separately
+            self._parse_response_with_parser_model(model_response, run_messages)
 
-        # 6. Execute post-hooks after output is generated but before response is returned
-        if self.post_hooks is not None:
-            self._execute_post_hooks(
-                hooks=self.post_hooks,  # type: ignore
-                run_output=run_response,
-                session=session,
-                user_id=user_id,
-                debug_mode=debug_mode,
-                **kwargs,
+            # 5. Update the RunOutput with the model response
+            self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+
+            if self.store_media:
+                self._store_media(run_response, model_response)
+            else:
+                self._scrub_media_from_run_output(run_response)
+
+            # We should break out of the run function
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                return self._handle_agent_run_paused(
+                    run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                )
+
+            run_response.status = RunStatus.completed
+
+            # Convert the response to the structured format if needed
+            self._convert_response_to_structured_format(run_response)
+
+            # Stop the timer for the Run duration
+            if run_response.metrics:
+                run_response.metrics.stop_timer()
+
+            # 6. Execute post-hooks after output is generated but before response is returned
+            if self.post_hooks is not None:
+                self._execute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    session=session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    **kwargs,
+                )
+
+            # 7. Calculate session metrics
+            self._update_session_metrics(session=session, run_response=run_response)
+
+            # 8. Optional: Save output to file if save_response_to_file is set
+            self.save_run_response_to_file(
+                run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
             )
 
-        # 7. Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
+            # 9. Add the RunOutput to Agent Session
+            session.upsert_run(run=run_response)
 
-        # 8. Optional: Save output to file if save_response_to_file is set
-        self.save_run_response_to_file(
-            run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
-        )
+            # 10. Update Agent Memory - Wait for background memory creation and handle session summaries
+            # Wait for memory creation to complete (if started)
+            if memory_future is not None:
+                try:
+                    memory_future.result()
+                except Exception as e:
+                    log_warning(f"Error in memory creation: {str(e)}")
 
-        # 9. Add the RunOutput to Agent Session
-        session.upsert_run(run=run_response)
+            # Create session summary
+            if self.session_summary_manager is not None:
+                try:
+                    self.session_summary_manager.create_session_summary(session=session)
+                except Exception as e:
+                    log_warning(f"Error in session summary creation: {str(e)}")
 
-        # 10. Update Agent Memory
-        # Execute in threadpool (tasks executed concurrently)
-        response_iterator = self._make_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        )
-        # Consume the response iterator to ensure the memory is updated before the run is completed
-        deque(response_iterator, maxlen=0)
+            # 11. Save session to memory
+            self.save_session(session=session)
 
-        # 11. Save session to memory
-        self.save_session(session=session)
+            # Log Agent Telemetry
+            self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
-        # Log Agent Telemetry
-        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+            log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
-        log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
-
-        # Always clean up the run tracking
-        cleanup_run(run_response.run_id)  # type: ignore
-
-        return run_response
+            return run_response
+        finally:
+            # Clean up the memory executor if it was created
+            if memory_executor is not None:
+                memory_executor.shutdown(wait=False)
+            # Always clean up the run tracking
+            cleanup_run(run_response.run_id)  # type: ignore
 
     def _run_stream(
         self,
@@ -1593,95 +1614,120 @@ class Agent:
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
-        # 4. Reason about the task if reasoning is enabled
-        await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
+        # Start memory creation as a background task (runs concurrently with the main execution)
+        import asyncio
 
-        # Check for cancellation before model call
-        raise_if_cancelled(run_response.run_id)  # type: ignore
+        memory_task = None
+        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+            log_debug("Starting memory creation in background task.")
+            memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
-        # 5. Generate a response from the Model (includes running function calls)
-        model_response: ModelResponse = await self.model.aresponse(
-            messages=run_messages.messages,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
-            tool_choice=self.tool_choice,
-            tool_call_limit=self.tool_call_limit,
-            response_format=response_format,
-            send_media_to_model=self.send_media_to_model,
-        )
+        try:
+            # 4. Reason about the task if reasoning is enabled
+            await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
-        # Check for cancellation after model call
-        raise_if_cancelled(run_response.run_id)  # type: ignore
+            # Check for cancellation before model call
+            raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # If an output model is provided, generate output using the output model
-        await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
-
-        # If a parser model is provided, structure the response separately
-        await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
-
-        # 6. Update the RunOutput with the model response
-        self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
-
-        if self.store_media:
-            self._store_media(run_response, model_response)
-        else:
-            self._scrub_media_from_run_output(run_response)
-
-        # We should break out of the run function
-        if any(tool_call.is_paused for tool_call in run_response.tools or []):
-            return self._handle_agent_run_paused(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+            # 5. Generate a response from the Model (includes running function calls)
+            model_response: ModelResponse = await self.model.aresponse(
+                messages=run_messages.messages,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+                response_format=response_format,
+                send_media_to_model=self.send_media_to_model,
             )
 
-        run_response.status = RunStatus.completed
+            # Check for cancellation after model call
+            raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
+            # If an output model is provided, generate output using the output model
+            await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
 
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
+            # If a parser model is provided, structure the response separately
+            await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
 
-        # 7. Execute post-hooks after output is generated but before response is returned
-        if self.post_hooks is not None:
-            await self._aexecute_post_hooks(
-                hooks=self.post_hooks,  # type: ignore
-                run_output=run_response,
-                session=session,
-                user_id=user_id,
-                debug_mode=debug_mode,
-                **kwargs,
+            # 6. Update the RunOutput with the model response
+            self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+
+            if self.store_media:
+                self._store_media(run_response, model_response)
+            else:
+                self._scrub_media_from_run_output(run_response)
+
+            # We should break out of the run function
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                return self._handle_agent_run_paused(
+                    run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                )
+
+            run_response.status = RunStatus.completed
+
+            # Convert the response to the structured format if needed
+            self._convert_response_to_structured_format(run_response)
+
+            # Set the run duration
+            if run_response.metrics:
+                run_response.metrics.stop_timer()
+
+            # 7. Execute post-hooks after output is generated but before response is returned
+            if self.post_hooks is not None:
+                await self._aexecute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    session=session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    **kwargs,
+                )
+
+            # 8. Calculate session metrics
+            self._update_session_metrics(session=session, run_response=run_response)
+
+            # 9. Optional: Save output to file if save_response_to_file is set
+            self.save_run_response_to_file(
+                run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
             )
 
-        # 8. Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
+            # 10. Add RunOutput to Agent Session
+            session.upsert_run(run=run_response)
 
-        # 9. Optional: Save output to file if save_response_to_file is set
-        self.save_run_response_to_file(
-            run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
-        )
+            # 11. Update Agent Memory - Wait for background memory creation and handle session summaries
+            # Wait for memory creation to complete (if started)
+            if memory_task is not None:
+                try:
+                    await memory_task
+                except Exception as e:
+                    log_warning(f"Error in memory creation: {str(e)}")
 
-        # 10. Add RunOutput to Agent Session
-        session.upsert_run(run=run_response)
+            # Create session summary
+            if self.session_summary_manager is not None:
+                try:
+                    await self.session_summary_manager.acreate_session_summary(session=session)
+                except Exception as e:
+                    log_warning(f"Error in session summary creation: {str(e)}")
 
-        # 11. Update Agent Memory
-        async for _ in self._amake_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        ):
-            pass
+            # 12. Save session to storage
+            self.save_session(session=session)
 
-        # 12. Save session to storage
-        self.save_session(session=session)
+            # Log Agent Telemetry
+            await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
-        # Log Agent Telemetry
-        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+            log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
-        log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
-
-        # Always clean up the run tracking
-        cleanup_run(run_response.run_id)  # type: ignore
-
-        return run_response
+            return run_response
+        finally:
+            # Cancel the memory task if it's still running
+            if memory_task is not None and not memory_task.done():
+                memory_task.cancel()
+                try:
+                    await memory_task
+                except asyncio.CancelledError:
+                    pass
+            # Always clean up the run tracking
+            cleanup_run(run_response.run_id)  # type: ignore
 
     async def _arun_stream(
         self,
@@ -4214,127 +4260,6 @@ class Agent:
             else:
                 log_warning("Unable to add messages to memory")
 
-    def _make_memories_and_summaries(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-    ) -> Iterator[RunOutputEvent]:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = []
-            memory_update_task: bool = False
-            session_summary_task: bool = False
-
-            if (
-                run_messages.user_message is not None
-                and self.memory_manager is not None
-                and not self.enable_agentic_memory
-            ):
-                log_debug("Creating memories.")
-                memory_update_task = True
-                futures.append(executor.submit(self._make_memories, run_messages=run_messages, user_id=user_id))
-
-            # Create session summary
-            if self.session_summary_manager is not None:
-                log_debug("Creating session summary.")
-                session_summary_task = True
-                futures.append(
-                    executor.submit(
-                        self.session_summary_manager.create_session_summary,  # type: ignore
-                        session=session,
-                    )
-                )
-
-            if futures:
-                if self.stream_intermediate_steps:
-                    if memory_update_task:
-                        yield self._handle_event(
-                            create_memory_update_started_event(from_run_response=run_response), run_response
-                        )
-                    if session_summary_task:
-                        yield self._handle_event(
-                            create_session_summary_creation_started_event(from_run_response=run_response), run_response
-                        )
-
-                # Wait for all operations to complete and handle any errors
-                for future in as_completed(futures):
-                    try:
-                        future.result()
-                    except Exception as e:
-                        log_warning(f"Error in memory/summary operation: {str(e)}")
-
-                if self.stream_intermediate_steps:
-                    if memory_update_task:
-                        yield self._handle_event(
-                            create_memory_update_completed_event(from_run_response=run_response), run_response
-                        )
-                    if session_summary_task:
-                        yield self._handle_event(
-                            create_session_summary_creation_completed_event(
-                                from_run_response=run_response, session_summary=session.summary
-                            ),
-                            run_response,
-                        )
-
-    async def _amake_memories_and_summaries(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-    ) -> AsyncIterator[RunOutputEvent]:
-        tasks: List[Any] = []
-        memory_update_task: bool = False
-        session_summary_task: bool = False
-
-        # Create user memories from single message
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            log_debug("Creating user memories.")
-            memory_update_task = True
-            tasks.append(self._amake_memories(run_messages=run_messages, user_id=user_id))
-
-        # Create session summary
-        if self.session_summary_manager is not None:
-            log_debug("Creating session summary.")
-            session_summary_task = True
-            tasks.append(
-                self.session_summary_manager.acreate_session_summary(
-                    session=session,
-                )
-            )
-
-        if tasks:
-            if self.stream_intermediate_steps:
-                if memory_update_task:
-                    yield self._handle_event(
-                        create_memory_update_started_event(from_run_response=run_response), run_response
-                    )
-                if session_summary_task:
-                    yield self._handle_event(
-                        create_session_summary_creation_started_event(from_run_response=run_response), run_response
-                    )
-
-            # Execute all tasks concurrently and handle any errors
-            try:
-                await asyncio.gather(*tasks)
-            except Exception as e:
-                log_warning(f"Error in memory/summary operation: {str(e)}")
-
-            if self.stream_intermediate_steps:
-                if memory_update_task:
-                    yield self._handle_event(
-                        create_memory_update_completed_event(from_run_response=run_response), run_response
-                    )
-                if session_summary_task:
-                    yield self._handle_event(
-                        create_session_summary_creation_completed_event(
-                            from_run_response=run_response, session_summary=session.summary
-                        ),
-                        run_response,
-                    )
 
     def _raise_if_async_tools(self) -> None:
         """Raise an exception if any tools contain async functions"""
