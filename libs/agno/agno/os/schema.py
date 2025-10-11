@@ -73,6 +73,7 @@ class InternalServerErrorResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    instantiation_time: str
 
     class Config:
         json_schema_extra = {"example": {"status": "ok"}}
