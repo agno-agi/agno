@@ -71,7 +71,6 @@ class LocalFileSystemTools(Toolkit):
             full_filename = f"{filename}.{extension}"
             file_path = dir_path / full_filename
 
-            # Explicit utf-8 encoding for cross-platform Unicode safety
             file_path.write_text(content, encoding="utf-8")
 
             return f"Successfully wrote file to: {file_path}"
@@ -88,4 +87,4 @@ class LocalFileSystemTools(Toolkit):
         file_path = Path(directory or self.target_directory) / filename
         if not file_path.exists():
             return f"File not found: {file_path}"
-    return file_path.read_text(encoding="utf-8")
+        return file_path.read_text(encoding="utf-8")
