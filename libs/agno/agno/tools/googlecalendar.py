@@ -136,7 +136,7 @@ class GoogleCalendarTools(Toolkit):
                 self.creds = flow.run_local_server(port=self.oauth_port)
 
         if self.creds:
-            token_file.write_text(self.creds.to_json())
+            token_file.write_text(self.creds.to_json(), encoding="utf-8")
             log_debug("Successfully authenticated with Google Calendar API.")
             log_info(f"Token file path: {token_file}")
 

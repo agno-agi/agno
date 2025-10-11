@@ -9,7 +9,7 @@ def read_yaml_file(file_path: Optional[Path]) -> Optional[Dict[str, Any]]:
         import yaml
 
         log_debug(f"Reading {file_path}")
-        data_from_file = yaml.safe_load(file_path.read_text())
+        data_from_file = yaml.safe_load(file_path.read_text(encoding="utf-8"))
         if data_from_file is not None and isinstance(data_from_file, dict):
             return data_from_file
         else:
@@ -22,4 +22,4 @@ def write_yaml_file(file_path: Optional[Path], data: Optional[Dict[str, Any]], *
         import yaml
 
         log_debug(f"Writing {file_path}")
-        file_path.write_text(yaml.safe_dump(data, **kwargs))
+        file_path.write_text(yaml.safe_dump(data, **kwargs), encoding="utf-8")
