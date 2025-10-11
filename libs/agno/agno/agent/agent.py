@@ -69,6 +69,8 @@ from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
+    create_session_summary_creation_completed_event,
+    create_session_summary_creation_started_event,
     create_parser_model_response_completed_event,
     create_parser_model_response_started_event,
     create_pre_hook_completed_event,
@@ -84,7 +86,7 @@ from agno.utils.events import (
     create_run_paused_event,
     create_run_started_event,
     create_tool_call_completed_event,
-    create_tool_call_started_event,
+    create_tool_call_started_event, create_run_content_completed_event,
 )
 from agno.utils.hooks import filter_hook_args, normalize_hooks
 from agno.utils.knowledge import get_agentic_or_user_search_filters
@@ -924,6 +926,7 @@ class Agent:
         session.upsert_run(run=run_response)
 
         # 10. Update Agent Memory
+        # Execute in threadpool (tasks executed concurrently)
         response_iterator = self._make_memories_and_summaries(
             run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
         )
@@ -1031,6 +1034,19 @@ class Agent:
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
+        # Start memory creation on a separate thread (runs concurrently with the main execution loop)
+        from concurrent.futures import ThreadPoolExecutor
+        memory_future = None
+        memory_executor = None
+        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+            log_debug("Starting memory creation in background thread.")
+            memory_executor = ThreadPoolExecutor(max_workers=1)
+            memory_future = memory_executor.submit(
+                self._make_memories,
+                run_messages=run_messages,
+                user_id=user_id
+            )
+
         try:
             # Start the Run by yielding a RunStarted event
             if stream_intermediate_steps:
@@ -1089,9 +1105,15 @@ class Agent:
             # Check for cancellation after model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
+
             # If a parser model is provided, structure the response separately
             yield from self._parse_response_with_parser_model_stream(
                 session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+            )
+            
+            # Yield RunContentCompletedEvent
+            yield self._handle_event(
+                create_run_content_completed_event(from_run_response=run_response), run_response
             )
 
             # We should break out of the run function
@@ -1100,6 +1122,11 @@ class Agent:
                     run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
                 )
                 return
+            
+            # Yield RunContentCompletedEvent
+            yield self._handle_event(
+                create_run_content_completed_event(from_run_response=run_response), run_response
+            )
 
             run_response.status = RunStatus.completed
 
@@ -1123,10 +1150,37 @@ class Agent:
             # 7. Add RunOutput to Agent Session
             session.upsert_run(run=run_response)
 
-            # 8. Update Agent Memory
-            yield from self._make_memories_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-            )
+            # 8. Update Agent Memory - Wait for background memory creation and handle session summaries
+            # Wait for memory creation to complete (if started)
+            if memory_future is not None:
+            
+                if self.stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_memory_update_started_event(from_run_response=run_response), run_response
+                    )
+                try:
+                    memory_future.result()
+                except Exception as e:
+                    log_warning(f"Error in memory creation: {str(e)}")
+                if self.stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_memory_update_completed_event(from_run_response=run_response), run_response
+                    )
+
+            # Create session summary
+            if self.session_summary_manager is not None:
+                if self.stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_session_summary_creation_started_event(from_run_response=run_response), run_response
+                    )
+                try:
+                    self.session_summary_manager.create_session_summary(session=session)
+                except Exception as e:
+                    log_warning(f"Error in session summary creation: {str(e)}")
+                if self.stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_session_summary_creation_completed_event(from_run_response=run_response, session_summary=session.summary), run_response
+                    )
 
             # 9. Create the run completed event
             completed_event = self._handle_event(
@@ -1163,6 +1217,9 @@ class Agent:
             session.upsert_run(run=run_response)
             self.save_session(session=session)
         finally:
+            # Clean up the memory executor if it was created
+            if memory_executor is not None:
+                memory_executor.shutdown(wait=False)
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1719,6 +1776,18 @@ class Agent:
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
+        # Start memory creation as a background task (runs concurrently with the main execution)
+        import asyncio
+        memory_task = None
+        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+            log_debug("Starting memory creation in background task.")
+            memory_task = asyncio.create_task(
+                self._amake_memories(
+                    run_messages=run_messages,
+                    user_id=user_id
+                )
+            )
+
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
@@ -1796,6 +1865,11 @@ class Agent:
                     yield item
                 return
 
+            # Yield RunContentCompletedEvent
+            yield self._handle_event(
+                create_run_content_completed_event(from_run_response=run_response), run_response
+            )
+
             run_response.status = RunStatus.completed
 
             # Set the run duration
@@ -1816,16 +1890,40 @@ class Agent:
             # 7. Add RunOutput to Agent Session
             session.upsert_run(run=run_response)
 
-            # 8. Update Agent Memory
-            async for event in self._amake_memories_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-            ):
-                yield event
+            # 8. Update Agent Memory - Wait for background memory creation and handle session summaries
+            # Wait for memory creation to complete (if started)
+            if memory_task is not None:
+                try:
+                    await memory_task
+                except Exception as e:
+                    log_warning(f"Error in memory creation: {str(e)}")
+                if self.stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_memory_update_completed_event(from_run_response=run_response), run_response
+                    )
+
+            # Create session summary
+            if self.session_summary_manager is not None:
+                if self.stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_session_summary_creation_started_event(from_run_response=run_response), run_response
+                    )
+                try:
+                    await self.session_summary_manager.acreate_session_summary(session=session)
+                except Exception as e:
+                    log_warning(f"Error in session summary creation: {str(e)}")
+                if self.stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_session_summary_creation_completed_event(from_run_response=run_response, session_summary=session.summary), run_response
+                    )
 
             # 9. Create the run completed event
             completed_event = self._handle_event(
                 create_run_completed_event(from_run_response=run_response), run_response
             )
+
+            # Add updated RunOutput to Agent Session (after new events)
+            session.upsert_run(run=run_response)
 
             # 10. Save session to storage
             self.save_session(session=session)
@@ -1857,6 +1955,13 @@ class Agent:
             session.upsert_run(run=run_response)
             self.save_session(session=session)
         finally:
+            # Cancel the memory task if it's still running
+            if memory_task is not None and not memory_task.done():
+                memory_task.cancel()
+                try:
+                    await memory_task
+                except asyncio.CancelledError:
+                    pass
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -2505,6 +2610,11 @@ class Agent:
             )
             return
 
+        # Yield RunContentCompletedEvent
+        yield self._handle_event(
+            create_run_content_completed_event(from_run_response=run_response), run_response
+        )
+
         # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
@@ -2522,13 +2632,26 @@ class Agent:
         # 5. Add the run to memory
         session.upsert_run(run=run_response)
 
-        # 6. Update Agent Memory
-        yield from self._make_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        )
+        # 6. Update session summary
+        if self.session_summary_manager is not None:
+            if self.stream_intermediate_steps:
+                yield self._handle_event(
+                    create_session_summary_creation_started_event(from_run_response=run_response), run_response
+                )
+            try:
+                self.session_summary_manager.create_session_summary(session=session)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {str(e)}")
+            if self.stream_intermediate_steps:
+                yield self._handle_event(
+                    create_session_summary_creation_completed_event(from_run_response=run_response, session_summary=session.summary), run_response
+                )
 
         # 7. Create the run completed event
-        completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
+        completed_event = self._handle_event(create_run_completed_event(run_response), run_response)\
+        
+        # Store updated run response    
+        session.upsert_run(run=run_response)
 
         # 8. Save session to storage
         self.save_session(session=session)
@@ -2907,6 +3030,11 @@ class Agent:
                 yield item
             return
 
+        # Yield RunContentCompletedEvent
+        yield self._handle_event(
+            create_run_content_completed_event(from_run_response=run_response), run_response
+        )
+        
         # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
@@ -4024,115 +4152,24 @@ class Agent:
                             run_response,
                         )
 
-    def _make_memories_and_summaries(
+    def _make_memories(
         self,
-        run_response: RunOutput,
         run_messages: RunMessages,
-        session: AgentSession,
         user_id: Optional[str] = None,
-    ) -> Iterator[RunOutputEvent]:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = []
-
-            # Create user memories
-            user_message_str = (
-                run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
-            )
-            if user_message_str is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-                log_debug("Creating user memories.")
-                futures.append(
-                    executor.submit(
-                        self.memory_manager.create_user_memories,
-                        message=user_message_str,
-                        user_id=user_id,
-                        agent_id=self.id,
-                    )
-                )
-
-            # Parse messages if provided
-            if (
-                self.enable_user_memories
-                and run_messages.extra_messages is not None
-                and len(run_messages.extra_messages) > 0
-            ):
-                parsed_messages = []
-                for _im in run_messages.extra_messages:
-                    if isinstance(_im, Message):
-                        parsed_messages.append(_im)
-                    elif isinstance(_im, dict):
-                        try:
-                            parsed_messages.append(Message(**_im))
-                        except Exception as e:
-                            log_warning(f"Failed to validate message during memory update: {e}")
-                    else:
-                        log_warning(f"Unsupported message type: {type(_im)}")
-                        continue
-
-                if len(parsed_messages) > 0 and self.memory_manager is not None:
-                    futures.append(
-                        executor.submit(
-                            self.memory_manager.create_user_memories,
-                            messages=parsed_messages,
-                            user_id=user_id,
-                            agent_id=self.id,
-                        )
-                    )
-                else:
-                    log_warning("Unable to add messages to memory")
-
-            # Create session summary
-            if self.session_summary_manager is not None:
-                log_debug("Creating session summary.")
-                futures.append(
-                    executor.submit(
-                        self.session_summary_manager.create_session_summary,  # type: ignore
-                        session=session,
-                    )
-                )
-
-            if futures:
-                if self.stream_intermediate_steps:
-                    yield self._handle_event(
-                        create_memory_update_started_event(from_run_response=run_response), run_response
-                    )
-
-                # Wait for all operations to complete and handle any errors
-                for future in as_completed(futures):
-                    try:
-                        future.result()
-                    except Exception as e:
-                        log_warning(f"Error in memory/summary operation: {str(e)}")
-
-                if self.stream_intermediate_steps:
-                    yield self._handle_event(
-                        create_memory_update_completed_event(from_run_response=run_response), run_response
-                    )
-
-    async def _amake_memories_and_summaries(
-        self,
-        run_response: RunOutput,
-        run_messages: RunMessages,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-    ) -> AsyncIterator[RunOutputEvent]:
-        tasks: List[Any] = []
-
-        # Create user memories from single message
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+    ):
+        user_message_str = (
+            run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+        )
+        if user_message_str is not None:
             log_debug("Creating user memories.")
-
-            tasks.append(
-                self.memory_manager.acreate_user_memories(
-                    message=run_messages.user_message.get_content_string(), user_id=user_id
-                )
+            self.memory_manager.create_user_memories(
+                message=user_message_str,
+                user_id=user_id,
+                agent_id=self.id,
             )
 
-        # Parse messages if provided
         if (
-            self.memory_manager is not None
-            and run_messages.extra_messages is not None
+            run_messages.extra_messages is not None
             and len(run_messages.extra_messages) > 0
         ):
             parsed_messages = []
@@ -4148,14 +4185,144 @@ class Agent:
                     log_warning(f"Unsupported message type: {type(_im)}")
                     continue
 
-            if len(parsed_messages) > 0:
-                tasks.append(self.memory_manager.acreate_user_memories(messages=parsed_messages, user_id=user_id))
+            if len(parsed_messages) > 0 and self.memory_manager is not None:
+                self.memory_manager.create_user_memories(
+                    messages=parsed_messages,
+                    user_id=user_id,
+                    agent_id=self.id
+                )
             else:
                 log_warning("Unable to add messages to memory")
+
+    async def _amake_memories(
+        self,
+        run_messages: RunMessages,
+        user_id: Optional[str] = None,
+    ):
+        user_message_str = (
+            run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+        )
+        if user_message_str is not None:
+            log_debug("Creating user memories.")
+            await self.memory_manager.acreate_user_memories(
+                message=user_message_str,
+                user_id=user_id,
+                agent_id=self.id,
+            )
+
+        if (
+            run_messages.extra_messages is not None
+            and len(run_messages.extra_messages) > 0
+        ):
+            parsed_messages = []
+            for _im in run_messages.extra_messages:
+                if isinstance(_im, Message):
+                    parsed_messages.append(_im)
+                elif isinstance(_im, dict):
+                    try:
+                        parsed_messages.append(Message(**_im))
+                    except Exception as e:
+                        log_warning(f"Failed to validate message during memory update: {e}")
+                else:
+                    log_warning(f"Unsupported message type: {type(_im)}")
+                    continue
+
+            if len(parsed_messages) > 0 and self.memory_manager is not None:
+                await self.memory_manager.acreate_user_memories(
+                    messages=parsed_messages,
+                    user_id=user_id,
+                    agent_id=self.id
+                )
+            else:
+                log_warning("Unable to add messages to memory")
+
+    def _make_memories_and_summaries(
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+    ) -> Iterator[RunOutputEvent]:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = []
+            memory_update_task: bool = False
+            session_summary_task: bool = False
+
+            if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+                log_debug("Creating memories.")
+                memory_update_task = True
+                futures.append(
+                    executor.submit(
+                        self._make_memories,
+                        run_messages=run_messages,
+                        user_id=user_id
+                    )
+                )
+
+            # Create session summary
+            if self.session_summary_manager is not None:
+                log_debug("Creating session summary.")
+                session_summary_task = True
+                futures.append(
+                    executor.submit(
+                        self.session_summary_manager.create_session_summary,  # type: ignore
+                        session=session,
+                    )
+                )
+
+            if futures:
+                if self.stream_intermediate_steps:
+                    if memory_update_task:
+                        yield self._handle_event(
+                                create_memory_update_started_event(from_run_response=run_response), run_response
+                            )
+                    if session_summary_task:
+                        yield self._handle_event(
+                            create_session_summary_creation_started_event(from_run_response=run_response), run_response
+                        )
+
+                # Wait for all operations to complete and handle any errors
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        log_warning(f"Error in memory/summary operation: {str(e)}")
+
+                if self.stream_intermediate_steps:
+                    if memory_update_task:
+                        yield self._handle_event(
+                            create_memory_update_completed_event(from_run_response=run_response), run_response
+                        )
+                    if session_summary_task:
+                        yield self._handle_event(
+                            create_session_summary_creation_completed_event(from_run_response=run_response, session_summary=session.summary), run_response
+                        )
+
+    async def _amake_memories_and_summaries(
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+    ) -> AsyncIterator[RunOutputEvent]:
+        tasks: List[Any] = []
+        memory_update_task: bool = False
+        session_summary_task: bool = False
+
+        # Create user memories from single message
+        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+            log_debug("Creating user memories.")
+            memory_update_task = True
+            tasks.append(
+                self._amake_memories(run_messages=run_messages, user_id=user_id)
+            )
 
         # Create session summary
         if self.session_summary_manager is not None:
             log_debug("Creating session summary.")
+            session_summary_task = True
             tasks.append(
                 self.session_summary_manager.acreate_session_summary(
                     session=session,
@@ -4164,9 +4331,14 @@ class Agent:
 
         if tasks:
             if self.stream_intermediate_steps:
-                yield self._handle_event(
-                    create_memory_update_started_event(from_run_response=run_response), run_response
-                )
+                if memory_update_task:
+                    yield self._handle_event(
+                            create_memory_update_started_event(from_run_response=run_response), run_response
+                        )
+                if session_summary_task:
+                    yield self._handle_event(
+                        create_session_summary_creation_started_event(from_run_response=run_response), run_response
+                    )
 
             # Execute all tasks concurrently and handle any errors
             try:
@@ -4175,9 +4347,14 @@ class Agent:
                 log_warning(f"Error in memory/summary operation: {str(e)}")
 
             if self.stream_intermediate_steps:
-                yield self._handle_event(
-                    create_memory_update_completed_event(from_run_response=run_response), run_response
-                )
+                if memory_update_task:
+                    yield self._handle_event(
+                        create_memory_update_completed_event(from_run_response=run_response), run_response
+                    )
+                if session_summary_task:
+                    yield self._handle_event(
+                        create_session_summary_creation_completed_event(from_run_response=run_response, session_summary=session.summary), run_response
+                    )
 
     def _raise_if_async_tools(self) -> None:
         """Raise an exception if any tools contain async functions"""
@@ -6408,8 +6585,9 @@ class Agent:
                         break
 
                     if (
-                        reasoning_agent_response.content.reasoning_steps is None
-                        or len(reasoning_agent_response.content.reasoning_steps) == 0
+                        reasoning_agent_response.content is not None
+                        and (reasoning_agent_response.content.reasoning_steps is None
+                        or len(reasoning_agent_response.content.reasoning_steps) == 0)
                     ):
                         log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
                         break

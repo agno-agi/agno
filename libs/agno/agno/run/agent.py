@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Union, TYPE_CHECKING
 
 from pydantic import BaseModel
 
@@ -12,6 +12,9 @@ from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.utils.log import logger
+
+if TYPE_CHECKING:
+    from agno.session.summary import SessionSummary
 
 
 @dataclass
@@ -109,6 +112,7 @@ class RunEvent(str, Enum):
 
     run_started = "RunStarted"
     run_content = "RunContent"
+    run_content_completed = "RunContentCompleted"
     run_intermediate_content = "RunIntermediateContent"
     run_completed = "RunCompleted"
     run_error = "RunError"
@@ -129,6 +133,9 @@ class RunEvent(str, Enum):
 
     memory_update_started = "MemoryUpdateStarted"
     memory_update_completed = "MemoryUpdateCompleted"
+
+    session_summary_creation_started = "SessionSummaryCreationStarted"
+    session_summary_creation_completed = "SessionSummaryCreationCompleted"
 
     parser_model_response_started = "ParserModelResponseStarted"
     parser_model_response_completed = "ParserModelResponseCompleted"
@@ -198,6 +205,10 @@ class RunContentEvent(BaseAgentRunEvent):
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
+
+@dataclass
+class RunContentCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.run_content_completed.value
 
 
 @dataclass
@@ -288,6 +299,17 @@ class MemoryUpdateCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class SessionSummaryCreationStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.session_summary_creation_started.value
+
+
+@dataclass
+class SessionSummaryCreationCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.session_summary_creation_completed.value
+    session_summary: Optional["SessionSummary"] = None
+
+
+@dataclass
 class ReasoningStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.reasoning_started.value
 
@@ -352,6 +374,7 @@ RunOutputEvent = Union[
     RunStartedEvent,
     RunContentEvent,
     IntermediateRunContentEvent,
+    RunContentCompletedEvent,
     RunCompletedEvent,
     RunErrorEvent,
     RunCancelledEvent,
@@ -364,6 +387,8 @@ RunOutputEvent = Union[
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
+    SessionSummaryCreationStartedEvent,
+    SessionSummaryCreationCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
@@ -378,6 +403,7 @@ RunOutputEvent = Union[
 RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.run_started.value: RunStartedEvent,
     RunEvent.run_content.value: RunContentEvent,
+    RunEvent.run_content_completed.value: RunContentCompletedEvent,
     RunEvent.run_intermediate_content.value: IntermediateRunContentEvent,
     RunEvent.run_completed.value: RunCompletedEvent,
     RunEvent.run_error.value: RunErrorEvent,
@@ -391,6 +417,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     RunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
+    RunEvent.session_summary_creation_started.value: SessionSummaryCreationStartedEvent,
+    RunEvent.session_summary_creation_completed.value: SessionSummaryCreationCompletedEvent,
     RunEvent.tool_call_started.value: ToolCallStartedEvent,
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
