@@ -3,8 +3,8 @@ import asyncio
 from hashlib import md5
 from typing import Any, Dict, List, Optional, Union, cast
 
-import redis
-import redis.asyncio as aioredis
+import valkey
+import valkey.asyncio as aio_valkey
 
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
@@ -59,10 +59,10 @@ class ValkeySearch(VectorDb):
         # Distance metric
         self.distance: Distance = distance
 
-        # Valkey/Redis client instances
-        self._client: Optional[redis.Redis] = None
-        self._async_client: Optional[aioredis.Redis] = None
-        self._async_binary_client: Optional[aioredis.Redis] = None
+        # Valkey client instances
+        self._client: Optional[valkey.Valkey] = None
+        self._async_client: Optional[aio_valkey.Valkey] = None
+        self._async_binary_client: Optional[aio_valkey.Valkey] = None
         
         # Flag to track if async operations are failing
         self._prefer_sync: bool = False
@@ -87,10 +87,10 @@ class ValkeySearch(VectorDb):
         self.content_hash_field: str = "content_hash"
 
     @property
-    def client(self) -> redis.Redis:
-        """Get or create the Redis client."""
+    def client(self) -> valkey.Valkey:
+        """Get or create the Valkey client."""
         if self._client is None:
-            self._client = redis.Redis(
+            self._client = valkey.Valkey(
                 host=self.host,
                 port=self.port,
                 password=self.password,
@@ -101,9 +101,9 @@ class ValkeySearch(VectorDb):
         return self._client
 
     @property
-    def binary_client(self) -> redis.Redis:
-        """Get or create a Redis client for binary operations (no response decoding)."""
-        return redis.Redis(
+    def binary_client(self) -> valkey.Valkey:
+        """Get or create a Valkey client for binary operations (no response decoding)."""
+        return valkey.Valkey(
             host=self.host,
             port=self.port,
             password=self.password,
@@ -113,10 +113,22 @@ class ValkeySearch(VectorDb):
         )
 
     @property
-    def async_binary_client(self) -> aioredis.Redis:
-        """Get or create an async Redis client for binary operations (no response decoding)."""
+    def async_binary_client(self) -> aio_valkey.Valkey:
+        """Get or create an async Valkey client for binary operations (no response decoding)."""
+        return aio_valkey.Valkey(
+            host=self.host,
+            port=self.port,
+            password=self.password,
+            db=self.db,
+            decode_responses=False,
+            **self.kwargs,
+        )
+
+    @property
+    def async_binary_client(self) -> aio_valkey.Valkey:
+        """Get or create an async Valkey client for binary operations (no response decoding)."""
         if self._async_binary_client is None:
-            self._async_binary_client = aioredis.Redis(
+            self._async_binary_client = aio_valkey.Valkey(
                 host=self.host,
                 port=self.port,
                 password=self.password,
@@ -127,10 +139,10 @@ class ValkeySearch(VectorDb):
         return self._async_binary_client
 
     @property
-    def async_client(self) -> aioredis.Redis:
-        """Get or create the async Redis client."""
+    def async_client(self) -> aio_valkey.Valkey:
+        """Get or create the async Valkey client."""
         if self._async_client is None:
-            self._async_client = aioredis.Redis(
+            self._async_client = aio_valkey.Valkey(
                 host=self.host,
                 port=self.port,
                 password=self.password,
