@@ -297,8 +297,7 @@ def _create_completion_events(
 
     # emit frontend tool calls, i.e. external_execution=True
     if isinstance(chunk, RunPausedEvent) and chunk.tools is not None:
-        # First, emit an assistant message for external tool calls sincean # assistant message with tool_calls
-        # must precede the tool response messages
+        # First, emit an assistant message for external tool calls
         assistant_message_id = str(uuid.uuid4())
         assistant_start_event = TextMessageStartEvent(
             type=EventType.TEXT_MESSAGE_START,
