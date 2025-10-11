@@ -1,5 +1,5 @@
 import json
-from typing import List, Optional
+from typing import Any, Callable, List, Optional
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
@@ -57,7 +57,7 @@ class WikipediaTools(Toolkit):
         except Exception as e:
             logger.warning(f"Failed to set Wikipedia language to {self.language}: {e}")
 
-        tools = []
+        tools: List[Callable[..., Any]] = []
 
         # Add tools based on configuration
         if all or enable_search:
