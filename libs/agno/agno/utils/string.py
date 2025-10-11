@@ -81,41 +81,11 @@ def _extract_json_objects(text: str) -> list[str]:
     return objs
 
 
-def _clean_json_content(content: str) -> str:
-    """Clean and prepare JSON content for parsing."""
-    # Handle code blocks
-    if "```json" in content:
-        content = content.split("```json")[-1].strip()
-        parts = content.split("```")
-        parts.pop(-1)
-        content = "".join(parts)
-    elif "```" in content:
-        content = content.split("```")[1].strip()
-
-    # Replace markdown formatting like *"name"* or `"name"` with "name"
-    content = re.sub(r'[*`#]?"([A-Za-z0-9_]+)"[*`#]?', r'"\1"', content)
-
-    # Handle newlines and control characters
-    content = content.replace("\n", " ").replace("\r", "")
-    content = re.sub(r"[\x00-\x1F\x7F]", "", content)
-
-    # Escape quotes only in values, not keys
-    def escape_quotes_in_values(match):
-        key = match.group(1)
-        value = match.group(2)
-
-        if '\\"' in value:
-            unescaped_value = value.replace('\\"', '"')
-            escaped_value = unescaped_value.replace('"', '\\"')
-        else:
-            escaped_value = value.replace('"', '\\"')
-
-        return f'"{key}": "{escaped_value}'
-
-    # Find and escape quotes in field values
-    content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
-
-    return content
+def _has_multiple_json_objects(text: str) -> bool:
+    objs = _extract_json_objects(text)
+    if len(objs) > 1:
+        return True
+    return False
 
 
 def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Optional[BaseModel]:
@@ -159,6 +129,8 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
     structured_output = None
 
     # Extract thinking content first to prevent <think> tags from corrupting JSON
+    from json_repair import repair_json
+
     from agno.utils.reasoning import extract_thinking_content
 
     # handle thinking content b/w <think> tags
@@ -167,36 +139,20 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
         if reasoning_content:
             content = output_content
 
-    # Clean content first to simplify all parsing attempts
-    cleaned_content = _clean_json_content(content)
+    # First attempt: check if there are multiple JSON objects
+    multiple_json_object_flag = _has_multiple_json_objects(content)
+    if multiple_json_object_flag:
+        # parse multiple JSON objects with field merging
+        return _parse_individual_json(content, output_schema)
+
+    # Decode JSON format string if fails repair it
+    cleaned_content = repair_json(content)  # Attempt to repair common JSON issues
 
     try:
-        # First attempt: direct JSON validation on cleaned content
+        # JSON validation on cleaned content
         structured_output = output_schema.model_validate_json(cleaned_content)
-    except (ValidationError, json.JSONDecodeError):
-        try:
-            # Second attempt: Parse as Python dict
-            data = json.loads(cleaned_content)
-            structured_output = output_schema.model_validate(data)
-        except (ValidationError, json.JSONDecodeError) as e:
-            logger.warning(f"Failed to parse cleaned JSON: {e}")
-
-            # Third attempt: Extract individual JSON objects
-            candidate_jsons = _extract_json_objects(cleaned_content)
-
-            if len(candidate_jsons) == 1:
-                # Single JSON object - try to parse it directly
-                try:
-                    data = json.loads(candidate_jsons[0])
-                    structured_output = output_schema.model_validate(data)
-                except (ValidationError, json.JSONDecodeError):
-                    pass
-
-            if structured_output is None:
-                # Final attempt: Handle concatenated JSON objects with field merging
-                structured_output = _parse_individual_json(cleaned_content, output_schema)
-                if structured_output is None:
-                    logger.warning("All parsing attempts failed.")
+    except (ValidationError, json.JSONDecodeError) as e:
+        logger.warning(f"Failed to parse JSON: {e}")
 
     return structured_output
 
