@@ -5,6 +5,7 @@ Core Rules
 - Always use output_schema for structured responses
 - PostgreSQL in production, SQLite for dev only
 - Start with single agent, scale up only when needed
+- Use a SHARED database for all agents/teams to avoid ID conflicts
 
 Basic Agent (start here):
 ```python
@@ -42,6 +43,20 @@ for query in queries:
     agent.run(query)
 ```
 
+CRITICAL: Shared Database Pattern
+```python
+# WRONG - Each agent has separate database (causes ID conflicts)
+agent_1 = Agent(db=SqliteDb(db_file="agent1.db"))
+agent_2 = Agent(db=SqliteDb(db_file="agent2.db"))
+team = Team(members=[agent_1, agent_2])  # CONFLICTS!
+
+# CORRECT - All agents share the same database
+shared_db = SqliteDb(db_file="tmp/agents.db")
+agent_1 = Agent(db=shared_db)
+agent_2 = Agent(db=shared_db)
+team = Team(db=shared_db, members=[agent_1, agent_2])
+```
+
 When to Use Each Pattern
 
 Single Agent (90% of use cases):
@@ -65,21 +80,53 @@ Team Pattern:
 ```python
 from agno.team.team import Team
 
+# Create shared database first
+shared_db = SqliteDb(db_file="tmp/agents.db")
+
 web_agent = Agent(
     name="Researcher",
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
+    db=shared_db,  # Shared DB
+    add_history_to_context=True,
+    num_history_runs=3,
 )
 
 writer_agent = Agent(
     name="Writer",
     model=OpenAIChat(id="gpt-4o"),
+    db=shared_db,  # Shared DB
+    add_history_to_context=True,
+    num_history_runs=3,
 )
 
 team = Team(
     members=[web_agent, writer_agent],
     model=OpenAIChat(id="gpt-4o"),
     instructions="Research and write articles",
+    db=shared_db,  # Critical: same DB reference
+    share_member_interactions=True,  # Pass work between agents
+    add_history_to_context=True,  # Team-level history
+    num_history_runs=3,
+    session_state={  # Track state across agent interactions
+        "research_completed": False,
+        "sources_collected": [],
+    },
+    add_session_state_to_context=True,  # Make state visible to agents
+)
+```
+
+IMPORTANT: Team Member Order Matters
+```python
+# Order affects which agent handles requests first
+# Put specialists BEFORE generalists
+
+# EXAMPLE: If agent_2 handles specific queries, put it first
+team = Team(
+    members=[specialist_agent, general_agent, action_agent],
+    # specialist_agent sees requests first and handles its domain
+    # general_agent gets requests specialist can't handle
+    # action_agent executes final actions
 )
 ```
 
@@ -128,6 +175,38 @@ agent = Agent(
 )
 ```
 
+Conditional Knowledge Retriever (Environment-Based):
+```python
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Enable/disable features based on environment
+enable_rag = os.getenv("ENABLE_RAG", "false").lower() == "true"
+
+# Build instructions conditionally
+if enable_rag:
+    instructions = [
+        "You have access to a knowledge base.",
+        "Search it automatically for answers.",
+        "Always cite your sources."
+    ]
+else:
+    instructions = [
+        "You do NOT have access to a knowledge base.",
+        "Only use real-time data from your tools.",
+        "If asked about unavailable data, say so clearly."
+    ]
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    knowledge_retriever=my_retriever if enable_rag else None,
+    search_knowledge=enable_rag,  # Only enable if retriever exists
+    instructions=instructions,
+)
+```
+
 Chat History:
 ```python
 agent = Agent(
@@ -160,23 +239,137 @@ from agno.os import AgentOS
 from agno.db.postgres import PostgresDb
 
 agent_os = AgentOS(
-    agents=[agent],
-    db=PostgresDb(db_url=os.getenv("DATABASE_URL")),
+    description="My Production Agent System",
+    version="1.0.0",
+    agents=[agent],  # For single agents
+    teams=[team],    # For teams (use teams OR agents, not both)
 )
 app = agent_os.get_app()
+
+# The app is a FastAPI instance - you can extend it!
+```
+
+CRITICAL: AgentOS with Teams (Avoid DB Conflicts)
+```python
+# WRONG - Registering individual agents when using a team
+agent_os = AgentOS(
+    agents=[agent_1, agent_2],  # DON'T do this if they're in a team
+    teams=[team],  # This creates DB ID conflicts!
+)
+
+# CORRECT - Register only the team
+agent_os = AgentOS(
+    teams=[team],  # Team already contains the agents
+)
+```
+
+Extending AgentOS with Custom FastAPI Features:
+```python
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse
+
+agent_os = AgentOS(teams=[team])
+app = agent_os.get_app()
+
+# Add CORS for frontend access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Restrict in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Add custom middleware
+@app.middleware("http")
+async def custom_middleware(request, call_next):
+    """Track metrics, log requests, etc."""
+    print(f"Request: {request.method} {request.url.path}")
+    response = await call_next(request)
+    print(f"Response: {response.status_code}")
+    return response
+
+# Add custom endpoints
+@app.get("/custom/health")
+async def custom_health():
+    return {"status": "healthy", "service": "my-agent-os"}
+
+@app.get("/custom/stats")
+async def get_stats():
+    # Return custom statistics
+    return {"total_requests": 123, "uptime": "24h"}
+
+if __name__ == "__main__":
+    agent_os.serve(
+        app="main:app",
+        host="0.0.0.0",
+        port=7777,
+        reload=True  # Hot reload for development
+    )
 ```
 
 Common Mistakes
 - Creating agents in loops (massive performance hit)
+- Using separate databases for agents in the same team (causes ID conflicts)
+- Registering both individual agents AND their team in AgentOS (duplicate registration)
 - Using Team when single agent would work
-- Forgetting search_knowledge=True with knowledge
-- Using SQLite in production
-- Not adding history when context matters
-- Missing output_schema validation
+- Forgetting search_knowledge=True with knowledge retriever
+- Using SQLite in production (PostgreSQL only!)
+- Not adding history when context matters (add_history_to_context=True)
+- Missing output_schema validation for structured responses
+- Forgetting to set knowledge_retriever=None when disabled
+- Not using session_state to track work in teams (prevents duplicate queries)
+- Ignoring team member order (specialists should come before generalists)
 
-Production
+Production Checklist
 - Use PostgresDb not SqliteDb
 - Set show_tool_calls=False, debug_mode=False
 - Wrap agent.run() in try-except
+- Use shared_db for all agents/teams
+- Add CORS middleware if serving to frontend
+- Use environment variables for feature flags (ENABLE_RAG, etc.)
+- Add custom middleware for monitoring/logging
+- Use conditional instructions based on available features
+- Enable session history (add_history_to_context=True, num_history_runs=3)
+- Use session_state in teams to prevent duplicate work
+
+Development Best Practices
+- Start with environment variables for feature toggles
+- Build instructions conditionally based on available features
+- Use shared database to avoid ID conflicts
+- Use session_state to track work progress
+- Add custom endpoints for monitoring and debugging
+
+Session Management (Multi-turn Conversations)
+```python
+# Enable history at agent level
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    db=shared_db,
+    add_history_to_context=True,  # Remember previous messages
+    num_history_runs=3,  # Include last 3 interactions
+)
+
+# Enable history at team level
+team = Team(
+    members=[agent_1, agent_2],
+    db=shared_db,
+    add_history_to_context=True,  # Team remembers conversations
+    num_history_runs=3,
+    share_member_interactions=True,  # Agents see each other's work
+)
+
+# Client must pass session_id to maintain context
+# POST /teams/{team_id}/runs
+# Body: { "message": "...", "session_id": "user-123" }
+```
+
+Debugging Tips
+- Set debug_mode=True during development
+- Add middleware to track request/response flow
+- Log feature availability (tools, knowledge base, etc.)
+- Check session_state to see what's been investigated
+- Use custom endpoints for introspection (/custom/stats, etc.)
 
 Docs: https://docs.agno.com
