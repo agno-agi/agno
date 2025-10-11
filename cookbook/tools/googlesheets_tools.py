@@ -5,6 +5,10 @@ Google Sheets Toolkit can be used to read, create, update and duplicate Google S
 Example spreadsheet: https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/
 The ID is the URL of the spreadsheet and the range is the sheet name and the range of cells to read.
 
+If you'd like to use a service account for access to Google Sheets, provide the absolute path
+to the service account file either using the service_account_path arg in the GoogleSheetsTools
+constructor or using a GOOGLE_SERVICE_ACCOUNT_FILE environment variable.
+
 Note: Add the complete auth URL as an Authorised redirect URIs for the Client ID in the Google Cloud Console.
 
 e.g for Localhost and port 8080: http://localhost:8080/flowName=GeneralOAuthFlow and pass the oauth_port to the toolkit

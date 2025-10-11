@@ -199,3 +199,22 @@ def test_error_handling(sheets_tools, mock_sheets_service):
     result = sheets_tools.read_sheet(spreadsheet_id="test_id", spreadsheet_range="A1:B2")
 
     assert "Error reading Google Sheet" in result
+
+
+def test_service_account():
+    """Test setting service_account_path when instantiating a GoogleSheetsTools."""
+    path = "/some/path"
+    tool = GoogleSheetsTools(service_account_path=path)
+    with patch("agno.tools.googlesheets.ServiceAccountCredentials") as mock_creds_class:
+        tool._auth()
+    mock_creds_class.from_service_account_file.assert_called_once_with(path, scopes=tool.scopes)
+
+
+def test_service_account_environment_variable(monkeypatch):
+    """Test setting the service account file path via an environment variable."""
+    path = "/some/path"
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", path)
+    tool = GoogleSheetsTools()
+    with patch("agno.tools.googlesheets.ServiceAccountCredentials") as mock_creds_class:
+        tool._auth()
+    mock_creds_class.from_service_account_file.assert_called_once_with(path, scopes=tool.scopes)
