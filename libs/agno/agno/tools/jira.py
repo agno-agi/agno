@@ -22,6 +22,7 @@ class JiraTools(Toolkit):
         enable_create_issue: bool = True,
         enable_search_issues: bool = True,
         enable_add_comment: bool = True,
+        enable_add_worklog: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -55,6 +56,8 @@ class JiraTools(Toolkit):
             tools.append(self.search_issues)
         if enable_add_comment or all:
             tools.append(self.add_comment)
+        if enable_add_worklog or all:
+            tools.append(self.add_worklog)
 
         super().__init__(name="jira_tools", tools=tools, **kwargs)
 
@@ -147,4 +150,21 @@ class JiraTools(Toolkit):
             return json.dumps({"status": "success", "issue_key": issue_key})
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {e}")
+            return json.dumps({"error": str(e)})
+
+    def add_worklog(self, issue_key: str, time_spent: str, comment: Optional[str] = None) -> str:
+        """
+        Adds a worklog entry to log time spent on a specific Jira issue.
+
+        :param issue_key: The key of the issue to log work against (e.g., 'PROJ-123').
+        :param time_spent: The amount of time spent. Use Jira's format, e.g., '2h', '30m', '1d 4h'.
+        :param comment: An optional comment describing the work done.
+        :return: A JSON string indicating success or containing an error message.
+        """
+        try:
+            self.jira.add_worklog(issue=issue_key, timeSpent=time_spent, comment=comment)
+            log_debug(f"Worklog of '{time_spent}' added to issue {issue_key}")
+            return json.dumps({"status": "success", "issue_key": issue_key, "time_spent": time_spent})
+        except Exception as e:
+            logger.error(f"Error adding worklog to issue {issue_key}: {e}")
             return json.dumps({"error": str(e)})
