@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional, Sequence, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel
 
@@ -205,6 +205,7 @@ class RunContentEvent(BaseAgentRunEvent):
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
+
 
 @dataclass
 class RunContentCompletedEvent(BaseAgentRunEvent):

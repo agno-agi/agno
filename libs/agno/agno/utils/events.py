@@ -7,8 +7,6 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
-    SessionSummaryCreationStartedEvent,
-    SessionSummaryCreationCompletedEvent,
     OutputModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
@@ -20,6 +18,7 @@ from agno.run.agent import (
     ReasoningStepEvent,
     RunCancelledEvent,
     RunCompletedEvent,
+    RunContentCompletedEvent,
     RunContentEvent,
     RunContinuedEvent,
     RunErrorEvent,
@@ -27,9 +26,10 @@ from agno.run.agent import (
     RunOutput,
     RunPausedEvent,
     RunStartedEvent,
+    SessionSummaryCreationCompletedEvent,
+    SessionSummaryCreationStartedEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
-    RunContentCompletedEvent,
 )
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
@@ -290,7 +290,10 @@ def create_session_summary_creation_started_event(from_run_response: RunOutput) 
         run_id=from_run_response.run_id,
     )
 
-def create_session_summary_creation_completed_event(from_run_response: RunOutput, session_summary: SessionSummary) -> SessionSummaryCreationCompletedEvent:
+
+def create_session_summary_creation_completed_event(
+    from_run_response: RunOutput, session_summary: SessionSummary
+) -> SessionSummaryCreationCompletedEvent:
     return SessionSummaryCreationCompletedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
@@ -298,6 +301,7 @@ def create_session_summary_creation_completed_event(from_run_response: RunOutput
         run_id=from_run_response.run_id,
         # session_summary=session_summary,
     )
+
 
 def create_reasoning_started_event(from_run_response: RunOutput) -> ReasoningStartedEvent:
     return ReasoningStartedEvent(
@@ -488,6 +492,7 @@ def create_team_run_output_content_event(
         reasoning_messages=from_run_response.reasoning_messages,  # type: ignore
     )
 
+
 def create_run_content_completed_event(
     from_run_response: RunOutput,
 ) -> RunContentCompletedEvent:
@@ -497,6 +502,7 @@ def create_run_content_completed_event(
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
     )
+
 
 def create_parser_model_response_started_event(
     from_run_response: RunOutput,
