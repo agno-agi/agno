@@ -18,6 +18,7 @@ from agno.run.agent import (
     ReasoningStepEvent,
     RunCancelledEvent,
     RunCompletedEvent,
+    RunContentCompletedEvent,
     RunContentEvent,
     RunContinuedEvent,
     RunErrorEvent,
@@ -25,6 +26,8 @@ from agno.run.agent import (
     RunOutput,
     RunPausedEvent,
     RunStartedEvent,
+    SessionSummaryCreationCompletedEvent,
+    SessionSummaryCreationStartedEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
@@ -47,6 +50,7 @@ from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
+from agno.session.summary import SessionSummary
 
 
 def create_team_run_started_event(from_run_response: TeamRunOutput) -> TeamRunStartedEvent:
@@ -278,6 +282,27 @@ def create_team_memory_update_completed_event(from_run_response: TeamRunOutput) 
     )
 
 
+def create_session_summary_creation_started_event(from_run_response: RunOutput) -> SessionSummaryCreationStartedEvent:
+    return SessionSummaryCreationStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_session_summary_creation_completed_event(
+    from_run_response: RunOutput, session_summary: SessionSummary
+) -> SessionSummaryCreationCompletedEvent:
+    return SessionSummaryCreationCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        # session_summary=session_summary,
+    )
+
+
 def create_reasoning_started_event(from_run_response: RunOutput) -> ReasoningStartedEvent:
     return ReasoningStartedEvent(
         session_id=from_run_response.session_id,
@@ -465,6 +490,17 @@ def create_team_run_output_content_event(
         additional_input=from_run_response.additional_input,  # type: ignore
         reasoning_steps=from_run_response.reasoning_steps,  # type: ignore
         reasoning_messages=from_run_response.reasoning_messages,  # type: ignore
+    )
+
+
+def create_run_content_completed_event(
+    from_run_response: RunOutput,
+) -> RunContentCompletedEvent:
+    return RunContentCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
     )
 
 
