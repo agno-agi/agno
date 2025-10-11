@@ -28,6 +28,8 @@ class Qdrant(VectorDb):
     def __init__(
         self,
         collection: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         location: Optional[str] = None,
@@ -52,6 +54,8 @@ class Qdrant(VectorDb):
         """
         Args:
             collection (str): Name of the Qdrant collection.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             embedder (Optional[Embedder]): Optional embedder for automatic vector generation.
             distance (Distance): Distance metric to use (default: cosine).
             location (Optional[str]): `":memory:"` for in-memory, or str used as `url`. If `None`, use default host/port.
@@ -75,6 +79,8 @@ class Qdrant(VectorDb):
         """
         # Collection attributes
         self.collection: str = collection
+        self.name: Optional[str] = name
+        self.description: Optional[str] = description
 
         # Embedder for embedding the document contents
         if embedder is None:
@@ -1096,3 +1102,7 @@ class Qdrant(VectorDb):
                 log_debug(f"Error closing async Qdrant client: {e}")
             finally:
                 self._async_client = None
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.keyword, SearchType.hybrid]

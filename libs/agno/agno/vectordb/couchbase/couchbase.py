@@ -66,6 +66,8 @@ class CouchbaseSearch(VectorDb):
         is_global_level_index: bool = False,
         wait_until_index_ready: float = 0,
         batch_limit: int = 500,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -75,6 +77,8 @@ class CouchbaseSearch(VectorDb):
             bucket_name (str): Name of the Couchbase bucket.
             scope_name (str): Name of the scope within the bucket.
             collection_name (str): Name of the collection within the scope.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             couchbase_connection_string (str): Couchbase connection string.
             cluster_options (ClusterOptions): Options for configuring the Couchbase cluster connection.
             search_index (Union[str, SearchIndex], optional): Search index configuration, either as index name or SearchIndex definition.
@@ -98,6 +102,8 @@ class CouchbaseSearch(VectorDb):
         self.wait_until_index_ready = wait_until_index_ready
         self.kwargs = kwargs
         self.batch_limit = batch_limit
+        self.name: Optional[str] = name
+        self.description: Optional[str] = description
         if isinstance(search_index, str):
             self.search_index_name = search_index
             self.search_index_definition = None
@@ -1420,3 +1426,7 @@ class CouchbaseSearch(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # CouchbaseSearch doesn't use SearchType enum

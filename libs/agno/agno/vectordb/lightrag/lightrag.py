@@ -21,11 +21,15 @@ class LightRag(VectorDb):
         api_key: Optional[str] = None,
         auth_header_name: str = "X-API-KEY",
         auth_header_format: str = "{api_key}",
+        name: Optional[str] = None,
+        description: Optional[str] = None,
     ):
         self.server_url = server_url
         self.api_key = api_key
         self.auth_header_name = auth_header_name
         self.auth_header_format = auth_header_format
+        self.name: Optional[str] = name
+        self.description: Optional[str] = description
 
     def _get_headers(self) -> Dict[str, str]:
         """Get headers with optional API key authentication."""
@@ -372,3 +376,7 @@ class LightRag(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         raise NotImplementedError("update_metadata not supported for LightRag - use LightRag's native methods")
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # LightRag doesn't use SearchType enum

@@ -66,9 +66,11 @@ class PineconeDb(VectorDb):
 
     def __init__(
         self,
-        name: str,
+ 
         dimension: int,
         spec: Union[Dict, ServerlessSpec, PodSpec],
+        name: Optional[str]=None,
+        description: Optional[str]=None,
         embedder: Optional[Embedder] = None,
         metric: Optional[str] = "cosine",
         additional_headers: Optional[Dict[str, str]] = None,
@@ -93,7 +95,8 @@ class PineconeDb(VectorDb):
         self.pool_threads: Optional[int] = pool_threads
         self.namespace: Optional[str] = namespace
         self.index_api: Optional[Any] = index_api
-        self.name: str = name
+        self.name: Optional[str] = name
+        self.description: Optional[str] = description
         self.dimension: Optional[int] = dimension
         self.spec: Union[Dict, ServerlessSpec, PodSpec] = spec
         self.metric: Optional[str] = metric
@@ -710,3 +713,7 @@ class PineconeDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # PineconeDb doesn't use SearchType enum

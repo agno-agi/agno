@@ -32,6 +32,8 @@ class UpstashVectorDb(VectorDb):
         embedder (Optional[Embedder], optional): The embedder to use. If None, uses Upstash hosted embedding models.
         namespace (Optional[str], optional): The namespace to use. Defaults to DEFAULT_NAMESPACE.
         reranker (Optional[Reranker], optional): The reranker to use. Defaults to None.
+        name (Optional[str], optional): The name of the vector database. Defaults to None.
+        description (Optional[str], optional): The description of the vector database. Defaults to None.
         **kwargs: Additional keyword arguments.
     """
 
@@ -45,6 +47,8 @@ class UpstashVectorDb(VectorDb):
         embedder: Optional[Embedder] = None,
         namespace: Optional[str] = DEFAULT_NAMESPACE,
         reranker: Optional[Reranker] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
         self._index: Optional[Index] = None
@@ -56,7 +60,8 @@ class UpstashVectorDb(VectorDb):
         self.namespace: str = namespace if namespace is not None else DEFAULT_NAMESPACE
         self.kwargs: Dict[str, Any] = kwargs
         self.use_upstash_embeddings: bool = embedder is None
-
+        self.name: Optional[str] = name
+        self.description: Optional[str] = description
         if embedder is None:
             logger.warning(
                 "You have not provided an embedder, using Upstash hosted embedding models. "
@@ -688,3 +693,7 @@ class UpstashVectorDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # UpstashVectorDb doesn't use SearchType enum

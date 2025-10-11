@@ -6,6 +6,8 @@ class VectorDb(ABC):
     """Base class for Vector Databases"""
 
     from agno.knowledge.document import Document
+    name: Optional[str] = None
+    description: Optional[str] = None
 
     @abstractmethod
     def create(self) -> None:
@@ -105,4 +107,8 @@ class VectorDb(ABC):
 
     @abstractmethod
     def delete_by_content_id(self, content_id: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_supported_search_types(self) -> List[str]:
         raise NotImplementedError

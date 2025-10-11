@@ -43,6 +43,8 @@ class PgVector(VectorDb):
         self,
         table_name: str,
         schema: str = "ai",
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         db_url: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         embedder: Optional[Embedder] = None,
@@ -62,6 +64,8 @@ class PgVector(VectorDb):
         Args:
             table_name (str): Name of the table to store vector data.
             schema (str): Database schema name.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             db_url (Optional[str]): Database connection URL.
             db_engine (Optional[Engine]): SQLAlchemy database engine.
             embedder (Optional[Embedder]): Embedder instance for creating embeddings.
@@ -133,6 +137,8 @@ class PgVector(VectorDb):
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
         # Database table
         self.table: Table = self.get_table()
+        self.name: Optional[str] = name
+        self.description: Optional[str] = description
         log_debug(f"Initialized PgVector with table '{self.schema}.{self.table_name}'")
 
     def get_table_v1(self) -> Table:
@@ -1383,3 +1389,6 @@ class PgVector(VectorDb):
         copied_obj.table = copied_obj.get_table()
 
         return copied_obj
+
+    def get_supported_search_types(self) -> List[str]:
+        return [SearchType.vector, SearchType.keyword, SearchType.hybrid]

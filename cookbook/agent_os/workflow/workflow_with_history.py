@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.os import AgentOS
 from agno.models.openai import OpenAIChat
+from agno.os import AgentOS
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
@@ -143,4 +143,3 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     agent_os.serve(app="workflow_with_history:app", reload=True)
-
