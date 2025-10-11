@@ -1,0 +1,27 @@
+services:
+  valkey:
+    image: valkey/valkey-bundle:latest
+    container_name: valkey-search
+    ports:
+      - "6379:6379"
+    command: >
+      valkey-server 
+      --appendonly yes
+      --appendfsync everysec
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - valkey-network
+
+volumes:
+  valkey_data:
+
+networks:
+  valkey-network:
+    driver: bridge

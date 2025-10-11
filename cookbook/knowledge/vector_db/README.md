@@ -46,4 +46,5 @@ agent = Agent(
 - **[SingleStore](./singlestore_db/)** - Distributed database with vector capabilities
 - **[SurrealDB](./surrealdb/)** - Multi-model database with vector capabilities
 - **[Upstash](./upstash_db/)** - Serverless vector database
+- **[Valkey Search](./valkey_db/)** - Redis-compatible search engine with vector search
 - **[Weaviate](./weaviate_db/)** - Multi-modal vector database
