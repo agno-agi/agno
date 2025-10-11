@@ -351,9 +351,7 @@ async def test_structured_output_agent_flow_async_streaming(shared_db):
         ],
     )
 
-    events = []
-    async for event in await workflow.arun(input="Research AI testing methodologies", stream=True):
-        events.append(event)
+    events = [event async for event in await workflow.arun(input="Research AI testing methodologies", stream=True)]
 
     # Find the workflow completed event
     from agno.run.workflow import WorkflowCompletedEvent
@@ -497,9 +495,7 @@ async def test_structured_output_team_flow_async_streaming(shared_db):
         ],
     )
 
-    events = []
-    async for event in await workflow.arun(input="Brief AI research", stream=True):
-        events.append(event)
+    events = [event async for event in await workflow.arun(input="Brief AI research", stream=True)]
 
     # Find the workflow completed event
     from agno.run.workflow import WorkflowCompletedEvent
