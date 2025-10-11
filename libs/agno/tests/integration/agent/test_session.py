@@ -312,3 +312,163 @@ def test_add_session_state_to_context(shared_db):
     assert "'shopping_list': ['oranges']" in response.messages[0].content
 
     assert "oranges" in response.content.lower()
+
+
+def test_session_state_in_run_output(shared_db):
+    """Test that RunOutput contains session_state in non-streaming mode."""
+
+    # Reuse the existing shopping list pattern
+    def add_item(session_state: Dict[str, Any], item: str) -> str:
+        """Add an item to the shopping list."""
+        session_state["shopping_list"].append(item)
+        return f"The shopping list is now {session_state['shopping_list']}"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        session_id=str(uuid.uuid4()),
+        session_state={"shopping_list": []},
+        tools=[add_item],
+        markdown=True,
+    )
+
+    response = agent.run("Add apples to my shopping list")
+
+    # Verify RunOutput has session_state field (structure test)
+    assert response.session_state is not None, "RunOutput should have session_state"
+    assert isinstance(response.session_state, dict), "session_state should be a dict"
+    assert "shopping_list" in response.session_state, "shopping_list key should be present"
+    assert isinstance(response.session_state["shopping_list"], list), "shopping_list should be a list"
+
+    # If tools were executed, verify state was updated
+    if response.tools and len(response.tools) > 0:
+        tool_was_called = any(tool.tool_name == "add_item" for tool in response.tools)
+        if tool_was_called:
+            assert len(response.session_state.get("shopping_list", [])) > 0, (
+                "Shopping list should have items if tool was called"
+            )
+
+
+def test_session_state_in_run_completed_event_stream(shared_db):
+    """Test that RunCompletedEvent contains session_state in streaming mode."""
+
+    # Reuse the existing shopping list pattern
+    def add_item(session_state: Dict[str, Any], item: str) -> str:
+        """Add an item to the shopping list."""
+        session_state["shopping_list"].append(item)
+        return f"The shopping list is now {session_state['shopping_list']}"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        session_id=str(uuid.uuid4()),
+        session_state={"shopping_list": ["bananas"]},
+        tools=[add_item],
+        markdown=True,
+    )
+
+    run_completed_event = None
+    tool_called_in_stream = False
+
+    for event in agent.run("Add oranges to my shopping list", stream=True, stream_intermediate_steps=True):
+        # Check if tool was called during streaming
+        if hasattr(event, "event") and event.event in ["ToolCallStarted", "ToolCallCompleted"]:
+            if hasattr(event, "tool") and event.tool and event.tool.tool_name == "add_item":
+                tool_called_in_stream = True
+
+        if hasattr(event, "event") and event.event == "RunCompleted":
+            run_completed_event = event
+            break
+
+    # Verify RunCompletedEvent structure
+    assert run_completed_event is not None, "Should receive RunCompleted event"
+    assert run_completed_event.session_state is not None, "RunCompletedEvent should have session_state"
+    assert isinstance(run_completed_event.session_state, dict), "session_state should be a dict"
+    assert "shopping_list" in run_completed_event.session_state, "shopping_list key should be present"
+    assert "bananas" in run_completed_event.session_state.get("shopping_list", []), "Initial item should be preserved"
+
+    # If tool was called, verify state reflects the update
+    if tool_called_in_stream:
+        assert len(run_completed_event.session_state.get("shopping_list", [])) > 1, (
+            "Shopping list should have more items if tool was called"
+        )
+
+
+async def test_session_state_in_run_output_async(shared_db):
+    """Test that RunOutput contains session_state in async non-streaming mode."""
+
+    # Reuse the existing shopping list pattern with async tool
+    async def add_item(session_state: Dict[str, Any], item: str) -> str:
+        """Add an item to the shopping list."""
+        session_state["shopping_list"].append(item)
+        return f"The shopping list is now {session_state['shopping_list']}"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        session_id=str(uuid.uuid4()),
+        session_state={"shopping_list": []},
+        tools=[add_item],
+        markdown=True,
+    )
+
+    response = await agent.arun("Add apples to my shopping list")
+
+    # Verify RunOutput has session_state field (structure test)
+    assert response.session_state is not None, "RunOutput should have session_state"
+    assert isinstance(response.session_state, dict), "session_state should be a dict"
+    assert "shopping_list" in response.session_state, "shopping_list key should be present"
+    assert isinstance(response.session_state["shopping_list"], list), "shopping_list should be a list"
+
+    # If tools were executed, verify state was updated
+    if response.tools and len(response.tools) > 0:
+        tool_was_called = any(tool.tool_name == "add_item" for tool in response.tools)
+        if tool_was_called:
+            assert len(response.session_state.get("shopping_list", [])) > 0, (
+                "Shopping list should have items if tool was called"
+            )
+
+
+async def test_session_state_in_run_completed_event_stream_async(shared_db):
+    """Test that RunCompletedEvent contains session_state in async streaming mode."""
+
+    # Reuse the existing shopping list pattern with async tool
+    async def add_item(session_state: Dict[str, Any], item: str) -> str:
+        """Add an item to the shopping list."""
+        session_state["shopping_list"].append(item)
+        return f"The shopping list is now {session_state['shopping_list']}"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        session_id=str(uuid.uuid4()),
+        session_state={"shopping_list": ["bananas"]},
+        tools=[add_item],
+        markdown=True,
+    )
+
+    run_completed_event = None
+    tool_called_in_stream = False
+
+    async for event in agent.arun("Add oranges to my shopping list", stream=True, stream_intermediate_steps=True):
+        # Check if tool was called during streaming
+        if hasattr(event, "event") and event.event in ["ToolCallStarted", "ToolCallCompleted"]:
+            if hasattr(event, "tool") and event.tool and event.tool.tool_name == "add_item":
+                tool_called_in_stream = True
+
+        if hasattr(event, "event") and event.event == "RunCompleted":
+            run_completed_event = event
+            break
+
+    # Verify RunCompletedEvent structure
+    assert run_completed_event is not None, "Should receive RunCompleted event"
+    assert run_completed_event.session_state is not None, "RunCompletedEvent should have session_state"
+    assert isinstance(run_completed_event.session_state, dict), "session_state should be a dict"
+    assert "shopping_list" in run_completed_event.session_state, "shopping_list key should be present"
+    assert "bananas" in run_completed_event.session_state.get("shopping_list", []), "Initial item should be preserved"
+
+    # If tool was called, verify state reflects the update
+    if tool_called_in_stream:
+        assert len(run_completed_event.session_state.get("shopping_list", [])) > 1, (
+            "Shopping list should have more items if tool was called"
+        )

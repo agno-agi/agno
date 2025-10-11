@@ -841,6 +841,7 @@ class RunSchema(BaseModel):
     created_at: Optional[datetime]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
+    session_state: Optional[dict] = None
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -862,6 +863,7 @@ class RunSchema(BaseModel):
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
             references=run_dict.get("references", []),
             reasoning_messages=run_dict.get("reasoning_messages", []),
+            session_state=run_dict.get("session_state"),
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
             else None,
@@ -884,6 +886,7 @@ class TeamRunSchema(BaseModel):
     created_at: Optional[datetime]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
+    session_state: Optional[dict] = None
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -907,6 +910,7 @@ class TeamRunSchema(BaseModel):
             else None,
             references=run_dict.get("references", []),
             reasoning_messages=run_dict.get("reasoning_messages", []),
+            session_state=run_dict.get("session_state"),
         )
 
 
