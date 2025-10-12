@@ -14,6 +14,7 @@ from agno.run.workflow import (
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
 )
+from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
 from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.condition import Condition
@@ -200,6 +201,9 @@ class Parallel:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
         # Use workflow logger for parallel orchestration
@@ -228,6 +232,9 @@ class Parallel:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
+                    num_history_runs=num_history_runs,
                     session_state=step_session_state,
                 )  # type: ignore[union-attr]
                 return idx, step_result, step_session_state
@@ -315,6 +322,9 @@ class Parallel:
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -380,6 +390,9 @@ class Parallel:
                     store_executor_outputs=store_executor_outputs,
                     session_state=step_session_state,
                     parent_step_id=parallel_step_id,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
+                    num_history_runs=num_history_runs,
                 ):
                     # Put event immediately in queue
                     event_queue.put(("event", idx, event))
@@ -491,6 +504,9 @@ class Parallel:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
         # Use workflow logger for async parallel orchestration
@@ -519,6 +535,9 @@ class Parallel:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
+                    num_history_runs=num_history_runs,
                     session_state=step_session_state,
                 )  # type: ignore[union-attr]
                 return idx, inner_step_result, step_session_state
@@ -607,6 +626,9 @@ class Parallel:
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -672,6 +694,9 @@ class Parallel:
                     store_executor_outputs=store_executor_outputs,
                     session_state=step_session_state,
                     parent_step_id=parallel_step_id,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
+                    num_history_runs=num_history_runs,
                 ):  # type: ignore[union-attr]
                     # Yield events immediately to the queue
                     await event_queue.put(("event", idx, event))
