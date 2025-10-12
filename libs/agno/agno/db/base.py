@@ -224,6 +224,18 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def increment_knowledge_access_count(self, id: str) -> Optional[KnowledgeRow]:
+        """Increment the access count for a knowledge row.
+
+        Args:
+            id (str): The ID of the knowledge row to update.
+
+        Returns:
+            Optional[KnowledgeRow]: The updated knowledge row, or None if it doesn't exist.
+        """
+        raise NotImplementedError
+
     # --- Evals ---
     @abstractmethod
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:

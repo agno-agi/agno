@@ -1328,7 +1328,17 @@ class Knowledge:
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(query=query, limit=_max_results, filters=filters)
+            results = self.vector_db.search(query=query, limit=_max_results, filters=filters)
+
+            if self.contents_db and results:
+                unique_content_ids = {doc.content_id for doc in results if doc.content_id}
+                for content_id in unique_content_ids:
+                    try:
+                        self.contents_db.increment_knowledge_access_count(content_id)
+                    except Exception as e:
+                        log_debug(f"Failed to increment access count for content {content_id}: {e}")
+
+            return results
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
@@ -1349,10 +1359,20 @@ class Knowledge:
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
-                return await self.vector_db.async_search(query=query, limit=_max_results, filters=filters)
+                results = await self.vector_db.async_search(query=query, limit=_max_results, filters=filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
                 return self.search(query=query, max_results=_max_results, filters=filters)
+
+            if self.contents_db and results:
+                unique_content_ids = {doc.content_id for doc in results if doc.content_id}
+                for content_id in unique_content_ids:
+                    try:
+                        self.contents_db.increment_knowledge_access_count(content_id)
+                    except Exception as e:
+                        log_debug(f"Failed to increment access count for content {content_id}: {e}")
+
+            return results
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
