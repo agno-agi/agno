@@ -1,7 +1,7 @@
 import json
 import re
-from typing import Any, Dict, List, Optional, Set
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -10,8 +10,8 @@ try:
     from sqlalchemy import Engine, create_engine, event
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session, sessionmaker
-    from sqlalchemy.sql.expression import text
     from sqlalchemy.pool import NullPool
+    from sqlalchemy.sql.expression import text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed")
 
@@ -58,7 +58,9 @@ class SQLTools(Toolkit):
             if dialect is not None and dialect.lower().startswith("sqlite"):
                 # unlikely with user/pw, but handle defensively
                 _engine = create_engine(
-                    f"{dialect}://{user}:{password}@{host}:{port}/{schema}" if schema else f"{dialect}://{user}:{password}@{host}:{port}",
+                    f"{dialect}://{user}:{password}@{host}:{port}/{schema}"
+                    if schema
+                    else f"{dialect}://{user}:{password}@{host}:{port}",
                     connect_args={"check_same_thread": False},
                     poolclass=NullPool,
                 )
@@ -413,6 +415,7 @@ class SQLTools(Toolkit):
                         json.dump(results, f, indent=2, default=str)
                 elif format == "csv":
                     import csv
+
                     with filename_path.open("w", newline="", encoding="utf-8") as f:
                         if results:
                             writer = csv.DictWriter(f, fieldnames=results[0].keys())
@@ -422,10 +425,12 @@ class SQLTools(Toolkit):
                     return json.dumps({"error": f"Unsupported format: {format}. Use 'json' or 'csv'"})
             except PermissionError as e:
                 logger.error(f"PermissionError exporting results: {e}")
-                return json.dumps({
-                    "error": str(e),
-                    "tip": "PermissionError: the file is open in another process. Close editors/DB tools (or use a different filename/path)."
-                })
+                return json.dumps(
+                    {
+                        "error": str(e),
+                        "tip": "PermissionError: the file is open in another process. Close editors/DB tools (or use a different filename/path).",
+                    }
+                )
 
             return json.dumps(
                 {

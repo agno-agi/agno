@@ -37,7 +37,7 @@ class Product(Base):
 def test_db(request):
     """Create a temporary SQLite database for testing."""
     import gc
-    
+
     temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
     db_url = f"sqlite:///{temp_db.name}"
     db_file = temp_db.name
@@ -66,31 +66,31 @@ def test_db(request):
     session.add_all(products)
     session.commit()
     session.close()
-    
+
     # Dispose the engine to close all connections
     engine.dispose()
 
     # Track all engines created in tests
     engines_to_dispose = []
-    
+
     def cleanup():
         # Dispose any engines created during the test
         for eng in engines_to_dispose:
             try:
                 eng.dispose()
-            except:
+            except Exception:
                 pass
-        
+
         # Force garbage collection
         gc.collect()
-        
+
         # Try to delete file, ignore if locked
         try:
             if os.path.exists(db_file):
                 os.unlink(db_file)
         except (PermissionError, OSError):
             pass
-    
+
     request.addfinalizer(cleanup)
 
     yield db_url, db_file, engines_to_dispose
