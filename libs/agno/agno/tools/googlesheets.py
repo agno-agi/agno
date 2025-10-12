@@ -95,13 +95,13 @@ class GoogleSheetsTools(Toolkit):
         creds: Optional[Credentials | ServiceAccountCredentials] = None,
         creds_path: Optional[str] = None,
         token_path: Optional[str] = None,
+        service_account_path: Optional[str] = None,
         oauth_port: int = 0,
         enable_read_sheet: bool = True,
         enable_create_sheet: bool = False,
         enable_update_sheet: bool = False,
         enable_create_duplicate_sheet: bool = False,
         all: bool = False,
-        service_account_path: Optional[str] = None,
         **kwargs,
     ):
         """Initialize GoogleSheetsTools with the specified configuration.
@@ -113,6 +113,7 @@ class GoogleSheetsTools(Toolkit):
             creds (Optional[Credentials | ServiceAccountCredentials]): Pre-existing credentials.
             creds_path (Optional[str]): Path to credentials file.
             token_path (Optional[str]): Path to token file.
+            service_account_path (Optional[str]): Path to a service account file.
             oauth_port (int): Port to use for OAuth authentication. Defaults to 0.
             enable_read_sheet (bool): Enable reading from a sheet.
             enable_create_sheet (bool): Enable creating a sheet.
