@@ -76,9 +76,9 @@ class TavilyReader(Reader):
     def get_supported_content_types(self) -> List[ContentType]:
         return [ContentType.URL]
 
-    def extract(self, url: str, name: Optional[str] = None) -> List[Document]:
+    def _extract(self, url: str, name: Optional[str] = None) -> List[Document]:
         """
-        Extracts content from a URL using Tavily's Extract API.
+        Internal method to extract content from a URL using Tavily's Extract API.
 
         Args:
             url: The URL to extract content from
@@ -147,9 +147,9 @@ class TavilyReader(Reader):
             logger.error(f"Error extracting content from {url}: {e}")
             return [Document(name=name or url, id=url, content="")]
 
-    async def async_extract(self, url: str, name: Optional[str] = None) -> List[Document]:
+    async def _async_extract(self, url: str, name: Optional[str] = None) -> List[Document]:
         """
-        Asynchronously extracts content from a URL.
+        Internal async method to extract content from a URL.
 
         Args:
             url: The URL to extract content from
@@ -161,12 +161,14 @@ class TavilyReader(Reader):
         log_debug(f"Async extracting content from: {url}")
 
         # Use asyncio.to_thread to run the synchronous extract in a thread
-        return await asyncio.to_thread(self.extract, url, name)
+        return await asyncio.to_thread(self._extract, url, name)
 
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         """
         Reads content from a URL using Tavily Extract API.
 
+        This is the public API method that users should call.
+
         Args:
             url: The URL to extract content from
             name: Optional name for the document
@@ -174,12 +176,14 @@ class TavilyReader(Reader):
         Returns:
             A list of documents containing the extracted content
         """
-        return self.extract(url, name)
+        return self._extract(url, name)
 
     async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
         """
         Asynchronously reads content from a URL using Tavily Extract API.
 
+        This is the public API method that users should call for async operations.
+
         Args:
             url: The URL to extract content from
             name: Optional name for the document
@@ -187,4 +191,4 @@ class TavilyReader(Reader):
         Returns:
             A list of documents containing the extracted content
         """
-        return await self.async_extract(url, name)
+        return await self._async_extract(url, name)

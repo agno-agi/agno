@@ -44,10 +44,10 @@ def test_extract_basic(mock_extract_response):
         mock_client = MockTavilyClient.return_value
         mock_client.extract.return_value = mock_extract_response
 
-        # Create reader and call extract
+        # Create reader and call read (public API)
         reader = TavilyReader()
         reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
-        documents = reader.extract("https://example.com")
+        documents = reader.read("https://example.com")
 
         # Verify results
         assert len(documents) == 1
@@ -77,7 +77,7 @@ def test_extract_with_api_key_and_params():
         params = {"include_images": True}
         reader = TavilyReader(api_key=api_key, params=params)
         reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
-        reader.extract("https://example.com")
+        reader.read("https://example.com")
 
         # Verify TavilyClient was called with correct parameters
         MockTavilyClient.assert_called_once_with(api_key=api_key)
@@ -95,7 +95,7 @@ def test_extract_with_advanced_depth():
         # Create reader with advanced depth
         reader = TavilyReader(extract_depth="advanced")
         reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
-        reader.extract("https://example.com")
+        reader.read("https://example.com")
 
         # Verify advanced depth was used
         call_args = mock_client.extract.call_args[1]
@@ -109,9 +109,9 @@ def test_extract_empty_response():
         mock_client = MockTavilyClient.return_value
         mock_client.extract.return_value = {}
 
-        # Create reader and call extract
+        # Create reader and call read
         reader = TavilyReader()
-        documents = reader.extract("https://example.com")
+        documents = reader.read("https://example.com")
 
         # Verify results
         assert len(documents) == 1
@@ -125,9 +125,9 @@ def test_extract_no_results():
         mock_client = MockTavilyClient.return_value
         mock_client.extract.return_value = {"results": []}
 
-        # Create reader and call extract
+        # Create reader and call read
         reader = TavilyReader()
-        documents = reader.extract("https://example.com")
+        documents = reader.read("https://example.com")
 
         # Verify results
         assert len(documents) == 1
@@ -148,9 +148,9 @@ def test_extract_none_content():
             ]
         }
 
-        # Create reader and call extract
+        # Create reader and call read
         reader = TavilyReader()
-        documents = reader.extract("https://example.com")
+        documents = reader.read("https://example.com")
 
         # Verify results
         assert len(documents) == 1
@@ -171,9 +171,9 @@ def test_extract_failed_extraction():
             ]
         }
 
-        # Create reader and call extract
+        # Create reader and call read
         reader = TavilyReader()
-        documents = reader.extract("https://example.com")
+        documents = reader.read("https://example.com")
 
         # Verify results - should return empty document
         assert len(documents) == 1
@@ -205,8 +205,8 @@ def test_extract_with_chunking(mock_extract_response):
             ]
 
         with patch.object(reader, "chunk_document", side_effect=mock_chunk_document):
-            # Call extract
-            documents = reader.extract("https://example.com")
+            # Call read
+            documents = reader.read("https://example.com")
 
             # Verify results
             assert len(documents) == 2
@@ -221,9 +221,9 @@ def test_extract_exception_handling():
         mock_client = MockTavilyClient.return_value
         mock_client.extract.side_effect = Exception("API Error")
 
-        # Create reader and call extract
+        # Create reader and call read
         reader = TavilyReader()
-        documents = reader.extract("https://example.com")
+        documents = reader.read("https://example.com")
 
         # Verify results - should return empty document
         assert len(documents) == 1
@@ -262,9 +262,9 @@ def test_extract_with_custom_name():
             ]
         }
 
-        # Create reader and call extract with custom name
+        # Create reader and call read with custom name
         reader = TavilyReader()
-        documents = reader.extract("https://example.com", name="Custom Name")
+        documents = reader.read("https://example.com", name="Custom Name")
 
         # Verify custom name was used
         assert documents[0].name == "Custom Name"
@@ -288,7 +288,7 @@ async def test_async_extract_basic(mock_extract_response):
         mock_to_thread.return_value = [document]
 
         reader = TavilyReader()
-        documents = await reader.async_extract("https://example.com")
+        documents = await reader.async_read("https://example.com")
 
         assert len(documents) == 1
         assert documents[0].name == "https://example.com"
@@ -301,8 +301,8 @@ async def test_async_extract_basic(mock_extract_response):
 
 @pytest.mark.asyncio
 async def test_async_read(mock_extract_response):
-    """Test async_read method calls async_extract"""
-    with patch("agno.knowledge.reader.tavily_reader.TavilyReader.async_extract") as mock_async_extract:
+    """Test async_read method calls _async_extract"""
+    with patch("agno.knowledge.reader.tavily_reader.TavilyReader._async_extract") as mock_async_extract:
         # Create a document to return
         document = Document(
             name="https://example.com",
@@ -317,14 +317,14 @@ async def test_async_read(mock_extract_response):
         assert len(documents) == 1
         assert documents[0].content == "# Test Website\n\nThis is test content from an extracted website."
 
-        # Verify async_extract was called
+        # Verify _async_extract was called
         mock_async_extract.assert_called_once_with("https://example.com", None)
 
 
 @pytest.mark.asyncio
 async def test_async_read_with_custom_name():
     """Test async_read method with custom name"""
-    with patch("agno.knowledge.reader.tavily_reader.TavilyReader.async_extract") as mock_async_extract:
+    with patch("agno.knowledge.reader.tavily_reader.TavilyReader._async_extract") as mock_async_extract:
         # Create a document to return
         document = Document(
             name="Custom Name",
@@ -339,7 +339,7 @@ async def test_async_read_with_custom_name():
         assert len(documents) == 1
         assert documents[0].name == "Custom Name"
 
-        # Verify async_extract was called with custom name
+        # Verify _async_extract was called with custom name
         mock_async_extract.assert_called_once_with("https://example.com", "Custom Name")
 
 
