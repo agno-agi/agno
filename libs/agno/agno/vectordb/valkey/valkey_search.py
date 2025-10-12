@@ -757,6 +757,16 @@ class ValkeySearch(VectorDb):
             log_error(f"Error deleting document by content ID: {e}")
             return False
 
+    def get_count(self) -> int:
+        """Get the number of documents in the collection."""
+        try:
+            # Get all keys with the collection prefix and count them
+            keys = self.client.keys(f"{self.prefix}*")
+            return len(keys)
+        except Exception as e:
+            log_error(f"Error getting document count: {e}")
+            return 0
+
     def optimize(self) -> None:
         """Optimize the Valkey Search index."""
         try:
