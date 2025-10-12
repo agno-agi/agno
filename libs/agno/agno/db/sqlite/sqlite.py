@@ -36,9 +36,9 @@ except ImportError:
 class SqliteDb(BaseDb):
     def __init__(
         self,
+        db_file: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         db_url: Optional[str] = None,
-        db_file: Optional[str] = None,
         session_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
@@ -56,9 +56,9 @@ class SqliteDb(BaseDb):
             4. Create a new database in the current directory
 
         Args:
+            db_file (Optional[str]): The database file to connect to.
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_url (Optional[str]): The database URL to connect to.
-            db_file (Optional[str]): The database file to connect to.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
             memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
