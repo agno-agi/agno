@@ -215,7 +215,7 @@ class TavilyTools(Toolkit):
             failed_reason = result.get("failed_reason")
 
             if failed_reason:
-                output.append(f"## {url}\n\n⚠️ **Extraction Failed**: {failed_reason}\n\n")
+                output.append(f"## {url}\n\n **Extraction Failed**: {failed_reason}\n\n")
             elif raw_content:
                 output.append(f"## {url}\n\n{raw_content}\n\n")
             else:
