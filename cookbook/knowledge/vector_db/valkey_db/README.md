@@ -84,20 +84,17 @@ INFO Setting default model to OpenAI Chat
 
 ## Key Features Demonstrated
 
-- **Vector Similarity Search**: HNSW algorithm with cosine similarity
-- **Binary Vector Storage**: Efficient 1536-dimensional embeddings (6144 bytes)
-- **Async/Sync Operations**: Full support for both paradigms
+- **PDF Content Loading**: Load and process PDF documents from URLs
+- **Vector Search Integration**: Automatic embeddings and indexing with Valkey Search
 - **Knowledge System Integration**: AI agents with searchable knowledge base
-- **Metadata Filtering**: TAG field indexing for efficient queries
-- **Automatic Fallbacks**: Robust error handling
+- **Retrieval-Augmented Generation (RAG)**: Agent searches knowledge base to answer questions
 
 ## Technical Implementation
 
-- **Vector Format**: Binary-packed float32 arrays using `struct.pack`
-- **Search Schema**: HNSW index with cosine distance metric
-- **Embeddings**: OpenAI text-embedding-ada-002 (1536 dimensions)
-- **Storage**: Valkey HASH with vector and metadata fields
-- **Query Processing**: KNN search with similarity scoring
+- **Embeddings**: OpenAI text-embedding-ada-002 (automatic configuration)
+- **Vector Database**: Valkey Search with HNSW indexing
+- **Content Processing**: PDF parsing and document chunking
+- **Agent Integration**: Knowledge-based question answering
 
 ## Architecture Overview
 
@@ -150,47 +147,29 @@ agent = Agent(knowledge=knowledge)
 agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
 ```
 
-### Basic Vector Search
-```python
-from agno.vectordb.valkey import ValkeySearch
+This example demonstrates the core functionality: loading a PDF document from a URL into Valkey Search and using an AI agent to answer questions based on the content.
 
-# Initialize Valkey Search
-valkey_db = ValkeySearch(
-    collection="my_collection",
-    host="localhost",
-    port=6379
-)
+## What This Example Shows
 
-# Search for similar documents
-results = valkey_db.search("machine learning", limit=5)
-for result in results:
-    print(f"Document: {result.content}")
-    print(f"Score: {result.score}")
-```
+- **Simple Setup**: Minimal code to get started with Valkey Search
+- **URL-based Content**: Load documents directly from web URLs
+- **Automatic Processing**: Agno handles PDF parsing and vectorization
+- **AI Integration**: Agent automatically searches knowledge base for answers
 
-## Performance Benefits
+## Next Steps
 
-- **High-Speed Vector Search**: HNSW algorithm provides sub-linear search complexity
-- **Memory Efficiency**: Binary vector encoding reduces storage overhead by 50%
-- **Concurrent Operations**: Full async/await support for high-throughput applications
-- **Automatic Scaling**: Valkey's clustering capabilities for distributed deployments
-- **Real-time Updates**: Live index updates without rebuild requirements
-
-## Use Cases
-
-1. **Retrieval-Augmented Generation (RAG)**: Enhance AI agents with searchable knowledge bases
-2. **Semantic Search**: Find documents based on meaning rather than keywords
-3. **Recommendation Systems**: Content-based recommendations using vector similarity
-4. **Duplicate Detection**: Identify similar content across large document collections
-5. **Clustering Analysis**: Group similar documents for organization and analysis
+To extend this example, you could:
+1. Add more PDF documents from different URLs
+2. Use local files instead of URLs
+3. Add different types of content (text, web pages, etc.)
+4. Customize the agent's instructions and behavior
+5. Implement custom embeddings or search parameters
 
 ## Getting Started
 
-The Valkey Search integration is part of the Agno framework's vector database ecosystem. To get started:
-
 1. Follow the setup instructions above
-2. Explore the cookbook examples in `cookbook/knowledge/vector_db/valkey_db/`
-3. Check out the comprehensive tests in the test suite
-4. Review the API documentation for advanced configuration options
+2. Run `python valkey_db.py` to see the example in action
+3. Try changing the URL to load different PDF documents
+4. Modify the agent's question to test different queries
 
-For production deployments, consider Valkey's clustering capabilities and monitoring tools to ensure optimal performance at scale.
+This example shows how easy it is to create a knowledge-powered AI agent using Valkey Search as the vector database backend.
