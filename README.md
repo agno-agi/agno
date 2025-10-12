@@ -58,13 +58,13 @@ if __name__ == "__main__":
 
 ## What is the AgentOS?
 
-AgentOS is a high-performance runtime for orchestrating multi-agent systems. Key features include:
+AgentOS is a high-performance runtime for multi-agent systems. Key features include:
 
 1. **Pre-built FastAPI runtime**: AgentOS ships with a ready-to-use FastAPI app for running your agents, teams, and workflows. This gives you a major head start in building your AI product.
 
 2. **Integrated UI**: The [AgentOS UI](https://os.agno.com) connects directly to your runtime, letting you test, monitor, and manage your system in real time. This gives you unmatched visibility and control over your system.
 
-3. **Private by design**: AgentOS runs entirely in your cloud, ensuring complete data privacy. No data ever leaves your system. This is ideal for security-conscious enterprises that can't send data to external services.
+3. **Private by design**: AgentOS runs entirely in your cloud, ensuring complete data privacy. No data ever leaves your system. This is ideal for security-conscious enterprises.
 
 Here's how the [AgentOS UI](https://os.agno.com) looks like:
 
@@ -74,9 +74,11 @@ https://github.com/user-attachments/assets/feb23db8-15cc-4e88-be7c-01a21a03ebf6
 
 For companies building agents, Agno provides the complete solution:
 
-- The fastest framework for building agents, multi-agent teams and agentic workflows (Agno Framework).
-- A ready-to-use FastAPI app that gets you building AI products on day one (AgentOS Runtime).
-- A control plane for testing, monitoring and managing your system (AgentOS UI).
+- The fastest framework for building agents, multi-agent teams and agentic workflows.
+- A ready-to-use FastAPI app that gets you building AI products on day one.
+- A control plane for testing, monitoring and managing your system.
+
+Agno brings a novel architecture that no other framework provides, your AgentOS runs securely in your cloud, and the control plane connects directly to it from your browser. You don't need to send data to any external services or pay retention costs, you get complete privacy and control.
 
 ## Getting started
 
