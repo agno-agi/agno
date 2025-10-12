@@ -1,5 +1,5 @@
-import json
 import asyncio
+import json
 from hashlib import md5
 from typing import Any, Dict, List, Optional, Union, cast
 
@@ -63,7 +63,7 @@ class ValkeySearch(VectorDb):
         self._client: Optional[valkey.Valkey] = None
         self._async_client: Optional[aio_valkey.Valkey] = None
         self._async_binary_client: Optional[aio_valkey.Valkey] = None
-        
+
         # Flag to track if async operations are failing
         self._prefer_sync: bool = False
 
@@ -164,12 +164,14 @@ class ValkeySearch(VectorDb):
     def _vector_to_bytes(self, vector: List[float]) -> bytes:
         """Convert vector to binary data for Valkey Search."""
         import struct
+
         return struct.pack(f"{len(vector)}f", *vector)
 
     def _bytes_to_vector(self, data: bytes) -> List[float]:
         """Convert bytes back to vector."""
         import struct
-        return list(struct.unpack(f"{len(data)//4}f", data))
+
+        return list(struct.unpack(f"{len(data) // 4}f", data))
 
     def create(self) -> None:
         """Create the Valkey Search index."""
@@ -181,21 +183,35 @@ class ValkeySearch(VectorDb):
 
             # Create index with vector field
             distance_metric = self._get_distance_metric()
-            
+
             # Create the index with vector field and searchable fields
             result = self.client.execute_command(
                 "FT.CREATE",
                 self.collection,
-                "ON", "HASH",
-                "PREFIX", "1", self.prefix,
+                "ON",
+                "HASH",
+                "PREFIX",
+                "1",
+                self.prefix,
                 "SCHEMA",
-                self.vector_field, "VECTOR", "HNSW", "6", "TYPE", "FLOAT32", "DIM", str(self.dimensions), "DISTANCE_METRIC", distance_metric,
-                self.content_hash_field, "TAG",  # Index content_hash for existence checks
-                self.id_field, "TAG"             # Index id field for lookups
+                self.vector_field,
+                "VECTOR",
+                "HNSW",
+                "6",
+                "TYPE",
+                "FLOAT32",
+                "DIM",
+                str(self.dimensions),
+                "DISTANCE_METRIC",
+                distance_metric,
+                self.content_hash_field,
+                "TAG",  # Index content_hash for existence checks
+                self.id_field,
+                "TAG",  # Index id field for lookups
             )
-            
+
             log_info(f"Created Valkey Search index '{self.collection}' with result: {result}")
-            
+
         except Exception as e:
             log_error(f"Error creating Valkey Search index: {e}")
             raise
@@ -210,21 +226,35 @@ class ValkeySearch(VectorDb):
 
             # Create index with vector field
             distance_metric = self._get_distance_metric()
-            
+
             # Create the index with vector field and searchable fields
             result = await self.async_client.execute_command(
                 "FT.CREATE",
                 self.collection,
-                "ON", "HASH",
-                "PREFIX", "1", self.prefix,
+                "ON",
+                "HASH",
+                "PREFIX",
+                "1",
+                self.prefix,
                 "SCHEMA",
-                self.vector_field, "VECTOR", "HNSW", "6", "TYPE", "FLOAT32", "DIM", str(self.dimensions), "DISTANCE_METRIC", distance_metric,
-                self.content_hash_field, "TAG",  # Index content_hash for existence checks
-                self.id_field, "TAG"             # Index id field for lookups
+                self.vector_field,
+                "VECTOR",
+                "HNSW",
+                "6",
+                "TYPE",
+                "FLOAT32",
+                "DIM",
+                str(self.dimensions),
+                "DISTANCE_METRIC",
+                distance_metric,
+                self.content_hash_field,
+                "TAG",  # Index content_hash for existence checks
+                self.id_field,
+                "TAG",  # Index id field for lookups
             )
-            
+
             log_info(f"Created Valkey Search index '{self.collection}' with result: {result}")
-            
+
         except Exception as e:
             log_error(f"Error creating Valkey Search index: {e}")
             raise
@@ -235,10 +265,7 @@ class ValkeySearch(VectorDb):
             # Search for documents with the given name
             # Use proper Redis Search query syntax for tag fields
             result = self.client.execute_command(
-                "FT.SEARCH",
-                self.collection,
-                f"@{self.id_field}:{{{name}}}",
-                "LIMIT", "0", "1"
+                "FT.SEARCH", self.collection, f"@{self.id_field}:{{{name}}}", "LIMIT", "0", "1"
             )
             return len(result) > 1  # Result includes header, so > 1 means documents found
         except Exception as e:
@@ -251,10 +278,7 @@ class ValkeySearch(VectorDb):
             # Search for documents with the given name
             # Use proper Redis Search query syntax for tag fields
             result = await self.async_client.execute_command(
-                "FT.SEARCH",
-                self.collection,
-                f"@{self.id_field}:{{{name}}}",
-                "LIMIT", "0", "1"
+                "FT.SEARCH", self.collection, f"@{self.id_field}:{{{name}}}", "LIMIT", "0", "1"
             )
             return len(result) > 1  # Result includes header, so > 1 means documents found
         except Exception as e:
@@ -289,11 +313,11 @@ class ValkeySearch(VectorDb):
             for doc in documents:
                 # Generate document ID
                 doc_id = f"{self.prefix}{doc.id}"
-                
+
                 # Embed the document content
                 vector = self.embedder.get_embedding(doc.content)
                 vector_bytes = self._vector_to_bytes(vector)
-                
+
                 # Prepare document data (simplified for vector-only schema)
                 doc_data = {
                     self.vector_field: vector_bytes,
@@ -303,18 +327,18 @@ class ValkeySearch(VectorDb):
                     "id": doc.id,
                     "content_hash": content_hash,
                 }
-                
+
                 # Store document in Redis using binary client for the vector field
                 # First store non-vector fields with regular client
                 regular_data = {k: v for k, v in doc_data.items() if k != self.vector_field}
                 if regular_data:
                     self.client.hset(doc_id, mapping=regular_data)
-                
+
                 # Then store vector field with binary client
                 self.binary_client.hset(doc_id, self.vector_field, vector_bytes)
-                
+
             log_info(f"Inserted {len(documents)} documents into Valkey Search index '{self.collection}'")
-            
+
         except Exception as e:
             log_error(f"Error inserting documents: {e}")
             raise
@@ -323,23 +347,23 @@ class ValkeySearch(VectorDb):
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
     ) -> None:
         """Insert documents into the Valkey Search index asynchronously."""
-        
+
         # If we've detected async issues, use sync operations directly
         if self._prefer_sync:
             log_debug("Using sync operation due to previous async issues")
             self.insert(content_hash, documents, filters)
             return
-            
+
         try:
             for doc in documents:
                 try:
                     # Generate document ID
                     doc_id = f"{self.prefix}{doc.id}"
-                    
+
                     # Embed the document content
                     vector = await self.embedder.async_get_embedding(doc.content)
                     vector_bytes = self._vector_to_bytes(vector)
-                    
+
                     # Prepare document data (simplified for vector-only schema)
                     doc_data = {
                         self.vector_field: vector_bytes,
@@ -349,16 +373,16 @@ class ValkeySearch(VectorDb):
                         "id": doc.id,
                         "content_hash": content_hash,
                     }
-                    
+
                     # Store document in Redis using async binary client for the vector field
                     # First store non-vector fields with regular client
                     regular_data = {k: v for k, v in doc_data.items() if k != self.vector_field}
                     if regular_data:
                         await self.async_client.hset(doc_id, mapping=regular_data)
-                    
+
                     # Then store vector field with async binary client
                     await self.async_binary_client.hset(doc_id, self.vector_field, vector_bytes)
-                    
+
                 except (RuntimeError, Exception) as e:
                     if "Event loop is closed" in str(e) or "asyncio" in str(e).lower():
                         log_debug(f"Async operation failed for document {doc.id}, switching to sync mode: {e}")
@@ -375,9 +399,9 @@ class ValkeySearch(VectorDb):
                 except Exception as e:
                     log_error(f"Error inserting document {doc.id}: {e}")
                     raise
-                
+
             log_info(f"Inserted {len(documents)} documents into Valkey Search index '{self.collection}'")
-            
+
         except Exception as e:
             log_error(f"Error inserting documents: {e}")
             raise
@@ -404,10 +428,10 @@ class ValkeySearch(VectorDb):
             # Embed the query
             query_vector = self.embedder.get_embedding(query)
             query_vector_bytes = self._vector_to_bytes(query_vector)
-            
+
             # Build search query
             search_query = f"*=>[KNN {limit} @{self.vector_field} $query_vector]"
-            
+
             # Add filters if provided
             if filters:
                 filter_parts = []
@@ -422,16 +446,21 @@ class ValkeySearch(VectorDb):
                             filter_parts.append(f"@{key}:{{{','.join(map(str, value))}}}")
                 if filter_parts:
                     search_query = f"({search_query}) {' '.join(filter_parts)}"
-            
+
             # Execute search using binary client for vector operations
             result = self.binary_client.execute_command(
                 "FT.SEARCH",
                 self.collection,
                 search_query,
-                "PARAMS", "2", "query_vector", query_vector_bytes,
-                "LIMIT", "0", str(limit)
+                "PARAMS",
+                "2",
+                "query_vector",
+                query_vector_bytes,
+                "LIMIT",
+                "0",
+                str(limit),
             )
-            
+
             # Parse results (handle binary response with scores)
             documents = []
             if len(result) > 1:  # Result includes header
@@ -440,55 +469,55 @@ class ValkeySearch(VectorDb):
                 for i in range(1, len(result), 2):
                     if i + 1 >= len(result):
                         break
-                        
-                    doc_key = result[i]      # Document key (bytes)
+
+                    doc_key = result[i]  # Document key (bytes)
                     field_values = result[i + 1]  # List of alternating field-value pairs
-                    
+
                     # Parse field-value pairs into a dictionary
                     doc_fields = {}
                     score = 0.0  # Default score
-                    
+
                     if isinstance(field_values, list):
                         for j in range(0, len(field_values), 2):
                             if j + 1 < len(field_values):
                                 field_name = field_values[j]
                                 field_value = field_values[j + 1]
-                                
+
                                 # Decode field name (always text)
                                 if isinstance(field_name, bytes):
-                                    field_name = field_name.decode('utf-8')
-                                
+                                    field_name = field_name.decode("utf-8")
+
                                 # Handle the vector score specially
                                 if field_name == "__vector_score":
                                     try:
                                         if isinstance(field_value, bytes):
-                                            score = float(field_value.decode('utf-8'))
+                                            score = float(field_value.decode("utf-8"))
                                         else:
                                             score = float(field_value)
                                     except (ValueError, TypeError):
                                         score = 0.0
                                     continue  # Don't add this to regular fields
-                                
+
                                 # Only decode field value if it's not the vector field (binary data)
                                 if isinstance(field_value, bytes) and field_name != self.vector_field:
                                     try:
-                                        field_value = field_value.decode('utf-8')
+                                        field_value = field_value.decode("utf-8")
                                     except UnicodeDecodeError:
                                         # Keep as bytes if it can't be decoded
                                         pass
-                                
+
                                 doc_fields[field_name] = field_value
-                    
+
                     # Extract document data
                     content = doc_fields.get("content", "")
                     metadata_str = doc_fields.get("metadata", "{}")
                     doc_id = doc_fields.get("id", "")
-                    
+
                     try:
                         metadata = json.loads(metadata_str) if metadata_str else {}
                     except json.JSONDecodeError:
                         metadata = {}
-                    
+
                     # Create document
                     doc = Document(
                         id=doc_id,
@@ -498,13 +527,13 @@ class ValkeySearch(VectorDb):
                     # Set the search score (using reranking_score field)
                     doc.reranking_score = score
                     documents.append(doc)
-            
+
             # Apply reranker if available
             if self.reranker and documents:
                 documents = self.reranker.rerank(query, documents)
-            
+
             return documents
-            
+
         except Exception as e:
             log_error(f"Error searching documents: {e}")
             return []
@@ -517,10 +546,10 @@ class ValkeySearch(VectorDb):
             # Embed the query
             query_vector = await self.embedder.async_get_embedding(query)
             query_vector_bytes = self._vector_to_bytes(query_vector)
-            
+
             # Build search query
             search_query = f"*=>[KNN {limit} @{self.vector_field} $query_vector]"
-            
+
             # Add filters if provided
             if filters:
                 filter_parts = []
@@ -535,16 +564,21 @@ class ValkeySearch(VectorDb):
                             filter_parts.append(f"@{key}:{{{','.join(map(str, value))}}}")
                 if filter_parts:
                     search_query = f"({search_query}) {' '.join(filter_parts)}"
-            
+
             # Execute search using async binary client for vector operations
             result = await self.async_binary_client.execute_command(
                 "FT.SEARCH",
                 self.collection,
                 search_query,
-                "PARAMS", "2", "query_vector", query_vector_bytes,
-                "LIMIT", "0", str(limit)
+                "PARAMS",
+                "2",
+                "query_vector",
+                query_vector_bytes,
+                "LIMIT",
+                "0",
+                str(limit),
             )
-            
+
             # Parse results (handle binary response with scores)
             documents = []
             if len(result) > 1:  # Result includes header
@@ -553,55 +587,55 @@ class ValkeySearch(VectorDb):
                 for i in range(1, len(result), 2):
                     if i + 1 >= len(result):
                         break
-                        
-                    doc_key = result[i]      # Document key (bytes)
+
+                    doc_key = result[i]  # Document key (bytes)
                     field_values = result[i + 1]  # List of alternating field-value pairs
-                    
+
                     # Parse field-value pairs into a dictionary
                     doc_fields = {}
                     score = 0.0  # Default score
-                    
+
                     if isinstance(field_values, list):
                         for j in range(0, len(field_values), 2):
                             if j + 1 < len(field_values):
                                 field_name = field_values[j]
                                 field_value = field_values[j + 1]
-                                
+
                                 # Decode field name (always text)
                                 if isinstance(field_name, bytes):
-                                    field_name = field_name.decode('utf-8')
-                                
+                                    field_name = field_name.decode("utf-8")
+
                                 # Handle the vector score specially
                                 if field_name == "__vector_score":
                                     try:
                                         if isinstance(field_value, bytes):
-                                            score = float(field_value.decode('utf-8'))
+                                            score = float(field_value.decode("utf-8"))
                                         else:
                                             score = float(field_value)
                                     except (ValueError, TypeError):
                                         score = 0.0
                                     continue  # Don't add this to regular fields
-                                
+
                                 # Only decode field value if it's not the vector field (binary data)
                                 if isinstance(field_value, bytes) and field_name != self.vector_field:
                                     try:
-                                        field_value = field_value.decode('utf-8')
+                                        field_value = field_value.decode("utf-8")
                                     except UnicodeDecodeError:
                                         # Keep as bytes if it can't be decoded
                                         pass
-                                
+
                                 doc_fields[field_name] = field_value
-                    
+
                     # Extract document data
                     content = doc_fields.get("content", "")
                     metadata_str = doc_fields.get("metadata", "{}")
                     doc_id = doc_fields.get("id", "")
-                    
+
                     try:
                         metadata = json.loads(metadata_str) if metadata_str else {}
                     except json.JSONDecodeError:
                         metadata = {}
-                    
+
                     # Create document
                     doc = Document(
                         id=doc_id,
@@ -611,13 +645,13 @@ class ValkeySearch(VectorDb):
                     # Set the search score (using reranking_score field)
                     doc.reranking_score = score
                     documents.append(doc)
-            
+
             # Apply reranker if available
             if self.reranker and documents:
                 documents = await self.reranker.arerank(query, documents)
-            
+
             return documents
-            
+
         except Exception as e:
             log_error(f"Error searching documents: {e}")
             return []
@@ -696,20 +730,22 @@ class ValkeySearch(VectorDb):
                 elif isinstance(value, list):
                     if value:
                         filter_parts.append(f"@{key}:{{{','.join(map(str, value))}}}")
-            
+
             if not filter_parts:
                 return False
-            
+
             search_query = " ".join(filter_parts)
-            
+
             # Search for documents to delete
             result = self.client.execute_command(
                 "FT.SEARCH",
                 self.collection,
                 search_query,
-                "LIMIT", "0", "1000"  # Get up to 1000 documents
+                "LIMIT",
+                "0",
+                "1000",  # Get up to 1000 documents
             )
-            
+
             # Delete found documents
             deleted_count = 0
             if len(result) > 1:  # Result includes header
@@ -720,9 +756,9 @@ class ValkeySearch(VectorDb):
                         redis_key = f"{self.prefix}{doc_id}"
                         if self.client.delete(redis_key):
                             deleted_count += 1
-            
+
             return deleted_count > 0
-            
+
         except Exception as e:
             log_error(f"Error deleting documents by metadata: {e}")
             return False
@@ -731,18 +767,20 @@ class ValkeySearch(VectorDb):
         """Update metadata for a document by content ID."""
         try:
             doc_id = f"{self.prefix}{content_id}"
-            
+
             # Check if document exists
             if not self.client.exists(doc_id):
-                log_debug(f"Document with ID '{content_id}' not found for metadata update - this is normal during initial content loading")
+                log_debug(
+                    f"Document with ID '{content_id}' not found for metadata update - this is normal during initial content loading"
+                )
                 return
-            
+
             # Update metadata
             metadata_str = json.dumps(metadata)
             self.client.hset(doc_id, self.metadata_field, metadata_str)
-            
+
             log_debug(f"Updated metadata for document '{content_id}'")
-            
+
         except Exception as e:
             log_error(f"Error updating metadata: {e}")
             raise

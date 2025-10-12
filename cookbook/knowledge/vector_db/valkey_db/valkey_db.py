@@ -12,10 +12,12 @@ Prerequisites:
 2. Set your OpenAI API key:
    export OPENAI_API_KEY="your-api-key-here"
 """
-from agno.vectordb.valkey import ValkeySearch
-from agno.knowledge.knowledge import Knowledge
-from agno.agent import Agent
+
 import asyncio
+
+from agno.agent import Agent
+from agno.knowledge.knowledge import Knowledge
+from agno.vectordb.valkey import ValkeySearch
 
 if __name__ == "__main__":
     # Valkey Search example loading PDF from URL
@@ -40,4 +42,6 @@ if __name__ == "__main__":
 
     # Create and use the agent
     agent = Agent(knowledge=knowledge)
-    agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
+    agent.print_response(
+        "List down the ingredients to make Massaman Gai", markdown=True
+    )
