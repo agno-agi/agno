@@ -1,6 +1,7 @@
 import json
 import re
 from typing import Any, Dict, List, Optional, Set
+from pathlib import Path
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -10,6 +11,7 @@ try:
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session, sessionmaker
     from sqlalchemy.sql.expression import text
+    from sqlalchemy.pool import NullPool
 except ImportError:
     raise ImportError("`sqlalchemy` not installed")
 
@@ -43,12 +45,28 @@ class SQLTools(Toolkit):
         # Get the database engine
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
-            _engine = create_engine(db_url)
-        elif user and password and host and port and dialect:
-            if schema is not None:
-                _engine = create_engine(f"{dialect}://{user}:{password}@{host}:{port}/{schema}")
+            # If sqlite, avoid connection pooling and set check_same_thread so short-lived connections don't lock file
+            if db_url.startswith("sqlite://") or db_url.startswith("sqlite:"):
+                _engine = create_engine(
+                    db_url,
+                    connect_args={"check_same_thread": False},
+                    poolclass=NullPool,
+                )
             else:
-                _engine = create_engine(f"{dialect}://{user}:{password}@{host}:{port}")
+                _engine = create_engine(db_url)
+        elif user and password and host and port and dialect:
+            if dialect is not None and dialect.lower().startswith("sqlite"):
+                # unlikely with user/pw, but handle defensively
+                _engine = create_engine(
+                    f"{dialect}://{user}:{password}@{host}:{port}/{schema}" if schema else f"{dialect}://{user}:{password}@{host}:{port}",
+                    connect_args={"check_same_thread": False},
+                    poolclass=NullPool,
+                )
+            else:
+                if schema is not None:
+                    _engine = create_engine(f"{dialect}://{user}:{password}@{host}:{port}/{schema}")
+                else:
+                    _engine = create_engine(f"{dialect}://{user}:{password}@{host}:{port}")
 
         if _engine is None:
             raise ValueError("Could not build the database connection")
@@ -73,13 +91,16 @@ class SQLTools(Toolkit):
             "UPDATE",
         }
 
-        # Set query timeout if specified
-        if self.query_timeout is not None:
+        # Set query timeout if specified (only for databases that support it)
+        if self.query_timeout is not None and dialect and dialect.lower() in ["postgresql", "postgres"]:
             timeout_ms = self.query_timeout * 1000
 
             @event.listens_for(_engine, "before_cursor_execute")
             def receive_before_cursor_execute(conn, cursor, statement, params, context, executemany):
-                conn.connection.connection.execute(f"SET statement_timeout = {timeout_ms}")
+                try:
+                    conn.connection.connection.execute(f"SET statement_timeout = {timeout_ms}")
+                except Exception as e:
+                    log_debug(f"Could not set query timeout: {e}")
 
         self.schema = schema
 
@@ -124,7 +145,7 @@ class SQLTools(Toolkit):
             return json.dumps(table_names)
         except Exception as e:
             logger.error(f"Error getting tables: {e}")
-            return f"Error getting tables: {e}"
+            return json.dumps({"error": f"Error getting tables: {e}"})
 
     def describe_table(self, table_name: str) -> str:
         """Use this function to describe a table.
@@ -148,7 +169,7 @@ class SQLTools(Toolkit):
             )
         except Exception as e:
             logger.error(f"Error getting table schema: {e}")
-            return f"Error getting table schema: {e}"
+            return json.dumps({"error": f"Error getting table schema: {e}"})
 
     def run_sql_query(self, query: str, limit: Optional[int] = 10) -> str:
         """Use this function to run a SQL query and return the result.
@@ -374,25 +395,42 @@ class SQLTools(Toolkit):
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"query_results_{timestamp}.{format}"
 
-            # Export based on format
-            if format == "json":
-                with open(filename, "w") as f:
-                    json.dump(results, f, indent=2, default=str)
-            elif format == "csv":
-                import csv
+            # Ensure filename is a Path
+            filename_path = Path(filename)
 
-                with open(filename, "w", newline="") as f:
-                    if results:
-                        writer = csv.DictWriter(f, fieldnames=results[0].keys())
-                        writer.writeheader()
-                        writer.writerows(results)
-            else:
-                return json.dumps({"error": f"Unsupported format: {format}. Use 'json' or 'csv'"})
+            # If parent directory doesn't exist, try to create it (safe no-op for same-dir)
+            if filename_path.parent and not filename_path.parent.exists():
+                try:
+                    filename_path.parent.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    # ignore parent creation errors; we'll hit open() error below if necessary
+                    pass
+
+            # Export based on format
+            try:
+                if format == "json":
+                    with filename_path.open("w", encoding="utf-8") as f:
+                        json.dump(results, f, indent=2, default=str)
+                elif format == "csv":
+                    import csv
+                    with filename_path.open("w", newline="", encoding="utf-8") as f:
+                        if results:
+                            writer = csv.DictWriter(f, fieldnames=results[0].keys())
+                            writer.writeheader()
+                            writer.writerows(results)
+                else:
+                    return json.dumps({"error": f"Unsupported format: {format}. Use 'json' or 'csv'"})
+            except PermissionError as e:
+                logger.error(f"PermissionError exporting results: {e}")
+                return json.dumps({
+                    "error": str(e),
+                    "tip": "PermissionError: the file is open in another process. Close editors/DB tools (or use a different filename/path)."
+                })
 
             return json.dumps(
                 {
                     "status": "success",
-                    "filename": filename,
+                    "filename": str(filename_path),
                     "rows_exported": len(results),
                     "format": format,
                 }
