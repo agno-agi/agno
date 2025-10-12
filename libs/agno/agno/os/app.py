@@ -64,11 +64,34 @@ async def mcp_lifespan(_, mcp_tools):
         await tool.close()
 
 
+def _combine_app_lifespans(lifespans: list) -> Any:
+    """Combine multiple FastAPI app lifespan context managers into one."""
+    if len(lifespans) == 1:
+        return lifespans[0]
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def combined_lifespan(app):
+        async def _run_nested(index: int):
+            if index >= len(lifespans):
+                yield
+                return
+
+            async with lifespans[index](app):
+                async for _ in _run_nested(index + 1):
+                    yield
+
+        async for _ in _run_nested(0):
+            yield
+
+    return combined_lifespan
+
+
 class AgentOS:
     def __init__(
         self,
         id: Optional[str] = None,
-        os_id: Optional[str] = None,  # Deprecated
         name: Optional[str] = None,
         description: Optional[str] = None,
         version: Optional[str] = None,
@@ -76,16 +99,18 @@ class AgentOS:
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
+        a2a_interface: bool = False,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
-        enable_mcp: bool = False,  # Deprecated
         enable_mcp_server: bool = False,
-        fastapi_app: Optional[FastAPI] = None,  # Deprecated
         base_app: Optional[FastAPI] = None,
-        replace_routes: Optional[bool] = None,  # Deprecated
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         telemetry: bool = True,
+        os_id: Optional[str] = None,  # Deprecated
+        enable_mcp: bool = False,  # Deprecated
+        fastapi_app: Optional[FastAPI] = None,  # Deprecated
+        replace_routes: Optional[bool] = None,  # Deprecated
     ):
         """Initialize AgentOS.
 
@@ -98,6 +123,7 @@ class AgentOS:
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
             interfaces: List of interfaces to include in the OS
+            a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
             lifespan: Optional lifespan context manager for the FastAPI app
@@ -105,6 +131,7 @@ class AgentOS:
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             telemetry: Whether to enable telemetry
+
         """
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
@@ -115,6 +142,7 @@ class AgentOS:
         self.workflows: Optional[List[Workflow]] = workflows
         self.teams: Optional[List[Team]] = teams
         self.interfaces = interfaces or []
+        self.a2a_interface = a2a_interface
 
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
 
@@ -179,9 +207,6 @@ class AgentOS:
 
                 team.initialize_team()
 
-                # Required for the built-in routes to work
-                team.store_events = True
-
                 for member in team.members:
                     if isinstance(member, Agent):
                         member.team_id = None
@@ -189,12 +214,19 @@ class AgentOS:
                     elif isinstance(member, Team):
                         member.initialize_team()
 
+                # Required for the built-in routes to work
+                team.store_events = True
+
         if self.workflows:
             for workflow in self.workflows:
                 # Track MCP tools recursively in workflow members
                 collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
+
                 if not workflow.id:
                     workflow.id = generate_id_from_name(workflow.name)
+
+                # Required for the built-in routes to work
+                workflow.store_events = True
 
         if self.telemetry:
             from agno.api.os import OSLaunch, log_os_telemetry
@@ -216,7 +248,7 @@ class AgentOS:
                         async with mcp_tools_lifespan(app):  # type: ignore
                             yield
 
-                app_lifespan = combined_lifespan  # type: ignore
+                app_lifespan = combined_lifespan
             else:
                 app_lifespan = mcp_tools_lifespan
 
@@ -233,6 +265,32 @@ class AgentOS:
     def get_app(self) -> FastAPI:
         if self.base_app:
             fastapi_app = self.base_app
+
+            # Initialize MCP server if enabled
+            if self.enable_mcp_server:
+                from agno.os.mcp import get_mcp_server
+
+                self._mcp_app = get_mcp_server(self)
+
+            # Collect all lifespans that need to be combined
+            lifespans = []
+
+            if fastapi_app.router.lifespan_context:
+                lifespans.append(fastapi_app.router.lifespan_context)
+
+            if self.mcp_tools:
+                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
+
+            if self.enable_mcp_server and self._mcp_app:
+                lifespans.append(self._mcp_app.lifespan)
+
+            if self.lifespan:
+                lifespans.append(self.lifespan)
+
+            # Combine lifespans and set them in the app
+            if lifespans:
+                fastapi_app.router.lifespan_context = _combine_app_lifespans(lifespans)
+
         else:
             if self.enable_mcp_server:
                 from contextlib import asynccontextmanager
@@ -251,7 +309,7 @@ class AgentOS:
                             async with self._mcp_app.lifespan(app):  # type: ignore
                                 yield
 
-                    final_lifespan = combined_lifespan  # type: ignore
+                    final_lifespan = combined_lifespan
 
                 fastapi_app = self._make_app(lifespan=final_lifespan)
             else:
@@ -263,9 +321,20 @@ class AgentOS:
         self._add_router(fastapi_app, get_health_router())
         self._add_router(fastapi_app, get_home_router(self))
 
+        has_a2a_interface = False
         for interface in self.interfaces:
+            if not has_a2a_interface and interface.__class__.__name__ == "A2A":
+                has_a2a_interface = True
             interface_router = interface.get_router()
             self._add_router(fastapi_app, interface_router)
+
+        # Add A2A interface if requested and not provided in self.interfaces
+        if self.a2a_interface and not has_a2a_interface:
+            from agno.os.interfaces.a2a import A2A
+
+            a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
+            self.interfaces.append(a2a_interface)
+            self._add_router(fastapi_app, a2a_interface.get_router())
 
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
@@ -400,18 +469,12 @@ class AgentOS:
                 self._register_db_with_validation(dbs, agent.db)
             if agent.knowledge and agent.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
-                # Also add to general dbs if it's used for both purposes
-                if agent.knowledge.contents_db.id not in dbs:
-                    self._register_db_with_validation(dbs, agent.knowledge.contents_db)
 
         for team in self.teams or []:
             if team.db:
                 self._register_db_with_validation(dbs, team.db)
             if team.knowledge and team.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, team.knowledge.contents_db)
-                # Also add to general dbs if it's used for both purposes
-                if team.knowledge.contents_db.id not in dbs:
-                    self._register_db_with_validation(dbs, team.knowledge.contents_db)
 
         for workflow in self.workflows or []:
             if workflow.db:
@@ -488,7 +551,6 @@ class AgentOS:
         if session_config.dbs is None:
             session_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in session_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -496,9 +558,7 @@ class AgentOS:
                 session_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=SessionDomainConfig(
-                            display_name="Sessions" if not multiple_dbs else "Sessions in database '" + db_id + "'"
-                        ),
+                        domain_config=SessionDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -510,7 +570,6 @@ class AgentOS:
         if memory_config.dbs is None:
             memory_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in memory_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -518,9 +577,7 @@ class AgentOS:
                 memory_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=MemoryDomainConfig(
-                            display_name="Memory" if not multiple_dbs else "Memory in database '" + db_id + "'"
-                        ),
+                        domain_config=MemoryDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -532,7 +589,6 @@ class AgentOS:
         if knowledge_config.dbs is None:
             knowledge_config.dbs = []
 
-        multiple_knowledge_dbs: bool = len(self.knowledge_dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
         # Only add databases that are actually used for knowledge contents
@@ -541,9 +597,7 @@ class AgentOS:
                 knowledge_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=KnowledgeDomainConfig(
-                            display_name="Knowledge" if not multiple_knowledge_dbs else "Knowledge in database " + db_id
-                        ),
+                        domain_config=KnowledgeDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -555,7 +609,6 @@ class AgentOS:
         if metrics_config.dbs is None:
             metrics_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in metrics_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -563,9 +616,7 @@ class AgentOS:
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=MetricsDomainConfig(
-                            display_name="Metrics" if not multiple_dbs else "Metrics in database '" + db_id + "'"
-                        ),
+                        domain_config=MetricsDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -577,7 +628,6 @@ class AgentOS:
         if evals_config.dbs is None:
             evals_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in evals_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -585,9 +635,7 @@ class AgentOS:
                 evals_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=EvalsDomainConfig(
-                            display_name="Evals" if not multiple_dbs else "Evals in database '" + db_id + "'"
-                        ),
+                        domain_config=EvalsDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -601,6 +649,7 @@ class AgentOS:
         port: int = 7777,
         reload: bool = False,
         workers: Optional[int] = None,
+        access_log: bool = False,
         **kwargs,
     ):
         import uvicorn
@@ -633,4 +682,4 @@ class AgentOS:
             )
         )
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, **kwargs)
+        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, access_log=access_log, **kwargs)

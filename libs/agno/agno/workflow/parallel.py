@@ -1,5 +1,6 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
@@ -13,7 +14,9 @@ from agno.run.workflow import (
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
 )
+from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
+from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
@@ -198,6 +201,9 @@ class Parallel:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
         # Use workflow logger for parallel orchestration
@@ -205,9 +211,20 @@ class Parallel:
 
         self._prepare_steps()
 
+        # Create individual session_state copies for each step to prevent race conditions
+        session_state_copies = []
+        for _ in range(len(self.steps)):
+            if session_state is not None:
+                session_state_copies.append(deepcopy(session_state))
+            else:
+                session_state_copies.append({})
+
         def execute_step_with_index(step_with_index):
             """Execute a single step and preserve its original index"""
             idx, step = step_with_index
+            # Use the individual session_state copy for this step
+            step_session_state = session_state_copies[idx]
+
             try:
                 step_result = step.execute(
                     step_input,
@@ -215,9 +232,12 @@ class Parallel:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
-                    session_state=session_state,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
+                    num_history_runs=num_history_runs,
+                    session_state=step_session_state,
                 )  # type: ignore[union-attr]
-                return idx, step_result
+                return idx, step_result, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 logger.error(f"Parallel step {parallel_step_name} failed: {exc}")
@@ -229,6 +249,7 @@ class Parallel:
                         success=False,
                         error=str(exc),
                     ),
+                    step_session_state,
                 )
 
         # Use index to preserve order
@@ -241,12 +262,14 @@ class Parallel:
                 for indexed_step in indexed_steps
             }
 
-            # Collect results
+            # Collect results and modified session_state copies
             results_with_indices = []
+            modified_session_states = []
             for future in as_completed(future_to_index):
                 try:
-                    index, result = future.result()
+                    index, result, modified_session_state = future.result()
                     results_with_indices.append((index, result))
+                    modified_session_states.append(modified_session_state)
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
                     log_debug(f"Parallel step {step_name} completed")
                 except Exception as e:
@@ -264,6 +287,9 @@ class Parallel:
                             ),
                         )
                     )
+
+        if session_state is not None:
+            merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort by original index to preserve order
         results_with_indices.sort(key=lambda x: x[0])
@@ -296,6 +322,9 @@ class Parallel:
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -303,6 +332,14 @@ class Parallel:
         parallel_step_id = str(uuid4())
 
         self._prepare_steps()
+
+        # Create individual session_state copies for each step to prevent race conditions
+        session_state_copies = []
+        for _ in range(len(self.steps)):
+            if session_state is not None:
+                session_state_copies.append(deepcopy(session_state))
+            else:
+                session_state_copies.append({})
 
         if stream_intermediate_steps and workflow_run_response:
             # Yield parallel step started event
@@ -318,11 +355,20 @@ class Parallel:
                 parent_step_id=parent_step_id,
             )
 
+        import queue
+
+        event_queue = queue.Queue()  # type: ignore
+        step_results = []
+        modified_session_states = []
+
         def execute_step_stream_with_index(step_with_index):
-            """Execute a single step with streaming and preserve its original index"""
+            """Execute a single step with streaming and put events in queue immediately"""
             idx, step = step_with_index
+            # Use the individual session_state copy for this step
+            step_session_state = session_state_copies[idx]
+
             try:
-                step_events = []
+                step_outputs = []
 
                 # If step_index is None or integer (main step): create (step_index, sub_index)
                 # If step_index is tuple (child step): all parallel sub-steps get same index
@@ -342,73 +388,82 @@ class Parallel:
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
-                    session_state=session_state,
+                    session_state=step_session_state,
                     parent_step_id=parallel_step_id,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
+                    num_history_runs=num_history_runs,
                 ):
-                    step_events.append(event)
-                return idx, step_events
+                    # Put event immediately in queue
+                    event_queue.put(("event", idx, event))
+                    if isinstance(event, StepOutput):
+                        step_outputs.append(event)
+
+                # Signal completion for this step
+                event_queue.put(("complete", idx, step_outputs, step_session_state))
+                return idx, step_outputs, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 logger.error(f"Parallel step {parallel_step_name} streaming failed: {exc}")
-                return (
-                    idx,
-                    [
-                        StepOutput(
-                            step_name=parallel_step_name,
-                            content=f"Step {parallel_step_name} failed: {str(exc)}",
-                            success=False,
-                            error=str(exc),
-                        )
-                    ],
+                error_event = StepOutput(
+                    step_name=parallel_step_name,
+                    content=f"Step {parallel_step_name} failed: {str(exc)}",
+                    success=False,
+                    error=str(exc),
                 )
+                event_queue.put(("event", idx, error_event))
+                event_queue.put(("complete", idx, [error_event], step_session_state))
+                return idx, [error_event], step_session_state
 
-        # Use index to preserve order
+        # Submit all parallel tasks
         indexed_steps = list(enumerate(self.steps))
-        all_events_with_indices = []
-        step_results = []
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
-            # Submit all tasks with their original indices
-            future_to_index = {
-                executor.submit(execute_step_stream_with_index, indexed_step): indexed_step[0]
-                for indexed_step in indexed_steps
-            }
+            # Submit all tasks
+            futures = [executor.submit(execute_step_stream_with_index, indexed_step) for indexed_step in indexed_steps]
 
-            # Collect results as they complete
-            for future in as_completed(future_to_index):
+            # Process events from queue as they arrive
+            completed_steps = 0
+            total_steps = len(self.steps)
+
+            while completed_steps < total_steps:
                 try:
-                    index, events = future.result()
-                    all_events_with_indices.append((index, events))
+                    message_type, step_idx, *data = event_queue.get(timeout=1.0)
 
-                    # Extract StepOutput from events for the final result
-                    step_outputs = [event for event in events if isinstance(event, StepOutput)]
-                    if step_outputs:
+                    if message_type == "event":
+                        event = data[0]
+                        # Yield events immediately as they arrive (except StepOutputs)
+                        if not isinstance(event, StepOutput):
+                            yield event
+
+                    elif message_type == "complete":
+                        step_outputs, step_session_state = data
                         step_results.extend(step_outputs)
+                        modified_session_states.append(step_session_state)
+                        completed_steps += 1
 
-                    step_name = getattr(self.steps[index], "name", f"step_{index}")
-                    log_debug(f"Parallel step {step_name} streaming completed")
+                        step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
+                        log_debug(f"Parallel step {step_name} streaming completed")
+
+                except queue.Empty:
+                    for i, future in enumerate(futures):
+                        if future.done() and future.exception():
+                            logger.error(f"Parallel step {i} failed: {future.exception()}")
+                            if completed_steps < total_steps:
+                                completed_steps += 1
                 except Exception as e:
-                    index = future_to_index[future]
-                    step_name = getattr(self.steps[index], "name", f"step_{index}")
-                    logger.error(f"Parallel step {step_name} streaming failed: {e}")
-                    error_event = StepOutput(
-                        step_name=step_name,
-                        content=f"Step {step_name} failed: {str(e)}",
-                        success=False,
-                        error=str(e),
-                    )
-                    all_events_with_indices.append((index, [error_event]))
-                    step_results.append(error_event)
+                    logger.error(f"Error processing parallel step events: {e}")
+                    completed_steps += 1
 
-        # Sort events by original index to preserve order
-        all_events_with_indices.sort(key=lambda x: x[0])
+            for future in futures:
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"Future completion error: {e}")
 
-        # Yield all collected streaming events in order (but not final StepOutputs)
-        for _, events in all_events_with_indices:
-            for event in events:
-                # Only yield non-StepOutput events during streaming to avoid duplication
-                if not isinstance(event, StepOutput):
-                    yield event
+        # Merge all session_state changes back into the original session_state
+        if session_state is not None:
+            merge_parallel_session_states(session_state, modified_session_states)
 
         # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
         flattened_step_results: List[StepOutput] = []
@@ -436,7 +491,7 @@ class Parallel:
                 step_name=self.name,
                 step_index=step_index,
                 parallel_step_count=len(self.steps),
-                step_results=[aggregated_result],  # Now single aggregated result
+                step_results=flattened_step_results,
                 step_id=parallel_step_id,
                 parent_step_id=parent_step_id,
             )
@@ -449,6 +504,9 @@ class Parallel:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
         # Use workflow logger for async parallel orchestration
@@ -456,9 +514,20 @@ class Parallel:
 
         self._prepare_steps()
 
+        # Create individual session_state copies for each step to prevent race conditions
+        session_state_copies = []
+        for _ in range(len(self.steps)):
+            if session_state is not None:
+                session_state_copies.append(deepcopy(session_state))
+            else:
+                session_state_copies.append({})
+
         async def execute_step_async_with_index(step_with_index):
             """Execute a single step asynchronously and preserve its original index"""
             idx, step = step_with_index
+            # Use the individual session_state copy for this step
+            step_session_state = session_state_copies[idx]
+
             try:
                 inner_step_result = await step.aexecute(
                     step_input,
@@ -466,9 +535,12 @@ class Parallel:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
-                    session_state=session_state,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
+                    num_history_runs=num_history_runs,
+                    session_state=step_session_state,
                 )  # type: ignore[union-attr]
-                return idx, inner_step_result
+                return idx, inner_step_result, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 logger.error(f"Parallel step {parallel_step_name} failed: {exc}")
@@ -480,6 +552,7 @@ class Parallel:
                         success=False,
                         error=str(exc),
                     ),
+                    step_session_state,
                 )
 
         # Use index to preserve order
@@ -493,6 +566,7 @@ class Parallel:
 
         # Process results and handle exceptions, preserving order
         processed_results_with_indices = []
+        modified_session_states = []
         for i, result in enumerate(results_with_indices):
             if isinstance(result, Exception):
                 step_name = getattr(self.steps[i], "name", f"step_{i}")
@@ -508,11 +582,18 @@ class Parallel:
                         ),
                     )
                 )
+                # Still collect the session state copy for failed steps
+                modified_session_states.append(session_state_copies[i])
             else:
-                index, step_result = result  # type: ignore[misc]
+                index, step_result, modified_session_state = result  # type: ignore[misc]
                 processed_results_with_indices.append((index, step_result))
+                modified_session_states.append(modified_session_state)
                 step_name = getattr(self.steps[index], "name", f"step_{index}")
                 log_debug(f"Parallel step {step_name} completed")
+
+        # Smart merge all session_state changes back into the original session_state
+        if session_state is not None:
+            merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort by original index to preserve order
         processed_results_with_indices.sort(key=lambda x: x[0])
@@ -545,6 +626,9 @@ class Parallel:
         store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -552,6 +636,14 @@ class Parallel:
         parallel_step_id = str(uuid4())
 
         self._prepare_steps()
+
+        # Create individual session_state copies for each step to prevent race conditions
+        session_state_copies = []
+        for _ in range(len(self.steps)):
+            if session_state is not None:
+                session_state_copies.append(deepcopy(session_state))
+            else:
+                session_state_copies.append({})
 
         if stream_intermediate_steps and workflow_run_response:
             # Yield parallel step started event
@@ -567,11 +659,20 @@ class Parallel:
                 parent_step_id=parent_step_id,
             )
 
+        import asyncio
+
+        event_queue = asyncio.Queue()  # type: ignore
+        step_results = []
+        modified_session_states = []
+
         async def execute_step_stream_async_with_index(step_with_index):
-            """Execute a single step with async streaming and preserve its original index"""
+            """Execute a single step with async streaming and yield events immediately"""
             idx, step = step_with_index
+            # Use the individual session_state copy for this step
+            step_session_state = session_state_copies[idx]
+
             try:
-                step_events = []
+                step_outputs = []
 
                 # If step_index is None or integer (main step): create (step_index, sub_index)
                 # If step_index is tuple (child step): all parallel sub-steps get same index
@@ -591,71 +692,70 @@ class Parallel:
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
-                    session_state=session_state,
+                    session_state=step_session_state,
                     parent_step_id=parallel_step_id,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
+                    num_history_runs=num_history_runs,
                 ):  # type: ignore[union-attr]
-                    step_events.append(event)
-                return idx, step_events
+                    # Yield events immediately to the queue
+                    await event_queue.put(("event", idx, event))
+                    if isinstance(event, StepOutput):
+                        step_outputs.append(event)
+
+                # Signal completion for this step
+                await event_queue.put(("complete", idx, step_outputs, step_session_state))
+                return idx, step_outputs, step_session_state
             except Exception as e:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 logger.error(f"Parallel step {parallel_step_name} async streaming failed: {e}")
-                return (
-                    idx,
-                    [
-                        StepOutput(
-                            step_name=parallel_step_name,
-                            content=f"Step {parallel_step_name} failed: {str(e)}",
-                            success=False,
-                            error=str(e),
-                        )
-                    ],
-                )
-
-        # Use index to preserve order
-        indexed_steps = list(enumerate(self.steps))
-        all_events_with_indices = []
-        step_results = []
-
-        # Create tasks for all steps with their indices
-        tasks = [execute_step_stream_async_with_index(indexed_step) for indexed_step in indexed_steps]
-
-        # Execute all tasks concurrently
-        results_with_indices = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Process results and handle exceptions, preserving order
-        for i, result in enumerate(results_with_indices):
-            if isinstance(result, Exception):
-                step_name = getattr(self.steps[i], "name", f"step_{i}")
-                logger.error(f"Parallel step {step_name} async streaming failed: {result}")
                 error_event = StepOutput(
-                    step_name=step_name,
-                    content=f"Step {step_name} failed: {str(result)}",
+                    step_name=parallel_step_name,
+                    content=f"Step {parallel_step_name} failed: {str(e)}",
                     success=False,
-                    error=str(result),
+                    error=str(e),
                 )
-                all_events_with_indices.append((i, [error_event]))
-                step_results.append(error_event)
-            else:
-                index, events = result  # type: ignore[misc]
-                all_events_with_indices.append((index, events))
+                await event_queue.put(("event", idx, error_event))
+                await event_queue.put(("complete", idx, [error_event], step_session_state))
+                return idx, [error_event], step_session_state
 
-                # Extract StepOutput from events for the final result
-                step_outputs = [event for event in events if isinstance(event, StepOutput)]
-                if step_outputs:
+        # Start all parallel tasks
+        indexed_steps = list(enumerate(self.steps))
+        tasks = [
+            asyncio.create_task(execute_step_stream_async_with_index(indexed_step)) for indexed_step in indexed_steps
+        ]
+
+        # Process events as they arrive and track completion
+        completed_steps = 0
+        total_steps = len(self.steps)
+
+        while completed_steps < total_steps:
+            try:
+                message_type, step_idx, *data = await event_queue.get()
+
+                if message_type == "event":
+                    event = data[0]
+                    if not isinstance(event, StepOutput):
+                        yield event
+
+                elif message_type == "complete":
+                    step_outputs, step_session_state = data
                     step_results.extend(step_outputs)
+                    modified_session_states.append(step_session_state)
+                    completed_steps += 1
 
-                step_name = getattr(self.steps[index], "name", f"step_{index}")
-                log_debug(f"Parallel step {step_name} async streaming completed")
+                    step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
+                    log_debug(f"Parallel step {step_name} async streaming completed")
 
-        # Sort events by original index to preserve order
-        all_events_with_indices.sort(key=lambda x: x[0])
+            except Exception as e:
+                logger.error(f"Error processing parallel step events: {e}")
+                completed_steps += 1
 
-        # Yield all collected streaming events in order (but not final StepOutputs)
-        for _, events in all_events_with_indices:
-            for event in events:
-                # Only yield non-StepOutput events during streaming to avoid duplication
-                if not isinstance(event, StepOutput):
-                    yield event
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Merge all session_state changes back into the original session_state
+        if session_state is not None:
+            merge_parallel_session_states(session_state, modified_session_states)
 
         # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
         flattened_step_results: List[StepOutput] = []
@@ -683,7 +783,7 @@ class Parallel:
                 step_name=self.name,
                 step_index=step_index,
                 parallel_step_count=len(self.steps),
-                step_results=[aggregated_result],  # Now single aggregated result
+                step_results=flattened_step_results,
                 step_id=parallel_step_id,
                 parent_step_id=parent_step_id,
             )

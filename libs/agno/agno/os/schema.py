@@ -913,6 +913,7 @@ class TeamRunSchema(BaseModel):
 class WorkflowRunSchema(BaseModel):
     run_id: str
     run_input: Optional[str]
+    events: Optional[List[dict]]
     workflow_id: Optional[str]
     user_id: Optional[str]
     content: Optional[Union[str, dict]]
@@ -933,6 +934,7 @@ class WorkflowRunSchema(BaseModel):
         return cls(
             run_id=run_response.get("run_id", ""),
             run_input=run_input,
+            events=run_response.get("events", []),
             workflow_id=run_response.get("workflow_id", ""),
             user_id=run_response.get("user_id", ""),
             content=run_response.get("content", ""),

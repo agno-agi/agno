@@ -727,11 +727,12 @@ class MongoDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete if the memory belongs to this user.
 
         Returns:
             bool: True if the memory was deleted, False otherwise.
@@ -744,7 +745,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return
 
-            result = collection.delete_one({"memory_id": memory_id})
+            query = {"memory_id": memory_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+
+            result = collection.delete_one(query)
 
             success = result.deleted_count > 0
             if success:
@@ -756,11 +761,12 @@ class MongoDb(BaseDb):
             log_error(f"Error deleting memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete memories that belong to this user.
 
         Raises:
             Exception: If there is an error deleting the memories.
@@ -770,7 +776,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return
 
-            result = collection.delete_many({"memory_id": {"$in": memory_ids}})
+            query: Dict[str, Any] = {"memory_id": {"$in": memory_ids}}
+            if user_id is not None:
+                query["user_id"] = user_id
+
+            result = collection.delete_many(query)
 
             if result.deleted_count == 0:
                 log_debug(f"No memories found with ids: {memory_ids}")
@@ -793,19 +803,22 @@ class MongoDb(BaseDb):
             if collection is None:
                 return []
 
-            topics = collection.distinct("topics")
+            topics = collection.distinct("topics", {})
             return [topic for topic in topics if topic]
 
         except Exception as e:
             log_error(f"Exception reading from collection: {e}")
             raise e
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[UserMemory]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only return the memory if it belongs to this user.
 
         Returns:
             Optional[UserMemory]:
@@ -820,7 +833,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
-            result = collection.find_one({"memory_id": memory_id})
+            query = {"memory_id": memory_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+
+            result = collection.find_one(query)
             if result is None or not deserialize:
                 return result
 
@@ -933,8 +950,10 @@ class MongoDb(BaseDb):
             if collection is None:
                 return [], 0
 
+            match_stage = {"user_id": {"$ne": None}}
+
             pipeline = [
-                {"$match": {"user_id": {"$ne": None}}},
+                {"$match": match_stage},
                 {
                     "$group": {
                         "_id": "$user_id",
