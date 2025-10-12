@@ -1,7 +1,6 @@
-
 # Valkey Search Vector Database Integration
 
-This demonstrates Valkey Search integration with the Agno framework. Valkey Search is a Redis-compatible vector database that supports high-performance similarity search using HNSW algorithm.
+This demonstrates Valkey Search integration with the Agno framework. Valkey Search is a high-performance vector database that supports similarity search using HNSW algorithm.
 
 ## Setup
 
@@ -50,108 +49,37 @@ python valkey_db.py
 
 ## Results
 
-When you run the example, you'll see output demonstrating all Valkey Search features with actual similarity scores:
+When you run the example, you'll see output demonstrating Valkey Search loading PDF content from a URL and answering questions:
 
 ```
-Valkey Search Vector Database Examples
-============================================================
-
-Make sure Valkey is running with the search module loaded!
-Start Valkey with: docker-compose up -d
-Check health with: docker-compose ps
-
-Valkey Search Vector Database Example
-==================================================
-Creating index...
-INFO Created Valkey Search index 'test_collection' with result: OK
-Inserting documents...
-INFO Inserted 3 documents into Valkey Search index 'test_collection'
-Searching for 'programming languages'...
-Found 3 results:
-1. Python is a high-level programming language.... (score: 0.1335)
-   Metadata: {'category': 'programming', 'language': 'python'}
-
-2. Machine learning is a subset of artificial intelli... (score: 0.2202)
-   Metadata: {'category': 'AI', 'topic': 'machine learning'}
-
-3. Vector databases store and search high-dimensional... (score: 0.2539)
-   Metadata: {'category': 'database', 'type': 'vector'}
-
-Cleaning up...
-INFO Dropped Valkey Search index 'test_collection' with result: OK
-
-Async Valkey Search Example
-==================================================
-Creating index...
-INFO Created Valkey Search index 'async_test_collection' with result: OK
-Inserting documents...
-INFO Inserted 2 documents into Valkey Search index 'async_test_collection'
-Searching for 'async programming'...
-Found 2 results:
-1. Asynchronous programming allows concurrent executi... (score: 0.0968)
-   Metadata: {'category': 'programming', 'type': 'async'}
-
-2. Event loops manage asynchronous operations efficie... (score: 0.1484)
-   Metadata: {'category': 'programming', 'type': 'async'}
-
-Cleaning up...
-INFO Dropped Valkey Search index 'async_test_collection' with result: OK
-
-Valkey Search with Knowledge System
-==================================================
-INFO Created Valkey Search index 'knowledge_collection' with result: OK
-Adding documents to knowledge base...
-INFO Adding content from AI Technology
-INFO Inserted 1 documents into Valkey Search index 'knowledge_collection'
-INFO Adding content from Blockchain Technology
-INFO Inserted 1 documents into Valkey Search index 'knowledge_collection'
-INFO Adding content from Quantum Computing
-INFO Inserted 1 documents into Valkey Search index 'knowledge_collection'
-
-Querying agent with knowledge...
-Agent response: Several technologies are currently transforming industries across the globe:
-
-1. **Artificial Intelligence (AI):** AI is significantly transforming industries by offering advanced data processing capabilities, automation, predictive analytics, and improved decision-making processes.
-
-2. **Blockchain Technology:** Blockchain enables decentralized systems, which enhance transparency, security, and efficiency in various sectors, including finance, supply chain, and healthcare.
-
-3. **Internet of Things (IoT):** IoT connects devices and systems, facilitating real-time data exchange and monitoring. This is transforming industries like manufacturing, healthcare, and transportation through enhanced tracking and efficiency.
-
-And more technologies...
-
-Cleaning up...
-INFO Dropped Valkey Search index 'knowledge_collection' with result: OK
-
-Advanced Valkey Search Example
-==================================================
-Creating index...
-INFO Created Valkey Search index 'advanced_collection' with result: OK
-Inserting documents...
-INFO Inserted 4 documents into Valkey Search index 'advanced_collection'
-Searching for 'technology innovation'...
-Found 3 results:
-1. Artificial intelligence is transforming industries... (score: 0.1542)
-   Metadata: {'category': 'technology', 'topic': 'AI', 'year': 2024}
-
-2. Blockchain technology enables decentralized system... (score: 0.2014)
-   Metadata: {'category': 'technology', 'topic': 'blockchain', 'year': 2024}
-
-3. Quantum computing promises exponential speedups.... (score: 0.2087)
-   Metadata: {'category': 'science', 'topic': 'quantum', 'year': 2024}
-
-Searching for 'quantum research'...
-Found 3 results:
-1. Quantum computing promises exponential speedups.... (score: 0.1473)
-   Metadata: {'category': 'science', 'topic': 'quantum', 'year': 2024}
-
-2. Climate change research requires urgent action.... (score: 0.2083)
-   Metadata: {'category': 'science', 'topic': 'climate', 'year': 2024}
-
-3. Artificial intelligence is transforming industries... (score: 0.2279)
-   Metadata: {'category': 'technology', 'topic': 'AI', 'year': 2024}
-
-Cleaning up...
-INFO Dropped Valkey Search index 'advanced_collection' with result: OK
+python valkey_db.py
+INFO Embedder not provided, using OpenAIEmbedder as default.
+INFO Created Valkey Search index 'vectors' with result: OK
+INFO Loading content: b9d61209-73e8-5072-8d39-84263a15b9d6
+INFO Adding content from URL https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf
+INFO Reading: Recipes
+INFO Inserted 187 documents into Valkey Search index 'vectors'
+WARNING  Contents DB not found for knowledge base: Valkey Knowledge Base
+INFO Setting default model to OpenAI Chat
+┏━ Message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                                                                      ┃
+┃ List down the ingredients to make Massaman Gai                                                                                                       ┃
+┃                                                                                                                                                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━ Tool Calls ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                                                                      ┃
+┃ • search_knowledge_base(query=Massaman Gai ingredients)                                                                                              ┃
+┃                                                                                                                                                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━ Response (4.2s) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                                                                      ┃
+┃ Here are the ingredients to make Massaman Gai (Massaman Curry with Chicken and Potatoes) for two servings:                                           ┃
+┃                                                                                                                                                      ┃
+┃  • 300 grams of chicken rump                                                                                                                         ┃
+┃  • 80 grams of Massaman curry paste                                                                                                                  ┃
+┃  • 100 grams of coconut                                                                                                                              ┃
+┃                                                                                                                                                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 ```
 
 ## Key Features Demonstrated
@@ -168,7 +96,101 @@ INFO Dropped Valkey Search index 'advanced_collection' with result: OK
 - **Vector Format**: Binary-packed float32 arrays using `struct.pack`
 - **Search Schema**: HNSW index with cosine distance metric
 - **Embeddings**: OpenAI text-embedding-ada-002 (1536 dimensions)
-- **Storage**: Redis HASH with vector and metadata fields
+- **Storage**: Valkey HASH with vector and metadata fields
 - **Query Processing**: KNN search with similarity scoring
 
+## Architecture Overview
 
+The Valkey Search integration provides a complete vector database solution within the Agno framework:
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Agno Agent    │───▶│  Knowledge Base  │───▶│ Valkey Search   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Query Processing│    │   Embeddings     │    │ Vector Storage  │
+│ & Response      │    │ (OpenAI/Custom)  │    │ & Search Index  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Integration Examples
+
+### Loading PDF from URL (Main Example)
+```python
+from agno.vectordb.valkey import ValkeySearch
+from agno.knowledge.knowledge import Knowledge
+from agno.agent import Agent
+import asyncio
+
+# Create Knowledge with Valkey Search
+knowledge = Knowledge(
+    name="Valkey Knowledge Base",
+    description="Agno Knowledge Implementation with Valkey Search",
+    vector_db=ValkeySearch(
+        collection="vectors",
+        host="localhost",
+        port=6379,
+    ),
+)
+
+# Add PDF content from URL
+asyncio.run(
+    knowledge.add_content_async(
+        name="Recipes",
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+        metadata={"doc_type": "recipe_book"},
+    )
+)
+
+# Create and use the agent
+agent = Agent(knowledge=knowledge)
+agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
+```
+
+### Basic Vector Search
+```python
+from agno.vectordb.valkey import ValkeySearch
+
+# Initialize Valkey Search
+valkey_db = ValkeySearch(
+    collection="my_collection",
+    host="localhost",
+    port=6379
+)
+
+# Search for similar documents
+results = valkey_db.search("machine learning", limit=5)
+for result in results:
+    print(f"Document: {result.content}")
+    print(f"Score: {result.score}")
+```
+
+## Performance Benefits
+
+- **High-Speed Vector Search**: HNSW algorithm provides sub-linear search complexity
+- **Memory Efficiency**: Binary vector encoding reduces storage overhead by 50%
+- **Concurrent Operations**: Full async/await support for high-throughput applications
+- **Automatic Scaling**: Valkey's clustering capabilities for distributed deployments
+- **Real-time Updates**: Live index updates without rebuild requirements
+
+## Use Cases
+
+1. **Retrieval-Augmented Generation (RAG)**: Enhance AI agents with searchable knowledge bases
+2. **Semantic Search**: Find documents based on meaning rather than keywords
+3. **Recommendation Systems**: Content-based recommendations using vector similarity
+4. **Duplicate Detection**: Identify similar content across large document collections
+5. **Clustering Analysis**: Group similar documents for organization and analysis
+
+## Getting Started
+
+The Valkey Search integration is part of the Agno framework's vector database ecosystem. To get started:
+
+1. Follow the setup instructions above
+2. Explore the cookbook examples in `cookbook/knowledge/vector_db/valkey_db/`
+3. Check out the comprehensive tests in the test suite
+4. Review the API documentation for advanced configuration options
+
+For production deployments, consider Valkey's clustering capabilities and monitoring tools to ensure optimal performance at scale.
