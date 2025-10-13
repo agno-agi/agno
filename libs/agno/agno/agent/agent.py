@@ -6346,7 +6346,7 @@ class Agent:
                 elif is_vertexai:
                     from agno.reasoning.vertexai import get_vertexai_reasoning
 
-                    log_debug("Starting VertexAI Claude Reasoning", center=True, symbol="=")
+                    log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
                     reasoning_message = get_vertexai_reasoning(
                         reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
                     )
@@ -6605,7 +6605,7 @@ class Agent:
                 elif is_vertexai:
                     from agno.reasoning.vertexai import aget_vertexai_reasoning
 
-                    log_debug("Starting VertexAI Claude Reasoning", center=True, symbol="=")
+                    log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
                     reasoning_message = await aget_vertexai_reasoning(
                         reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
                     )
