@@ -2266,7 +2266,7 @@ class Agent:
             if updated_tools is None:
                 raise ValueError("Updated tools are required to continue a run from a run_id.")
 
-            runs = agent_session.runs
+            runs = agent_session.runs or []
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
@@ -2664,7 +2664,7 @@ class Agent:
             if updated_tools is None:
                 raise ValueError("Updated tools are required to continue a run from a run_id.")
 
-            runs = agent_session.runs
+            runs = agent_session.runs or []
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
