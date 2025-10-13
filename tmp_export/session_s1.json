@@ -1,0 +1,44 @@
+{
+  "session_id": "s1",
+  "agent_id": "agent1",
+  "team_id": null,
+  "user_id": "user1",
+  "workflow_id": null,
+  "session_data": {
+    "key": "value"
+  },
+  "metadata": null,
+  "agent_data": null,
+  "runs": [
+    {
+      "run_id": "r1",
+      "agent_id": "agent1",
+      "session_id": "s1",
+      "content": "response text",
+      "content_type": "str",
+      "created_at": 1760345278,
+      "status": "RUNNING",
+      "messages": [
+        {
+          "content": "hello",
+          "from_history": false,
+          "stop_after_tool_call": false,
+          "role": "user",
+          "created_at": 1760345278
+        },
+        {
+          "content": "world",
+          "from_history": false,
+          "stop_after_tool_call": false,
+          "role": "assistant",
+          "created_at": 1760345278
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "summary": "short summary"
+  },
+  "created_at": null,
+  "updated_at": null
+}
