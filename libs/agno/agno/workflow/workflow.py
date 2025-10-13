@@ -1899,13 +1899,25 @@ class Workflow:
                 workflow_run_response.status = RunStatus.running
                 self.save_session(session=workflow_session)
 
-                await self._aexecute(
-                    session=workflow_session,
-                    execution_input=inputs,
-                    workflow_run_response=workflow_run_response,
-                    session_state=session_state,
-                    **kwargs,
-                )
+                if self.agent is not None:
+                    await self._aexecute_workflow_agent(
+                        user_input=input,  # type: ignore
+                        session=workflow_session,
+                        execution_input=inputs,
+                        session_state=session_state,
+                        workflow_run_response=workflow_run_response,
+                        stream=False,
+                        stream_intermediate_steps=False,
+                        **kwargs,
+                    )
+                else:
+                    await self._aexecute(
+                        session=workflow_session,
+                        execution_input=inputs,
+                        workflow_run_response=workflow_run_response,
+                        session_state=session_state,
+                        **kwargs,
+                    )
 
                 log_debug(f"Background execution completed with status: {workflow_run_response.status}")
 
@@ -1990,19 +2002,37 @@ class Workflow:
                 workflow_run_response.status = RunStatus.running
                 self.save_session(session=workflow_session)
 
-                # Execute with streaming - consume all events (they're auto-broadcast via _handle_event)
-                async for event in self._aexecute_stream(
-                    execution_input=inputs,
-                    session=workflow_session,
-                    workflow_run_response=workflow_run_response,
-                    stream_intermediate_steps=stream_intermediate_steps,
-                    session_state=session_state,
-                    websocket_handler=websocket_handler,
-                    **kwargs,
-                ):
-                    # Events are automatically broadcast by _handle_event
-                    # We just consume them here to drive the execution
-                    pass
+                if self.agent is not None:
+                    result = await self._aexecute_workflow_agent(
+                        user_input=input,  # type: ignore
+                        session=workflow_session,
+                        execution_input=inputs,
+                        session_state=session_state,
+                        workflow_run_response=workflow_run_response,
+                        stream=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                        **kwargs,
+                    )
+                    # For streaming, result is an async iterator
+                    async for event in result:  # type: ignore
+                        # Events are automatically broadcast by _handle_event in the agent execution
+                        # We just consume them here to drive the execution
+                        pass
+                    log_debug(f"Background streaming execution (workflow agent) completed with status: {workflow_run_response.status}")
+                else:
+                    # Execute with streaming - consume all events (they're auto-broadcast via _handle_event)
+                    async for event in self._aexecute_stream(
+                        execution_input=inputs,
+                        session=workflow_session,
+                        workflow_run_response=workflow_run_response,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                        session_state=session_state,
+                        websocket_handler=websocket_handler,
+                        **kwargs,
+                    ):
+                        # Events are automatically broadcast by _handle_event
+                        # We just consume them here to drive the execution
+                        pass
 
                 log_debug(f"Background streaming execution completed with status: {workflow_run_response.status}")
 
