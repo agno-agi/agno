@@ -1749,7 +1749,6 @@ class Team:
         store_member_responses: Optional[bool] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        workflow_context: Optional[Dict] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
@@ -1761,49 +1760,52 @@ class Team:
         files: Optional[Sequence[File]] = None,
         debug_mode: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
 
         Steps:
-        1. Resolve dependencies
-        2. Read or create session. Reads from the database if provided.
-        3. Update metadata and session state
+        1. Read or create session
+        2. Update metadata and session state
+        3. Execute pre-hooks
         4. Determine tools for model
         5. Prepare run messages
         6. Reason about the task if reasoning is enabled
         7. Get a response from the Model (includes running function calls)
-        8. Calculate session metrics
-        10. Save session to storage
-        11. Update Team Memory
-        12. Save session to storage
+        8. Update TeamRunOutput
+        9. Add the run to memory
+        10. Calculate session metrics
+        11. Parse team response model
+        12. Update Team Memory
+        13. Save session to storage
+        14. Execute post-hooks
         """
+        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
-        # 2. Read or create session. Reads from the database if provided.
+        register_run(run_response.run_id)  # type: ignore
+
+        # 1. Read or create session. Reads from the database if provided.
         if self._has_async_db():
             team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
         else:
             team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
 
-        # 3. Update metadata and session state
+        # 2. Update metadata and session state
         self._update_metadata(session=team_session)
         session_state = self._load_session_state(session=team_session, session_state=session_state)  # type: ignore
 
         if store_member_responses is None:
             store_member_responses = False if self.store_member_responses is None else self.store_member_responses
 
-        team_run_context: Dict[str, Any] = {}
-
         run_input = cast(TeamRunInput, run_response.input)
-        self.model = cast(Model, self.model)
-        # 2. Execute pre-hooks after session is loaded but before processing starts
+
+        # 3. Execute pre-hooks after session is loaded but before processing starts
         if self.pre_hooks is not None:
             pre_hook_iterator = self._aexecute_pre_hooks(
                 hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
-                session=session,
+                session=team_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -1813,14 +1815,14 @@ class Team:
             async for _ in pre_hook_iterator:
                 pass
 
-        # Initialize the team run context
+        # 4. Determine tools for model
         team_run_context: Dict[str, Any] = {}
-
+        self.model = cast(Model, self.model)
         self.determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
-            session=session,
+            session=team_session,
             session_state=session_state,
             user_id=user_id,
             async_mode=True,
@@ -1838,7 +1840,7 @@ class Team:
             metadata=metadata,
         )
 
-        # 7. Prepare run messages
+        # 5. Prepare run messages
         run_messages = await self._aget_run_messages(
             run_response=run_response,
             session=team_session,  # type: ignore
@@ -1859,6 +1861,7 @@ class Team:
 
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
+
         # 6. Reason about the task(s) if reasoning is enabled
         await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
@@ -1876,36 +1879,34 @@ class Team:
             response_format=response_format,
             send_media_to_model=self.send_media_to_model,
         )  # type: ignore
-
-        # Check for cancellation after model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
         # If an output model is provided, generate output using the output model
         await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
-
         # If a parser model is provided, structure the response separately
         await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
 
-        #  Update TeamRunOutput
+        # 8. Update TeamRunOutput
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
+        # Optional: Store media
         if self.store_media:
             self._store_media(run_response, model_response)
         else:
             self._scrub_media_from_run_output(run_response)
 
-        # 8. Add the run to memory
+        # 9. Add the run to memory
         team_session.upsert_run(run_response=run_response)
 
-        # 9. Calculate session metrics
+        # 10. Calculate session metrics
         self._update_session_metrics(session=team_session)
 
         run_response.status = RunStatus.completed
 
-        # 10. Parse team response model
+        # 11. Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
 
-        # 11. Update Team Memory
+        # 12. Update Team Memory
         async for _ in self._amake_memories_and_summaries(
             run_response=run_response,
             session=team_session,
@@ -1914,7 +1915,7 @@ class Team:
         ):
             pass
 
-        # 12. Save session to storage
+        # 13. Save session to storage
         if self._has_async_db():
             await self.asave_session(session=team_session)
         else:
@@ -1923,18 +1924,20 @@ class Team:
         #  Log Team Telemetry
         await self._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
 
-        # Execute post-hooks after output is generated but before response is returned
+        # 14. Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
             await self._aexecute_post_hooks(
                 hooks=self.post_hooks,  # type: ignore
                 run_output=run_response,
-                session=session,
+                session=team_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
                 **kwargs,
             )
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
+
+        cleanup_run(run_response.run_id)  # type: ignore
 
         return run_response
 
@@ -1944,7 +1947,6 @@ class Team:
         run_response: TeamRunOutput,
         session_id: str,
         session_state: Optional[Dict[str, Any]] = None,
-        store_member_responses: Optional[bool] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
@@ -1966,40 +1968,54 @@ class Team:
 
         Steps:
         1. Resolve dependencies
-        2. Read or create session. Reads from the database if provided.
+        2. Read or create session
         3. Update metadata and session state
-        4. Determine tools for model
-        5. Prepare run messages
-        6. Reason about the task if reasoning is enabled
-        7. Get a response from the Model (includes running function calls)
-        8. Update Team Memory
-        9. Calculate session metrics
-        10. Add RunOutput to Team Session
-        11. Save session to storage
+        4. Execute pre-hooks
+        5. Determine tools for model
+        6. Prepare run messages
+        7. Yield the run started event
+        8. Reason about the task(s) if reasoning is enabled
+        9. Get a response from the model
+        10. Add the run to memory
+        11. Update Team Memory
+        12. Calculate session metrics
+        13. Create the run completed event
+        14. Save session to storage
         """
 
         # 1. Resolve dependencies
         if dependencies is not None:
             self._resolve_run_dependencies(dependencies=dependencies)
 
-        # 4. Read or create session. Reads from the database if provided.
+        # 2. Read or create session. Reads from the database if provided.
         if self._has_async_db():
             team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
         else:
             team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
 
-        # 5. Update metadata and session state
+        # 3. Update metadata and session state
         self._update_metadata(session=team_session)
         session_state = self._load_session_state(session=team_session, session_state=session_state)  # type: ignore
 
-        if store_member_responses is None:
-            store_member_responses = False if self.store_member_responses is None else self.store_member_responses
-
-        team_run_context: Dict[str, Any] = {}
-
+        # 4. Execute pre-hooks
+        run_input = cast(TeamRunInput, run_response.input)
         self.model = cast(Model, self.model)
+        if self.pre_hooks is not None:
+            pre_hook_iterator = self._aexecute_pre_hooks(
+                hooks=self.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                session=team_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
+            async for pre_hook_event in pre_hook_iterator:
+                yield pre_hook_event
 
-        # 6. Determine tools for model
+        # 5. Determine tools for model
+        team_run_context: Dict[str, Any] = {}
+        self.model = cast(Model, self.model)
         self.determine_tools_for_model(
             model=self.model,
             run_response=run_response,
@@ -2014,14 +2030,13 @@ class Team:
             videos=videos,
             audio=audio,
             files=files,
-            workflow_context=workflow_context,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
             metadata=metadata,
         )
 
-        # 7. Prepare run messages
+        # 6. Prepare run messages
         run_messages = await self._aget_run_messages(
             run_response=run_response,
             session=team_session,  # type: ignore
@@ -2047,7 +2062,7 @@ class Team:
         register_run(run_response.run_id)  # type: ignore
 
         try:
-            # Start the Run by yielding a RunStarted event
+            # 7. Yield the run started event
             if stream_intermediate_steps:
                 yield self._handle_event(create_team_run_started_event(from_run_response=run_response), run_response)
 
@@ -2125,11 +2140,12 @@ class Team:
             # 12. Calculate session metrics
             self._update_session_metrics(session=team_session)
 
+            # 13. Create the run completed event
             completed_event = self._handle_event(
                 create_team_run_completed_event(from_run_response=run_response), run_response
             )
 
-            # 13. Save session to storage
+            # 14. Save the session to storage
             if self._has_async_db():
                 await self.asave_session(session=team_session)
             else:
@@ -2290,9 +2306,6 @@ class Team:
             audios=audio_artifacts,
             files=files,
         )
-
-        # Extract workflow context from kwargs if present
-        workflow_context = kwargs.pop("workflow_context", None)
 
         # Use stream override value when necessary
         if stream is None:
