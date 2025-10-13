@@ -2,6 +2,11 @@ from datetime import date
 from textwrap import dedent
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
+from agno.db.base import BaseDb, SessionType
+from agno.db.schemas import UserMemory
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.surrealdb import utils
 from agno.db.surrealdb.models import (
     TableType,
     deserialize_eval_run_record,
@@ -10,6 +15,7 @@ from agno.db.surrealdb.models import (
     deserialize_sessions,
     deserialize_user_memories,
     deserialize_user_memory,
+    desurealize_eval_run_record,
     desurrealize_user_memory,
     get_schema,
     get_session_type,
@@ -18,13 +24,8 @@ from agno.db.surrealdb.models import (
     serialize_session,
     serialize_user_memory,
 )
-from agno.db.surrealdb.utils import build_client
-from agno.db.base import BaseDb, SessionType
-from agno.db.schemas import UserMemory
-from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
-from agno.db.schemas.knowledge import KnowledgeRow
-from agno.db.surrealdb import utils
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
+from agno.db.surrealdb.utils import build_client
 from agno.session import Session
 from agno.utils.string import generate_id
 
@@ -122,6 +123,8 @@ class SurrealDb(BaseDb):
             table_name = self._teams_table_name
         elif table_type == "workflows":
             table_name = self._workflows_table_name
+        elif table_type == "evals":
+            table_name = self.eval_table_name
         else:
             raise NotImplementedError(f"Unknown table type: {table_type}")
 
@@ -718,7 +721,7 @@ class SurrealDb(BaseDb):
         return list(deserialize_user_memories(raw))
 
     # --- Metrics ---
-    # TODO: test evals
+    # TODO: test metrics
 
     def get_metrics(
         self,
@@ -822,15 +825,42 @@ class SurrealDb(BaseDb):
         return deserialize_knowledge_row(result) if result else None
 
     # --- Evals ---
-    # TODO: test evals
+
+    def clear_evals(self) -> None:
+        """Delete all eval rows from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        table = self._get_table("evals")
+        _ = self.client.delete(table)
 
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
+        """Create an EvalRunRecord in the database.
+
+        Args:
+            eval_run (EvalRunRecord): The eval run to create.
+
+        Returns:
+            Optional[EvalRunRecord]: The created eval run, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during creation.
+        """
         table = self._get_table("evals")
-        query = f"CREATE {table} CONTENT $content"
-        result = self._query_one(query, {"content": serialize_eval_run_record(eval_run)}, dict)
+        rec_id = RecordID(table, eval_run.run_id)
+        query = "CREATE ONLY $record CONTENT $content"
+        result = self._query_one(
+            query, {"record": rec_id, "content": serialize_eval_run_record(eval_run, self.table_names)}, dict
+        )
         return deserialize_eval_run_record(result) if result else None
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+        """Delete multiple eval runs from the database.
+
+        Args:
+            eval_run_ids (List[str]): List of eval run IDs to delete.
+        """
         table = self._get_table("evals")
         records = [RecordID(table, id) for id in eval_run_ids]
         _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
@@ -838,11 +868,25 @@ class SurrealDb(BaseDb):
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-        table_type = "evals"
-        record = RecordID(table_type, eval_run_id)
-        result = self._query_one("SELECT * FROM $record", {"record": record}, dict)
+        """Get an eval run from the database.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to get.
+            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+
+        Returns:
+            Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+                - When deserialize=True: EvalRunRecord object
+                - When deserialize=False: EvalRun dictionary
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        table = self._get_table("evals")
+        record = RecordID(table, eval_run_id)
+        result = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
         if not result or not deserialize:
-            return result
+            return desurealize_eval_run_record(result) if result is not None else None
         return deserialize_eval_run_record(result)
 
     def get_eval_runs(
@@ -859,24 +903,44 @@ class SurrealDb(BaseDb):
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+        """Get all eval runs from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of eval runs to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            model_id (Optional[str]): The ID of the model to filter by.
+            eval_type (Optional[List[EvalType]]): The type of eval to filter by.
+            filter_type (Optional[EvalFilterType]): The type of filter to apply.
+            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+
+        Returns:
+            Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of EvalRunRecord objects
+                - When deserialize=False: List of eval run dictionaries and the total count
+
+        Raises:
+            Exception: If there is an error getting the eval runs.
+        """
         table = self._get_table("evals")
 
         where = WhereClause()
         if filter_type is not None:
             if filter_type == EvalFilterType.AGENT:
-                where.and_("agent", RecordID("agent", agent_id))
+                where.and_("agent", RecordID(self._get_table("agents"), agent_id))
             elif filter_type == EvalFilterType.TEAM:
-                where.and_("team", RecordID("team", team_id))
+                where.and_("team", RecordID(self._get_table("teams"), team_id))
             elif filter_type == EvalFilterType.WORKFLOW:
-                where.and_("workflow", RecordID("workflow", workflow_id))
+                where.and_("workflow", RecordID(self._get_table("workflows"), workflow_id))
         if model_id is not None:
-            where.and_("model", RecordID("model", model_id))
+            where.and_("model_id", model_id)
         if eval_type is not None:
             where.and_("eval_type", eval_type)
         where_clause, where_vars = where.build()
-
-        # Group
-        group_clause = "GROUP BY user_id"
 
         # Order
         order_limit_start_clause = order_limit_start(sort_by, sort_order, limit, page)
@@ -886,13 +950,9 @@ class SurrealDb(BaseDb):
 
         # Query
         query = dedent(f"""
-            SELECT
-                user,
-                count(id) AS total_memories,
-                max(updated_at) AS last_memory_updated_at
+            SELECT *
             FROM {table}
             {where_clause}
-            {group_clause}
             {order_limit_start_clause}
         """)
         result = self._query(query, where_vars, dict)
@@ -904,6 +964,21 @@ class SurrealDb(BaseDb):
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        """Update the name of an eval run in the database.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            name (str): The new name of the eval run.
+            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+
+        Returns:
+            Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+                - When deserialize=True: EvalRunRecord object
+                - When deserialize=False: EvalRun dictionary
+
+        Raises:
+            Exception: If there is an error updating the eval run.
+        """
         table = self._get_table("evals")
         vars = {"record": RecordID(table, eval_run_id), "name": name}
 

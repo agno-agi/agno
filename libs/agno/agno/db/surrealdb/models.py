@@ -139,13 +139,36 @@ def serialize_knowledge_row(knowledge_row: KnowledgeRow, knowledge_table_name: s
     return dict_
 
 
+def desurealize_eval_run_record(eval_run_record_raw: dict) -> dict:
+    copy = eval_run_record_raw.copy()
+
+    copy = deserialize_record_id(copy, "run_id", "id")
+    copy = deserialize_record_id(copy, "agent_id", "agent")
+    copy = deserialize_record_id(copy, "team_id", "team")
+    copy = deserialize_record_id(copy, "workflow_id", "workflow")
+
+    return copy
+
+
 def deserialize_eval_run_record(eval_run_record_raw: dict) -> EvalRunRecord:
-    return EvalRunRecord.model_validate(eval_run_record_raw)
+    return EvalRunRecord.model_validate(desurealize_eval_run_record(eval_run_record_raw))
 
 
-def serialize_eval_run_record(eval_run_record: EvalRunRecord) -> dict:
-    _dict = eval_run_record.model_dump()
-    return _dict
+def serialize_eval_run_record(eval_run_record: EvalRunRecord, table_names: dict[TableType, str]) -> dict:
+    dict_ = eval_run_record.model_dump()
+    if eval_run_record.run_id is not None:
+        dict_["id"] = RecordID(table_names["evals"], eval_run_record.run_id)
+        del dict_["run_id"]
+    if eval_run_record.agent_id is not None:
+        dict_["agent"] = RecordID(table_names["agents"], eval_run_record.agent_id)
+        del dict_["agent_id"]
+    if eval_run_record.team_id is not None:
+        dict_["team"] = RecordID(table_names["teams"], eval_run_record.team_id)
+        del dict_["team_id"]
+    if eval_run_record.workflow_id is not None:
+        dict_["workflow"] = RecordID(table_names["workflows"], eval_run_record.workflow_id)
+        del dict_["workflow_id"]
+    return dict_
 
 
 def get_schema(table_type: TableType, table_name: str) -> str:
