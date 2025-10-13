@@ -2198,17 +2198,15 @@ class Workflow:
         log_debug(f"Executing workflow agent with streaming - input: {agent_input[:100]}...")
 
         # Run the agent in streaming mode and yield all events
-        for event in self.agent.run(
+        for event in self.agent.run(  # type: ignore[union-attr]
             input=agent_input,
             stream=True,
             stream_intermediate_steps=stream_intermediate_steps,
             yield_run_response=True,
             dependencies=dependencies,  # Pass context dynamically per-run
         ):  # type: ignore
-            # Yield WorkflowRunOutputEvent AND RunContentEvent for streaming content
-            # WorkflowRunOutputEvent is a Union type, so we need to check against the tuple of types
             if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
-                yield event
+                yield event  # type: ignore[misc]
 
                 # Track if workflow was executed by checking for WorkflowCompletedEvent
                 if isinstance(event, WorkflowCompletedEvent):
@@ -2217,9 +2215,9 @@ class Workflow:
                     # Update workflow_run_response with the completed workflow data
                     workflow_run_response.content = event.content
                     workflow_run_response.status = RunStatus.completed
-                    workflow_run_response.step_results = event.step_results or []
+                    workflow_run_response.step_results = cast(List[Union[StepOutput, List[StepOutput]]], event.step_results or [])
             elif isinstance(event, (RunContentEvent, TeamRunContentEvent)):
-                yield event
+                yield event  # type: ignore[misc]
 
             # Capture the final RunOutput (but don't yield it)
             if isinstance(event, RunOutput):
@@ -2337,7 +2335,7 @@ class Workflow:
 
         # Run the agent
         log_debug(f"Executing workflow agent with input: {agent_input}")
-        agent_response: RunOutput = self.agent.run(
+        agent_response: RunOutput = self.agent.run(  # type: ignore[union-attr]
             input=agent_input,
             dependencies=dependencies,
         )  # type: ignore
@@ -2391,10 +2389,11 @@ class Workflow:
             session.upsert_run(run=workflow_run_response)
 
             print("--> DIRECT ANSWER: AFTER upsert:")
-            print(f"  session.runs count: {len(session.runs)}")
-            for i, run in enumerate(session.runs):
-                has_agent_run = run.workflow_agent_run is not None
-                print(f"    run[{i}]: run_id={run.run_id}, has_workflow_agent_run={has_agent_run}")
+            print(f"  session.runs count: {len(session.runs) if session.runs else 0}")
+            if session.runs:
+                for i, run in enumerate(session.runs):
+                    has_agent_run = run.workflow_agent_run is not None
+                    print(f"    run[{i}]: run_id={run.run_id}, has_workflow_agent_run={has_agent_run}")
 
             self.save_session(session=session)
             print("--> DIRECT ANSWER: SAVED session to DB")
@@ -2573,7 +2572,7 @@ class Workflow:
         log_debug(f"Executing async workflow agent with streaming - input: {agent_input[:100]}...")
 
         # Run the agent in streaming mode and yield all events
-        async for event in self.agent.arun(
+        async for event in self.agent.arun(  # type: ignore[union-attr]
             input=agent_input,
             stream=True,
             stream_intermediate_steps=stream_intermediate_steps,
@@ -2581,7 +2580,7 @@ class Workflow:
             dependencies=dependencies,  # Pass context dynamically per-run
         ):  # type: ignore
             if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
-                yield event
+                yield event  # type: ignore[misc]
 
                 if isinstance(event, WorkflowCompletedEvent):
                     workflow_executed = True
@@ -2589,9 +2588,9 @@ class Workflow:
                     # Update workflow_run_response with the completed workflow data
                     workflow_run_response.content = event.content
                     workflow_run_response.status = RunStatus.completed
-                    workflow_run_response.step_results = event.step_results or []
+                    workflow_run_response.step_results = cast(List[Union[StepOutput, List[StepOutput]]], event.step_results or [])
             elif isinstance(event, (RunContentEvent, TeamRunContentEvent)):
-                yield event
+                yield event  # type: ignore[misc]
 
             # Capture the final RunOutput (but don't yield it)
             if isinstance(event, RunOutput):
@@ -2702,7 +2701,7 @@ class Workflow:
 
         # Run the agent
         log_debug(f"Executing async workflow agent with input: {agent_input}")
-        agent_response: RunOutput = await self.agent.arun(
+        agent_response: RunOutput = await self.agent.arun(  # type: ignore[union-attr]
             input=agent_input,
             dependencies=dependencies,
         )  # type: ignore
