@@ -26,11 +26,6 @@ def get_anthropic_reasoning(reasoning_agent: "Agent", messages: List[Message]) -
     """Get reasoning from an Anthropic Claude model."""
     from agno.run.agent import RunOutput
 
-    # Update system message role to "system"
-    for message in messages:
-        if message.role == "developer":
-            message.role = "system"
-
     try:
         reasoning_agent_response: RunOutput = reasoning_agent.run(input=messages)
     except Exception as e:
@@ -59,11 +54,6 @@ def get_anthropic_reasoning(reasoning_agent: "Agent", messages: List[Message]) -
 async def aget_anthropic_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
     """Get reasoning from an Anthropic Claude model asynchronously."""
     from agno.run.agent import RunOutput
-
-    # Update system message role to "system"
-    for message in messages:
-        if message.role == "developer":
-            message.role = "system"
 
     try:
         reasoning_agent_response: RunOutput = await reasoning_agent.arun(input=messages)

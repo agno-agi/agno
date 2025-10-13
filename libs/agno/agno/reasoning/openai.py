@@ -54,11 +54,6 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
 async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
     from agno.run.agent import RunOutput
 
-    # Update system message role to "system"
-    for message in messages:
-        if message.role == "developer":
-            message.role = "system"
-
     try:
         reasoning_agent_response: RunOutput = await reasoning_agent.arun(input=messages)
     except Exception as e:
