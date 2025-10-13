@@ -76,7 +76,7 @@ class HealthResponse(BaseModel):
     instantiation_time: str
 
     class Config:
-        json_schema_extra = {"example": {"status": "ok"}}
+        json_schema_extra = {"example": {"status": "ok", "instantiation_time": "1760169236.778903"}}
 
 
 class InterfaceResponse(BaseModel):
