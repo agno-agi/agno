@@ -426,6 +426,13 @@ def migrate_table_in_batches(
 
         log_info(f"Completed batch {batch_count}: migrated {batch_size_actual} records")
 
+        # Explicit cleanup to free memory before next batch
+        del batch_content
+        if v1_table_type in ["agent_sessions", "team_sessions", "workflow_sessions"]:
+            del sessions
+        elif v1_table_type == "memories":
+            del memories
+
     log_info(f"✅ Migration completed for table {v1_table_name}: {total_migrated} total records migrated")
 
 
