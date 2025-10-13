@@ -25,29 +25,29 @@ from textwrap import dedent
 from agno.os import AgentOS
 
 # Import all single agents
-from agents.showcase.education_tutor import (
+from agents.education_tutor import (
     education_tutor,
     load_education_knowledge,
 )
-from agents.showcase.ecommerce_product_recommender import ecommerce_recommender
-from agents.showcase.legal_document_analyzer import (
+from agents.ecommerce_product_recommender import ecommerce_recommender
+from agents.legal_document_analyzer import (
     legal_analyzer,
     load_legal_knowledge,
 )
-from agents.showcase.personal_finance_manager import personal_finance_agent
-from agents.showcase.travel_planning_assistant import travel_planner
+from agents.personal_finance_manager import personal_finance_agent
+from agents.travel_planning_assistant import travel_planner
 
 # Import all teams
-from teams.showcase.business_intelligence_team import bi_analyst_team
-from teams.showcase.customer_support_team import customer_support_team
-from teams.showcase.healthcare_symptom_checker_team import (
+from teams.business_intelligence_team import bi_analyst_team
+from teams.customer_support_team import customer_support_team
+from teams.healthcare_symptom_checker_team import (
     healthcare_team,
     load_medical_knowledge,
 )
-from teams.showcase.hr_recruitment_team import hr_recruitment_team
+from teams.hr_recruitment_team import hr_recruitment_team
 
 # Import workflows
-from workflows.showcase.content_creation_pipeline import content_creation_workflow
+from workflows.content_creation_pipeline import content_creation_workflow
 
 # ============================================================================
 # Knowledge Base Initialization
