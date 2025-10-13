@@ -17,6 +17,7 @@ from agno.run.workflow import (
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
 )
+from agno.session.workflow import WorkflowSession
 from agno.team import Team
 from agno.utils.log import log_debug, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.utils.merge_dict import merge_dictionaries
@@ -60,6 +61,9 @@ class Step:
     # If False, only warn about missing inputs
     strict_input_validation: bool = False
 
+    add_workflow_history: Optional[bool] = None
+    num_history_runs: int = 3
+
     _retry_count: int = 0
 
     def __init__(
@@ -74,6 +78,8 @@ class Step:
         timeout_seconds: Optional[int] = None,
         skip_on_failure: bool = False,
         strict_input_validation: bool = False,
+        add_workflow_history: Optional[bool] = None,
+        num_history_runs: int = 3,
     ):
         # Auto-detect name for function executors if not provided
         if name is None and executor is not None:
@@ -93,6 +99,8 @@ class Step:
         self.timeout_seconds = timeout_seconds
         self.skip_on_failure = skip_on_failure
         self.strict_input_validation = strict_input_validation
+        self.add_workflow_history = add_workflow_history
+        self.num_history_runs = num_history_runs
         self.step_id = step_id
 
         if step_id is None:
@@ -204,12 +212,19 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
+
+        if workflow_session:
+            step_input.workflow_session = workflow_session
+        session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
@@ -223,7 +238,6 @@ class Step:
                     if inspect.isgeneratorfunction(self.active_executor):
                         content = ""
                         final_response = None
-                        session_state_copy = copy(session_state) if session_state else None
                         try:
                             for chunk in self._call_custom_function(
                                 self.active_executor, step_input, session_state_copy
@@ -244,7 +258,7 @@ class Step:
                                 final_response = e.value
 
                         # Merge session_state changes back
-                        if session_state_copy and session_state:
+                        if session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         if final_response is not None:
@@ -253,11 +267,10 @@ class Step:
                             response = StepOutput(content=content)
                     else:
                         # Execute function with signature inspection for session_state support
-                        session_state_copy = copy(session_state) if session_state else None
                         result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
 
                         # Merge session_state changes back
-                        if session_state_copy and session_state:
+                        if session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         # If function returns StepOutput, use it directly
@@ -292,9 +305,22 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        session_state_copy = copy(session_state)
+                        num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
+
+                        use_history = (
+                            self.add_workflow_history
+                            if self.add_workflow_history is not None
+                            else add_workflow_history_to_steps
+                        )
+
+                        final_message = message
+                        if use_history and workflow_session:
+                            history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
+                            if history_messages:
+                                final_message = f"{history_messages}{message}"
+
                         response = self.active_executor.run(  # type: ignore
-                            input=message,  # type: ignore
+                            input=final_message,  # type: ignore
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -305,8 +331,9 @@ class Step:
                             **kwargs,
                         )
 
-                        # Update workflow session state
-                        merge_dictionaries(session_state, session_state_copy)  # type: ignore
+                        if session_state is not None:
+                            # Update workflow session state
+                            merge_dictionaries(session_state, session_state_copy)  # type: ignore
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
@@ -348,6 +375,32 @@ class Step:
         except Exception:
             return False
 
+    def _enrich_event_with_context(
+        self,
+        event: Any,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        step_index: Optional[Union[int, tuple]] = None,
+    ) -> Any:
+        """Enrich event with step and workflow context information"""
+        if workflow_run_response is None:
+            return event
+            
+        if hasattr(event, 'workflow_id'):
+            event.workflow_id = workflow_run_response.workflow_id
+        if hasattr(event, 'workflow_run_id'):
+            event.workflow_run_id = workflow_run_response.run_id
+        if hasattr(event, "step_id"):
+            event.step_id = self.step_id
+        if hasattr(event, "step_name") and self.name is not None:
+            if getattr(event, "step_name", None) is None:
+                event.step_name = self.name
+        # Only set step_index if it's not already set (preserve parallel.py's tuples)
+        if hasattr(event, "step_index") and step_index is not None:
+            if event.step_index is None:
+                event.step_index = step_index
+
+        return event
+
     def execute_stream(
         self,
         step_input: StepInput,
@@ -359,11 +412,19 @@ class Step:
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
+        workflow_session: Optional["WorkflowSession"] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
+
+        if workflow_session:
+            step_input.workflow_session = workflow_session
+        # Create session_state copy once to avoid duplication
+        session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Emit StepStartedEvent
         if stream_intermediate_steps and workflow_run_response:
@@ -395,7 +456,6 @@ class Step:
                     if inspect.isgeneratorfunction(self.active_executor):
                         log_debug("Function returned iterable, streaming events")
                         content = ""
-                        session_state_copy = copy(session_state) if session_state else None
                         try:
                             iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
                             for event in iterator:  # type: ignore
@@ -411,10 +471,14 @@ class Step:
                                     final_response = event
                                     break
                                 else:
-                                    yield event  # type: ignore[misc]
+                                    # Enrich event with workflow context before yielding
+                                    enriched_event = self._enrich_event_with_context(
+                                        event, workflow_run_response, step_index
+                                    )
+                                    yield enriched_event  # type: ignore[misc]
 
                             # Merge session_state changes back
-                            if session_state_copy and session_state:
+                            if session_state is not None:
                                 merge_dictionaries(session_state, session_state_copy)
 
                             if not final_response:
@@ -424,11 +488,10 @@ class Step:
                                 final_response = e.value
 
                     else:
-                        session_state_copy = copy(session_state) if session_state else None
                         result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
 
                         # Merge session_state changes back
-                        if session_state_copy and session_state:
+                        if session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         if isinstance(result, StepOutput):
@@ -462,9 +525,22 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        session_state_copy = copy(session_state)
+                        num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
+
+                        use_history = (
+                            self.add_workflow_history
+                            if self.add_workflow_history is not None
+                            else add_workflow_history_to_steps
+                        )
+
+                        final_message = message
+                        if use_history and workflow_session:
+                            history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
+                            if history_messages:
+                                final_message = f"{history_messages}{message}"
+
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
-                            input=message,
+                            input=final_message,
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -474,14 +550,6 @@ class Step:
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
-                            # Pass workflow context directly via kwargs
-                            workflow_context={
-                                "workflow_id": workflow_run_response.workflow_id if workflow_run_response else None,
-                                "workflow_run_id": workflow_run_response.run_id if workflow_run_response else None,
-                                "step_id": self.step_id,
-                                "step_name": self.name,
-                                "step_index": step_index,
-                            },
                             yield_run_response=True,
                             **kwargs,
                         )
@@ -491,10 +559,14 @@ class Step:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 break
-                            yield event  # type: ignore[misc]
+                            enriched_event = self._enrich_event_with_context(
+                                event, workflow_run_response, step_index
+                            )
+                            yield enriched_event  # type: ignore[misc]
 
-                        # Update workflow session state
-                        merge_dictionaries(session_state, session_state_copy)  # type: ignore
+                        if session_state is not None:
+                            # Update workflow session state
+                            merge_dictionaries(session_state, session_state_copy)  # type: ignore
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
@@ -557,6 +629,9 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_session: Optional["WorkflowSession"] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
@@ -564,6 +639,11 @@ class Step:
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
+
+        if workflow_session:
+            step_input.workflow_session = workflow_session
+        # Create session_state copy once to avoid duplication
+        session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
@@ -576,7 +656,6 @@ class Step:
                     ):
                         content = ""
                         final_response = None
-                        session_state_copy = copy(session_state) if session_state else None
                         try:
                             if inspect.isgeneratorfunction(self.active_executor):
                                 iterator = self._call_custom_function(
@@ -615,7 +694,7 @@ class Step:
                                 final_response = e.value
 
                         # Merge session_state changes back
-                        if session_state_copy and session_state:
+                        if session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         if final_response is not None:
@@ -623,7 +702,6 @@ class Step:
                         else:
                             response = StepOutput(content=content)
                     else:
-                        session_state_copy = copy(session_state) if session_state else None
                         if inspect.iscoroutinefunction(self.active_executor):
                             result = await self._acall_custom_function(
                                 self.active_executor, step_input, session_state_copy
@@ -632,7 +710,7 @@ class Step:
                             result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
 
                         # Merge session_state changes back
-                        if session_state_copy and session_state:
+                        if session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         # If function returns StepOutput, use it directly
@@ -668,9 +746,22 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        session_state_copy = copy(session_state)
+                        num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
+
+                        use_history = (
+                            self.add_workflow_history
+                            if self.add_workflow_history is not None
+                            else add_workflow_history_to_steps
+                        )
+
+                        final_message = message
+                        if use_history and workflow_session:
+                            history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
+                            if history_messages:
+                                final_message = f"{history_messages}{message}"
+
                         response = await self.active_executor.arun(  # type: ignore
-                            input=message,  # type: ignore
+                            input=final_message,  # type: ignore
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -681,8 +772,9 @@ class Step:
                             **kwargs,
                         )
 
-                        # Update workflow session state
-                        merge_dictionaries(session_state, session_state_copy)  # type: ignore
+                        if session_state is not None:
+                            # Update workflow session state
+                            merge_dictionaries(session_state, session_state_copy)  # type: ignore
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
@@ -722,11 +814,20 @@ class Step:
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
+        workflow_session: Optional["WorkflowSession"] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
+
+        if workflow_session:
+            step_input.workflow_session = workflow_session
+
+        # Create session_state copy once to avoid duplication
+        session_state_copy = copy(session_state) if session_state is not None else {}
 
         if stream_intermediate_steps and workflow_run_response:
             # Emit StepStartedEvent
@@ -751,8 +852,6 @@ class Step:
                     log_debug(f"Executing async function executor for step: {self.name}")
                     import inspect
 
-                    session_state_copy = copy(session_state) if session_state else None
-
                     # Check if the function is an async generator
                     if inspect.isasyncgenfunction(self.active_executor):
                         content = ""
@@ -773,7 +872,11 @@ class Step:
                                 final_response = event
                                 break
                             else:
-                                yield event  # type: ignore[misc]
+                                # Enrich event with workflow context before yielding
+                                enriched_event = self._enrich_event_with_context(
+                                    event, workflow_run_response, step_index
+                                )
+                                yield enriched_event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
                     elif inspect.iscoroutinefunction(self.active_executor):
@@ -800,7 +903,11 @@ class Step:
                                 final_response = event
                                 break
                             else:
-                                yield event  # type: ignore[misc]
+                                # Enrich event with workflow context before yielding
+                                enriched_event = self._enrich_event_with_context(
+                                    event, workflow_run_response, step_index
+                                )
+                                yield enriched_event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
                     else:
@@ -812,7 +919,7 @@ class Step:
                             final_response = StepOutput(content=str(result))
 
                     # Merge session_state changes back
-                    if session_state_copy and session_state:
+                    if session_state is not None:
                         merge_dictionaries(session_state, session_state_copy)
                 else:
                     # For agents and teams, prepare message with context
@@ -840,9 +947,22 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
-                        session_state_copy = copy(session_state)
+                        num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
+
+                        use_history = (
+                            self.add_workflow_history
+                            if self.add_workflow_history is not None
+                            else add_workflow_history_to_steps
+                        )
+
+                        final_message = message
+                        if use_history and workflow_session:
+                            history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
+                            if history_messages:
+                                final_message = f"{history_messages}{message}"
+
                         response_stream = self.active_executor.arun(  # type: ignore
-                            input=message,
+                            input=final_message,
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -852,14 +972,6 @@ class Step:
                             session_state=session_state_copy,
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
-                            # Pass workflow context directly via kwargs
-                            workflow_context={
-                                "workflow_id": workflow_run_response.workflow_id if workflow_run_response else None,
-                                "workflow_run_id": workflow_run_response.run_id if workflow_run_response else None,
-                                "step_id": self.step_id,
-                                "step_name": self.name,
-                                "step_index": step_index,
-                            },
                             yield_run_response=True,
                             **kwargs,
                         )
@@ -869,10 +981,14 @@ class Step:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 break
-                            yield event  # type: ignore[misc]
+                            enriched_event = self._enrich_event_with_context(
+                                event, workflow_run_response, step_index
+                            )
+                            yield enriched_event  # type: ignore[misc]
 
-                        # Update workflow session state
-                        merge_dictionaries(session_state, session_state_copy)  # type: ignore
+                        if session_state is not None:
+                            # Update workflow session state
+                            merge_dictionaries(session_state, session_state_copy)  # type: ignore
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore

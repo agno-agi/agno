@@ -1,4 +1,5 @@
 import json
+from itertools import chain
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
@@ -643,7 +644,7 @@ def get_base_router(
             os_id=os.id or "Unnamed OS",
             description=os.description,
             available_models=os.config.available_models if os.config else [],
-            databases=[db.id for db in os.dbs.values()],
+            databases=list({db.id for db in chain(os.dbs.values(), os.knowledge_dbs.values())}),
             chat=os.config.chat if os.config else None,
             session=os._get_session_config(),
             memory=os._get_memory_config(),

@@ -459,12 +459,23 @@ class GcsJsonDb(BaseDb):
         return False
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str) -> None:
-        """Delete a user memory from the GCS JSON file."""
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
+        """Delete a user memory from the GCS JSON file.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user. If provided, verifies ownership before deletion.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
             original_count = len(memories)
-            memories = [m for m in memories if m.get("memory_id") != memory_id]
+
+            # Filter out the memory, with optional user_id verification
+            memories = [
+                m
+                for m in memories
+                if not (m.get("memory_id") == memory_id and (user_id is None or m.get("user_id") == user_id))
+            ]
 
             if len(memories) < original_count:
                 self._write_json_file(self.memory_table_name, memories)
@@ -477,11 +488,23 @@ class GcsJsonDb(BaseDb):
             log_warning(f"Error deleting user memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
-        """Delete multiple user memories from the GCS JSON file."""
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+        """Delete multiple user memories from the GCS JSON file.
+
+        Args:
+            memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user. If provided, verifies ownership before deletion.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
-            memories = [m for m in memories if m.get("memory_id") not in memory_ids]
+
+            # Filter out memories, with optional user_id verification
+            memories = [
+                m
+                for m in memories
+                if not (m.get("memory_id") in memory_ids and (user_id is None or m.get("user_id") == user_id))
+            ]
+
             self._write_json_file(self.memory_table_name, memories)
             log_debug(f"Successfully deleted user memories with ids: {memory_ids}")
         except Exception as e:
@@ -489,7 +512,11 @@ class GcsJsonDb(BaseDb):
             raise e
 
     def get_all_memory_topics(self) -> List[str]:
-        """Get all memory topics from the GCS JSON file."""
+        """Get all memory topics from the GCS JSON file.
+
+        Returns:
+            List[str]: List of unique memory topics.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
             topics = set()
@@ -504,14 +531,27 @@ class GcsJsonDb(BaseDb):
             raise e
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
-        """Get a memory from the GCS JSON file."""
+        """Get a memory from the GCS JSON file.
+
+        Args:
+            memory_id (str): The ID of the memory to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to UserMemory object. Defaults to True.
+            user_id (Optional[str]): The ID of the user. If provided, verifies ownership before returning.
+
+        Returns:
+            Optional[Union[UserMemory, Dict[str, Any]]]: The memory if found and ownership matches, None otherwise.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
 
             for memory_data in memories:
                 if memory_data.get("memory_id") == memory_id:
+                    # Verify user ownership if user_id is provided
+                    if user_id is not None and memory_data.get("user_id") != user_id:
+                        continue
+
                     if not deserialize:
                         return memory_data
 
@@ -583,20 +623,33 @@ class GcsJsonDb(BaseDb):
     def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get user memory statistics."""
+        """Get user memory statistics.
+
+        Args:
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: List of user memory statistics and total count.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
             user_stats = {}
 
             for memory in memories:
-                user_id = memory.get("user_id")
-                if user_id:
-                    if user_id not in user_stats:
-                        user_stats[user_id] = {"user_id": user_id, "total_memories": 0, "last_memory_updated_at": 0}
-                    user_stats[user_id]["total_memories"] += 1
+                memory_user_id = memory.get("user_id")
+
+                if memory_user_id:
+                    if memory_user_id not in user_stats:
+                        user_stats[memory_user_id] = {
+                            "user_id": memory_user_id,
+                            "total_memories": 0,
+                            "last_memory_updated_at": 0,
+                        }
+                    user_stats[memory_user_id]["total_memories"] += 1
                     updated_at = memory.get("updated_at", 0)
-                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = updated_at
+                    if updated_at > user_stats[memory_user_id]["last_memory_updated_at"]:
+                        user_stats[memory_user_id]["last_memory_updated_at"] = updated_at
 
             stats_list = list(user_stats.values())
             stats_list.sort(key=lambda x: x["last_memory_updated_at"], reverse=True)

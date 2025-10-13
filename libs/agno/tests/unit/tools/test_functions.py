@@ -234,7 +234,25 @@ def test_function_cache_key_generation():
 
     cache_key = func._get_cache_key(entrypoint_args, call_args)
     assert isinstance(cache_key, str)
-    assert cache_key == "12cfb4e42ec8561012d976e2dca0e0c1"
+    # Hash updated to use json.dumps with sort_keys=True for consistent ordering
+    assert cache_key == "d76d42a06e815b6402e24486f1f61805"
+
+
+def test_function_cache_key_dict_order_independence():
+    """Test that cache keys are identical regardless of dictionary key order."""
+    func = Function(name="test_func", cache_results=True, cache_dir="/tmp")
+
+    # Same data, different key orders
+    args1 = {"param1": "value1", "param2": 42, "param3": "value3"}
+    args2 = {"param3": "value3", "param1": "value1", "param2": 42}
+    args3 = {"param2": 42, "param3": "value3", "param1": "value1"}
+
+    cache_key1 = func._get_cache_key(args1)
+    cache_key2 = func._get_cache_key(args2)
+    cache_key3 = func._get_cache_key(args3)
+
+    # Should generate identical cache keys
+    assert cache_key1 == cache_key2 == cache_key3
 
 
 def test_function_cache_file_path():
