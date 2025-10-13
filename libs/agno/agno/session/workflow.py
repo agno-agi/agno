@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from agno.run.workflow import WorkflowRunOutput
 from agno.utils.log import logger
-
-if TYPE_CHECKING:
-    from agno.workflow.types import WorkflowAgentResponse
 
 
 @dataclass
@@ -78,16 +75,24 @@ class WorkflowSession:
         else:
             self.runs.append(run)
 
-    def get_workflow_history(self, num_runs: int = 3) -> List[Tuple[str, str]]:
-        """Get workflow history as structured data (input, response pairs)"""
-        if not self or not self.runs:
+    def get_workflow_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
+        """Get workflow history as structured data (input, response pairs)
+        
+        Args:
+            num_runs: Number of recent runs to include. If None, returns all available history.
+        """
+        if not self.runs:
             return []
 
         from agno.run.base import RunStatus
 
         # Get completed runs only (exclude current/pending run)
         completed_runs = [run for run in self.runs if run.status == RunStatus.completed]
-        recent_runs = completed_runs[-num_runs:] if len(completed_runs) > num_runs else completed_runs
+        
+        if num_runs is not None and len(completed_runs) > num_runs:
+            recent_runs = completed_runs[-num_runs:]
+        else:
+            recent_runs = completed_runs
 
         if not recent_runs:
             return []
@@ -109,8 +114,12 @@ class WorkflowSession:
 
         return history_data
 
-    def get_workflow_history_context(self, num_runs: int = 3) -> Optional[str]:
-        """Get formatted workflow history context for steps"""
+    def get_workflow_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
+        """Get formatted workflow history context for steps
+        
+        Args:
+            num_runs: Number of recent runs to include. If None, returns all available history.
+        """
         history_data = self.get_workflow_history(num_runs)
 
         if not history_data:

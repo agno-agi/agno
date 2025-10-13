@@ -175,6 +175,11 @@ class Workflow:
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
 
+    # Add this flag to control if the workflow should add history to the steps
+    add_workflow_history_to_steps: bool = False
+    # Number of historical runs to include in the messages
+    num_history_runs: int = 3
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -197,6 +202,8 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         cache_session: bool = False,
         telemetry: bool = True,
+        add_workflow_history_to_steps: bool = False,
+        num_history_runs: int = 3,
     ):
         self.id = id
         self.name = name
@@ -218,7 +225,8 @@ class Workflow:
         self.cache_session = cache_session
         self.db = db
         self.telemetry = telemetry
-
+        self.add_workflow_history_to_steps = add_workflow_history_to_steps
+        self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
 
     def set_id(self) -> None:
@@ -714,6 +722,34 @@ class Workflow:
 
         return event
 
+    def _enrich_event_with_workflow_context(
+        self,
+        event: Any,
+        workflow_run_response: WorkflowRunOutput,
+        step_index: Optional[Union[int, tuple]] = None,
+        step: Optional[Any] = None,
+    ) -> Any:
+        """Enrich any event with workflow context information for frontend tracking"""
+
+        step_id = getattr(step, "step_id", None) if step else None
+        step_name = getattr(step, "name", None) if step else None
+
+        if hasattr(event, "workflow_id"):
+            event.workflow_id = workflow_run_response.workflow_id
+        if hasattr(event, "workflow_run_id"):
+            event.workflow_run_id = workflow_run_response.run_id
+        if hasattr(event, "step_id") and step_id:
+            event.step_id = step_id
+        if hasattr(event, "step_name") and step_name is not None:
+            if event.step_name is None:
+                event.step_name = step_name
+        # Only set step_index if it's not already set (preserve parallel.py's tuples)
+        if hasattr(event, "step_index") and step_index is not None:
+            if event.step_index is None:
+                event.step_index = step_index
+
+        return event
+
     def _transform_step_output_to_event(
         self, step_output: StepOutput, workflow_run_response: WorkflowRunOutput, step_index: Optional[int] = None
     ) -> StepOutputEvent:
@@ -882,10 +918,8 @@ class Workflow:
             return func(**call_kwargs)
         except TypeError as e:
             # If signature inspection fails, fall back to original method
-            logger.warning(
-                f"Async function signature inspection failed: {e}. Falling back to original calling convention."
-            )
-            return func(**call_kwargs)
+            logger.error(f"Function signature inspection failed: {e}. Falling back to original calling convention.")
+            return func(**kwargs)
 
     def _execute(
         self,
@@ -899,7 +933,8 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
-        register_run(workflow_run_response.run_id)  # type: ignore
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
@@ -960,6 +995,11 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_session=session,
+                        add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                        if self.add_workflow_history_to_steps
+                        else None,
+                        num_history_runs=self.num_history_runs,
                     )
 
                     # Check for cancellation after step execution
@@ -1129,6 +1169,11 @@ class Workflow:
                         session_state=session_state,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_session=session,
+                        add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                        if self.add_workflow_history_to_steps
+                        else None,
+                        num_history_runs=self.num_history_runs,
                     ):
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                         # Handle events
@@ -1179,11 +1224,18 @@ class Workflow:
                                 yield step_output_event
 
                         elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
-                            yield self._handle_event(event, workflow_run_response)  # type: ignore
+                            # Enrich event with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                         else:
-                            # Yield other internal events
-                            yield self._handle_event(event, workflow_run_response)  # type: ignore
+                            # Enrich other events with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -1353,7 +1405,8 @@ class Workflow:
         workflow_run_response.status = RunStatus.running
 
         # Register run for cancellation tracking
-        register_run(workflow_run_response.run_id)  # type: ignore
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             # Execute the workflow with the custom executor
@@ -1422,6 +1475,11 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_session=session,
+                        add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                        if self.add_workflow_history_to_steps
+                        else None,
+                        num_history_runs=self.num_history_runs,
                     )
 
                     # Check for cancellation after step execution
@@ -1514,6 +1572,10 @@ class Workflow:
 
         workflow_run_response.status = RunStatus.running
 
+        # Register run for cancellation tracking
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)
+
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
@@ -1592,6 +1654,11 @@ class Workflow:
                         session_state=session_state,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_session=session,
+                        add_workflow_history_to_steps=self.add_workflow_history_to_steps
+                        if self.add_workflow_history_to_steps
+                        else None,
+                        num_history_runs=self.num_history_runs,
                     ):
                         if workflow_run_response.run_id:
                             raise_if_cancelled(workflow_run_response.run_id)
@@ -1641,11 +1708,22 @@ class Workflow:
                                 yield step_output_event
 
                         elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
-                            yield self._handle_event(event, workflow_run_response, websocket_handler=websocket_handler)  # type: ignore
+                            # Enrich event with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(
+                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
+                            )  # type: ignore
 
                         else:
-                            # Yield other internal events
-                            yield self._handle_event(event, workflow_run_response, websocket_handler=websocket_handler)  # type: ignore
+                            # Enrich other events with workflow context before yielding
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(
+                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
+                            )  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -2573,6 +2651,7 @@ class Workflow:
                     additional_data=additional_data,
                     user_id=user_id,
                     session_id=session_id,
+                    session_state=session_state,
                     audio=audio,
                     images=images,
                     videos=videos,
@@ -2591,6 +2670,7 @@ class Workflow:
                     additional_data=additional_data,
                     user_id=user_id,
                     session_id=session_id,
+                    session_state=session_state,
                     audio=audio,
                     images=images,
                     videos=videos,
@@ -3048,57 +3128,144 @@ class Workflow:
 
     def cli_app(
         self,
-        message: Optional[str] = None,
-        user: str = "User",
-        emoji: str = "🤖",
-        stream: bool = False,
-        markdown: bool = True,
-        exit_on: Optional[List[str]] = None,
+        input: Optional[str] = None,
         session_id: Optional[str] = None,
-        **kwargs,
+        user_id: Optional[str] = None,
+        user: str = "User",
+        emoji: str = ":technologist:",
+        stream: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        markdown: bool = True,
+        show_time: bool = True,
+        show_step_details: bool = True,
+        exit_on: Optional[List[str]] = None,
+        **kwargs: Any,
     ) -> None:
-        """Run an interactive command-line interface for the workflow."""
-        from rich.console import Console
-        from rich.panel import Panel
+        """
+            Run an interactive command-line interface to interact with the workflow.
+        
+            This method creates a CLI interface that allows users to interact with the workflow
+            either by providing a single input or through continuous interactive prompts.
+            
+            Arguments:
+                input: Optional initial input to process before starting interactive mode.
+                session_id: Optional session identifier for maintaining conversation context.
+                user_id: Optional user identifier for tracking user-specific data.
+                user: Display name for the user in the CLI prompt. Defaults to "User".
+                emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
+                stream: Whether to stream the workflow response. If None, uses workflow default.
+                stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
+                markdown: Whether to render output as markdown. Defaults to True.
+                show_time: Whether to display timestamps in the output. Defaults to True.
+                show_step_details: Whether to show detailed step information. Defaults to True.
+                exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
+                **kwargs: Additional keyword arguments passed to the workflow's print_response method.
+            
+            Returns:
+                None: This method runs interactively and does not return a value.
+        """
+
         from rich.prompt import Prompt
 
-        console = Console()
-
-        # Welcome message
-        console.print(
-            Panel.fit(
-                f"[bold blue]Welcome to {self.name or 'Workflow Chat'}![/bold blue]\n"
-                f"[dim]{self.description or 'Interactive workflow assistant'}[/dim]\n\n"
-                f"[yellow]Type your questions and I'll help you through the workflow.[/yellow]\n"
-                f"[dim]Type 'exit', 'quit', or 'bye' to end the conversation.[/dim]",
-                title="🚀 Workflow Chat",
-                border_style="blue",
+        if input:
+            self.print_response(
+                input=input,
+                stream=stream,
+                stream_intermediate_steps=stream_intermediate_steps,
+                markdown=markdown,
+                show_time=show_time,
+                show_step_details=show_step_details,
+                user_id=user_id,
+                session_id=session_id,
+                **kwargs,
             )
-        )
 
-        if message:
-            console.print(f"\n[bold]{emoji} {user}:[/bold] {message}")
-            self.print_response(input=message, stream=stream, markdown=markdown, console=console, **kwargs)
-
-        _exit_on = exit_on or ["exit", "quit", "bye"]
-        session_id = session_id
-
+        _exit_on = exit_on or ["exit", "quit", "bye", "stop"]
         while True:
-            try:
-                message = Prompt.ask(f"\n[bold]{emoji} {user}[/bold]")
-                if message.lower().strip() in _exit_on:
-                    console.print("\n[yellow]👋 Thanks for using the workflow chat! Goodbye![/yellow]")
-                    break
-
-                if not message.strip():
-                    continue
-
-                self.print_response(
-                    input=message, stream=stream, markdown=markdown, session_id=session_id, console=console, **kwargs
-                )
-
-            except KeyboardInterrupt:
-                console.print("\n[yellow]👋 Chat interrupted. Goodbye![/yellow]")
+            message = Prompt.ask(f"[bold] {emoji} {user} [/bold]")
+            if message in _exit_on:
                 break
-            except Exception as e:
-                console.print(f"\n[red]❌ Error: {e}[/red]")
+
+            self.print_response(
+                input=message,
+                stream=stream,
+                stream_intermediate_steps=stream_intermediate_steps,
+                markdown=markdown,
+                show_time=show_time,
+                show_step_details=show_step_details,
+                user_id=user_id,
+                session_id=session_id,
+                **kwargs,
+            )
+
+    async def acli_app(
+        self,
+        input: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        user: str = "User",
+        emoji: str = ":technologist:",
+        stream: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        markdown: bool = True,
+        show_time: bool = True,
+        show_step_details: bool = True,
+        exit_on: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+            Run an interactive command-line interface to interact with the workflow.
+        
+            This method creates a CLI interface that allows users to interact with the workflow
+            either by providing a single input or through continuous interactive prompts.
+            
+            Arguments:
+                input: Optional initial input to process before starting interactive mode.
+                session_id: Optional session identifier for maintaining conversation context.
+                user_id: Optional user identifier for tracking user-specific data.
+                user: Display name for the user in the CLI prompt. Defaults to "User".
+                emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
+                stream: Whether to stream the workflow response. If None, uses workflow default.
+                stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
+                markdown: Whether to render output as markdown. Defaults to True.
+                show_time: Whether to display timestamps in the output. Defaults to True.
+                show_step_details: Whether to show detailed step information. Defaults to True.
+                exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
+                **kwargs: Additional keyword arguments passed to the workflow's print_response method.
+            
+            Returns:
+                None: This method runs interactively and does not return a value.
+        """
+
+        from rich.prompt import Prompt
+
+        if input:
+            await self.aprint_response(
+                input=input,
+                stream=stream,
+                stream_intermediate_steps=stream_intermediate_steps,
+                markdown=markdown,
+                show_time=show_time,
+                show_step_details=show_step_details,
+                user_id=user_id,
+                session_id=session_id,
+                **kwargs,
+            )
+
+        _exit_on = exit_on or ["exit", "quit", "bye", "stop"]
+        while True:
+            message = Prompt.ask(f"[bold] {emoji} {user} [/bold]")
+            if message in _exit_on:
+                break
+
+            await self.aprint_response(
+                input=message,
+                stream=stream,
+                stream_intermediate_steps=stream_intermediate_steps,
+                markdown=markdown,
+                show_time=show_time,
+                show_step_details=show_step_details,
+                user_id=user_id,
+                session_id=session_id,
+                **kwargs,
+            )

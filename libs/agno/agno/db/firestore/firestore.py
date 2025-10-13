@@ -596,11 +596,12 @@ class FirestoreDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Returns:
             bool: True if the memory was deleted, False otherwise.
@@ -610,28 +611,41 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
-            docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
 
-            deleted_count = 0
-            for doc in docs:
-                doc.reference.delete()
-                deleted_count += 1
-
-            success = deleted_count > 0
-            if success:
-                log_debug(f"Successfully deleted user memory id: {memory_id}")
+            # If user_id is provided, verify the memory belongs to the user before deleting
+            if user_id:
+                docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
+                for doc in docs:
+                    data = doc.to_dict()
+                    if data.get("user_id") != user_id:
+                        log_debug(f"Memory {memory_id} does not belong to user {user_id}")
+                        return
+                    doc.reference.delete()
+                    log_debug(f"Successfully deleted user memory id: {memory_id}")
+                    return
             else:
-                log_debug(f"No user memory found with id: {memory_id}")
+                docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
+                deleted_count = 0
+                for doc in docs:
+                    doc.reference.delete()
+                    deleted_count += 1
+
+                success = deleted_count > 0
+                if success:
+                    log_debug(f"Successfully deleted user memory id: {memory_id}")
+                else:
+                    log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Raises:
             Exception: If there is an error deleting the memories.
@@ -641,11 +655,21 @@ class FirestoreDb(BaseDb):
             batch = self.db_client.batch()
             deleted_count = 0
 
-            for memory_id in memory_ids:
-                docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
-                for doc in docs:
-                    batch.delete(doc.reference)
-                    deleted_count += 1
+            # If user_id is provided, filter memory_ids to only those belonging to the user
+            if user_id:
+                for memory_id in memory_ids:
+                    docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
+                    for doc in docs:
+                        data = doc.to_dict()
+                        if data.get("user_id") == user_id:
+                            batch.delete(doc.reference)
+                            deleted_count += 1
+            else:
+                for memory_id in memory_ids:
+                    docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
+                    for doc in docs:
+                        batch.delete(doc.reference)
+                        deleted_count += 1
 
             batch.commit()
 
@@ -687,12 +711,15 @@ class FirestoreDb(BaseDb):
             log_error(f"Exception getting all memory topics: {e}")
             raise e
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[UserMemory]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Returns:
             Optional[UserMemory]:
@@ -711,7 +738,14 @@ class FirestoreDb(BaseDb):
                 result = doc.to_dict()
                 break
 
-            if result is None or not deserialize:
+            if result is None:
+                return None
+
+            # Filter by user_id if provided
+            if user_id and result.get("user_id") != user_id:
+                return None
+
+            if not deserialize:
                 return result
 
             return UserMemory.from_dict(result)
@@ -818,23 +852,26 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
-            docs = collection_ref.where(filter=FieldFilter("user_id", "!=", None)).stream()
+
+            query = collection_ref.where(filter=FieldFilter("user_id", "!=", None))
+
+            docs = query.stream()
 
             user_stats = {}
             for doc in docs:
                 data = doc.to_dict()
-                user_id = data.get("user_id")
-                if user_id:
-                    if user_id not in user_stats:
-                        user_stats[user_id] = {
-                            "user_id": user_id,
+                current_user_id = data.get("user_id")
+                if current_user_id:
+                    if current_user_id not in user_stats:
+                        user_stats[current_user_id] = {
+                            "user_id": current_user_id,
                             "total_memories": 0,
                             "last_memory_updated_at": 0,
                         }
-                    user_stats[user_id]["total_memories"] += 1
+                    user_stats[current_user_id]["total_memories"] += 1
                     updated_at = data.get("updated_at", 0)
-                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = updated_at
+                    if updated_at > user_stats[current_user_id]["last_memory_updated_at"]:
+                        user_stats[current_user_id]["last_memory_updated_at"] = updated_at
 
             # Convert to list and sort
             formatted_results = list(user_stats.values())
