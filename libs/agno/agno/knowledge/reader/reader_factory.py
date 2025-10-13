@@ -60,6 +60,18 @@ class ReaderFactory:
         return DocxReader(**config)
 
     @classmethod
+    def _get_pptx_reader(cls, **kwargs) -> Reader:
+        """Get PPTX reader instance."""
+        from agno.knowledge.reader.pptx_reader import PPTXReader
+
+        config: Dict[str, Any] = {
+            "name": "PPTX Reader",
+            "description": "Extracts text content from Microsoft PowerPoint presentations (.pptx format)",
+        }
+        config.update(kwargs)
+        return PPTXReader(**config)
+
+    @classmethod
     def _get_json_reader(cls, **kwargs) -> Reader:
         """Get JSON reader instance."""
         from agno.knowledge.reader.json_reader import JSONReader
@@ -203,6 +215,8 @@ class ReaderFactory:
             return cls.create_reader("csv")
         elif extension in [".docx", ".doc"]:
             return cls.create_reader("docx")
+        elif extension == ".pptx":
+            return cls.create_reader("pptx")
         elif extension == ".json":
             return cls.create_reader("json")
         elif extension in [".md", ".markdown"]:
