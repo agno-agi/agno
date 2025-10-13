@@ -29,7 +29,7 @@ from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledExcep
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
-from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
+from agno.run.agent import RunEvent, RunOutput
 from agno.run.base import RunStatus
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
@@ -55,7 +55,6 @@ from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.log import (
     log_debug,
     log_error,
-    log_info,
     log_warning,
     logger,
     set_log_level_to_debug,

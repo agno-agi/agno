@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 from agno.agent import Agent
 from agno.models.base import Model
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_info, logger
 
 if TYPE_CHECKING:
     from agno.session.workflow import WorkflowSession
@@ -155,7 +155,7 @@ class WorkflowAgent(Agent):
                         final_content = str(event.content) if event.content else ""
 
                 logger.info("=" * 80)
-                logger.info(f"TOOL EXECUTION COMPLETE: run_workflow")
+                logger.info("TOOL EXECUTION COMPLETE: run_workflow")
                 logger.info("=" * 80)
 
                 return final_content
@@ -171,7 +171,7 @@ class WorkflowAgent(Agent):
                 )
 
                 logger.info("=" * 80)
-                logger.info(f"TOOL EXECUTION COMPLETE: run_workflow")
+                logger.info("TOOL EXECUTION COMPLETE: run_workflow")
                 logger.info(f"  ➜ Run ID: {result.run_id}")
                 logger.info(f"  ➜ Result length: {len(str(result.content)) if result.content else 0} chars")
                 logger.info("=" * 80)
@@ -279,7 +279,7 @@ class WorkflowAgent(Agent):
                         final_content = str(event.content) if event.content else ""
 
                 logger.info("=" * 80)
-                logger.info(f"ASYNC TOOL EXECUTION COMPLETE: run_workflow")
+                logger.info("ASYNC TOOL EXECUTION COMPLETE: run_workflow")
                 logger.info("=" * 80)
 
                 yield final_content
@@ -294,7 +294,7 @@ class WorkflowAgent(Agent):
                 )
 
                 logger.info("=" * 80)
-                logger.info(f"ASYNC TOOL EXECUTION COMPLETE: run_workflow")
+                logger.info("ASYNC TOOL EXECUTION COMPLETE: run_workflow")
                 logger.info(f"  ➜ Run ID: {result.run_id}")
                 logger.info(f"  ➜ Result length: {len(str(result.content)) if result.content else 0} chars")
                 logger.info("=" * 80)
