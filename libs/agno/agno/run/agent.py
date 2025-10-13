@@ -130,6 +130,9 @@ class RunEvent(str, Enum):
     memory_update_started = "MemoryUpdateStarted"
     memory_update_completed = "MemoryUpdateCompleted"
 
+    session_summary_started = "SessionSummaryStarted"
+    session_summary_completed = "SessionSummaryCompleted"
+
     parser_model_response_started = "ParserModelResponseStarted"
     parser_model_response_completed = "ParserModelResponseCompleted"
 
@@ -288,6 +291,16 @@ class MemoryUpdateCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class SessionSummaryStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.session_summary_started.value
+
+
+@dataclass
+class SessionSummaryCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.session_summary_completed.value
+
+
+@dataclass
 class ReasoningStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.reasoning_started.value
 
@@ -364,6 +377,8 @@ RunOutputEvent = Union[
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
+    SessionSummaryStartedEvent,
+    SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
@@ -391,6 +406,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     RunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
+    RunEvent.session_summary_started.value: SessionSummaryStartedEvent,
+    RunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     RunEvent.tool_call_started.value: ToolCallStartedEvent,
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,

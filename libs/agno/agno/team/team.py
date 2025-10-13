@@ -2984,19 +2984,26 @@ class Team:
                 )
 
             # Create session summary
+            session_summary_future = None
             if self.session_summary_manager is not None:
                 log_debug("Creating session summary.")
-                futures.append(
-                    executor.submit(
-                        self.session_summary_manager.create_session_summary,  # type: ignore
-                        session=session,
-                    )
+                session_summary_future = executor.submit(
+                    self.session_summary_manager.create_session_summary,  # type: ignore
+                    session=session,
                 )
+                futures.append(session_summary_future)
 
             if futures:
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
                         create_team_memory_update_started_event(from_run_response=run_response), run_response
+                    )
+
+                # Emit session summary started event after memory update started
+                if session_summary_future is not None and self.stream_intermediate_steps:
+                    from agno.utils.events import create_team_session_summary_started_event
+                    yield self._handle_event(
+                        create_team_session_summary_started_event(from_run_response=run_response), run_response
                     )
 
                 # Wait for all operations to complete and handle any errors
@@ -3005,6 +3012,13 @@ class Team:
                         future.result()
                     except Exception as e:
                         log_warning(f"Error in memory/summary operation: {str(e)}")
+
+                # Emit session summary completed event before memory update completed
+                if session_summary_future is not None and self.stream_intermediate_steps:
+                    from agno.utils.events import create_team_session_summary_completed_event
+                    yield self._handle_event(
+                        create_team_session_summary_completed_event(from_run_response=run_response), run_response
+                    )
 
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
@@ -3027,8 +3041,10 @@ class Team:
         if user_message_str is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             tasks.append(self.memory_manager.acreate_user_memories(message=user_message_str, user_id=user_id))
 
+        session_summary_task = None
         if self.session_summary_manager is not None:
-            tasks.append(self.session_summary_manager.acreate_session_summary(session=session))
+            session_summary_task = self.session_summary_manager.acreate_session_summary(session=session)
+            tasks.append(session_summary_task)
 
         if tasks:
             if self.stream_intermediate_steps:
@@ -3036,11 +3052,25 @@ class Team:
                     create_team_memory_update_started_event(from_run_response=run_response), run_response
                 )
 
+            # Emit session summary started event after memory update started
+            if session_summary_task is not None and self.stream_intermediate_steps:
+                from agno.utils.events import create_team_session_summary_started_event
+                yield self._handle_event(
+                    create_team_session_summary_started_event(from_run_response=run_response), run_response
+                )
+
             # Execute all tasks concurrently and handle any errors
             try:
                 await asyncio.gather(*tasks)
             except Exception as e:
                 log_warning(f"Error in memory/summary operation: {str(e)}")
+
+            # Emit session summary completed event before memory update completed
+            if session_summary_task is not None and self.stream_intermediate_steps:
+                from agno.utils.events import create_team_session_summary_completed_event
+                yield self._handle_event(
+                    create_team_session_summary_completed_event(from_run_response=run_response), run_response
+                )
 
             if self.stream_intermediate_steps:
                 yield self._handle_event(

@@ -126,6 +126,9 @@ class TeamRunEvent(str, Enum):
     memory_update_started = "TeamMemoryUpdateStarted"
     memory_update_completed = "TeamMemoryUpdateCompleted"
 
+    session_summary_started = "TeamSessionSummaryStarted"
+    session_summary_completed = "TeamSessionSummaryCompleted"
+
     parser_model_response_started = "TeamParserModelResponseStarted"
     parser_model_response_completed = "TeamParserModelResponseCompleted"
 
@@ -274,6 +277,16 @@ class MemoryUpdateCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class SessionSummaryStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.session_summary_started.value
+
+
+@dataclass
+class SessionSummaryCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.session_summary_completed.value
+
+
+@dataclass
 class ReasoningStartedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.reasoning_started.value
 
@@ -348,6 +361,8 @@ TeamRunOutputEvent = Union[
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
+    SessionSummaryStartedEvent,
+    SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
@@ -372,6 +387,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     TeamRunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     TeamRunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
+    TeamRunEvent.session_summary_started.value: SessionSummaryStartedEvent,
+    TeamRunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     TeamRunEvent.tool_call_started.value: ToolCallStartedEvent,
     TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     TeamRunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,

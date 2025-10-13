@@ -25,6 +25,8 @@ from agno.run.agent import (
     RunOutput,
     RunPausedEvent,
     RunStartedEvent,
+    SessionSummaryCompletedEvent,
+    SessionSummaryStartedEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
@@ -44,6 +46,8 @@ from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
+from agno.run.team import SessionSummaryCompletedEvent as TeamSessionSummaryCompletedEvent
+from agno.run.team import SessionSummaryStartedEvent as TeamSessionSummaryStartedEvent
 from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
@@ -271,6 +275,42 @@ def create_memory_update_completed_event(from_run_response: RunOutput) -> Memory
 
 def create_team_memory_update_completed_event(from_run_response: TeamRunOutput) -> TeamMemoryUpdateCompletedEvent:
     return TeamMemoryUpdateCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_session_summary_started_event(from_run_response: RunOutput) -> SessionSummaryStartedEvent:
+    return SessionSummaryStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_session_summary_started_event(from_run_response: TeamRunOutput) -> TeamSessionSummaryStartedEvent:
+    return TeamSessionSummaryStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_session_summary_completed_event(from_run_response: RunOutput) -> SessionSummaryCompletedEvent:
+    return SessionSummaryCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_session_summary_completed_event(from_run_response: TeamRunOutput) -> TeamSessionSummaryCompletedEvent:
+    return TeamSessionSummaryCompletedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore

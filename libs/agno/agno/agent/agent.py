@@ -4083,19 +4083,26 @@ class Agent:
                     log_warning("Unable to add messages to memory")
 
             # Create session summary
+            session_summary_future = None
             if self.session_summary_manager is not None:
                 log_debug("Creating session summary.")
-                futures.append(
-                    executor.submit(
-                        self.session_summary_manager.create_session_summary,  # type: ignore
-                        session=session,
-                    )
+                session_summary_future = executor.submit(
+                    self.session_summary_manager.create_session_summary,  # type: ignore
+                    session=session,
                 )
+                futures.append(session_summary_future)
 
             if futures:
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
                         create_memory_update_started_event(from_run_response=run_response), run_response
+                    )
+
+                # Emit session summary started event after memory update started
+                if session_summary_future is not None and self.stream_intermediate_steps:
+                    from agno.utils.events import create_session_summary_started_event
+                    yield self._handle_event(
+                        create_session_summary_started_event(from_run_response=run_response), run_response
                     )
 
                 # Wait for all operations to complete and handle any errors
@@ -4104,6 +4111,13 @@ class Agent:
                         future.result()
                     except Exception as e:
                         log_warning(f"Error in memory/summary operation: {str(e)}")
+
+                # Emit session summary completed event before memory update completed
+                if session_summary_future is not None and self.stream_intermediate_steps:
+                    from agno.utils.events import create_session_summary_completed_event
+                    yield self._handle_event(
+                        create_session_summary_completed_event(from_run_response=run_response), run_response
+                    )
 
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
@@ -4154,13 +4168,13 @@ class Agent:
                 log_warning("Unable to add messages to memory")
 
         # Create session summary
+        session_summary_task = None
         if self.session_summary_manager is not None:
             log_debug("Creating session summary.")
-            tasks.append(
-                self.session_summary_manager.acreate_session_summary(
-                    session=session,
-                )
+            session_summary_task = self.session_summary_manager.acreate_session_summary(
+                session=session,
             )
+            tasks.append(session_summary_task)
 
         if tasks:
             if self.stream_intermediate_steps:
@@ -4168,11 +4182,25 @@ class Agent:
                     create_memory_update_started_event(from_run_response=run_response), run_response
                 )
 
+            # Emit session summary started event after memory update started
+            if session_summary_task is not None and self.stream_intermediate_steps:
+                from agno.utils.events import create_session_summary_started_event
+                yield self._handle_event(
+                    create_session_summary_started_event(from_run_response=run_response), run_response
+                )
+
             # Execute all tasks concurrently and handle any errors
             try:
                 await asyncio.gather(*tasks)
             except Exception as e:
                 log_warning(f"Error in memory/summary operation: {str(e)}")
+
+            # Emit session summary completed event before memory update completed
+            if session_summary_task is not None and self.stream_intermediate_steps:
+                from agno.utils.events import create_session_summary_completed_event
+                yield self._handle_event(
+                    create_session_summary_completed_event(from_run_response=run_response), run_response
+                )
 
             if self.stream_intermediate_steps:
                 yield self._handle_event(
