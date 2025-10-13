@@ -1623,9 +1623,12 @@ class Model(ABC):
 
             try:
                 async for item in function_call.result:
-                    # This function yields agent/team run events
-                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                        item, tuple(get_args(TeamRunOutputEvent))
+                    # This function yields agent/team/workflow run events
+                    if isinstance(
+                        item,
+                        tuple(get_args(RunOutputEvent))
+                        + tuple(get_args(TeamRunOutputEvent))
+                        + tuple(get_args(WorkflowRunOutputEvent)),
                     ):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
@@ -1641,6 +1644,16 @@ class Model(ABC):
 
                             if isinstance(item, CustomEvent):
                                 function_call_output += str(item)
+
+                            # For WorkflowCompletedEvent, extract content for final output
+                            from agno.run.workflow import WorkflowCompletedEvent
+
+                            if isinstance(item, WorkflowCompletedEvent):
+                                if item.content is not None:
+                                    if isinstance(item.content, BaseModel):
+                                        function_call_output += item.content.model_dump_json()
+                                    else:
+                                        function_call_output += str(item.content)
 
                         # Put the event into the queue to be yielded
                         await event_queue.put(item)
@@ -1732,9 +1745,12 @@ class Model(ABC):
                 # Events from async generators were already yielded in real-time above
             elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
                 for item in function_call.result:
-                    # This function yields agent/team run events
-                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                        item, tuple(get_args(TeamRunOutputEvent))
+                    # This function yields agent/team/workflow run events
+                    if isinstance(
+                        item,
+                        tuple(get_args(RunOutputEvent))
+                        + tuple(get_args(TeamRunOutputEvent))
+                        + tuple(get_args(WorkflowRunOutputEvent)),
                     ):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):

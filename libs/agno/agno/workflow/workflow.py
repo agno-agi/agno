@@ -2426,6 +2426,346 @@ class Workflow:
 
             return workflow_run_response
 
+    def _async_initialize_workflow_agent(
+        self,
+        session: WorkflowSession,
+        execution_input: WorkflowExecutionInput,
+        session_state: Optional[Dict[str, Any]],
+        stream_intermediate_steps: bool = False,
+    ) -> None:
+        """Initialize the workflow agent with async tools (but NOT context - that's passed per-run)"""
+        from agno.tools.function import Function
+
+        workflow_tool_func = self.agent.async_create_workflow_tool(  # type: ignore
+            workflow=self,
+            session=session,
+            execution_input=execution_input,
+            session_state=session_state,
+            stream_intermediate_steps=stream_intermediate_steps,
+        )
+        workflow_tool = Function.from_callable(workflow_tool_func)
+
+        self.agent.tools = [workflow_tool]  # type: ignore
+
+        log_debug("Workflow agent initialized with async run_workflow tool")
+
+    async def _aexecute_workflow_agent(
+        self,
+        user_input: Union[str, Dict[str, Any], List[Any], BaseModel],
+        session: WorkflowSession,
+        execution_input: WorkflowExecutionInput,
+        session_state: Optional[Dict[str, Any]],
+        workflow_run_response: WorkflowRunOutput,
+        stream: bool = False,
+        stream_intermediate_steps: bool = False,
+        **kwargs: Any,
+    ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
+        """
+        Execute the workflow agent asynchronously in streaming or non-streaming mode.
+
+        The agent decides whether to run the workflow or answer directly from history.
+
+        Args:
+            user_input: The user's input
+            session: The workflow session
+            execution_input: The execution input
+            session_state: The session state
+            workflow_run_response: The workflow run response object to populate
+            stream: Whether to stream the response
+            stream_intermediate_steps: Whether to stream intermediate steps
+
+        Returns:
+            WorkflowRunOutput if stream=False, AsyncIterator[WorkflowRunOutputEvent] if stream=True
+        """
+        # Convert input to string for the agent
+        if isinstance(user_input, str):
+            agent_input = user_input
+        elif isinstance(user_input, BaseModel):
+            agent_input = user_input.model_dump_json(exclude_none=True)
+        else:
+            agent_input = str(user_input)
+
+        if stream:
+            return self._aexecute_workflow_agent_streaming(
+                agent_input=agent_input,
+                session=session,
+                execution_input=execution_input,
+                session_state=session_state,
+                workflow_run_response=workflow_run_response,
+                stream_intermediate_steps=stream_intermediate_steps,
+                **kwargs,
+            )
+        else:
+            return await self._aexecute_workflow_agent_non_streaming(
+                agent_input=agent_input,
+                session=session,
+                execution_input=execution_input,
+                session_state=session_state,
+                workflow_run_response=workflow_run_response,
+            )
+
+    async def _aexecute_workflow_agent_streaming(
+        self,
+        agent_input: str,
+        session: WorkflowSession,
+        execution_input: WorkflowExecutionInput,
+        session_state: Optional[Dict[str, Any]],
+        workflow_run_response: WorkflowRunOutput,
+        stream_intermediate_steps: bool = False,
+        **kwargs: Any,
+    ) -> AsyncIterator[WorkflowRunOutputEvent]:
+        """
+        Execute the workflow agent asynchronously in streaming mode.
+
+        The agent's tool (run_workflow) is an async generator that yields workflow events directly.
+        These events bubble up through the agent's streaming and are yielded here.
+        We filter to only yield WorkflowRunOutputEvent to the CLI.
+
+        Yields:
+            WorkflowRunOutputEvent: Events from workflow execution (agent events are filtered)
+        """
+        from typing import get_args
+
+        from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
+
+        logger.info("Workflow agent enabled - async streaming mode")
+        log_debug(f"User input: {agent_input}")
+
+        self._async_initialize_workflow_agent(session, execution_input, session_state, stream_intermediate_steps=True)
+
+        dependencies = self._get_workflow_agent_dependencies(session)
+
+        agent_response: Optional[RunOutput] = None
+        workflow_executed = False
+
+        from agno.run.agent import RunContentEvent
+        from agno.run.team import RunContentEvent as TeamRunContentEvent
+
+        log_debug(f"Executing async workflow agent with streaming - input: {agent_input[:100]}...")
+
+        # Run the agent in streaming mode and yield all events
+        async for event in self.agent.arun(
+            input=agent_input,
+            stream=True,
+            stream_intermediate_steps=stream_intermediate_steps,
+            yield_run_response=True,
+            dependencies=dependencies,  # Pass context dynamically per-run
+        ):  # type: ignore
+            if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
+                yield event
+
+                if isinstance(event, WorkflowCompletedEvent):
+                    workflow_executed = True
+                    log_debug("Workflow execution detected via WorkflowCompletedEvent")
+                    # Update workflow_run_response with the completed workflow data
+                    workflow_run_response.content = event.content
+                    workflow_run_response.status = RunStatus.completed
+                    workflow_run_response.step_results = event.step_results or []
+            elif isinstance(event, (RunContentEvent, TeamRunContentEvent)):
+                yield event
+
+            # Capture the final RunOutput (but don't yield it)
+            if isinstance(event, RunOutput):
+                agent_response = event
+                log_debug(
+                    f"Agent response: {str(agent_response.content)[:100] if agent_response.content else 'None'}..."
+                )
+
+        if agent_response:
+            # Set parent_run_id to link agent run to this workflow run
+            agent_response.parent_run_id = workflow_run_response.run_id
+            agent_response.workflow_id = workflow_run_response.workflow_id
+
+        # Handle direct answer case (no workflow execution)
+        if not workflow_executed:
+            logger.info("=" * 80)
+            logger.info("WORKFLOW AGENT: Answered directly from session history (async)")
+            logger.info(
+                f"  ➜ Response: {str(agent_response.content)[:100] if agent_response and agent_response.content else 'None'}..."
+            )
+            logger.info("=" * 80)
+
+            workflow_run_response.content = agent_response.content if agent_response else ""
+            workflow_run_response.status = RunStatus.completed
+            workflow_run_response.workflow_agent_run = agent_response
+
+            # Update the run in session
+            session.upsert_run(run=workflow_run_response)
+            # Save session
+            self.save_session(session=session)
+
+            log_debug(f"Agent decision: workflow_executed={workflow_executed}")
+
+            # Yield a workflow completed event with the agent's direct response
+            completed_event = WorkflowCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                content=workflow_run_response.content,
+                workflow_name=workflow_run_response.workflow_name,
+                workflow_id=workflow_run_response.workflow_id,
+                session_id=workflow_run_response.session_id,
+                step_results=[],
+                metadata={"agent_direct_response": True},
+            )
+            yield completed_event
+        else:
+            # Workflow was executed by the tool
+            logger.info("=" * 80)
+            logger.info("WORKFLOW AGENT: Workflow execution completed (async)")
+            logger.info("=" * 80)
+
+            log_debug("Reloading session from database to get the latest workflow run...")
+            reloaded_session = self.get_session(session_id=session.session_id)
+
+            if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
+                # Get the last run (which is the one just created by the tool)
+                last_run = reloaded_session.runs[-1]
+                log_debug(f"Retrieved latest workflow run: {last_run.run_id}")
+                log_debug(f"Total workflow runs in session: {len(reloaded_session.runs)}")
+
+                # Update the last run directly with workflow_agent_run
+                last_run.workflow_agent_run = agent_response
+
+                # Save the reloaded session (which has the updated run)
+                self.save_session(session=reloaded_session)
+
+                # Update workflow_run_response for streaming events
+                workflow_run_response.content = last_run.content
+                workflow_run_response.status = last_run.status
+                workflow_run_response.run_id = last_run.run_id
+                workflow_run_response.created_at = last_run.created_at
+                workflow_run_response.step_results = last_run.step_results
+                workflow_run_response.step_executor_runs = last_run.step_executor_runs
+                workflow_run_response.metrics = last_run.metrics
+                workflow_run_response.events = last_run.events or []
+                workflow_run_response.images = last_run.images
+                workflow_run_response.videos = last_run.videos
+                workflow_run_response.audio = last_run.audio
+                workflow_run_response.workflow_agent_run = agent_response
+
+                log_debug(f"Agent decision: workflow_executed={workflow_executed}")
+            else:
+                log_warning("Could not reload session or no runs found after workflow execution")
+
+    async def _aexecute_workflow_agent_non_streaming(
+        self,
+        agent_input: str,
+        session: WorkflowSession,
+        execution_input: WorkflowExecutionInput,
+        session_state: Optional[Dict[str, Any]],
+        workflow_run_response: WorkflowRunOutput,
+    ) -> WorkflowRunOutput:
+        """
+        Execute the workflow agent asynchronously in non-streaming mode.
+
+        The agent decides whether to run the workflow or answer directly from history.
+
+        Returns:
+            WorkflowRunOutput: The workflow run output with agent response
+        """
+        logger.info("Workflow agent enabled - async non-streaming mode")
+        log_debug(f"User input: {agent_input}")
+
+        # Initialize the agent
+        self._async_initialize_workflow_agent(session, execution_input, session_state)
+
+        # Build dependencies with workflow context
+        dependencies = self._get_workflow_agent_dependencies(session)
+
+        # Run the agent
+        log_debug(f"Executing async workflow agent with input: {agent_input}")
+        agent_response: RunOutput = await self.agent.arun(
+            input=agent_input,
+            dependencies=dependencies,
+        )  # type: ignore
+
+        # Check if the agent called the workflow tool
+        workflow_executed = False
+        if agent_response.messages:
+            for message in agent_response.messages:
+                if message.role == "assistant" and message.tool_calls:
+                    # Check if the tool call is specifically for run_workflow
+                    for tool_call in message.tool_calls:
+                        # Handle both dict and object formats
+                        if isinstance(tool_call, dict):
+                            tool_name = tool_call.get("function", {}).get("name", "")
+                        else:
+                            tool_name = tool_call.function.name if hasattr(tool_call, "function") else ""
+
+                        if tool_name == "run_workflow":
+                            workflow_executed = True
+                            break
+                    if workflow_executed:
+                        break
+
+        log_debug(f"Async workflow agent execution complete. Workflow executed: {workflow_executed}")
+
+        if agent_response:
+            # Set parent_run_id to link agent run to this workflow run
+            agent_response.parent_run_id = workflow_run_response.run_id
+            agent_response.workflow_id = workflow_run_response.workflow_id
+
+        # Handle direct answer case (no workflow execution)
+        if not workflow_executed:
+            logger.info("=" * 80)
+            logger.info("WORKFLOW AGENT: Answered directly from session history (async)")
+            logger.info("  ➜ No workflow execution needed")
+            logger.info("=" * 80)
+
+            log_debug(f"Agent response: {str(agent_response.content)[:200]}...")
+
+            workflow_run_response.content = agent_response.content
+            workflow_run_response.status = RunStatus.completed
+            workflow_run_response.workflow_agent_run = agent_response
+
+            # Update the run in session
+            session.upsert_run(run=workflow_run_response)
+            self.save_session(session=session)
+
+            log_debug(f"Agent decision: workflow_executed={workflow_executed}")
+
+            return workflow_run_response
+        else:
+            # Workflow was executed by the tool
+            logger.info("=" * 80)
+            logger.info("WORKFLOW AGENT: Called run_workflow tool (async)")
+            logger.info("  ➜ Workflow was executed, retrieving results...")
+            logger.info("=" * 80)
+
+            log_debug("Reloading session from database to get the latest workflow run...")
+            reloaded_session = self.get_session(session_id=session.session_id)
+
+            if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
+                # Get the last run (which is the one just created by the tool)
+                last_run = reloaded_session.runs[-1]
+                log_debug(f"Retrieved latest workflow run: {last_run.run_id}")
+                log_debug(f"Total workflow runs in session: {len(reloaded_session.runs)}")
+
+                # Update the last run directly with workflow_agent_run
+                last_run.workflow_agent_run = agent_response
+
+                # Save the reloaded session (which has the updated run)
+                self.save_session(session=reloaded_session)
+
+                # Update workflow_run_response for return value
+                workflow_run_response.content = last_run.content
+                workflow_run_response.status = last_run.status
+                workflow_run_response.run_id = last_run.run_id
+                workflow_run_response.created_at = last_run.created_at
+                workflow_run_response.step_results = last_run.step_results
+                workflow_run_response.step_executor_runs = last_run.step_executor_runs
+                workflow_run_response.metrics = last_run.metrics
+                workflow_run_response.events = last_run.events or []
+                workflow_run_response.images = last_run.images
+                workflow_run_response.videos = last_run.videos
+                workflow_run_response.audio = last_run.audio
+                workflow_run_response.workflow_agent_run = agent_response
+
+                log_debug(f"Agent decision: workflow_executed={workflow_executed}")
+            else:
+                log_warning("Could not reload session or no runs found after workflow execution")
+
+            return workflow_run_response
+
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a running workflow execution.
 
@@ -2732,6 +3072,18 @@ class Workflow:
         )
 
         self.update_agents_and_teams_session_info()
+
+        if self.agent is not None:
+            return await self._aexecute_workflow_agent(
+                user_input=input,  # type: ignore
+                session=workflow_session,
+                execution_input=inputs,
+                session_state=session_state,
+                workflow_run_response=workflow_run_response,
+                stream=stream,
+                stream_intermediate_steps=stream_intermediate_steps,
+                **kwargs,
+            )
 
         if stream:
             return self._aexecute_stream(

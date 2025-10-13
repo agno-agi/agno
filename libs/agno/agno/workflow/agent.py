@@ -185,3 +185,125 @@ class WorkflowAgent(Agent):
                     return str(result.content)
 
         return run_workflow
+
+    def async_create_workflow_tool(
+        self,
+        workflow: "Any",  # Workflow type
+        session: "WorkflowSession",
+        execution_input: "WorkflowExecutionInput",
+        session_state: Optional[Dict[str, Any]],
+        stream_intermediate_steps: bool = False,
+    ) -> Callable:
+        """
+        Create the async workflow execution tool that this agent can call.
+        This is the async counterpart of create_workflow_tool.
+        
+        Args:
+            workflow: The workflow instance
+            session: The workflow session
+            execution_input: The execution input
+            session_state: The session state
+            stream_intermediate_steps: Whether to stream intermediate steps
+            
+        Returns:
+            Async callable tool function
+        """
+        from datetime import datetime
+        from uuid import uuid4
+
+        from pydantic import BaseModel
+
+        from agno.run.workflow import WorkflowRunOutput
+        from agno.utils.log import log_debug
+        from agno.workflow.types import WorkflowExecutionInput
+
+        async def run_workflow(query: str):
+            """
+            Execute the complete workflow with the given query asynchronously.
+            Use this tool when you need to run the workflow to answer the user's question.
+            
+            Args:
+                query: The input query/question to process through the workflow
+                
+            Returns:
+                The workflow execution result (str in non-streaming, async generator in streaming)
+            """
+            # Reload session to get latest data from database
+            # This ensures we don't overwrite any updates made after the tool was created
+            fresh_session = workflow.get_session(session_id=session.session_id)
+            if fresh_session is None:
+                fresh_session = session  # Fallback to closure session if reload fails
+                log_info(f"Fallback to closure session: {len(fresh_session.runs or [])} runs")
+            else:
+                log_info(f"Reloaded session before async tool execution: {len(fresh_session.runs or [])} runs")
+
+            # Create a new run ID for this execution
+            run_id = str(uuid4())
+            log_debug(f"Created new run ID: {run_id}")
+
+            # Create workflow run response
+            workflow_run_response = WorkflowRunOutput(
+                run_id=run_id,
+                input=query,
+                session_id=fresh_session.session_id,
+                workflow_id=workflow.id,
+                workflow_name=workflow.name,
+                created_at=int(datetime.now().timestamp()),
+            )
+
+            workflow_execution_input = WorkflowExecutionInput(
+                input=query,
+                additional_data=execution_input.additional_data,
+                audio=execution_input.audio,
+                images=execution_input.images,
+                videos=execution_input.videos,
+                files=execution_input.files,
+            )
+
+            if stream_intermediate_steps:
+                log_debug("Executing workflow with async streaming...")
+
+                final_content = ""
+                async for event in workflow._aexecute_stream(
+                    session=fresh_session,
+                    execution_input=workflow_execution_input,
+                    workflow_run_response=workflow_run_response,
+                    session_state=session_state,
+                    stream_intermediate_steps=True,
+                ):
+                    yield event
+
+                    from agno.run.workflow import WorkflowCompletedEvent
+
+                    if isinstance(event, WorkflowCompletedEvent):
+                        final_content = str(event.content) if event.content else ""
+
+                logger.info("=" * 80)
+                logger.info(f"ASYNC TOOL EXECUTION COMPLETE: run_workflow")
+                logger.info("=" * 80)
+
+                yield final_content
+            else:
+                log_debug("Executing workflow steps asynchronously...")
+
+                result = await workflow._aexecute(
+                    session=fresh_session,
+                    execution_input=workflow_execution_input,
+                    workflow_run_response=workflow_run_response,
+                    session_state=session_state,
+                )
+
+                logger.info("=" * 80)
+                logger.info(f"ASYNC TOOL EXECUTION COMPLETE: run_workflow")
+                logger.info(f"  ➜ Run ID: {result.run_id}")
+                logger.info(f"  ➜ Result length: {len(str(result.content)) if result.content else 0} chars")
+                logger.info("=" * 80)
+
+                if isinstance(result.content, str):
+                    yield result.content
+                elif isinstance(result.content, BaseModel):
+                    yield result.content.model_dump_json(exclude_none=True)
+                else:
+                    yield str(result.content)
+
+        return run_workflow

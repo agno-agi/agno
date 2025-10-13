@@ -11,10 +11,9 @@ from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.team import TeamRunOutput
 
 if TYPE_CHECKING:
-    from agno.workflow.types import StepOutput, WorkflowAgentResponse, WorkflowMetrics
+    from agno.workflow.types import StepOutput, WorkflowMetrics
 else:
     StepOutput = Any
-    WorkflowAgentResponse = Any
     WorkflowMetrics = Any
 
 
@@ -601,12 +600,9 @@ class WorkflowRunOutput:
         workflow_agent_run = None
         if workflow_agent_run_data:
             if isinstance(workflow_agent_run_data, dict):
-                # Check if it's the old WorkflowAgentResponse format or new RunOutput format
                 if "agent_id" in workflow_agent_run_data or "messages" in workflow_agent_run_data:
-                    # New format: RunOutput
                     workflow_agent_run = RunOutput.from_dict(workflow_agent_run_data)
                 else:
-                    # Old format: WorkflowAgentResponse - skip for now, will be migrated
                     workflow_agent_run = None
             elif isinstance(workflow_agent_run_data, RunOutput):
                 workflow_agent_run = workflow_agent_run_data
