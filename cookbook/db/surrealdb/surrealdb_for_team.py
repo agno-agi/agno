@@ -61,7 +61,7 @@ web_searcher = Agent(
 
 
 hn_team = Team(
-    name="HackerNews Team", 
+    name="HackerNews Team",
     model=Claude(id="claude-sonnet-4-5-20250929"),
     members=[hn_researcher, web_searcher],
     db=db,
