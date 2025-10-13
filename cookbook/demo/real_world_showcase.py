@@ -25,26 +25,14 @@ from textwrap import dedent
 from agno.os import AgentOS
 
 # Import all single agents
-from agents.education_tutor import (
-    education_tutor,
-    load_education_knowledge,
-)
-from agents.ecommerce_product_recommender import ecommerce_recommender
-from agents.legal_document_analyzer import (
-    legal_analyzer,
-    load_legal_knowledge,
-)
-from agents.personal_finance_manager import personal_finance_agent
-from agents.travel_planning_assistant import travel_planner
+from agents.agent_with_storage import travel_planner
+from agents.agent_with_tools import personal_finance_agent
+from agents.knowledge_agent import education_tutor, load_education_knowledge
+from agents.structured_output_agent import ecommerce_recommender
 
 # Import all teams
-from teams.business_intelligence_team import bi_analyst_team
-from teams.customer_support_team import customer_support_team
-from teams.healthcare_symptom_checker_team import (
-    healthcare_team,
-    load_medical_knowledge,
-)
-from teams.hr_recruitment_team import hr_recruitment_team
+from teams.multi_agent_team import customer_support_team
+from teams.team_with_knowledge import healthcare_team, load_medical_knowledge
 
 # Import workflows
 from workflows.content_creation_pipeline import content_creation_workflow
@@ -57,7 +45,6 @@ from workflows.content_creation_pipeline import content_creation_workflow
 async def initialize_knowledge_bases():
     """Initialize all knowledge bases with content"""
     await asyncio.gather(
-        load_legal_knowledge(),
         load_medical_knowledge(),
         load_education_knowledge(),
         return_exceptions=True,
@@ -71,36 +58,29 @@ async def initialize_knowledge_bases():
 # Create AgentOS instance with all use cases
 agent_os = AgentOS(
     description=dedent("""\
-        Real-World Use Cases Showcase - 10 Innovative AI Applications
+        Real-World Use Cases Showcase - Agno Framework Demo
 
-        This demo showcases the full capabilities of the Agno framework through
-        practical, real-world use cases spanning customer support, content creation,
-        finance, legal, HR, e-commerce, healthcare, business intelligence, education,
-        and travel planning.
-
-        Each use case demonstrates different Agno features:
+        This demo showcases core Agno framework capabilities through
+        practical examples demonstrating:
         - Memory & Knowledge (RAG, user preferences, conversation history)
         - Team Coordination (multi-agent workflows)
-        - Tool Integration (APIs, databases, web scraping)
+        - Tool Integration (APIs, databases)
         - Structured Outputs (Pydantic schemas)
         - Hooks & Validation (input/output validation)
-        - Async Operations
+        - Storage & Persistence
     """),
     agents=[
-        personal_finance_agent,
-        legal_analyzer,
-        ecommerce_recommender,
-        education_tutor,
-        travel_planner,
+        personal_finance_agent,  # Tools (YFinance)
+        ecommerce_recommender,  # Structured Output
+        education_tutor,  # Knowledge/RAG
+        travel_planner,  # Storage
     ],
     teams=[
-        customer_support_team,
-        hr_recruitment_team,
-        healthcare_team,
-        bi_analyst_team,
+        customer_support_team,  # Multi-Agent
+        healthcare_team,  # Team + Knowledge + Hooks
     ],
     workflows=[
-        content_creation_workflow,
+        content_creation_workflow,  # Workflow Example
     ],
     config=str(Path(__file__).parent / "config.yaml"),
 )
@@ -119,17 +99,17 @@ if __name__ == "__main__":
     asyncio.run(initialize_knowledge_bases())
 
     print("\n✅ All systems ready!")
-    print("\n📋 Available Use Cases:")
-    print("   1. Customer Support AI Team - Intelligent ticket classification & resolution")
-    print("   2. Content Creation Pipeline - Automated research, writing & editing")
-    print("   3. Personal Finance Manager - Investment analysis & financial advice")
-    print("   4. Legal Document Analyzer - Contract review & legal research")
-    print("   5. HR Recruitment Assistant - Resume screening & candidate evaluation")
-    print("   6. E-commerce Product Recommender - Personalized shopping assistant")
-    print("   7. Healthcare Symptom Checker - Educational health information")
-    print("   8. Business Intelligence Team - Data analysis & strategic insights")
-    print("   9. Education Tutor - Adaptive personalized learning")
-    print("   10. Travel Planning Assistant - Comprehensive trip planning")
+    print("\n📋 Agno Framework Features Demonstrated:")
+    print("\n   AGENTS (4):")
+    print("   • Agent with Tools (YFinance) - Personal finance manager")
+    print("   • Structured Output Agent - E-commerce recommender")
+    print("   • Knowledge Agent (RAG) - Education tutor")
+    print("   • Agent with Storage - Travel planner")
+    print("\n   TEAMS (2):")
+    print("   • Multi-Agent Team - Customer support workflow")
+    print("   • Team with Knowledge + Hooks - Healthcare symptom checker")
+    print("\n   WORKFLOWS (1):")
+    print("   • Workflow Example - Content creation pipeline")
 
     print("\n🌐 Starting AgentOS on http://localhost:7780")
     print("=" * 80 + "\n")

@@ -8,7 +8,9 @@ from agno.models.openai.chat import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 from pydantic import BaseModel, Field
 
-from shared.database import db
+from agno.db.sqlite.sqlite import SqliteDb
+
+db = SqliteDb(id="real-world-db", db_file="tmp/real_world.db")
 
 
 class FinancialAdvice(BaseModel):

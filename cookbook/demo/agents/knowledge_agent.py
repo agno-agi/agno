@@ -5,12 +5,14 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.anthropic import Claude
+from agno.models.openai.chat import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 from pydantic import BaseModel, Field
 
-from shared.database import db
+from agno.db.sqlite.sqlite import SqliteDb
+
+db = SqliteDb(id="real-world-db", db_file="tmp/real_world.db")
 
 
 class LearningAssessment(BaseModel):
@@ -40,7 +42,7 @@ education_tutor = Agent(
     id="education-tutor",
     name="Adaptive Learning Tutor",
     session_id="education_tutor_session",
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=OpenAIChat(id="gpt-4o"),
     knowledge=education_knowledge,
     tools=[DuckDuckGoTools()],
     db=db,
@@ -77,11 +79,51 @@ async def load_education_knowledge():
     """Load educational resources into knowledge base"""
     try:
         print("\n📚 Loading educational resources into knowledge base...")
-        # Example: Load educational content
+        # Example: Load sample educational content
         # In production, load curated curriculum content
+        sample_education_content = """
+        Python Programming Fundamentals:
+
+        Variables and Data Types:
+        - Variables store data values (numbers, strings, lists)
+        - Use descriptive names (user_name, not x)
+        - Python is dynamically typed (no type declaration needed)
+
+        Control Flow:
+        - if/elif/else for conditional logic
+        - for loops iterate over sequences
+        - while loops continue until condition is False
+        - break exits loops early, continue skips iteration
+
+        Functions:
+        - Functions organize reusable code blocks
+        - Define with def function_name(parameters):
+        - Return values with return statement
+        - Functions can have default parameter values
+
+        Data Structures:
+        - Lists: Ordered, mutable sequences [1, 2, 3]
+        - Tuples: Ordered, immutable sequences (1, 2, 3)
+        - Dictionaries: Key-value pairs {"name": "John"}
+        - Sets: Unordered unique values {1, 2, 3}
+
+        Best Practices:
+        - Write clear, readable code with comments
+        - Follow PEP 8 style guidelines
+        - Handle errors with try/except blocks
+        - Test your code thoroughly
+        - Break complex problems into smaller functions
+
+        Common Beginner Mistakes:
+        - Forgetting colons after if/for/while/def statements
+        - Incorrect indentation (use 4 spaces)
+        - Modifying lists while iterating over them
+        - Not handling exceptions properly
+        """
+
         await education_knowledge.add_content_async(
             name="Python Tutorial",
-            url="https://docs.python.org/3/tutorial/index.html",
+            text_content=sample_education_content,
             skip_if_exists=True,
         )
         print("✅ Education knowledge base loaded successfully")

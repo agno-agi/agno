@@ -7,14 +7,23 @@ from agno.models.openai.chat import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from pydantic import BaseModel, Field
 
-from shared.database import db
+from agno.db.sqlite.sqlite import SqliteDb
+
+db = SqliteDb(id="real-world-db", db_file="tmp/real_world.db")
+
+
+class Product(BaseModel):
+    """Individual product recommendation"""
+    name: str = Field(description="Product name")
+    description: str = Field(description="Product description")
+    why_recommended: str = Field(description="Why this product is recommended for the user")
 
 
 class ProductRecommendation(BaseModel):
     """Structured product recommendation"""
 
-    products: list[dict[str, str]] = Field(
-        description="List of recommended products with name, description, and why recommended"
+    products: list[Product] = Field(
+        description="List of recommended products with details"
     )
     personalization_notes: str = Field(
         description="How recommendations were personalized"

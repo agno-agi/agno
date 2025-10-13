@@ -6,7 +6,6 @@ from agno.agent import Agent
 from agno.exceptions import InputCheckError
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.anthropic import Claude
 from agno.models.openai.chat import OpenAIChat
 from agno.run.team import TeamRunInput
 from agno.team.team import Team
@@ -14,7 +13,9 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 from pydantic import BaseModel, Field
 
-from shared.database import db
+from agno.db.sqlite.sqlite import SqliteDb
+
+db = SqliteDb(id="real-world-db", db_file="tmp/real_world.db")
 
 
 class HealthAssessment(BaseModel):
@@ -101,7 +102,7 @@ triage_nurse = Agent(
 health_specialist = Agent(
     name="Health Specialist",
     role="Detailed health information and recommendations",
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=OpenAIChat(id="gpt-4o"),
     knowledge=medical_knowledge,
     description="Health information specialist providing educational content",
     instructions=[
@@ -160,9 +161,45 @@ async def load_medical_knowledge():
     """Load medical information into knowledge base"""
     try:
         print("\n📚 Loading medical information into knowledge base...")
+        # Example: Load sample medical information
+        # In production, load from verified medical sources
+        sample_medical_content = """
+        Common Symptoms and When to Seek Care:
+
+        Urgent Care Situations:
+        - High fever (over 103°F/39.4°C) lasting more than 3 days
+        - Persistent vomiting or diarrhea causing dehydration
+        - Severe headache with vision changes
+        - Difficulty breathing or shortness of breath
+        - Severe abdominal pain
+
+        Self-Care Guidelines:
+        - Stay hydrated with water and electrolyte drinks
+        - Get adequate rest (7-9 hours for adults)
+        - Manage mild pain with over-the-counter medication
+        - Monitor temperature and symptoms
+        - Wash hands frequently to prevent illness spread
+
+        When to See a Doctor:
+        - Symptoms persisting longer than 7-10 days
+        - Worsening symptoms despite self-care
+        - New or unusual symptoms appearing
+        - Chronic condition changes
+        - Medication side effects
+
+        Prevention Tips:
+        - Regular exercise (150 minutes per week)
+        - Balanced diet with fruits and vegetables
+        - Adequate sleep and stress management
+        - Regular health screenings
+        - Stay up-to-date with vaccinations
+
+        DISCLAIMER: This is educational information only. Always consult qualified healthcare professionals for medical advice.
+        """
+
         await medical_knowledge.add_content_async(
             name="General Health Info",
-            url="https://www.mayoclinic.org",
+            text_content=sample_medical_content,
             skip_if_exists=True,
         )
         print("✅ Medical knowledge base loaded successfully")

@@ -7,7 +7,23 @@ from agno.models.openai.chat import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from pydantic import BaseModel, Field
 
-from shared.database import db
+from agno.db.sqlite.sqlite import SqliteDb
+
+db = SqliteDb(id="real-world-db", db_file="tmp/real_world.db")
+
+
+class Activity(BaseModel):
+    """Individual activity recommendation"""
+    day: str = Field(description="Day number or date")
+    activity_name: str = Field(description="Name of the activity")
+    description: str = Field(description="Activity description and details")
+    duration: str = Field(description="Estimated duration")
+
+
+class CostBreakdown(BaseModel):
+    """Cost breakdown by category"""
+    category: str = Field(description="Cost category (e.g., flights, accommodation, food)")
+    estimated_amount: str = Field(description="Estimated cost for this category")
 
 
 class TravelItinerary(BaseModel):
@@ -19,11 +35,11 @@ class TravelItinerary(BaseModel):
     best_time_to_visit: str
     flight_options: list[str] = Field(description="Flight recommendations")
     accommodation_options: list[str] = Field(description="Hotel/lodging recommendations")
-    activities: list[dict[str, str]] = Field(description="Recommended activities by day")
+    activities: list[Activity] = Field(description="Recommended activities by day")
     restaurants: list[str] = Field(description="Restaurant recommendations")
     local_tips: list[str] = Field(description="Local tips and cultural notes")
     packing_list: list[str] = Field(description="Essential items to pack")
-    estimated_costs: dict[str, str] = Field(description="Breakdown of estimated costs")
+    estimated_costs: list[CostBreakdown] = Field(description="Breakdown of estimated costs")
 
 
 travel_planner = Agent(

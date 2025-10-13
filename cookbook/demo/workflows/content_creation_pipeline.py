@@ -12,7 +12,9 @@ from agno.workflow.types import StepOutput, WorkflowExecutionInput
 from agno.workflow.workflow import Workflow
 from pydantic import BaseModel, Field
 
-from shared.database import db
+from agno.db.sqlite.sqlite import SqliteDb
+
+db = SqliteDb(id="real-world-db", db_file="tmp/real_world.db")
 
 
 class ContentBrief(BaseModel):
