@@ -1525,7 +1525,6 @@ class Agent:
         if dependencies is not None:
             await self._aresolve_run_dependencies(dependencies=dependencies)
 
-
         # 4. Update metadata and session state
         self._update_metadata(session=agent_session)
         if session_state is not None:
@@ -2024,27 +2023,7 @@ class Agent:
             images=images, videos=videos, audios=audio, files=files
         )
 
-<<<<<<< HEAD
         # Resolve variables
-=======
-        # Create RunInput to capture the original user input
-        run_input = RunInput(
-            input_content=validated_input,
-            images=image_artifacts,
-            videos=video_artifacts,
-            audios=audio_artifacts,
-            files=file_artifacts,
-        )
-
-        # Read existing session from storage
-        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-        self._update_metadata(session=agent_session)
-
-        # Update session state from DB
-        session_state = self._load_session_state(session=agent_session, session_state=session_state)
-
-        # Determine run dependencies
->>>>>>> 8414b652fdf9d2cf58653fb9d1f21fb5d5d82359
         run_dependencies = dependencies if dependencies is not None else self.dependencies
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
@@ -2056,7 +2035,6 @@ class Agent:
         )
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
-<<<<<<< HEAD
         # Create RunInput to capture the original user input
         run_input = RunInput(
             input_content=validated_input,
@@ -2068,12 +2046,6 @@ class Agent:
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
-=======
-        effective_filters = knowledge_filters
-        # When filters are passed manually
-        if self.knowledge_filters or knowledge_filters:
-            effective_filters = self._get_effective_filters(knowledge_filters)
->>>>>>> 8414b652fdf9d2cf58653fb9d1f21fb5d5d82359
 
         # Use stream override value when necessary
         if stream is None:
@@ -2128,12 +2100,6 @@ class Agent:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-<<<<<<< HEAD
-        # If no retries are set, use the agent's default retries
-        retries = retries if retries is not None else self.retries
-
-=======
->>>>>>> 8414b652fdf9d2cf58653fb9d1f21fb5d5d82359
         last_exception = None
         num_attempts = retries + 1
 
@@ -2142,26 +2108,13 @@ class Agent:
                 # Pass the new run_response to _arun
                 if stream:
                     return self._arun_stream(  # type: ignore
-<<<<<<< HEAD
                         input=validated_input,
                         run_response=run_response,
                         user_id=user_id,
-=======
-                        run_response=run_response,
-                        session=agent_session,
-                        user_id=user_id,
-                        session_state=session_state,
-                        knowledge_filters=effective_filters,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        metadata=metadata,
->>>>>>> 8414b652fdf9d2cf58653fb9d1f21fb5d5d82359
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
                         yield_run_response=yield_run_response,
                         dependencies=run_dependencies,
-<<<<<<< HEAD
                         session_id=session_id,
                         session_state=session_state,
                         audio=audio,
@@ -2173,33 +2126,18 @@ class Agent:
                         add_dependencies_to_context=add_dependencies,
                         add_session_state_to_context=add_session_state,
                         metadata=metadata,
-=======
                         debug_mode=debug_mode,
->>>>>>> 8414b652fdf9d2cf58653fb9d1f21fb5d5d82359
                         **kwargs,
                     )  # type: ignore[assignment]
                 else:
                     return self._arun(  # type: ignore
-<<<<<<< HEAD
                         input=validated_input,
                         run_response=run_response,
                         user_id=user_id,
-=======
-                        run_response=run_response,
-                        user_id=user_id,
-                        session=agent_session,
-                        session_state=session_state,
-                        knowledge_filters=knowledge_filters,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        metadata=metadata,
->>>>>>> 8414b652fdf9d2cf58653fb9d1f21fb5d5d82359
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
                         yield_run_response=yield_run_response,
                         dependencies=run_dependencies,
-<<<<<<< HEAD
                         session_id=session_id,
                         session_state=session_state,
                         audio=audio,
@@ -2211,9 +2149,7 @@ class Agent:
                         add_dependencies_to_context=add_dependencies,
                         add_session_state_to_context=add_session_state,
                         metadata=metadata,
-=======
                         debug_mode=debug_mode,
->>>>>>> 8414b652fdf9d2cf58653fb9d1f21fb5d5d82359
                         **kwargs,
                     )
 
@@ -2743,15 +2679,6 @@ class Agent:
 
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
-<<<<<<< HEAD
-=======
-        effective_filters = knowledge_filters
-
-        # When filters are passed manually
-        if self.knowledge_filters or knowledge_filters:
-            effective_filters = self._get_effective_filters(knowledge_filters)
-
->>>>>>> 8414b652fdf9d2cf58653fb9d1f21fb5d5d82359
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
 
@@ -2982,29 +2909,22 @@ class Agent:
             # 11. Calculate session metrics
             self._update_session_metrics(session=agent_session, run_response=run_response)
 
-<<<<<<< HEAD
             run_response.status = RunStatus.completed
-=======
-        if self.post_hooks is not None:
-            await self._aexecute_post_hooks(
-                hooks=self.post_hooks,  # type: ignore
-                run_output=run_response,
-                session=session,
-                user_id=user_id,
-                debug_mode=debug_mode,
-                **kwargs,
-            )
 
-        # 4. Save output to file if save_response_to_file is set
-        self.save_run_response_to_file(
-            run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
-        )
->>>>>>> 8414b652fdf9d2cf58653fb9d1f21fb5d5d82359
+            # x. Execute post-hooks
+            if self.post_hooks is not None:
+                await self._aexecute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    session=session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    **kwargs,
+                )
 
             # Convert the response to the structured format if needed
             self._convert_response_to_structured_format(run_response)
 
-            # Set the run duration
             if run_response.metrics:
                 run_response.metrics.stop_timer()
 
@@ -3070,7 +2990,6 @@ class Agent:
         """Continue a previous run.
 
         Steps:
-<<<<<<< HEAD
         1. Resolve dependencies
         2. Read existing session from db
         3. Get knowledge filters
@@ -3093,20 +3012,6 @@ class Agent:
         # 2. Read existing session from db
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
-=======
-        1. Handle any updated tools
-        2. Generate a response from the Model
-        3. Calculate session metrics
-        4. Save output to file if save_response_to_file is set
-        5. Add the run to memory
-        6. Update Agent Memory
-        7. Create the run completed event
-        8. Save session to storage
-        """
-        # Resolve dependencies
-        if dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=dependencies)
->>>>>>> 8414b652fdf9d2cf58653fb9d1f21fb5d5d82359
 
         # 4. Update session state
         if session_state is not None:
@@ -3140,40 +3045,11 @@ class Agent:
         await self._adetermine_tools_for_model(
             model=self.model,
             run_response=run_response,
-<<<<<<< HEAD
             session=agent_session,
             session_state=session_state,
             user_id=user_id,
             async_mode=True,
             knowledge_filters=knowledge_filters,
-=======
-            run_messages=run_messages,
-            response_format=response_format,
-            stream_intermediate_steps=stream_intermediate_steps,
-        ):
-            yield event
-
-        # We should break out of the run function
-        if any(tool_call.is_paused for tool_call in run_response.tools or []):
-            for item in self._handle_agent_run_paused_stream(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-            ):
-                yield item
-            return
-
-        # 3. Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
-
-        run_response.status = RunStatus.completed
-
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
-
-        # 4. Save output to file if save_response_to_file is set
-        self.save_run_response_to_file(
-            run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
->>>>>>> 8414b652fdf9d2cf58653fb9d1f21fb5d5d82359
         )
 
         # 7. Prepare run messages
@@ -3184,18 +3060,10 @@ class Agent:
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
-<<<<<<< HEAD
         try:
             # Start the Run by yielding a RunContinued event
             if stream_intermediate_steps:
                 yield self._handle_event(create_run_continued_event(run_response), run_response)
-=======
-        # 7. Create the run completed event
-        completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
-
-        # 8. Save session to storage
-        self.save_session(session=session)
->>>>>>> 8414b652fdf9d2cf58653fb9d1f21fb5d5d82359
 
             # 8. Handle the updated tools
             async for event in self._ahandle_tool_call_updates_stream(
