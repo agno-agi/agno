@@ -1454,7 +1454,7 @@ class DynamoDb(BaseDb):
         """
         import json
 
-        item = {}
+        item: Dict[str, Any] = {}
         for key, value in data.items():
             if value is not None:
                 if isinstance(value, bool):
@@ -1811,7 +1811,7 @@ class DynamoDb(BaseDb):
 
             if filter_expressions:
                 scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
-            
+
             if expression_values:
                 scan_kwargs["ExpressionAttributeValues"] = expression_values  # type: ignore
 
