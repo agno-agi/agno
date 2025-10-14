@@ -151,6 +151,12 @@ def extract_output_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 
     for message in run_dict.get("messages", []):
+        if message.get("role") == "user" and message.get("generated") is True:
+            output_media["images"].extend(message.get("images", []))
+            output_media["videos"].extend(message.get("videos", []))
+            output_media["audio"].extend(message.get("audio", []))
+            output_media["files"].extend(message.get("files", []))
+
         if message.get("role") == "assistant":        
             output_media["images"].extend(message.get("images", []))
             output_media["videos"].extend(message.get("videos", []))
@@ -176,6 +182,8 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
 
     for message in run_dict.get("messages", []):
         if message.get("role") == "user":
+            if message.get("generated") is True:
+                continue
             input_media["images"].extend(message.get("images", []))
             input_media["videos"].extend(message.get("videos", []))
             input_media["audio"].extend(message.get("audio", []))
