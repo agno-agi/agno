@@ -254,6 +254,7 @@ def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Opti
     return None
 
 
+
 def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional[Team]:
     if team_id is None or teams is None:
         return None
@@ -273,6 +274,30 @@ def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = N
             return workflow
     return None
 
+
+#  INPUT SCHEMA VALIDATIONS
+
+def get_agent_input_schema_dict(agent: Agent) -> Optional[Dict[str, Any]]:
+    """Get input schema as dictionary for API responses"""
+
+    if agent.input_schema is not None:
+        try:
+            return agent.input_schema.model_json_schema()
+        except Exception:
+            return None
+
+    return None
+
+def get_team_input_schema_dict(team: Team) -> Optional[Dict[str, Any]]:
+    """Get input schema as dictionary for API responses"""
+
+    if team.input_schema is not None:
+        try:
+            return team.input_schema.model_json_schema()
+        except Exception:
+            return None
+
+    return None
 
 def get_workflow_input_schema_dict(workflow: Workflow) -> Optional[Dict[str, Any]]:
     """Get input schema as dictionary for API responses"""
