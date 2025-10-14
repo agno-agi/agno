@@ -59,14 +59,15 @@ class Claude(Model):
     For more information, see: https://docs.anthropic.com/en/api/messages
     """
 
-    # Models that support extended thinking
+    # Models that DO NOT support extended thinking
+    # All other models are assumed to support thinking (future-proof design)
     # Based on official Anthropic documentation: https://docs.claude.com/en/docs/about-claude/models/overview
-    THINKING_CAPABLE_MODELS = {
-        "claude-sonnet-4-5-20250929",  # Claude Sonnet 4.5
-        "claude-sonnet-4-20250514",  # Claude Sonnet 4
-        "claude-3-7-sonnet-20250219",  # Claude Sonnet 3.7
-        "claude-opus-4-1-20250805",  # Claude Opus 4.1
-        "claude-opus-4-20250514",  # Claude Opus 4
+    NON_THINKING_MODELS = {
+        # Claude Haiku 3 family (does not support thinking)
+        "claude-3-haiku-20240307",
+        # Claude Haiku 3.5 family (does not support thinking)
+        "claude-3-5-haiku-20241022",
+        "claude-3-5-haiku-latest",
     }
 
     id: str = "claude-sonnet-4-5-20250929"
@@ -149,12 +150,12 @@ class Claude(Model):
         Raises:
             ValueError: If thinking is enabled but the model doesn't support it
         """
-        if self.thinking and self.id not in self.THINKING_CAPABLE_MODELS:
-            supported_models = "\n  - ".join(sorted(self.THINKING_CAPABLE_MODELS))
+        if self.thinking and self.id in self.NON_THINKING_MODELS:
+            non_thinking_models = "\n  - ".join(sorted(self.NON_THINKING_MODELS))
             raise ValueError(
                 f"Model '{self.id}' does not support extended thinking.\n\n"
-                f"Extended thinking is only available for the following models:\n  - {supported_models}\n\n"
-                f"To use extended thinking, please use one of the supported models.\n"
+                f"The following models do NOT support thinking:\n  - {non_thinking_models}\n\n"
+                f"All other Claude models support extended thinking by default.\n"
                 f"For more information, see: https://docs.anthropic.com/en/docs/about-claude/models/overview"
             )
 
