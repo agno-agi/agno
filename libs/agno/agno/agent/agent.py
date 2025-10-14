@@ -247,6 +247,10 @@ class Agent:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If True, store tool results in run output
+    store_tool_results: bool = True
+    # If True, store history messages in run output
+    store_history_messages: bool = True
 
     # --- System message settings ---
     # Provide the system message as a string or function
@@ -384,6 +388,8 @@ class Agent:
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
         store_media: bool = True,
+        store_tool_results: bool = True,
+        store_history_messages: bool = True,
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
@@ -484,6 +490,8 @@ class Agent:
             )
 
         self.store_media = store_media
+        self.store_tool_results = store_tool_results
+        self.store_history_messages = store_history_messages
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
@@ -886,6 +894,12 @@ class Agent:
         else:
             self._scrub_media_from_run_output(run_response)
 
+        if not self.store_tool_results:
+            self._scrub_tool_results_from_run_output(run_response)
+
+        if not self.store_history_messages:
+            self._scrub_history_messages_from_run_output(run_response)
+
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             return self._handle_agent_run_paused(
@@ -1119,6 +1133,15 @@ class Agent:
                 session_id=session.session_id,
                 user_id=user_id,
             )
+
+            if not self.store_media:
+                self._scrub_media_from_run_output(run_response)
+
+            if not self.store_tool_results:
+                self._scrub_tool_results_from_run_output(run_response)
+
+            if not self.store_history_messages:
+                self._scrub_history_messages_from_run_output(run_response)
 
             # 7. Add RunOutput to Agent Session
             session.upsert_run(run=run_response)
@@ -1575,6 +1598,12 @@ class Agent:
         else:
             self._scrub_media_from_run_output(run_response)
 
+        if not self.store_tool_results:
+            self._scrub_tool_results_from_run_output(run_response)
+
+        if not self.store_history_messages:
+            self._scrub_history_messages_from_run_output(run_response)
+
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             return self._handle_agent_run_paused(
@@ -1812,6 +1841,16 @@ class Agent:
                 session_id=session.session_id,
                 user_id=user_id,
             )
+
+            # 6b. Scrub data before storage based on storage flags
+            if not self.store_media:
+                self._scrub_media_from_run_output(run_response)
+
+            if not self.store_tool_results:
+                self._scrub_tool_results_from_run_output(run_response)
+
+            if not self.store_history_messages:
+                self._scrub_history_messages_from_run_output(run_response)
 
             # 7. Add RunOutput to Agent Session
             session.upsert_run(run=run_response)
@@ -7684,6 +7723,39 @@ class Agent:
         message.audio_output = None
         message.image_output = None
         message.video_output = None
+
+    def _scrub_tool_results_from_run_output(self, run_response: RunOutput) -> None:
+        """
+        Remove all tool-related data from RunOutput when store_tool_results=False.
+        This includes tool calls, tool results, and tool-related message fields.
+        """
+        # 1. Remove tool results (messages with role="tool")
+        if run_response.messages:
+            run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
+            # Also scrub tool-related fields from remaining messages
+            for message in run_response.messages:
+                self._scrub_tool_data_from_message(message)
+
+        # 2. Clear tools list
+        if run_response.tools:
+            run_response.tools = []
+
+    def _scrub_tool_data_from_message(self, message: Message) -> None:
+        """Remove all tool-related data from a Message object."""
+        message.tool_calls = None
+        message.tool_call_id = None
+        message.tool_name = None
+        message.tool_args = None
+        message.tool_call_error = None
+
+    def _scrub_history_messages_from_run_output(self, run_response: RunOutput) -> None:
+        """
+        Remove all history messages from RunOutput when store_history_messages=False.
+        This removes messages that were loaded from the agent's memory.
+        """
+        # Remove messages with from_history=True
+        if run_response.messages:
+            run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
 
     def _validate_media_object_id(
         self,
