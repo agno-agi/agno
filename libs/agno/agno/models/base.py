@@ -180,7 +180,7 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
-    def _filter_messages(self, messages: List[Message], num_tool_calls_in_context: int) -> None:
+    def _forget_tool_calls(self, messages: List[Message], num_tool_calls_in_context: int) -> None:
         """
         Filter messages (in-place) to keep only the most recent N tool calls.
 
@@ -301,8 +301,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
-        forget_tool_calls: bool = False,
-        num_tool_calls_in_context: Optional[int] = None,
+        max_tool_calls_in_context: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -417,10 +416,10 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
-                # Apply message filtering if forget_tool_calls is enabled and limit exceeded
+                # Apply message filtering if max_tool_calls_in_context is set
                 # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
-                if forget_tool_calls and num_tool_calls_in_context is not None:
-                    self._filter_messages(messages, num_tool_calls_in_context)
+                if max_tool_calls_in_context is not None:
+                    self._forget_tool_calls(messages, max_tool_calls_in_context)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -456,8 +455,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         send_media_to_model: bool = True,
-        forget_tool_calls: bool = False,
-        num_tool_calls_in_context: Optional[int] = None,
+        max_tool_calls_in_context: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -569,10 +567,10 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
-                # Apply message filtering if forget_tool_calls is enabled and limit exceeded
+                # Apply message filtering if max_tool_calls_in_context is set
                 # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
-                if forget_tool_calls and num_tool_calls_in_context is not None:
-                    self._filter_messages(messages, num_tool_calls_in_context)
+                if max_tool_calls_in_context is not None:
+                    self._forget_tool_calls(messages, max_tool_calls_in_context)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -616,7 +614,7 @@ class Model(ABC):
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
         # Log messages being sent to API (helps verify tool call forgetting)
-        _log_messages_sent_to_api(messages)
+        # _log_messages_sent_to_api(messages)
 
         # Generate response
         provider_response = self.invoke(
@@ -672,7 +670,7 @@ class Model(ABC):
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
         # Log messages being sent to API (helps verify tool call forgetting)
-        _log_messages_sent_to_api(messages)
+        # _log_messages_sent_to_api(messages)
 
         # Generate response
         provider_response = await self.ainvoke(
@@ -712,7 +710,7 @@ class Model(ABC):
             model_response.extra.update(provider_response.extra)
 
     # Generate a unique ID for each tool call if missing. Mostly for Ollama
-    # id is required for forget_tool_calls feature
+    # id is required for max_tool_calls_in_context feature
     def _ensure_tool_call_ids(self, tool_calls: List[Dict[str, Any]]) -> None:
         """Ensure all tool calls have unique IDs. Generate UUIDs if missing."""
         from uuid import uuid4
@@ -747,7 +745,7 @@ class Model(ABC):
 
         # Add tool calls to assistant message
         if provider_response.tool_calls is not None and len(provider_response.tool_calls) > 0:
-            # Ensure all tool calls have IDs (required for forget_tool_calls and tool result matching)
+            # Ensure all tool calls have IDs (required for max_tool_calls_in_context and tool result matching)
             self._ensure_tool_call_ids(provider_response.tool_calls)
             assistant_message.tool_calls = provider_response.tool_calls
 
@@ -837,8 +835,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
-        forget_tool_calls: bool = False,
-        num_tool_calls_in_context: Optional[int] = None,
+        max_tool_calls_in_context: Optional[int] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -882,7 +879,7 @@ class Model(ABC):
                     assistant_message.audio_output = stream_data.response_audio
                 if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
-                    # Ensure all tool calls have IDs (required for forget_tool_calls)
+                    # Ensure all tool calls have IDs (required for max_tool_calls_in_context)
                     self._ensure_tool_call_ids(assistant_message.tool_calls)
 
             else:
@@ -943,10 +940,10 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
-                # Apply message filtering if forget_tool_calls is enabled and limit exceeded
+                # Apply message filtering if max_tool_calls_in_context is set
                 # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
-                if forget_tool_calls and num_tool_calls_in_context is not None:
-                    self._filter_messages(messages, num_tool_calls_in_context)
+                if max_tool_calls_in_context is not None:
+                    self._forget_tool_calls(messages, max_tool_calls_in_context)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -1014,8 +1011,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
-        forget_tool_calls: bool = False,
-        num_tool_calls_in_context: Optional[int] = None,
+        max_tool_calls_in_context: Optional[int] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1058,7 +1054,7 @@ class Model(ABC):
                     assistant_message.audio_output = stream_data.response_audio
                 if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
-                    # Ensure all tool calls have IDs (required for forget_tool_calls)
+                    # Ensure all tool calls have IDs (required for max_tool_calls_in_context)
                     self._ensure_tool_call_ids(assistant_message.tool_calls)
 
             else:
@@ -1120,10 +1116,10 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
-                # Apply message filtering if forget_tool_calls is enabled and limit exceeded
+                # Apply message filtering if max_tool_calls_in_context is set
                 # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
-                if forget_tool_calls and num_tool_calls_in_context is not None:
-                    self._filter_messages(messages, num_tool_calls_in_context)
+                if max_tool_calls_in_context is not None:
+                    self._forget_tool_calls(messages, max_tool_calls_in_context)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):

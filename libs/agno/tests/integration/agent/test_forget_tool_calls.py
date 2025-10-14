@@ -22,14 +22,13 @@ def playwright_tools():
 
 @pytest.fixture
 def agent_with_forget(shared_db, playwright_tools):
-    """Create an agent with forget_tool_calls enabled."""
+    """Create an agent with max_tool_calls_in_context set."""
     return Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[playwright_tools],
         db=shared_db,
         session_id="test_forget_tool_calls",
-        forget_tool_calls=True,
-        num_tool_calls_in_context=2,
+        max_tool_calls_in_context=2,
         tool_call_limit=6,  # Prevent infinite loops
         instructions=(
             "You are a web browser agent. Use navigate_to to visit websites, "
@@ -42,14 +41,13 @@ def agent_with_forget(shared_db, playwright_tools):
 
 @pytest.fixture
 def agent_with_forget_and_history(shared_db, playwright_tools):
-    """Create an agent with both forget_tool_calls and add_history enabled."""
+    """Create an agent with both max_tool_calls_in_context and add_history enabled."""
     return Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[playwright_tools],
         db=shared_db,
         session_id="test_forget_with_history",
-        forget_tool_calls=True,
-        num_tool_calls_in_context=2,
+        max_tool_calls_in_context=2,
         add_history_to_context=True,
         tool_call_limit=5,  # Prevent infinite loops
         instructions=(
@@ -61,7 +59,7 @@ def agent_with_forget_and_history(shared_db, playwright_tools):
 
 
 def test_forget_tool_calls_basic(agent_with_forget):
-    """Test that forget_tool_calls limits tool calls in context with browser automation."""
+    """Test that max_tool_calls_in_context limits tool calls in context with browser automation."""
     response = agent_with_forget.run("Navigate to https://example.com, extract the page text, then close the session.")
 
     assert response.content is not None
@@ -93,14 +91,14 @@ def test_forget_tool_calls_basic(agent_with_forget):
 
 
 def test_forget_tool_calls_with_history(agent_with_forget_and_history):
-    """Test that forget_tool_calls works with add_history_to_context."""
+    """Test that max_tool_calls_in_context works with add_history_to_context."""
     # First run: Navigate to a website
     response1 = agent_with_forget_and_history.run("Navigate to https://example.com")
     assert response1.content is not None
 
     # Second run: Navigate to another website
     # With add_history=True, previous messages should be in context
-    # With forget_tool_calls=True, only recent tool calls should be kept
+    # With max_tool_calls_in_context=2, only recent tool calls should be kept
     response2 = agent_with_forget_and_history.run("Navigate to https://example.org and close the session.")
     assert response2.content is not None
     assert response2.messages is not None
@@ -135,8 +133,7 @@ def test_forget_tool_calls_preserves_content(shared_db, playwright_tools):
         tools=[playwright_tools],
         db=shared_db,
         session_id="test_preserve_content",
-        forget_tool_calls=True,
-        num_tool_calls_in_context=1,  # Very small window
+        max_tool_calls_in_context=1,  # Very small window
         add_history_to_context=True,  # Enable history to test filtering across runs
         tool_call_limit=3,  # Prevent infinite loops
         instructions=(
@@ -160,7 +157,7 @@ def test_forget_tool_calls_preserves_content(shared_db, playwright_tools):
     assert len(assistant_messages) > 0, "Expected assistant messages"
 
     # The key is that the agent completes successfully with a small window
-    # (proving that forget_tool_calls prevents infinite loops)
+    # (proving that max_tool_calls_in_context prevents infinite loops)
 
 
 def test_forget_tool_calls_tool_call_ids(shared_db, playwright_tools):
@@ -170,8 +167,7 @@ def test_forget_tool_calls_tool_call_ids(shared_db, playwright_tools):
         tools=[playwright_tools],
         db=shared_db,
         session_id="test_tool_call_ids",
-        forget_tool_calls=True,
-        num_tool_calls_in_context=3,
+        max_tool_calls_in_context=3,
         tool_call_limit=5,  # Prevent infinite loops
         instructions=(
             "You are a web browser agent. Navigate to websites and extract content. Always close_session when done."
