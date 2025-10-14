@@ -2727,27 +2727,27 @@ class Workflow:
         **kwargs: Any,
     ) -> None:
         """
-            Run an interactive command-line interface to interact with the workflow.
-        
-            This method creates a CLI interface that allows users to interact with the workflow
-            either by providing a single input or through continuous interactive prompts.
-            
-            Arguments:
-                input: Optional initial input to process before starting interactive mode.
-                session_id: Optional session identifier for maintaining conversation context.
-                user_id: Optional user identifier for tracking user-specific data.
-                user: Display name for the user in the CLI prompt. Defaults to "User".
-                emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
-                stream: Whether to stream the workflow response. If None, uses workflow default.
-                stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
-                markdown: Whether to render output as markdown. Defaults to True.
-                show_time: Whether to display timestamps in the output. Defaults to True.
-                show_step_details: Whether to show detailed step information. Defaults to True.
-                exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
-                **kwargs: Additional keyword arguments passed to the workflow's print_response method.
-            
-            Returns:
-                None: This method runs interactively and does not return a value.
+        Run an interactive command-line interface to interact with the workflow.
+
+        This method creates a CLI interface that allows users to interact with the workflow
+        either by providing a single input or through continuous interactive prompts.
+
+        Arguments:
+            input: Optional initial input to process before starting interactive mode.
+            session_id: Optional session identifier for maintaining conversation context.
+            user_id: Optional user identifier for tracking user-specific data.
+            user: Display name for the user in the CLI prompt. Defaults to "User".
+            emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
+            stream: Whether to stream the workflow response. If None, uses workflow default.
+            stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
+            markdown: Whether to render output as markdown. Defaults to True.
+            show_time: Whether to display timestamps in the output. Defaults to True.
+            show_step_details: Whether to show detailed step information. Defaults to True.
+            exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
+            **kwargs: Additional keyword arguments passed to the workflow's print_response method.
+
+        Returns:
+            None: This method runs interactively and does not return a value.
         """
 
         from rich.prompt import Prompt
@@ -2799,27 +2799,27 @@ class Workflow:
         **kwargs: Any,
     ) -> None:
         """
-            Run an interactive command-line interface to interact with the workflow.
-        
-            This method creates a CLI interface that allows users to interact with the workflow
-            either by providing a single input or through continuous interactive prompts.
-            
-            Arguments:
-                input: Optional initial input to process before starting interactive mode.
-                session_id: Optional session identifier for maintaining conversation context.
-                user_id: Optional user identifier for tracking user-specific data.
-                user: Display name for the user in the CLI prompt. Defaults to "User".
-                emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
-                stream: Whether to stream the workflow response. If None, uses workflow default.
-                stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
-                markdown: Whether to render output as markdown. Defaults to True.
-                show_time: Whether to display timestamps in the output. Defaults to True.
-                show_step_details: Whether to show detailed step information. Defaults to True.
-                exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
-                **kwargs: Additional keyword arguments passed to the workflow's print_response method.
-            
-            Returns:
-                None: This method runs interactively and does not return a value.
+        Run an interactive command-line interface to interact with the workflow.
+
+        This method creates a CLI interface that allows users to interact with the workflow
+        either by providing a single input or through continuous interactive prompts.
+
+        Arguments:
+            input: Optional initial input to process before starting interactive mode.
+            session_id: Optional session identifier for maintaining conversation context.
+            user_id: Optional user identifier for tracking user-specific data.
+            user: Display name for the user in the CLI prompt. Defaults to "User".
+            emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
+            stream: Whether to stream the workflow response. If None, uses workflow default.
+            stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
+            markdown: Whether to render output as markdown. Defaults to True.
+            show_time: Whether to display timestamps in the output. Defaults to True.
+            show_step_details: Whether to show detailed step information. Defaults to True.
+            exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
+            **kwargs: Additional keyword arguments passed to the workflow's print_response method.
+
+        Returns:
+            None: This method runs interactively and does not return a value.
         """
 
         from rich.prompt import Prompt
