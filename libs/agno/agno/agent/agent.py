@@ -937,9 +937,7 @@ class Agent:
         deque(response_iterator, maxlen=0)
 
         # 11. Scrub the stored run based on storage flags
-        stored_run = session.get_run(run_response.run_id)
-        if stored_run:
-            self._scrub_run_output_for_storage(stored_run)
+        self._scrub_run_output_for_storage(run_response, session)
 
         # 12. Save session to memory
         self.save_session(session=session)
@@ -1145,9 +1143,7 @@ class Agent:
             )
 
             # 10. Scrub the stored run based on storage flags
-            stored_run = session.get_run(run_response.run_id)
-            if stored_run:
-                self._scrub_run_output_for_storage(stored_run)
+            self._scrub_run_output_for_storage(run_response, session)
 
             # 11. Save session to storage
             self.save_session(session=session)
@@ -1633,9 +1629,7 @@ class Agent:
             pass
 
         # 12. Scrub the stored run based on storage flags
-        stored_run = session.get_run(run_response.run_id)
-        if stored_run:
-            self._scrub_run_output_for_storage(stored_run)
+        self._scrub_run_output_for_storage(run_response, session)
 
         # 13. Save session to storage
         self.save_session(session=session)
@@ -1847,9 +1841,7 @@ class Agent:
             )
 
             # 10. Scrub the stored run based on storage flags
-            stored_run = session.get_run(run_response.run_id)
-            if stored_run:
-                self._scrub_run_output_for_storage(stored_run)
+            self._scrub_run_output_for_storage(run_response, session)
 
             # 11. Save session to storage
             self.save_session(session=session)
@@ -7738,7 +7730,7 @@ class Agent:
         if run_response.messages:
             run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
 
-    def _scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
+    def _scrub_run_output_for_storage(self, run_response: RunOutput, session: AgentSession) -> None:
         """
         Scrub run output based on storage flags before persisting to database.
         This is called after upsert_run to scrub the stored version.
@@ -7751,6 +7743,9 @@ class Agent:
 
         if not self.store_history_messages:
             self._scrub_history_messages_from_run_output(run_response)
+        
+        # Upsert scrubbed run to session
+        session.upsert_run(run=run_response)
 
     def _validate_media_object_id(
         self,
