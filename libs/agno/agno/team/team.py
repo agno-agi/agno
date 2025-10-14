@@ -3654,7 +3654,7 @@ class Team:
         Remove all tool-related data from TeamRunOutput when store_tool_results=False.
         This includes tool calls, tool results, and tool-related message fields.
         """
-        # 1. Remove tool results (messages with role="tool")
+        # Remove tool results (messages with role="tool")
         if run_response.messages:
             run_response.messages = [
                 msg for msg in run_response.messages 
@@ -3663,10 +3663,6 @@ class Team:
             # Also scrub tool-related fields from remaining messages
             for message in run_response.messages:
                 self._scrub_tool_data_from_message(message)
-
-        # 2. Clear tools list
-        if run_response.tools:
-            run_response.tools = []
 
     def _scrub_tool_data_from_message(self, message: Message) -> None:
         """Remove tool-related data from a Message object."""
