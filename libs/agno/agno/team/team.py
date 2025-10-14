@@ -1232,7 +1232,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
         yield_run_response: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -1244,10 +1243,11 @@ class Team:
         2. Prepare run messages
         3. Reason about the task(s) if reasoning is enabled
         4. Get a response from the model
-        5. Add RunOutput to Team Session
-        6. Calculate session metrics
-        7. Update Team Memory
-        8. Save session to storage
+        5. Add the run to Team Session
+        6. Update Team Memory
+        7. Create the run completed event
+        8. Calculate session metrics
+        9. Save session to storage
         """
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
@@ -1286,7 +1286,6 @@ class Team:
             videos=run_input.videos,
             audio=run_input.audios,
             files=run_input.files,
-            workflow_context=workflow_context,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
             add_session_state_to_context=add_session_state_to_context,
@@ -1322,7 +1321,7 @@ class Team:
         try:
             # Start the Run by yielding a RunStarted event
             if stream_intermediate_steps:
-                yield self._handle_event(create_team_run_started_event(run_response), run_response, workflow_context)
+                yield self._handle_event(create_team_run_started_event(run_response), run_response)
 
             # 3. Reason about the task(s) if reasoning is enabled
             yield from self._handle_reasoning_stream(
@@ -1341,7 +1340,6 @@ class Team:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -1352,7 +1350,6 @@ class Team:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
@@ -1371,7 +1368,6 @@ class Team:
                     run_response=run_response,
                     run_messages=run_messages,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -1395,18 +1391,7 @@ class Team:
             # 5. Add the run to Team Session
             session.upsert_run(run_response=run_response)
 
-            # 6. Calculate session metrics
-            self._update_session_metrics(session=session)
-
-            completed_event = self._handle_event(
-                create_team_run_completed_event(
-                    from_run_response=run_response,
-                ),
-                run_response,
-                workflow_context,
-            )
-
-            # 7. Update Team Memory
+            # 6. Update Team Memory
             yield from self._make_memories_and_summaries(
                 run_response=run_response,
                 run_messages=run_messages,
@@ -1414,7 +1399,18 @@ class Team:
                 user_id=user_id,
             )
 
-            # 8. Save session to storage
+            # 7. Create the run completed event
+            completed_event = self._handle_event(
+                create_team_run_completed_event(
+                    from_run_response=run_response,
+                ),
+                run_response,
+            )
+
+            # 8. Calculate session metrics
+            self._update_session_metrics(session=session)
+
+            # 9. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1438,7 +1434,6 @@ class Team:
             yield self._handle_event(
                 create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                 run_response,
-                workflow_context,
             )
 
             # Add the RunOutput to Team Session even when cancelled
@@ -1584,9 +1579,6 @@ class Team:
         )
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
-        # Extract workflow context from kwargs if present
-        workflow_context = kwargs.pop("workflow_context", None)
-
         # Initialize Knowledge Filters
         effective_filters = knowledge_filters
 
@@ -1665,7 +1657,6 @@ class Team:
                         dependencies=run_dependencies,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
-                        workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
                         debug_mode=debug_mode,
                         **kwargs,
@@ -1756,7 +1747,6 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
-        workflow_context: Optional[Dict] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput:
@@ -1812,7 +1802,6 @@ class Team:
             videos=run_input.videos,
             audio=run_input.audios,
             files=run_input.files,
-            workflow_context=workflow_context,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
             add_dependencies_to_context=add_dependencies_to_context,
@@ -1943,7 +1932,6 @@ class Team:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
         yield_run_response: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -1955,10 +1943,11 @@ class Team:
         2. Prepare run messages
         3. Reason about the task(s) if reasoning is enabled
         4. Get a response from the model
-        5. Update Team Memory
-        6. Add RunOutput to Team Session
-        7. Calculate session metrics
-        8. Save session to storage
+        5. Add the run to Team Session
+        6. Update Team Memory
+        7. Create the run completed event
+        8. Calculate session metrics
+        9. Save session to storage
         """
 
         # 1. Resolve callable dependencies if present
@@ -1998,7 +1987,6 @@ class Team:
             videos=run_input.videos,
             audio=run_input.audios,
             files=run_input.files,
-            workflow_context=workflow_context,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
             add_dependencies_to_context=add_dependencies_to_context,
@@ -2035,9 +2023,7 @@ class Team:
         try:
             # Start the Run by yielding a RunStarted event
             if stream_intermediate_steps:
-                yield self._handle_event(
-                    create_team_run_started_event(from_run_response=run_response), run_response, workflow_context
-                )
+                yield self._handle_event(create_team_run_started_event(from_run_response=run_response), run_response)
 
             # 3. Reason about the task(s) if reasoning is enabled
             async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
@@ -2055,7 +2041,6 @@ class Team:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -2066,7 +2051,6 @@ class Team:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
@@ -2085,7 +2069,6 @@ class Team:
                     run_response=run_response,
                     run_messages=run_messages,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -2117,14 +2100,15 @@ class Team:
             ):
                 yield event
 
-            # 7. Calculate session metrics
-            self._update_session_metrics(session=session)
-
+            # 7. Create the run completed event
             completed_event = self._handle_event(
-                create_team_run_completed_event(from_run_response=run_response), run_response, workflow_context
+                create_team_run_completed_event(from_run_response=run_response), run_response
             )
 
-            # 8. Save session to storage
+            # 8. Calculate session metrics
+            self._update_session_metrics(session=session)
+
+            # 9. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -2148,7 +2132,6 @@ class Team:
             yield self._handle_event(
                 create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                 run_response,
-                workflow_context,
             )
 
             # Add the RunOutput to Team Session even when cancelled
@@ -2289,9 +2272,6 @@ class Team:
         )
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
-        # Extract workflow context from kwargs if present
-        workflow_context = kwargs.pop("workflow_context", None)
-
         effective_filters = knowledge_filters
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
@@ -2367,7 +2347,6 @@ class Team:
                         response_format=response_format,
                         dependencies=run_dependencies,
                         stream_intermediate_steps=stream_intermediate_steps,
-                        workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
                         debug_mode=debug_mode,
                         **kwargs,
@@ -2386,7 +2365,6 @@ class Team:
                         metadata=metadata,
                         response_format=response_format,
                         dependencies=run_dependencies,
-                        workflow_context=workflow_context,
                         debug_mode=debug_mode,
                         **kwargs,
                     )
@@ -2526,7 +2504,6 @@ class Team:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         self.model = cast(Model, self.model)
 
@@ -2559,7 +2536,6 @@ class Team:
                 reasoning_state=reasoning_state,
                 stream_intermediate_steps=stream_intermediate_steps,
                 parse_structured_output=self.should_parse_structured_output,
-                workflow_context=workflow_context,
             )
 
         # 3. Update TeamRunOutput
@@ -2608,7 +2584,6 @@ class Team:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         self.model = cast(Model, self.model)
 
@@ -2642,7 +2617,6 @@ class Team:
                 reasoning_state=reasoning_state,
                 stream_intermediate_steps=stream_intermediate_steps,
                 parse_structured_output=self.should_parse_structured_output,
-                workflow_context=workflow_context,
             ):
                 yield event
 
@@ -2695,7 +2669,6 @@ class Team:
         reasoning_state: Optional[Dict[str, Any]] = None,
         stream_intermediate_steps: bool = False,
         parse_structured_output: bool = False,
-        workflow_context: Optional[Dict] = None,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunOutputEvent))
@@ -2829,7 +2802,6 @@ class Team:
                                 image=model_response_event.images[-1] if model_response_event.images else None,
                             ),
                             run_response,
-                            workflow_context=workflow_context,
                         )
                     else:
                         yield self._handle_event(
@@ -2839,7 +2811,6 @@ class Team:
                                 content_type=content_type,
                             ),
                             run_response,
-                            workflow_context=workflow_context,
                         )
 
             # If the model response is a tool_call_started, add the tool call to the run_response
@@ -3285,7 +3256,6 @@ class Team:
         run_response: TeamRunOutput,
         run_messages: RunMessages,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
     ):
         """Parse the model response using the output model stream."""
         from agno.utils.events import (
@@ -3308,7 +3278,6 @@ class Team:
                 run_response=run_response,
                 full_model_response=model_response,
                 model_response_event=model_response_event,
-                workflow_context=workflow_context,
             )
 
         # Update the TeamRunResponse content
@@ -3341,7 +3310,6 @@ class Team:
         run_response: TeamRunOutput,
         run_messages: RunMessages,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict] = None,
     ):
         """Parse the model response using the output model stream."""
         from agno.utils.events import (
@@ -3364,7 +3332,6 @@ class Team:
                 run_response=run_response,
                 full_model_response=model_response,
                 model_response_event=model_response_event,
-                workflow_context=workflow_context,
             ):
                 yield event
 
@@ -3385,15 +3352,7 @@ class Team:
         self,
         event: Union[RunOutputEvent, TeamRunOutputEvent],
         run_response: TeamRunOutput,
-        workflow_context: Optional[Dict] = None,
     ):
-        if workflow_context:
-            event.workflow_id = workflow_context.get("workflow_id")
-            event.workflow_run_id = workflow_context.get("workflow_run_id")
-            event.step_id = workflow_context.get("step_id")
-            event.step_name = workflow_context.get("step_name")
-            event.step_index = workflow_context.get("step_index")
-
         # We only store events that are not run_response_content events
         events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
         if self.store_events and event.event not in events_to_skip:
@@ -4035,6 +3994,12 @@ class Team:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
                         break
 
+                    if isinstance(reasoning_agent_response.content, str):
+                        log_warning(
+                            "Reasoning error. Content is a string, not structured output. Continuing regular session..."
+                        )
+                        break
+
                     if reasoning_agent_response.content.reasoning_steps is None:
                         log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
                         break
@@ -4259,6 +4224,12 @@ class Team:
                     )
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
+                        break
+
+                    if isinstance(reasoning_agent_response.content, str):
+                        log_warning(
+                            "Reasoning error. Content is a string, not structured output. Continuing regular session..."
+                        )
                         break
 
                     if reasoning_agent_response.content.reasoning_steps is None:
@@ -4517,7 +4488,6 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         audio: Optional[Sequence[Audio]] = None,
         files: Optional[Sequence[File]] = None,
-        workflow_context: Optional[Dict] = None,
         debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
@@ -4611,7 +4581,6 @@ class Team:
                 files=files,  # type: ignore
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
-                workflow_context=workflow_context,
                 dependencies=dependencies,
                 add_dependencies_to_context=add_dependencies_to_context,
                 add_session_state_to_context=add_session_state_to_context,
@@ -5822,7 +5791,6 @@ class Team:
         files: Optional[List[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
-        workflow_context: Optional[Dict] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -5977,7 +5945,6 @@ class Team:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     debug_mode=debug_mode,
-                    workflow_context=workflow_context,
                     dependencies=dependencies,
                     add_dependencies_to_context=add_dependencies_to_context,
                     metadata=metadata,
@@ -6017,7 +5984,6 @@ class Team:
                     files=files,
                     stream=False,
                     debug_mode=debug_mode,
-                    workflow_context=workflow_context,
                     dependencies=dependencies,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
@@ -6109,7 +6075,6 @@ class Team:
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=metadata,
-                    workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -6145,7 +6110,6 @@ class Team:
                     files=files,
                     stream=False,
                     debug_mode=debug_mode,
-                    workflow_context=workflow_context,
                     dependencies=dependencies,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
@@ -6222,7 +6186,6 @@ class Team:
                         files=files,
                         stream=True,
                         stream_intermediate_steps=stream_intermediate_steps,
-                        workflow_context=workflow_context,
                         knowledge_filters=knowledge_filters
                         if not member_agent.knowledge_filters and member_agent.knowledge
                         else None,
@@ -6263,7 +6226,6 @@ class Team:
                         audio=audio,
                         files=files,
                         stream=False,
-                        workflow_context=workflow_context,
                         knowledge_filters=knowledge_filters
                         if not member_agent.knowledge_filters and member_agent.knowledge
                         else None,
@@ -6340,7 +6302,6 @@ class Team:
                         files=files,
                         stream=True,
                         stream_intermediate_steps=stream_intermediate_steps,
-                        workflow_context=workflow_context,
                         debug_mode=debug_mode,
                         knowledge_filters=knowledge_filters
                         if not member_agent.knowledge_filters and member_agent.knowledge
@@ -6421,7 +6382,6 @@ class Team:
                             stream=False,
                             stream_intermediate_steps=stream_intermediate_steps,
                             debug_mode=debug_mode,
-                            workflow_context=workflow_context,
                             knowledge_filters=knowledge_filters
                             if not member_agent.knowledge_filters and member_agent.knowledge
                             else None,
