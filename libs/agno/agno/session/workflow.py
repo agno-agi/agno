@@ -77,7 +77,7 @@ class WorkflowSession:
 
     def get_workflow_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
         """Get workflow history as structured data (input, response pairs)
-        
+
         Args:
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
@@ -88,7 +88,7 @@ class WorkflowSession:
 
         # Get completed runs only (exclude current/pending run)
         completed_runs = [run for run in self.runs if run.status == RunStatus.completed]
-        
+
         if num_runs is not None and len(completed_runs) > num_runs:
             recent_runs = completed_runs[-num_runs:]
         else:
@@ -116,7 +116,7 @@ class WorkflowSession:
 
     def get_workflow_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
         """Get formatted workflow history context for steps
-        
+
         Args:
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
