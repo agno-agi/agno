@@ -8,18 +8,14 @@ from agno.utils.log import logger
 
 
 def is_vertexai_reasoning_model(reasoning_model: Model) -> bool:
-    """Check if the model is a VertexAI Claude model with thinking support."""
-    is_claude = reasoning_model.__class__.__name__ == "Claude"
-    if not is_claude:
-        return False
-
+    """Check if the model is a VertexAI model with thinking support."""
     # Check if provider is VertexAI
     is_vertexai_provider = hasattr(reasoning_model, "provider") and reasoning_model.provider == "VertexAI"
 
     # Check if thinking parameter is set
     has_thinking = hasattr(reasoning_model, "thinking") and reasoning_model.thinking is not None
 
-    return is_claude and is_vertexai_provider and has_thinking
+    return is_vertexai_provider and has_thinking
 
 
 def get_vertexai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821

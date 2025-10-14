@@ -3,7 +3,12 @@
 import pytest
 
 from agno.reasoning.anthropic import is_anthropic_reasoning_model
+from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
+from agno.reasoning.deepseek import is_deepseek_reasoning_model
 from agno.reasoning.gemini import is_gemini_reasoning_model
+from agno.reasoning.groq import is_groq_reasoning_model
+from agno.reasoning.ollama import is_ollama_reasoning_model
+from agno.reasoning.openai import is_openai_reasoning_model
 from agno.reasoning.vertexai import is_vertexai_reasoning_model
 
 
@@ -90,6 +95,116 @@ def test_gemini_model_with_none_params():
         include_thoughts=None,
     )
     assert is_gemini_reasoning_model(model) is False
+
+
+# ============================================================================
+# OpenAI Reasoning Model Tests
+# ============================================================================
+
+
+def test_openai_chat_with_o4_model():
+    """Test OpenAIChat model with o4 in ID returns True."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="gpt-o4",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_with_o3_model():
+    """Test OpenAIChat model with o3 in ID returns True."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="gpt-o3-mini",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_with_o1_model():
+    """Test OpenAIChat model with o1 in ID returns True."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="o1-preview",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_with_4_1_in_id():
+    """Test OpenAIChat model with 4.1 in ID returns True."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="claude-opus-4.1",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_with_4_5_in_id():
+    """Test OpenAIChat model with 4.5 in ID returns True."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="claude-sonnet-4.5",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_responses_with_reasoning_model():
+    """Test OpenAIResponses model with o1 in ID returns True."""
+    model = MockModel(
+        class_name="OpenAIResponses",
+        model_id="o1-mini",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_azure_openai_with_reasoning_model():
+    """Test AzureOpenAI model with o3 in ID returns True."""
+    model = MockModel(
+        class_name="AzureOpenAI",
+        model_id="gpt-o3",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_like_with_deepseek_r1():
+    """Test OpenAILike model with deepseek-r1 in ID returns True."""
+    from agno.models.openai.like import OpenAILike
+
+    # Create a proper OpenAILike instance
+    model = OpenAILike(
+        id="deepseek-r1",
+        name="DeepSeek",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_without_reasoning_id():
+    """Test OpenAIChat model without reasoning model ID returns False."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="gpt-4-turbo",
+    )
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_openai_non_openai_model():
+    """Test non-OpenAI model returns False."""
+    model = MockModel(
+        class_name="Claude",
+        model_id="claude-3-5-sonnet",
+    )
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_openai_like_without_deepseek_r1():
+    """Test OpenAILike model without deepseek-r1 returns False."""
+    from agno.models.openai.like import OpenAILike
+
+    # Create a proper OpenAILike instance
+    model = OpenAILike(
+        id="gpt-4-turbo",
+        name="GPT-4",
+    )
+    assert is_openai_reasoning_model(model) is False
 
 
 # ============================================================================
@@ -231,14 +346,15 @@ def test_vertexai_with_none_thinking():
 
 
 def test_vertexai_non_claude_model():
-    """Test non-Claude model with VertexAI provider returns False."""
+    """Test non-Claude model with VertexAI provider and thinking returns True (future-proof design)."""
     model = MockModel(
         class_name="Gemini",
         model_id="gemini-2.5-pro",
         provider="VertexAI",
         thinking={"type": "enabled", "budget_tokens": 1024},
     )
-    assert is_vertexai_reasoning_model(model) is False
+    # After future-proofing, any VertexAI model with thinking support returns True
+    assert is_vertexai_reasoning_model(model) is True
 
 
 def test_vertexai_wrong_provider():
@@ -250,6 +366,188 @@ def test_vertexai_wrong_provider():
         thinking={"type": "enabled", "budget_tokens": 1024},
     )
     assert is_vertexai_reasoning_model(model) is False
+
+
+# ============================================================================
+# DeepSeek Reasoning Model Tests
+# ============================================================================
+
+
+def test_deepseek_with_reasoner_model():
+    """Test DeepSeek model with deepseek-reasoner ID returns True."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-reasoner",
+    )
+    assert is_deepseek_reasoning_model(model) is True
+
+
+def test_deepseek_with_different_model_id():
+    """Test DeepSeek model with different ID returns False."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-chat",
+    )
+    assert is_deepseek_reasoning_model(model) is False
+
+
+def test_deepseek_non_deepseek_model():
+    """Test non-DeepSeek model returns False."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="deepseek-reasoner",
+    )
+    assert is_deepseek_reasoning_model(model) is False
+
+
+# ============================================================================
+# Groq Reasoning Model Tests
+# ============================================================================
+
+
+def test_groq_with_deepseek():
+    """Test Groq model with deepseek in ID returns True."""
+    model = MockModel(
+        class_name="Groq",
+        model_id="deepseek-r1-distill-llama-70b",
+    )
+    assert is_groq_reasoning_model(model) is True
+
+
+def test_groq_without_deepseek():
+    """Test Groq model without deepseek in ID returns False."""
+    model = MockModel(
+        class_name="Groq",
+        model_id="llama-3.3-70b-versatile",
+    )
+    assert is_groq_reasoning_model(model) is False
+
+
+def test_groq_non_groq_model():
+    """Test non-Groq model returns False."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="deepseek-chat",
+    )
+    assert is_groq_reasoning_model(model) is False
+
+
+# ============================================================================
+# Ollama Reasoning Model Tests
+# ============================================================================
+
+
+def test_ollama_with_qwq():
+    """Test Ollama model with qwq in ID returns True."""
+    model = MockModel(
+        class_name="Ollama",
+        model_id="qwq:32b",
+    )
+    assert is_ollama_reasoning_model(model) is True
+
+
+def test_ollama_with_deepseek_r1():
+    """Test Ollama model with deepseek-r1 in ID returns True."""
+    model = MockModel(
+        class_name="Ollama",
+        model_id="deepseek-r1:7b",
+    )
+    assert is_ollama_reasoning_model(model) is True
+
+
+def test_ollama_with_qwen2_5_coder():
+    """Test Ollama model with qwen2.5-coder in ID returns True."""
+    model = MockModel(
+        class_name="Ollama",
+        model_id="qwen2.5-coder:32b",
+    )
+    assert is_ollama_reasoning_model(model) is True
+
+
+def test_ollama_with_openthinker():
+    """Test Ollama model with openthinker in ID returns True."""
+    model = MockModel(
+        class_name="Ollama",
+        model_id="openthinker:7b",
+    )
+    assert is_ollama_reasoning_model(model) is True
+
+
+def test_ollama_with_unsupported_model():
+    """Test Ollama model with unsupported ID returns False."""
+    model = MockModel(
+        class_name="Ollama",
+        model_id="llama3.2:3b",
+    )
+    assert is_ollama_reasoning_model(model) is False
+
+
+def test_ollama_non_ollama_model():
+    """Test non-Ollama model returns False."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="qwq-chat",
+    )
+    assert is_ollama_reasoning_model(model) is False
+
+
+# ============================================================================
+# Azure AI Foundry Reasoning Model Tests
+# ============================================================================
+
+
+def test_ai_foundry_with_deepseek():
+    """Test AzureAIFoundry model with deepseek in ID returns True."""
+    model = MockModel(
+        class_name="AzureAIFoundry",
+        model_id="deepseek-r1",
+    )
+    assert is_ai_foundry_reasoning_model(model) is True
+
+
+def test_ai_foundry_with_o1():
+    """Test AzureAIFoundry model with o1 in ID returns True."""
+    model = MockModel(
+        class_name="AzureAIFoundry",
+        model_id="gpt-o1-preview",
+    )
+    assert is_ai_foundry_reasoning_model(model) is True
+
+
+def test_ai_foundry_with_o3():
+    """Test AzureAIFoundry model with o3 in ID returns True."""
+    model = MockModel(
+        class_name="AzureAIFoundry",
+        model_id="gpt-o3-mini",
+    )
+    assert is_ai_foundry_reasoning_model(model) is True
+
+
+def test_ai_foundry_with_o4():
+    """Test AzureAIFoundry model with o4 in ID returns True."""
+    model = MockModel(
+        class_name="AzureAIFoundry",
+        model_id="gpt-o4",
+    )
+    assert is_ai_foundry_reasoning_model(model) is True
+
+
+def test_ai_foundry_with_unsupported_model():
+    """Test AzureAIFoundry model with unsupported ID returns False."""
+    model = MockModel(
+        class_name="AzureAIFoundry",
+        model_id="gpt-4-turbo",
+    )
+    assert is_ai_foundry_reasoning_model(model) is False
+
+
+def test_ai_foundry_non_ai_foundry_model():
+    """Test non-AzureAIFoundry model returns False."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="deepseek-r1",
+    )
+    assert is_ai_foundry_reasoning_model(model) is False
 
 
 # ============================================================================
@@ -287,5 +585,10 @@ def test_all_checkers_return_false_for_non_reasoning_model():
         model_id="gpt-4-turbo",
     )
     assert is_gemini_reasoning_model(model) is False
+    assert is_openai_reasoning_model(model) is False
     assert is_anthropic_reasoning_model(model) is False
     assert is_vertexai_reasoning_model(model) is False
+    assert is_deepseek_reasoning_model(model) is False
+    assert is_groq_reasoning_model(model) is False
+    assert is_ollama_reasoning_model(model) is False
+    assert is_ai_foundry_reasoning_model(model) is False
