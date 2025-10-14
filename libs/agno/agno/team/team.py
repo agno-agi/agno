@@ -259,6 +259,10 @@ class Team:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If True, store tool results in run output
+    store_tool_results: bool = True
+    # If True, store history messages in run output
+    store_history_messages: bool = True
 
     # --- Team Tools ---
     # A list of tools provided to the Model.
@@ -418,6 +422,8 @@ class Team:
         search_knowledge: bool = True,
         read_team_history: bool = False,
         store_media: bool = True,
+        store_tool_results: bool = True,
+        store_history_messages: bool = True,
         send_media_to_model: bool = True,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
@@ -518,6 +524,8 @@ class Team:
         self.read_team_history = read_team_history
 
         self.store_media = store_media
+        self.store_tool_results = store_tool_results
+        self.store_history_messages = store_history_messages
         self.send_media_to_model = send_media_to_model
 
         self.tools = tools
@@ -1189,6 +1197,12 @@ class Team:
                 debug_mode=debug_mode,
                 **kwargs,
             )
+        
+        if not self.store_tool_results:
+            self._scrub_tool_results_from_run_output(run_response)
+        
+        if not self.store_history_messages:
+            self._scrub_history_messages_from_run_output(run_response)
 
         # 7. Add the RunOutput to Team Session
         session.upsert_run(run_response=run_response)
@@ -1387,6 +1401,15 @@ class Team:
                 run_response.metrics.stop_timer()
 
             # TODO: For now we don't run post-hooks during streaming
+
+            if not self.store_media:
+                self._scrub_media_from_run_output(run_response)
+            
+            if not self.store_tool_results:
+                self._scrub_tool_results_from_run_output(run_response)
+            
+            if not self.store_history_messages:
+                self._scrub_history_messages_from_run_output(run_response)
 
             # 5. Add the run to Team Session
             session.upsert_run(run_response=run_response)
@@ -1878,6 +1901,12 @@ class Team:
         # Set the run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
+        
+        if not self.store_tool_results:
+            self._scrub_tool_results_from_run_output(run_response)
+        
+        if not self.store_history_messages:
+            self._scrub_history_messages_from_run_output(run_response)
 
         # 6. Add the run to session
         session.upsert_run(run_response=run_response)
@@ -2087,6 +2116,15 @@ class Team:
             # Set the run duration
             if run_response.metrics:
                 run_response.metrics.stop_timer()
+
+            if not self.store_media:
+                self._scrub_media_from_run_output(run_response)
+            
+            if not self.store_tool_results:
+                self._scrub_tool_results_from_run_output(run_response)
+            
+            if not self.store_history_messages:
+                self._scrub_history_messages_from_run_output(run_response)
 
             # 5. Add the run to Team Session
             session.upsert_run(run_response=run_response)
@@ -3610,6 +3648,42 @@ class Team:
         message.audio_output = None
         message.image_output = None
         message.video_output = None
+
+    def _scrub_tool_results_from_run_output(self, run_response: TeamRunOutput) -> None:
+        """
+        Remove all tool-related data from TeamRunOutput when store_tool_results=False.
+        This includes tool calls, tool results, and tool-related message fields.
+        """
+        # 1. Remove tool results (messages with role="tool")
+        if run_response.messages:
+            run_response.messages = [
+                msg for msg in run_response.messages 
+                if msg.role != "tool"
+            ]
+            # Also scrub tool-related fields from remaining messages
+            for message in run_response.messages:
+                self._scrub_tool_data_from_message(message)
+
+        # 2. Clear tools list
+        if run_response.tools:
+            run_response.tools = []
+
+    def _scrub_tool_data_from_message(self, message: Message) -> None:
+        """Remove tool-related data from a Message object."""
+        message.tool_calls = None
+        message.tool_call_id = None
+
+    def _scrub_history_messages_from_run_output(self, run_response: TeamRunOutput) -> None:
+        """
+        Remove all history messages from TeamRunOutput when store_history_messages=False.
+        This removes messages that were loaded from the team's memory.
+        """
+        # Remove messages with from_history=True
+        if run_response.messages:
+            run_response.messages = [
+                msg for msg in run_response.messages 
+                if not msg.from_history
+            ]
 
     def _validate_media_object_id(
         self,

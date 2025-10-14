@@ -43,8 +43,6 @@ def test_store_tool_results_enabled_by_default(tmp_path):
     assert stored_run is not None
 
     if stored_run.messages:
-        # Should have tool messages
-        tool_messages = [m for m in stored_run.messages if m.role == "tool"]
         # May or may not have tool calls depending on model behavior
         # But if tools were used, should be stored
         if response.tools:
@@ -63,7 +61,7 @@ def test_store_tool_results_disabled(tmp_path):
     assert agent.store_tool_results is False
 
     # Run agent
-    response = agent.run("Run command: echo 'test'")
+    agent.run("Run command: echo 'test'")
 
     # Check stored run
     stored_run = agent.get_last_run_output()
@@ -112,7 +110,7 @@ async def test_store_tool_results_disabled_async(tmp_path):
     )
 
     # Run agent async
-    response = await agent.arun("Run command: echo 'test'")
+    await agent.arun("Run command: echo 'test'")
 
     # Check stored run
     stored_run = agent.get_last_run_output()
@@ -141,7 +139,7 @@ def test_store_history_messages_enabled_by_default(tmp_path):
     agent.run("My name is Alice")
 
     # Second run with history
-    response = agent.run("What is my name?")
+    agent.run("What is my name?")
 
     # Check stored run
     stored_run = agent.get_last_run_output()
@@ -169,7 +167,7 @@ def test_store_history_messages_disabled(tmp_path):
     agent.run("My name is Bob")
 
     # Second run with history
-    response = agent.run("What is my name?")
+    agent.run("What is my name?")
 
     # Check stored run
     stored_run = agent.get_last_run_output()
@@ -217,7 +215,7 @@ async def test_store_history_messages_disabled_async(tmp_path):
     await agent.arun("My name is David")
 
     # Second run with history
-    response = await agent.arun("What is my name?")
+    await agent.arun("What is my name?")
 
     # Check stored run
     stored_run = agent.get_last_run_output()
@@ -246,7 +244,7 @@ def test_all_storage_disabled(tmp_path):
     agent.run("Tell me about Python")
 
     # Second run with history and tools
-    response = agent.run("What did we talk about? Run: echo 'test'")
+    agent.run("What did we talk about? Run: echo 'test'")
 
     stored_run = agent.get_last_run_output()
     assert stored_run is not None
@@ -278,7 +276,7 @@ def test_selective_storage(tmp_path):
     agent.run("Hello")
 
     # Second run
-    response = agent.run("Run: echo 'test'")
+    agent.run("Run: echo 'test'")
 
     stored_run = agent.get_last_run_output()
     assert stored_run is not None
@@ -304,7 +302,7 @@ def test_no_tools_used(tmp_path):
     )
 
     # Run without triggering tools
-    response = agent.run("What is 2+2?")
+    agent.run("What is 2+2?")
 
     stored_run = agent.get_last_run_output()
     assert stored_run is not None
@@ -321,7 +319,7 @@ def test_no_history_available(tmp_path):
     )
 
     # First run (no history to scrub)
-    response = agent.run("Hello")
+    agent.run("Hello")
 
     stored_run = agent.get_last_run_output()
     assert stored_run is not None
@@ -338,7 +336,7 @@ def test_empty_messages_list(tmp_path):
     )
 
     # This should handle gracefully even if messages are somehow empty
-    response = agent.run("Test")
+    agent.run("Test")
 
     stored_run = agent.get_last_run_output()
     assert stored_run is not None
@@ -357,7 +355,7 @@ def test_multiple_runs_same_agent(tmp_path):
 
     # Multiple runs
     for i in range(3):
-        response = agent.run(f"Run {i}: echo 'test{i}'")
+        agent.run(f"Run {i}: echo 'test{i}'")
 
         stored_run = agent.get_last_run_output()
         assert stored_run is not None
