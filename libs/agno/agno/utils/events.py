@@ -44,9 +44,12 @@ from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
 from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
 from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+from agno.run.team import RunContentCompletedEvent as TeamRunContentCompletedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
+from agno.run.team import SessionSummaryCreationCompletedEvent as TeamSessionSummaryCreationCompletedEvent
+from agno.run.team import SessionSummaryCreationStartedEvent as TeamSessionSummaryCreationStartedEvent
 from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
@@ -282,6 +285,29 @@ def create_team_memory_update_completed_event(from_run_response: TeamRunOutput) 
     )
 
 
+def create_team_session_summary_creation_started_event(
+    from_run_response: TeamRunOutput,
+) -> TeamSessionSummaryCreationStartedEvent:
+    return TeamSessionSummaryCreationStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_session_summary_creation_completed_event(
+    from_run_response: TeamRunOutput, session_summary: Optional[SessionSummary] = None
+) -> TeamSessionSummaryCreationCompletedEvent:
+    return TeamSessionSummaryCreationCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        session_summary=session_summary,
+    )
+
+
 def create_session_summary_creation_started_event(from_run_response: RunOutput) -> SessionSummaryCreationStartedEvent:
     return SessionSummaryCreationStartedEvent(
         session_id=from_run_response.session_id,
@@ -292,14 +318,14 @@ def create_session_summary_creation_started_event(from_run_response: RunOutput) 
 
 
 def create_session_summary_creation_completed_event(
-    from_run_response: RunOutput, session_summary: SessionSummary
+    from_run_response: RunOutput, session_summary: Optional[SessionSummary] = None
 ) -> SessionSummaryCreationCompletedEvent:
     return SessionSummaryCreationCompletedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
-        # session_summary=session_summary,
+        session_summary=session_summary,
     )
 
 
@@ -500,6 +526,17 @@ def create_run_content_completed_event(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_run_content_completed_event(
+    from_run_response: TeamRunOutput,
+) -> TeamRunContentCompletedEvent:
+    return TeamRunContentCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
     )
 

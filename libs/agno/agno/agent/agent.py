@@ -893,7 +893,9 @@ class Agent:
             self._parse_response_with_parser_model(model_response, run_messages)
 
             # 5. Update the RunOutput with the model response
-            self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+            self._update_run_response(
+                model_response=model_response, run_response=run_response, run_messages=run_messages
+            )
 
             if self.store_media:
                 self._store_media(run_response, model_response)
@@ -931,7 +933,10 @@ class Agent:
 
             # 8. Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
-                run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
+                run_response=run_response,
+                input=run_messages.user_message,
+                session_id=session.session_id,
+                user_id=user_id,
             )
 
             # 9. Add the RunOutput to Agent Session
@@ -1129,9 +1134,6 @@ class Agent:
                 session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             )
 
-            # Yield RunContentCompletedEvent
-            yield self._handle_event(create_run_content_completed_event(from_run_response=run_response), run_response)
-
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 yield from self._handle_agent_run_paused_stream(
@@ -1140,7 +1142,10 @@ class Agent:
                 return
 
             # Yield RunContentCompletedEvent
-            yield self._handle_event(create_run_content_completed_event(from_run_response=run_response), run_response)
+            if stream_intermediate_steps:
+                yield self._handle_event(
+                    create_run_content_completed_event(from_run_response=run_response), run_response
+                )
 
             run_response.status = RunStatus.completed
 
@@ -1203,6 +1208,9 @@ class Agent:
                 create_run_completed_event(from_run_response=run_response), run_response
             )
 
+            # Upsert RunOutput to Agent Session (after new events)
+            session.upsert_run(run=run_response)
+
             # 10. Save session to storage
             self.save_session(session=session)
 
@@ -1229,8 +1237,10 @@ class Agent:
                 run_response,
             )
 
-            # Add the RunOutput to Agent Session even when cancelled
+            # Upsert the RunOutput to Agent Session even when cancelled
             session.upsert_run(run=run_response)
+
+            # Save session to storage
             self.save_session(session=session)
         finally:
             # Clean up the memory executor if it was created
@@ -1650,7 +1660,9 @@ class Agent:
             await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
 
             # 6. Update the RunOutput with the model response
-            self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+            self._update_run_response(
+                model_response=model_response, run_response=run_response, run_messages=run_messages
+            )
 
             if self.store_media:
                 self._store_media(run_response, model_response)
@@ -1688,7 +1700,10 @@ class Agent:
 
             # 9. Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
-                run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
+                run_response=run_response,
+                input=run_messages.user_message,
+                session_id=session.session_id,
+                user_id=user_id,
             )
 
             # 10. Add RunOutput to Agent Session
@@ -1903,7 +1918,10 @@ class Agent:
                 return
 
             # Yield RunContentCompletedEvent
-            yield self._handle_event(create_run_content_completed_event(from_run_response=run_response), run_response)
+            if stream_intermediate_steps:
+                yield self._handle_event(
+                    create_run_content_completed_event(from_run_response=run_response), run_response
+                )
 
             run_response.status = RunStatus.completed
 
@@ -1960,7 +1978,7 @@ class Agent:
                 create_run_completed_event(from_run_response=run_response), run_response
             )
 
-            # Add updated RunOutput to Agent Session (after new events)
+            # Upsert RunOutput to Agent Session (after new events)
             session.upsert_run(run=run_response)
 
             # 10. Save session to storage
@@ -2580,15 +2598,15 @@ class Agent:
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
 
-        # 5. Add the run to memory
+        # 5. Add the run to session
         session.upsert_run(run=run_response)
 
-        # 6. Update Agent Memory
-        response_iterator = self._make_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        )
-        # Consume the response iterator to ensure the memory is updated before the run is completed
-        deque(response_iterator, maxlen=0)
+        # Create session summary
+        if self.session_summary_manager is not None:
+            try:
+                self.session_summary_manager.create_session_summary(session=session)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {str(e)}")
 
         # 7. Save session to storage
         self.save_session(session=session)
@@ -2629,7 +2647,9 @@ class Agent:
             yield self._handle_event(create_run_continued_event(run_response), run_response)
 
         # 1. Handle the updated tools
-        yield from self._handle_tool_call_updates_stream(run_response=run_response, run_messages=run_messages)
+        yield from self._handle_tool_call_updates_stream(
+            run_response=run_response, run_messages=run_messages, stream_intermediate_steps=stream_intermediate_steps
+        )
 
         # 2. Process model response
         for event in self._handle_model_response_stream(
@@ -2649,7 +2669,8 @@ class Agent:
             return
 
         # Yield RunContentCompletedEvent
-        yield self._handle_event(create_run_content_completed_event(from_run_response=run_response), run_response)
+        if stream_intermediate_steps:
+            yield self._handle_event(create_run_content_completed_event(from_run_response=run_response), run_response)
 
         # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
@@ -2688,7 +2709,8 @@ class Agent:
 
         # 7. Create the run completed event
         completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
-        # Store updated run response
+
+        # Upsert RunOutput to Agent Session (after new events)
         session.upsert_run(run=run_response)
 
         # 8. Save session to storage
@@ -3000,11 +3022,12 @@ class Agent:
         # 5. Add the run to memory
         session.upsert_run(run=run_response)
 
-        # 6. Update Agent Memory
-        async for _ in self._amake_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        ):
-            pass
+        # Create session summary
+        if self.session_summary_manager is not None:
+            try:
+                self.session_summary_manager.create_session_summary(session=session)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {str(e)}")
 
         # 7. Save session to storage
         self.save_session(session=session)
@@ -3047,7 +3070,9 @@ class Agent:
             yield self._handle_event(create_run_continued_event(run_response), run_response)
 
         # 1. Handle the updated tools
-        async for event in self._ahandle_tool_call_updates_stream(run_response=run_response, run_messages=run_messages):
+        async for event in self._ahandle_tool_call_updates_stream(
+            run_response=run_response, run_messages=run_messages, stream_intermediate_steps=stream_intermediate_steps
+        ):
             yield event
 
         # 2. Process model response
@@ -3069,7 +3094,8 @@ class Agent:
             return
 
         # Yield RunContentCompletedEvent
-        yield self._handle_event(create_run_content_completed_event(from_run_response=run_response), run_response)
+        if stream_intermediate_steps:
+            yield self._handle_event(create_run_content_completed_event(from_run_response=run_response), run_response)
 
         # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
@@ -3088,14 +3114,29 @@ class Agent:
         # 5. Add the run to memory
         session.upsert_run(run=run_response)
 
-        # 6. Update Agent Memory
-        async for event in self._amake_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        ):
-            yield event
+        # Create session summary
+        if self.session_summary_manager is not None:
+            if self.stream_intermediate_steps:
+                yield self._handle_event(
+                    create_session_summary_creation_started_event(from_run_response=run_response), run_response
+                )
+            try:
+                await self.session_summary_manager.acreate_session_summary(session=session)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {str(e)}")
+            if self.stream_intermediate_steps:
+                yield self._handle_event(
+                    create_session_summary_creation_completed_event(
+                        from_run_response=run_response, session_summary=session.summary
+                    ),
+                    run_response,
+                )
 
         # 7. Create the run completed event
         completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
+
+        # Upsert RunOutput to Agent Session (after new events)
+        session.upsert_run(run=run_response)
 
         # 8. Save session to storage
         self.save_session(session=session)
@@ -3439,7 +3480,11 @@ class Agent:
         )
 
     def _run_tool(
-        self, run_response: RunOutput, run_messages: RunMessages, tool: ToolExecution
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        tool: ToolExecution,
+        stream_intermediate_steps: bool = False,
     ) -> Iterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
         # Execute the tool
@@ -3452,21 +3497,23 @@ class Agent:
         ):
             if isinstance(call_result, ModelResponse):
                 if call_result.event == ModelResponseEvent.tool_call_started.value:
-                    yield self._handle_event(
-                        create_tool_call_started_event(from_run_response=run_response, tool=tool),
-                        run_response,
-                    )
+                    if stream_intermediate_steps:
+                        yield self._handle_event(
+                            create_tool_call_started_event(from_run_response=run_response, tool=tool),
+                            run_response,
+                        )
 
                 if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
                     tool_execution = call_result.tool_executions[0]
                     tool.result = tool_execution.result
                     tool.tool_call_error = tool_execution.tool_call_error
-                    yield self._handle_event(
-                        create_tool_call_completed_event(
-                            from_run_response=run_response, tool=tool, content=call_result.content
-                        ),
-                        run_response,
-                    )
+                    if stream_intermediate_steps:
+                        yield self._handle_event(
+                            create_tool_call_completed_event(
+                                from_run_response=run_response, tool=tool, content=call_result.content
+                            ),
+                            run_response,
+                        )
 
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
@@ -3486,6 +3533,7 @@ class Agent:
         run_response: RunOutput,
         run_messages: RunMessages,
         tool: ToolExecution,
+        stream_intermediate_steps: bool = False,
     ) -> AsyncIterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
@@ -3500,20 +3548,22 @@ class Agent:
         ):
             if isinstance(call_result, ModelResponse):
                 if call_result.event == ModelResponseEvent.tool_call_started.value:
-                    yield self._handle_event(
-                        create_tool_call_started_event(from_run_response=run_response, tool=tool),
-                        run_response,
-                    )
+                    if stream_intermediate_steps:
+                        yield self._handle_event(
+                            create_tool_call_started_event(from_run_response=run_response, tool=tool),
+                            run_response,
+                        )
                 if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
                     tool_execution = call_result.tool_executions[0]
                     tool.result = tool_execution.result
                     tool.tool_call_error = tool_execution.tool_call_error
-                    yield self._handle_event(
-                        create_tool_call_completed_event(
-                            from_run_response=run_response, tool=tool, content=call_result.content
-                        ),
-                        run_response,
-                    )
+                    if stream_intermediate_steps:
+                        yield self._handle_event(
+                            create_tool_call_completed_event(
+                                from_run_response=run_response, tool=tool, content=call_result.content
+                            ),
+                            run_response,
+                        )
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
 
@@ -3555,7 +3605,7 @@ class Agent:
                 deque(self._run_tool(run_response, run_messages, _t), maxlen=0)
 
     def _handle_tool_call_updates_stream(
-        self, run_response: RunOutput, run_messages: RunMessages
+        self, run_response: RunOutput, run_messages: RunMessages, stream_intermediate_steps: bool = False
     ) -> Iterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
         for _t in run_response.tools or []:
@@ -3563,7 +3613,9 @@ class Agent:
             if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                    yield from self._run_tool(run_response, run_messages, _t)
+                    yield from self._run_tool(
+                        run_response, run_messages, _t, stream_intermediate_steps=stream_intermediate_steps
+                    )
                 else:
                     self._reject_tool_call(run_messages, _t)
                     _t.confirmed = False
@@ -3588,7 +3640,9 @@ class Agent:
             # Case 4: Handle user input required tools
             elif _t.requires_user_input is not None and _t.requires_user_input is True:
                 self._handle_user_input_update(tool=_t)
-                yield from self._run_tool(run_response, run_messages, _t)
+                yield from self._run_tool(
+                    run_response, run_messages, _t, stream_intermediate_steps=stream_intermediate_steps
+                )
                 _t.requires_user_input = False
                 _t.answered = True
 
@@ -3629,7 +3683,7 @@ class Agent:
                 _t.answered = True
 
     async def _ahandle_tool_call_updates_stream(
-        self, run_response: RunOutput, run_messages: RunMessages
+        self, run_response: RunOutput, run_messages: RunMessages, stream_intermediate_steps: bool = False
     ) -> AsyncIterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
         for _t in run_response.tools or []:
@@ -3637,7 +3691,9 @@ class Agent:
             if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                    async for event in self._arun_tool(run_response, run_messages, _t):
+                    async for event in self._arun_tool(
+                        run_response, run_messages, _t, stream_intermediate_steps=stream_intermediate_steps
+                    ):
                         yield event
                 else:
                     self._reject_tool_call(run_messages, _t)
@@ -3661,7 +3717,9 @@ class Agent:
             # # Case 4: Handle user input required tools
             elif _t.requires_user_input is not None and _t.requires_user_input is True:
                 self._handle_user_input_update(tool=_t)
-                async for event in self._arun_tool(run_response, run_messages, _t):
+                async for event in self._arun_tool(
+                    run_response, run_messages, _t, stream_intermediate_steps=stream_intermediate_steps
+                ):
                     yield event
                 _t.requires_user_input = False
                 _t.answered = True
@@ -4100,10 +4158,11 @@ class Agent:
                         run_response.tools.extend(tool_executions_list)
 
                     # Yield each tool call started event
-                    for tool in tool_executions_list:
-                        yield self._handle_event(
-                            create_tool_call_started_event(from_run_response=run_response, tool=tool), run_response
-                        )
+                    if stream_intermediate_steps:
+                        for tool in tool_executions_list:
+                            yield self._handle_event(
+                                create_tool_call_started_event(from_run_response=run_response, tool=tool), run_response
+                            )
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
@@ -4164,12 +4223,13 @@ class Agent:
                                     "reasoning_time_taken"
                                 ] + float(tool_call_metrics.duration)
 
-                        yield self._handle_event(
-                            create_tool_call_completed_event(
-                                from_run_response=run_response, tool=tool_call, content=model_response_event.content
-                            ),
-                            run_response,
-                        )
+                        if stream_intermediate_steps:
+                            yield self._handle_event(
+                                create_tool_call_completed_event(
+                                    from_run_response=run_response, tool=tool_call, content=model_response_event.content
+                                ),
+                                run_response,
+                            )
 
                 if stream_intermediate_steps:
                     if reasoning_step is not None:
@@ -4198,7 +4258,7 @@ class Agent:
         )
         if user_message_str is not None:
             log_debug("Creating user memories.")
-            self.memory_manager.create_user_memories(
+            self.memory_manager.create_user_memories(  # type: ignore
                 message=user_message_str,
                 user_id=user_id,
                 agent_id=self.id,
@@ -4219,7 +4279,7 @@ class Agent:
                     continue
 
             if len(parsed_messages) > 0 and self.memory_manager is not None:
-                self.memory_manager.create_user_memories(messages=parsed_messages, user_id=user_id, agent_id=self.id)
+                self.memory_manager.create_user_memories(messages=parsed_messages, user_id=user_id, agent_id=self.id)  # type: ignore
             else:
                 log_warning("Unable to add messages to memory")
 
@@ -4231,9 +4291,9 @@ class Agent:
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
-        if user_message_str is not None:
+        if user_message_str is not None and self.memory_manager is not None:
             log_debug("Creating user memories.")
-            await self.memory_manager.acreate_user_memories(
+            await self.memory_manager.acreate_user_memories( # type: ignore
                 message=user_message_str,
                 user_id=user_id,
                 agent_id=self.id,
@@ -4254,12 +4314,11 @@ class Agent:
                     continue
 
             if len(parsed_messages) > 0 and self.memory_manager is not None:
-                await self.memory_manager.acreate_user_memories(
+                await self.memory_manager.acreate_user_memories( # type: ignore
                     messages=parsed_messages, user_id=user_id, agent_id=self.id
                 )
             else:
                 log_warning("Unable to add messages to memory")
-
 
     def _raise_if_async_tools(self) -> None:
         """Raise an exception if any tools contain async functions"""
