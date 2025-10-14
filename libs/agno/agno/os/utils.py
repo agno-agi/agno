@@ -143,6 +143,8 @@ def get_session_name(session: Dict[str, Any]) -> str:
 def extract_media(run_dict: Dict[str, Any], media_type: Literal["images", "videos", "audio", "files", "response_audio"] = "images"):
     media = []
     for message in run_dict.get("messages", []):
+        if message.get("role") != "assistant":
+            continue
         # For response_audio, check both response_audio and audio_output
         if media_type == "response_audio":
             value = message.get("response_audio") or message.get("audio_output")
@@ -158,6 +160,21 @@ def extract_media(run_dict: Dict[str, Any], media_type: Literal["images", "video
             media.append(value)
     return media
 
+def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:    
+    input_media = {
+        "images": [],
+        "videos": [],
+        "audio": [],
+        "files": [],
+    }
+
+    for message in run_dict.get("messages", []):
+        if message.get("role") == "user":
+            input_media["images"].extend(message.get("images", []))
+            input_media["videos"].extend(message.get("videos", []))
+            input_media["audio"].extend(message.get("audio", []))
+            input_media["files"].extend(message.get("files", []))
+    return input_media
 
 def process_image(file: UploadFile) -> Image:
     content = file.file.read()

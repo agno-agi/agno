@@ -16,6 +16,7 @@ from agno.os.utils import (
     get_session_name,
     get_workflow_input_schema_dict,
     extract_media,
+    extract_input_media,
 )
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
@@ -847,10 +848,12 @@ class RunSchema(BaseModel):
     audio: Optional[Any]
     files: Optional[List[dict]]
     response_audio: Optional[Any]
+    input_media: Optional[Dict[str, Any]]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
         run_input = get_run_input(run_dict)
+        input_media = extract_input_media(run_dict)
         run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
         return cls(
             run_id=run_dict.get("run_id", ""),
@@ -873,6 +876,7 @@ class RunSchema(BaseModel):
             files=extract_media(run_dict, "files"),
             audio=extract_media(run_dict, "audio"),
             response_audio=extract_media(run_dict, "response_audio"),
+            input_media=input_media,
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
             else None,
