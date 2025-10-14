@@ -197,7 +197,7 @@ class Model(ABC):
         # Collect tool_call_ids to keep (most recent N)
         tool_call_ids_list: List[str] = []
         for msg in reversed(messages):
-            if msg.role == "tool" and len(tool_call_ids_list) < num_tool_calls_in_context:
+            if msg.role == "tool" and len(tool_call_ids_list) <= num_tool_calls_in_context:
                 if msg.tool_call_id:
                     tool_call_ids_list.append(msg.tool_call_id)
 
@@ -245,7 +245,9 @@ class Model(ABC):
         # Log filtering information
         num_filtered = total_tool_calls - len(tool_call_ids_to_keep)
         if num_filtered > 0:
-            log_debug(f"Forgot {num_filtered} tool call results from a total of {num_tool_calls_in_context} tool calls")
+            log_info(
+                f"Keeping last {num_tool_calls_in_context} tool call cycles (filtered out {num_filtered} older tool calls)"
+            )
 
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:

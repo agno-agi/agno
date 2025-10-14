@@ -1,5 +1,7 @@
 import asyncio
+
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.tools.mcp import MCPTools
@@ -18,13 +20,16 @@ async def run_agent(message: str) -> None:
         server_params=server_params, include_tools=["browser_navigate", "browser_click"]
     ) as mcp_tools:
         agent = Agent(
-            model=Gemini(id="gemini-2.5-pro", vertexai=True),
+            model=Claude(id="claude-sonnet-4-5-20250929"),
             tools=[mcp_tools],
             role="Your task is to use your web browsing capabilities to find information and take actions on the web.",
             markdown=True,
             exponential_backoff=True,
+            db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
             forget_tool_calls=True,  # Enable tool call forgetting to manage context
-            num_tool_calls_in_context=5,  # Keep only the last 5 tool calls in context
+            num_tool_calls_in_context=3,  # Keep only the last 3 tool calls in context
+            add_history_to_context=True,
+            session_id="playwright_personality_session",
         )
 
         await agent.aprint_response(input=message, debug_mode=True, stream=True)
