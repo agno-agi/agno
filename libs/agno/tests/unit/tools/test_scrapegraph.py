@@ -169,6 +169,7 @@ def test_smartscraper_basic():
 
         mock_client.smartscraper.assert_called_once_with(website_url="https://example.com", user_prompt="extract title")
 
+
 def test_markdownify_basic():
     """Test markdownify basic functionality."""
     with (
