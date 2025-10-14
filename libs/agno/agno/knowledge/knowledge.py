@@ -682,7 +682,6 @@ class Knowledge:
                     self._update_content(content)
                     return
 
-
         else:
             content.status = ContentStatus.FAILED
             content.status_message = "No content provided"
