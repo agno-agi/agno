@@ -4,7 +4,7 @@ This cookbook contains comprehensive demonstrations of Agno's capabilities for c
 
 ## 📁 Demo Files
 
-- **`real_world_showcase.py`** - 10 production-ready use cases (5 agents + 4 teams + 1 workflow)
+- **`real_world_showcase.py`** - 3 comprehensive consumer/lifestyle agents (Lifestyle Concierge + Study Buddy + Creative Studio)
 - **`run.py`** - AgentOS production setup with agents, teams, and workflows
 
 > Note: Fork and clone the repository if needed
@@ -90,7 +90,7 @@ source venv/bin/activate
 export OPENAI_API_KEY='your-openai-key'
 export ANTHROPIC_API_KEY='your-anthropic-key'
 
-# Run real-world showcase (serves 10 use cases: 5 agents + 4 teams + 1 workflow)
+# Run real-world showcase (3 comprehensive agents: Lifestyle Concierge + Study Buddy + Creative Studio)
 python cookbook/demo/real_world_showcase.py
 ```
 
@@ -111,34 +111,37 @@ Then open [os.agno.com](https://os.agno.com/) to connect and interact with the d
 
 ### 🟡 `real_world_showcase.py` - Production-Ready Use Cases
 
-**10 Real-World Applications:**
-1. **Customer Support AI Team** - Intelligent ticket classification & resolution
-2. **Content Creation Pipeline** - Automated research, writing & editing workflow
-3. **Personal Finance Manager** - Investment analysis & financial advice
-4. **Legal Document Analyzer** - Contract review with RAG knowledge base
-5. **HR Recruitment Assistant** - Resume screening & candidate evaluation
-6. **E-commerce Product Recommender** - Personalized shopping assistant
-7. **Healthcare Symptom Checker** - Educational health information team
-8. **Business Intelligence Team** - Data analysis & strategic insights
-9. **Education Tutor** - Adaptive personalized learning with RAG
-10. **Travel Planning Assistant** - Comprehensive trip planning
+**3 Comprehensive Consumer/Lifestyle Agents:**
+1. **Lifestyle Concierge** - Multi-domain personal assistant (finance/shopping/travel)
+   - Stock analysis with YFinance, product recommendations, travel planning
+   - Demonstrates: Tools, Structured Outputs, Guardrails, Memory, Storage, Agent State, Metrics
+2. **Study Buddy** - Educational AI with RAG capabilities
+   - Knowledge base search, educational resources, learning assessments
+   - Demonstrates: Vector Search, Input Validation Hooks, Tool Monitoring, Memory, Metrics
+3. **Creative Studio** - Multimodal AI assistant
+   - Image generation with DALL-E, image analysis with GPT-4o vision
+   - Demonstrates: Multimodal Capabilities, Tool Hooks, Guardrails, Metrics
 
-**Key Features Demonstrated:**
-- 📋 Multi-Agent Teams (4 teams with specialized roles)
-- 🔄 Complex Workflows (Research → Write → Edit pipeline)
-- 💾 Memory & Knowledge (RAG with legal, medical, education knowledge bases)
-- ✅ Structured Outputs (Pydantic schemas for all responses)
-- 🔒 Validation & Safety (Pre-hooks for input validation, emergency detection)
-- 🎯 Real-World Scenarios (Customer support, finance, healthcare, etc.)
+**Key Features Demonstrated (ALL 10 Core Agno Features):**
+- 🔧 Tools - External API integration (YFinance, DuckDuckGo, DALL-E)
+- 📚 Knowledge/RAG - Vector database with hybrid search (LanceDB)
+- 🎨 Multimodal - Image generation and analysis (DALL-E, GPT-4o vision)
+- 🪝 Pre/Post Hooks - Input validation, tool monitoring, metrics display
+- 🛡️ Guardrails - PII detection, prompt injection protection
+- 💾 Agent Sessions - Persistent conversation history and context
+- 🗂️ Agent State - Shopping cart, travel preferences across sessions
+- 🧠 Memory - User preferences and session summaries
+- 📊 Structured Outputs - Pydantic schemas for all responses
+- 📈 Metrics - Automatic performance tracking (tokens, cost, latency)
 
 **Run AgentOS:**
 ```bash
 # Start the Real-World Showcase server
 python cookbook/demo/real_world_showcase.py
 
-# Then connect to https://os.agno.com to interact with all use cases
+# Then connect to https://os.agno.com to interact with all agents
 # API available at http://localhost:7780
-# Full documentation: cookbook/demo/REAL_WORLD_SHOWCASE.md
+# Quick prompts available in showcase_config.yaml
 ```
 
 ---

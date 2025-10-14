@@ -1,18 +1,18 @@
 """
 Real-World Use Cases Showcase - Agno Framework
 
-This demo showcases 10 innovative real-world applications built with Agno,
+This demo showcases 3 comprehensive agents built with Agno,
 demonstrating the full range of capabilities including:
 - Memory & Knowledge (RAG, user preferences, conversation history)
-- Team Coordination (multi-agent workflows)
 - Tool Integration (APIs, databases, web scraping)
 - Structured Outputs (Pydantic schemas)
 - Hooks & Validation (input/output validation)
-- Async Operations & MCP Integration
+- Agent State Management
+- Automatic Metrics Display
 
 Steps:
-1. Run: `pip install agno yfinance duckduckgo-search newspaper4k lancedb openai` to install dependencies
-2. Run: `python real_world_showcase.py` to launch AgentOS with all 10 use cases
+1. Run: `pip install agno yfinance duckduckgo-search lancedb openai` to install dependencies
+2. Run: `python real_world_showcase.py` to launch AgentOS with all agents
 3. Access the API at http://localhost:7780 or use the CLI
 
 Author: Agno Team
@@ -24,18 +24,10 @@ from textwrap import dedent
 
 from agno.os import AgentOS
 
-# Import all single agents
-from agents.agent_with_storage import travel_planner
-from agents.agent_with_tools import personal_finance_agent
-from agents.knowledge_agent import education_tutor, load_education_knowledge
-from agents.structured_output_agent import ecommerce_recommender
-
-# Import all teams
-from teams.multi_agent_team import customer_support_team
-from teams.team_with_knowledge import healthcare_team, load_medical_knowledge
-
-# Import workflows
-from workflows.content_creation_pipeline import content_creation_workflow
+# Import consolidated agents
+from agents.study_buddy import study_buddy, load_education_knowledge
+from agents.creative_studio import creative_studio
+from agents.lifestyle_concierge import lifestyle_concierge
 
 # ============================================================================
 # Knowledge Base Initialization
@@ -45,8 +37,7 @@ from workflows.content_creation_pipeline import content_creation_workflow
 async def initialize_knowledge_bases():
     """Initialize all knowledge bases with content"""
     await asyncio.gather(
-        load_medical_knowledge(),
-        load_education_knowledge(),
+        load_education_knowledge(),  # Study Buddy agent
         return_exceptions=True,
     )
 
@@ -55,34 +46,31 @@ async def initialize_knowledge_bases():
 # AgentOS Configuration & Launch
 # ============================================================================
 
-# Create AgentOS instance with all use cases
+# Create AgentOS instance with all agents
 agent_os = AgentOS(
     description=dedent("""\
         Real-World Use Cases Showcase - Agno Framework Demo
 
-        This demo showcases core Agno framework capabilities through
-        practical examples demonstrating:
-        - Memory & Knowledge (RAG, user preferences, conversation history)
-        - Team Coordination (multi-agent workflows)
-        - Tool Integration (APIs, databases)
-        - Structured Outputs (Pydantic schemas)
-        - Hooks & Validation (input/output validation)
-        - Storage & Persistence
+        Quality-focused demonstration of Agno framework capabilities.
+
+        Each component demonstrates multiple features:
+
+        AGENTS (3):
+        • Lifestyle Concierge - Multi-domain (finance/shopping/travel) with tools,
+          structured outputs, guardrails, memory, storage, and agent state
+        • Study Buddy - RAG/vector search with input validation hooks,
+          tool monitoring, and multi-source knowledge retrieval
+        • Creative Studio - Multimodal (image generation/analysis) with
+          tool hooks and comprehensive guardrails
+
+        Total: 3 agents demonstrating ALL 10 core Agno features with real-world depth
     """),
     agents=[
-        personal_finance_agent,  # Tools (YFinance)
-        ecommerce_recommender,  # Structured Output
-        education_tutor,  # Knowledge/RAG
-        travel_planner,  # Storage
+        lifestyle_concierge,  # Multi-domain: Tools + Structured Outputs + Guardrails + Memory + Storage + Agent State + Metrics
+        study_buddy,  # Study Buddy: RAG + Input Validation + Tool Hooks + Memory + Metrics
+        creative_studio,  # Creative Studio: Multimodal + Tool Hooks + Guardrails + Metrics
     ],
-    teams=[
-        customer_support_team,  # Multi-Agent
-        healthcare_team,  # Team + Knowledge + Hooks
-    ],
-    workflows=[
-        content_creation_workflow,  # Workflow Example
-    ],
-    config=str(Path(__file__).parent / "config.yaml"),
+    config=str(Path(__file__).parent / "showcase_config.yaml"),
 )
 
 # Get the FastAPI app
@@ -99,17 +87,15 @@ if __name__ == "__main__":
     asyncio.run(initialize_knowledge_bases())
 
     print("\n✅ All systems ready!")
-    print("\n📋 Agno Framework Features Demonstrated:")
-    print("\n   AGENTS (4):")
-    print("   • Agent with Tools (YFinance) - Personal finance manager")
-    print("   • Structured Output Agent - E-commerce recommender")
-    print("   • Knowledge Agent (RAG) - Education tutor")
-    print("   • Agent with Storage - Travel planner")
-    print("\n   TEAMS (2):")
-    print("   • Multi-Agent Team - Customer support workflow")
-    print("   • Team with Knowledge + Hooks - Healthcare symptom checker")
-    print("\n   WORKFLOWS (1):")
-    print("   • Workflow Example - Content creation pipeline")
+    print("\n📋 Quality-Focused Agno Framework Showcase:")
+    print("\n   AGENTS (3) - Each demonstrates multiple features:")
+    print("   • Lifestyle Concierge - Multi-domain (finance/shopping/travel)")
+    print("     Features: Tools, Structured Outputs, Guardrails, Memory, Storage, Agent State, Metrics")
+    print("   • Study Buddy - RAG with advanced capabilities")
+    print("     Features: Vector Search, Input Validation, Tool Hooks, Memory, Metrics")
+    print("   • Creative Studio - Multimodal AI assistant")
+    print("     Features: Image Generation/Analysis, Tool Hooks, Guardrails, Metrics")
+    print("\n   📊 Total: 3 agents demonstrating ALL 10 core Agno features")
 
     print("\n🌐 Starting AgentOS on http://localhost:7780")
     print("=" * 80 + "\n")
