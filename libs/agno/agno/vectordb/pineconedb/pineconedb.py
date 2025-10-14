@@ -307,6 +307,8 @@ class PineconeDb(VectorDb):
         show_progress: bool = False,
     ) -> None:
         """Upsert documents into the index asynchronously with batching."""
+        if self.content_hash_exists(content_hash):
+            await asyncio.to_thread(self._delete_by_content_hash, content_hash)
         if not documents:
             return
 
@@ -320,7 +322,7 @@ class PineconeDb(VectorDb):
 
         # Process each batch in parallel
         async def process_batch(batch_docs):
-            return await self._prepare_vectors(batch_docs)
+            return await self._prepare_vectors(batch_docs, content_hash, filters)
 
         # Run all batches in parallel
         batch_vectors = await asyncio.gather(*[process_batch(batch) for batch in batches])
@@ -335,7 +337,9 @@ class PineconeDb(VectorDb):
 
         log_debug(f"Finished async upsert of {len(documents)} documents")
 
-    async def _prepare_vectors(self, documents: List[Document]) -> List[Dict[str, Any]]:
+    async def _prepare_vectors(
+        self, documents: List[Document], content_hash: str, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """Prepare vectors for upsert."""
         vectors = []
 
@@ -382,10 +386,15 @@ class PineconeDb(VectorDb):
             doc.meta_data["text"] = doc.content
             # Include name and content_id in metadata
             metadata = doc.meta_data.copy()
+            if filters:
+                metadata.update(filters)
+
             if doc.name:
                 metadata["name"] = doc.name
             if doc.content_id:
                 metadata["content_id"] = doc.content_id
+
+            metadata["content_hash"] = content_hash
 
             data_to_upsert = {
                 "id": doc.id,
