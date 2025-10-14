@@ -28,8 +28,8 @@ if __name__ == "__main__":
     stored_run = agent.get_last_run_output()
     if stored_run and stored_run.messages:
         history_messages = [m for m in stored_run.messages if m.from_history]
-        print(f"\n📊 Storage Info:")
+        print("\n Storage Info:")
         print(f"   Total messages stored: {len(stored_run.messages)}")
         print(f"   History messages: {len(history_messages)} (scrubbed!)")
-        print(f"\n History was used during execution (agent knew the answer)")
-        print(f"   but history messages are NOT stored in the database!")
+        print("\n History was used during execution (agent knew the answer)")
+        print("   but history messages are NOT stored in the database!")

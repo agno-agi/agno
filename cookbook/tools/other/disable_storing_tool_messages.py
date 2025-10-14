@@ -25,9 +25,9 @@ if __name__ == "__main__":
     stored_run = agent.get_last_run_output()
     if stored_run and stored_run.messages:
         tool_messages = [m for m in stored_run.messages if m.role == "tool"]
-        print(f"\n Storage info:")
-        print(f"   Total messages stored: {len(stored_run.messages)}")
-        print(f"   Tool result messages: {len(tool_messages)} (scrubbed!)")
+        print("\n Storage info:")
+        print("   Total messages stored: {len(stored_run.messages)}")
+        print("   Tool result messages: {len(tool_messages)} (scrubbed!)")
         print(
             f"   Tools list: {len(stored_run.tools) if stored_run.tools else 0} (scrubbed!)"
         )
