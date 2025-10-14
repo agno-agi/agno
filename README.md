@@ -86,6 +86,107 @@ If you're new to Agno, follow our [quickstart](https://docs.agno.com/introductio
 
 After that, checkout the [examples gallery](https://docs.agno.com/examples/introduction) and build real-world applications with Agno.
 
+## Development Setup
+
+To contribute to Agno or work with the latest features, set up the development environment:
+
+### Prerequisites
+- Python 3.8 or higher
+- Git
+
+### Setup Steps
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/agno-agi/agno.git
+   cd agno
+   ```
+
+2. **Run the development setup script**:
+   ```bash
+   ./scripts/dev_setup.sh
+   ```
+   
+   This script will:
+   - Create and activate a virtual environment
+   - Install all dependencies in development mode
+   - Set up pre-commit hooks
+   - Configure your environment for development
+
+3. **Activate the virtual environment** (if not already activated):
+   ```bash
+   source .venv/bin/activate  # On macOS/Linux
+   # OR
+   .venv\Scripts\activate     # On Windows
+   ```
+
+4. **Verify the installation**:
+   ```bash
+   python -c "import agno; print(f'Agno version: {agno.__version__}')"
+   ```
+
+### Working with Vector Databases
+
+Agno now includes comprehensive vector database support, including **Valkey Search** - a Redis-compatible vector search engine. Here's a quick example:
+
+```python
+from agno.vectordb.valkey import ValkeySearch
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# Set up Valkey Search vector database
+embedder = OpenAIEmbedder(id="text-embedding-ada-002", dimensions=1536)
+valkey_db = ValkeySearch(
+    collection="my_knowledge",
+    embedder=embedder,
+    host="localhost",
+    port=6379
+)
+
+# Create Knowledge system with vector database
+knowledge = Knowledge(
+    name="AI Knowledge Base",
+    vector_db=valkey_db
+)
+
+# Create an agent with access to the knowledge base
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    knowledge=knowledge,
+    search_knowledge=True,
+    instructions="You are an AI assistant with access to a comprehensive knowledge base."
+)
+
+# Add content to the knowledge base
+knowledge.add_content(
+    name="AI Overview",
+    text_content="Artificial intelligence is transforming industries through automation and intelligent decision-making.",
+    metadata={"category": "technology", "topic": "AI"}
+)
+
+# Query the agent - it will automatically search the knowledge base
+response = agent.run("What is artificial intelligence?")
+print(response.content)
+```
+
+### Vector Database Examples
+
+Explore comprehensive vector database examples in the cookbook:
+
+- **Valkey Search**: `cookbook/knowledge/vector_db/valkey_db/` - Redis-compatible vector search with HNSW algorithm
+- **ChromaDB**: `cookbook/knowledge/vector_db/chroma_db/` - Popular vector database for embeddings
+- **Pinecone**: `cookbook/knowledge/vector_db/pinecone_db/` - Cloud-native vector database
+- **Qdrant**: `cookbook/knowledge/vector_db/qdrant_db/` - High-performance vector search engine
+
+Each example includes:
+- Complete setup instructions
+- Docker configurations where needed
+- Sync and async operation examples
+- Knowledge system integration
+- Agent-based querying demonstrations
+
 ## Documentation, Community & More Examples
 
 - Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
