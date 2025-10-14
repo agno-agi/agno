@@ -1,4 +1,4 @@
-import datetime
+from datetime import date, datetime, timezone
 from textwrap import dedent
 from typing import List, Literal, Optional, Sequence
 
@@ -13,7 +13,17 @@ from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
 
-TableType = Literal["sessions", "memories", "users", "knowledge", "evals", "agents", "teams", "workflows"]
+TableType = Literal[
+    "agents",
+    "evals",
+    "knowledge",
+    "memories",
+    "metrics",
+    "sessions",
+    "teams",
+    "users",
+    "workflows",
+]
 
 
 def deserialize_record_id(record: dict, agno_field: str, surreal_field: Optional[str] = None) -> dict:
@@ -25,6 +35,24 @@ def deserialize_record_id(record: dict, agno_field: str, surreal_field: Optional
         if agno_field != surreal_field:
             del record[surreal_field]
     return record
+
+
+def surrealize_dates(record: dict) -> dict:
+    copy = record.copy()
+    for key, value in copy.items():
+        if isinstance(value, date):
+            copy[key] = datetime.combine(value, datetime.min.time()).replace(tzinfo=timezone.utc)
+        elif key in ["created_at", "updated_at"] and isinstance(value, int):
+            copy[key] = datetime.fromtimestamp(value).replace(tzinfo=timezone.utc)
+    return copy
+
+
+def desurrealize_dates(record: dict) -> dict:
+    copy = record.copy()
+    for key, value in copy.items():
+        if isinstance(value, datetime):
+            copy[key] = int(value.timestamp())
+    return copy
 
 
 def serialize_session(session: Session, table_names: dict[TableType, str]) -> dict:
@@ -44,13 +72,26 @@ def serialize_session(session: Session, table_names: dict[TableType, str]) -> di
     return _dict
 
 
-def deserialize_session(session_type: SessionType, session_raw: dict) -> Optional[Session]:
-    # session_raw = deserialize_session_json_fields(session_raw)
-
+def desurrealize_session(session_raw: dict) -> dict:
     session_raw = deserialize_record_id(session_raw, "session_id", "id")
     session_raw = deserialize_record_id(session_raw, "agent_id", "agent")
     session_raw = deserialize_record_id(session_raw, "team_id", "team")
     session_raw = deserialize_record_id(session_raw, "workflow_id", "workflow")
+
+    session_raw = desurrealize_dates(session_raw)
+
+    if session_raw["agent_id"]:
+        session_raw["session_type"] = SessionType.AGENT
+    elif session_raw["team_id"]:
+        session_raw["session_type"] = SessionType.TEAM
+    elif session_raw["workflow_id"]:
+        session_raw["session_type"] = SessionType.WORKFLOW
+
+    return session_raw
+
+
+def deserialize_session(session_type: SessionType, session_raw: dict) -> Optional[Session]:
+    session_raw = desurrealize_session(session_raw)
 
     if session_type == SessionType.AGENT:
         return AgentSession.from_dict(session_raw)
@@ -86,6 +127,8 @@ def desurrealize_user_memory(memory_raw: dict) -> dict:
     copy = deserialize_record_id(copy, "team_id", "team")
     copy = deserialize_record_id(copy, "workflow_id", "workflow")
 
+    # TODO: is this ok? or should we cast datetimes to int? Like in desurrealize_session
+    # copy = desurrealize_dates(copy)
     updated_at = copy.get("updated_at")
     if not isinstance(updated_at, str):
         copy["updated_at"] = str(updated_at)
@@ -115,20 +158,9 @@ def serialize_user_memory(memory: UserMemory, memory_table_name: str, user_table
 def deserialize_knowledge_row(knowledge_row_raw: dict) -> KnowledgeRow:
     copy = knowledge_row_raw.copy()
 
-    # - id
     copy = deserialize_record_id(copy, "id")
+    copy = desurrealize_dates(copy)
 
-    # - created_at
-    created_at = copy.get("created_at")
-    if created_at and isinstance(created_at, datetime.datetime):
-        copy["created_at"] = int(created_at.timestamp())
-
-    # - updated_at
-    updated_at = copy.get("updated_at")
-    if updated_at and isinstance(updated_at, datetime.datetime):
-        copy["updated_at"] = int(updated_at.timestamp())
-
-    # return
     return KnowledgeRow.model_validate(copy)
 
 
@@ -139,7 +171,7 @@ def serialize_knowledge_row(knowledge_row: KnowledgeRow, knowledge_table_name: s
     return dict_
 
 
-def desurealize_eval_run_record(eval_run_record_raw: dict) -> dict:
+def desurrealize_eval_run_record(eval_run_record_raw: dict) -> dict:
     copy = eval_run_record_raw.copy()
 
     copy = deserialize_record_id(copy, "run_id", "id")
@@ -151,7 +183,7 @@ def desurealize_eval_run_record(eval_run_record_raw: dict) -> dict:
 
 
 def deserialize_eval_run_record(eval_run_record_raw: dict) -> EvalRunRecord:
-    return EvalRunRecord.model_validate(desurealize_eval_run_record(eval_run_record_raw))
+    return EvalRunRecord.model_validate(desurrealize_eval_run_record(eval_run_record_raw))
 
 
 def serialize_eval_run_record(eval_run_record: EvalRunRecord, table_names: dict[TableType, str]) -> dict:
@@ -179,6 +211,12 @@ def get_schema(table_type: TableType, table_name: str) -> str:
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     elif table_type == "knowledge":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now() READONLY;
+            DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            """)
+    elif table_type == "sessions":
         return dedent(f"""
             {define_table}
             DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now() READONLY;

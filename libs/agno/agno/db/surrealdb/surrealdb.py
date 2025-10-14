@@ -1,12 +1,22 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from textwrap import dedent
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from agno.db.base import BaseDb, SessionType
+from agno.db.postgres.utils import (
+    calculate_date_metrics,
+    fetch_all_sessions_data,
+    get_dates_to_calculate_metrics_for,
+)
 from agno.db.schemas import UserMemory
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.surrealdb import utils
+from agno.db.surrealdb.metrics import (
+    bulk_upsert_metrics,
+    get_all_sessions_for_metrics_calculation,
+    get_metrics_calculation_starting_date,
+)
 from agno.db.surrealdb.models import (
     TableType,
     deserialize_eval_run_record,
@@ -15,7 +25,7 @@ from agno.db.surrealdb.models import (
     deserialize_sessions,
     deserialize_user_memories,
     deserialize_user_memory,
-    desurealize_eval_run_record,
+    desurrealize_eval_run_record,
     desurrealize_user_memory,
     get_schema,
     get_session_type,
@@ -27,6 +37,7 @@ from agno.db.surrealdb.models import (
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
 from agno.db.surrealdb.utils import build_client
 from agno.session import Session
+from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
 
 try:
@@ -125,6 +136,8 @@ class SurrealDb(BaseDb):
             table_name = self._workflows_table_name
         elif table_type == "evals":
             table_name = self.eval_table_name
+        elif table_type == "metrics":
+            table_name = self.metrics_table_name
         else:
             raise NotImplementedError(f"Unknown table type: {table_type}")
 
@@ -163,6 +176,16 @@ class SurrealDb(BaseDb):
         return total_count
 
     # --- Sessions ---
+
+    def clear_sessions(self) -> None:
+        """Delete all session rows from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        table = self._get_table("sessions")
+        _ = self.client.delete(table)
+
     def delete_session(self, session_id: str) -> bool:
         table = self._get_table(table_type="sessions")
         if table is None:
@@ -721,21 +744,118 @@ class SurrealDb(BaseDb):
         return list(deserialize_user_memories(raw))
 
     # --- Metrics ---
-    # TODO: test metrics
 
     def get_metrics(
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
-        # TODO
-        raise NotImplementedError
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        table = self._get_table("metrics")
+
+        where = WhereClause()
+
+        # starting_date
+        if starting_date is not None:
+            where = where.and_("starting_date", starting_date, ">=")
+
+        # ending_date
+        if ending_date is not None:
+            where = where.and_("ending_date", ending_date, "<=")
+
+        where_clause, where_vars = where.build()
+
+        # Query
+        query = dedent(f"""
+            SELECT *
+            FROM {table}
+            {where_clause}
+            ORDER BY updated_at DESC
+        """)
+
+        results = self._query(query, where_vars, dict)
+        if len(results):
+            latest_update = results[-1]["updated_at"]
+        else:
+            latest_update = None
+
+        return list(results), latest_update
 
     def calculate_metrics(self) -> Optional[Any]:
-        # TODO
-        raise NotImplementedError
+        """Calculate metrics for all dates without complete metrics.
+
+        Returns:
+            Optional[list[dict]]: The calculated metrics.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        try:
+            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
+
+            starting_date = get_metrics_calculation_starting_date(self.client, table, self.get_sessions)
+
+            if starting_date is None:
+                log_info("No session data found. Won't calculate metrics.")
+                return None
+
+            dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
+            if not dates_to_process:
+                log_info("Metrics already calculated for all relevant dates.")
+                return None
+
+            start_timestamp = datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc)
+            end_timestamp = datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).replace(
+                tzinfo=timezone.utc
+            )
+
+            sessions = get_all_sessions_for_metrics_calculation(
+                self.client, self._get_table("sessions"), start_timestamp, end_timestamp
+            )
+
+            all_sessions_data = fetch_all_sessions_data(sessions, dates_to_process, int(start_timestamp.timestamp()))
+            if not all_sessions_data:
+                log_info("No new session data found. Won't calculate metrics.")
+                return None
+
+            results = []
+            metrics_records = []
+
+            for date_to_process in dates_to_process:
+                date_key = date_to_process.isoformat()
+                sessions_for_date = all_sessions_data.get(date_key, {})
+
+                # Skip dates with no sessions
+                if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
+                    continue
+
+                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+                metrics_records.append(metrics_record)
+
+            if metrics_records:
+                results = bulk_upsert_metrics(self.client, table, metrics_records)
+
+            log_debug("Updated metrics calculations")
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception refreshing metrics: {e}")
+            raise e
 
     # --- Knowledge ---
+
     def clear_knowledge(self) -> None:
         """Delete all knowledge rows from the database.
 
@@ -886,7 +1006,7 @@ class SurrealDb(BaseDb):
         record = RecordID(table, eval_run_id)
         result = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
         if not result or not deserialize:
-            return desurealize_eval_run_record(result) if result is not None else None
+            return desurrealize_eval_run_record(result) if result is not None else None
         return deserialize_eval_run_record(result)
 
     def get_eval_runs(
