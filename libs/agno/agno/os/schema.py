@@ -898,8 +898,12 @@ class TeamRunSchema(BaseModel):
     created_at: Optional[datetime]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
-    output_media: Optional[Dict[str, Any]]
     input_media: Optional[Dict[str, Any]]
+    images: Optional[List[dict]]
+    videos: Optional[List[dict]]
+    audio: Optional[List[dict]]
+    files: Optional[List[dict]]
+    response_audio: Optional[dict]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -923,7 +927,11 @@ class TeamRunSchema(BaseModel):
             else None,
             references=run_dict.get("references", []),
             reasoning_messages=run_dict.get("reasoning_messages", []),
-            output_media=extract_output_media(run_dict),
+            images=extract_output_media(run_dict).get("images", []),
+            videos=extract_output_media(run_dict).get("videos", []),
+            audio=extract_output_media(run_dict).get("audio", []),
+            files=extract_output_media(run_dict).get("files", []),
+            response_audio=extract_output_media(run_dict).get("response_audio", None),
             input_media=extract_input_media(run_dict),
         )
 
@@ -945,7 +953,11 @@ class WorkflowRunSchema(BaseModel):
     reasoning_steps: Optional[List[dict]]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
-    output_media: Optional[Dict[str, Any]]
+    images: Optional[List[dict]]
+    videos: Optional[List[dict]]
+    audio: Optional[List[dict]]
+    files: Optional[List[dict]]
+    response_audio: Optional[dict]
     input_media: Optional[Dict[str, Any]]
 
     @classmethod
@@ -968,7 +980,11 @@ class WorkflowRunSchema(BaseModel):
             reasoning_steps=run_response.get("reasoning_steps", []),
             references=run_response.get("references", []),
             reasoning_messages=run_response.get("reasoning_messages", []),
-            output_media=extract_output_media(run_response),
+            images=extract_output_media(run_response).get("images", []),
+            videos=extract_output_media(run_response).get("videos", []),
+            audio=extract_output_media(run_response).get("audio", []),
+            files=extract_output_media(run_response).get("files", []),
+            response_audio=extract_output_media(run_response).get("response_audio", None),
             input_media=extract_input_media(run_response),
         )
 
