@@ -1,18 +1,20 @@
 """Integration tests for parallel session state handling in workflows."""
 
-import pytest
 import asyncio
 from copy import deepcopy
 
+import pytest
+
 from agno.run.base import RunStatus
+from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
-from agno.utils.merge_dict import merge_parallel_session_states
+
 
 def test_basic_parallel_modifications(shared_db):
     """Test basic parallel modifications to different keys"""
-    
+
     def func_a(step_input: StepInput, session_state: dict) -> StepOutput:
         session_state["a"] += 1
         return StepOutput(content="A done")
@@ -27,24 +29,26 @@ def test_basic_parallel_modifications(shared_db):
 
     workflow = Workflow(
         name="Basic Parallel Test",
-        steps=[Parallel(
-            Step(name="Step A", executor=func_a),
-            Step(name="Step B", executor=func_b),
-            Step(name="Step C", executor=func_c),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Step A", executor=func_a),
+                Step(name="Step B", executor=func_b),
+                Step(name="Step C", executor=func_c),
+            )
+        ],
         session_state={"a": 1, "b": 2, "c": 3},
         db=shared_db,
     )
 
     workflow.run("test")
     final_state = workflow.get_session_state()
-    
+
     assert final_state == {"a": 2, "b": 3, "c": 4}
 
 
 def test_overlapping_modifications(shared_db):
     """Test when multiple functions modify the same key"""
-    
+
     def func_increment_counter(step_input: StepInput, session_state: dict) -> StepOutput:
         session_state["counter"] = session_state.get("counter", 0) + 1
         return StepOutput(content="Counter incremented")
@@ -59,18 +63,20 @@ def test_overlapping_modifications(shared_db):
 
     workflow = Workflow(
         name="Overlapping Modifications Test",
-        steps=[Parallel(
-            Step(name="Increment", executor=func_increment_counter),
-            Step(name="Add 5", executor=func_add_to_counter),
-            Step(name="Multiply", executor=func_multiply_counter),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Increment", executor=func_increment_counter),
+                Step(name="Add 5", executor=func_add_to_counter),
+                Step(name="Multiply", executor=func_multiply_counter),
+            )
+        ],
         session_state={"counter": 10},
         db=shared_db,
     )
 
     workflow.run("test")
     final_state = workflow.get_session_state()
-    
+
     # One of the three operations should have taken precedence
     # Since all modify the same key, only one change will be preserved
     possible_results = [11, 15, 20]  # +1, +5, *2 respectively
@@ -79,7 +85,7 @@ def test_overlapping_modifications(shared_db):
 
 def test_new_key_additions(shared_db):
     """Test adding new keys to session state in parallel"""
-    
+
     def func_add_x(step_input: StepInput, session_state: dict) -> StepOutput:
         session_state["x"] = "added by func_x"
         return StepOutput(content="X added")
@@ -94,30 +100,27 @@ def test_new_key_additions(shared_db):
 
     workflow = Workflow(
         name="New Key Additions Test",
-        steps=[Parallel(
-            Step(name="Add X", executor=func_add_x),
-            Step(name="Add Y", executor=func_add_y),
-            Step(name="Add Z", executor=func_add_z),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Add X", executor=func_add_x),
+                Step(name="Add Y", executor=func_add_y),
+                Step(name="Add Z", executor=func_add_z),
+            )
+        ],
         session_state={"initial": "value"},
         db=shared_db,
     )
 
     workflow.run("test")
     final_state = workflow.get_session_state()
-    
-    expected = {
-        "initial": "value",
-        "x": "added by func_x",
-        "y": "added by func_y", 
-        "z": "added by func_z"
-    }
+
+    expected = {"initial": "value", "x": "added by func_x", "y": "added by func_y", "z": "added by func_z"}
     assert final_state == expected
 
 
 def test_nested_dictionary_modifications(shared_db):
     """Test modifications to nested dictionaries"""
-    
+
     def func_update_user(step_input: StepInput, session_state: dict) -> StepOutput:
         if "user" not in session_state:
             session_state["user"] = {}
@@ -138,29 +141,32 @@ def test_nested_dictionary_modifications(shared_db):
 
     workflow = Workflow(
         name="Nested Dictionary Test",
-        steps=[Parallel(
-            Step(name="Update User", executor=func_update_user),
-            Step(name="Update Config", executor=func_update_config),
-            Step(name="Update Metrics", executor=func_update_metrics),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Update User", executor=func_update_user),
+                Step(name="Update Config", executor=func_update_config),
+                Step(name="Update Metrics", executor=func_update_metrics),
+            )
+        ],
         session_state={"initial": "data"},
         db=shared_db,
     )
 
     workflow.run("test")
     final_state = workflow.get_session_state()
-    
+
     expected = {
         "initial": "data",
         "user": {"name": "Updated by func_user"},
         "config": {"debug": True},
-        "metrics": {"count": 100}
+        "metrics": {"count": 100},
     }
     assert final_state == expected
 
+
 def test_empty_session_state(shared_db):
     """Test parallel execution with empty session state"""
-    
+
     def func_a(step_input: StepInput, session_state: dict) -> StepOutput:
         session_state["created_by_a"] = "value_a"
         return StepOutput(content="A done")
@@ -171,27 +177,26 @@ def test_empty_session_state(shared_db):
 
     workflow = Workflow(
         name="Empty Session State Test",
-        steps=[Parallel(
-            Step(name="Step A", executor=func_a),
-            Step(name="Step B", executor=func_b),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Step A", executor=func_a),
+                Step(name="Step B", executor=func_b),
+            )
+        ],
         session_state={},  # Empty session state
         db=shared_db,
     )
 
     workflow.run("test")
     final_state = workflow.get_session_state()
-    
-    expected = {
-        "created_by_a": "value_a",
-        "created_by_b": "value_b"
-    }
+
+    expected = {"created_by_a": "value_a", "created_by_b": "value_b"}
     assert final_state == expected
 
 
 def test_none_session_state(shared_db):
     """Test parallel execution with None session state"""
-    
+
     def func_a(step_input: StepInput, session_state: dict) -> StepOutput:
         # This should handle the case where session_state could be None
         if session_state is not None:
@@ -200,9 +205,11 @@ def test_none_session_state(shared_db):
 
     workflow = Workflow(
         name="None Session State Test",
-        steps=[Parallel(
-            Step(name="Step A", executor=func_a),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Step A", executor=func_a),
+            )
+        ],
         session_state=None,  # None session state
         db=shared_db,
     )
@@ -210,7 +217,7 @@ def test_none_session_state(shared_db):
     # This should not crash
     workflow.run("test")
     final_state = workflow.get_session_state()
-    
+
     # When session_state=None, workflow initializes it as empty dict
     # So the function should be able to add to it
     assert "created_by_a" in final_state
@@ -219,7 +226,7 @@ def test_none_session_state(shared_db):
 
 def test_failed_steps_exception_handling(shared_db):
     """Test parallel execution with some steps failing"""
-    
+
     def func_success(step_input: StepInput, session_state: dict) -> StepOutput:
         session_state["success"] = True
         return StepOutput(content="Success")
@@ -234,11 +241,13 @@ def test_failed_steps_exception_handling(shared_db):
 
     workflow = Workflow(
         name="Failed Steps Test",
-        steps=[Parallel(
-            Step(name="Success Step", executor=func_success),
-            Step(name="Failure Step", executor=func_failure),
-            Step(name="Another Success Step", executor=func_another_success),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Success Step", executor=func_success),
+                Step(name="Failure Step", executor=func_failure),
+                Step(name="Another Success Step", executor=func_another_success),
+            )
+        ],
         session_state={"initial": "value"},
         db=shared_db,
     )
@@ -246,15 +255,11 @@ def test_failed_steps_exception_handling(shared_db):
     # Should not crash even with failures
     result = workflow.run("test")
     final_state = workflow.get_session_state()
-    
+
     # Successful steps should still have updated session state
-    expected = {
-        "initial": "value",
-        "success": True,
-        "another_success": True
-    }
+    expected = {"initial": "value", "success": True, "another_success": True}
     assert final_state == expected
-    
+
     # Workflow completes successfully even with some parallel step failures
     # The failed steps are logged but don't fail the overall workflow
     assert result.status == RunStatus.completed
@@ -262,7 +267,7 @@ def test_failed_steps_exception_handling(shared_db):
 
 def test_no_modifications(shared_db):
     """Test parallel execution where functions don't modify session state"""
-    
+
     def func_read_only_a(step_input: StepInput, session_state: dict) -> StepOutput:
         # Only read, don't modify
         value = session_state.get("data", "default")
@@ -276,24 +281,26 @@ def test_no_modifications(shared_db):
     initial_state = {"data": "unchanged", "other": "also unchanged"}
     workflow = Workflow(
         name="No Modifications Test",
-        steps=[Parallel(
-            Step(name="Read Only A", executor=func_read_only_a),
-            Step(name="Read Only B", executor=func_read_only_b),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Read Only A", executor=func_read_only_a),
+                Step(name="Read Only B", executor=func_read_only_b),
+            )
+        ],
         session_state=deepcopy(initial_state),
         db=shared_db,
     )
 
     workflow.run("test")
     final_state = workflow.get_session_state()
-    
+
     # Session state should remain unchanged
     assert final_state == initial_state
 
 
 def test_list_modifications(shared_db):
     """Test modifications to lists in session state"""
-    
+
     def func_append_to_list_a(step_input: StepInput, session_state: dict) -> StepOutput:
         if "list_a" not in session_state:
             session_state["list_a"] = []
@@ -313,18 +320,20 @@ def test_list_modifications(shared_db):
 
     workflow = Workflow(
         name="List Modifications Test",
-        steps=[Parallel(
-            Step(name="Update List A", executor=func_append_to_list_a),
-            Step(name="Update List B", executor=func_append_to_list_b),
-            Step(name="Update Shared List", executor=func_modify_shared_list),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Update List A", executor=func_append_to_list_a),
+                Step(name="Update List B", executor=func_append_to_list_b),
+                Step(name="Update Shared List", executor=func_modify_shared_list),
+            )
+        ],
         session_state={"shared_list": ["initial_item"]},
         db=shared_db,
     )
 
     workflow.run("test")
     final_state = workflow.get_session_state()
-    
+
     # Each function should have created/updated its respective list
     assert "list_a" in final_state
     assert "item_from_func_a" in final_state["list_a"]
@@ -336,7 +345,7 @@ def test_list_modifications(shared_db):
 
 def test_mixed_data_types(shared_db):
     """Test modifications with various data types"""
-    
+
     def func_update_int(step_input: StepInput, session_state: dict) -> StepOutput:
         session_state["int_value"] = 42
         return StepOutput(content="Int updated")
@@ -355,33 +364,29 @@ def test_mixed_data_types(shared_db):
 
     workflow = Workflow(
         name="Mixed Data Types Test",
-        steps=[Parallel(
-            Step(name="Update Int", executor=func_update_int),
-            Step(name="Update Float", executor=func_update_float),
-            Step(name="Update Bool", executor=func_update_bool),
-            Step(name="Update None", executor=func_update_none),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Update Int", executor=func_update_int),
+                Step(name="Update Float", executor=func_update_float),
+                Step(name="Update Bool", executor=func_update_bool),
+                Step(name="Update None", executor=func_update_none),
+            )
+        ],
         session_state={"existing": "data"},
         db=shared_db,
     )
 
     workflow.run("test")
     final_state = workflow.get_session_state()
-    
-    expected = {
-        "existing": "data",
-        "int_value": 42,
-        "float_value": 3.14159,
-        "bool_value": True,
-        "none_value": None
-    }
+
+    expected = {"existing": "data", "int_value": 42, "float_value": 3.14159, "bool_value": True, "none_value": None}
     assert final_state == expected
 
 
 @pytest.mark.asyncio
 async def test_async_parallel_modifications(shared_db):
     """Test async parallel execution with session state modifications"""
-    
+
     async def async_func_a(step_input: StepInput, session_state: dict) -> StepOutput:
         # Simulate async work
         await asyncio.sleep(0.01)
@@ -396,10 +401,12 @@ async def test_async_parallel_modifications(shared_db):
 
     workflow = Workflow(
         name="Async Parallel Test",
-        steps=[Parallel(
-            Step(name="Async Step A", executor=async_func_a),
-            Step(name="Async Step B", executor=async_func_b),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Async Step A", executor=async_func_a),
+                Step(name="Async Step B", executor=async_func_b),
+            )
+        ],
         session_state={"sync_data": "exists"},
         db=shared_db,
     )
@@ -407,18 +414,14 @@ async def test_async_parallel_modifications(shared_db):
     # Test async execution
     await workflow.arun("test")
     final_state = workflow.get_session_state()
-    
-    expected = {
-        "sync_data": "exists",
-        "async_a": "completed", 
-        "async_b": "completed"
-    }
+
+    expected = {"sync_data": "exists", "async_a": "completed", "async_b": "completed"}
     assert final_state == expected
 
 
 def test_streaming_parallel_modifications(shared_db):
     """Test sync parallel execution with streaming and session state modifications"""
-    
+
     def func_stream_a(step_input: StepInput, session_state: dict) -> StepOutput:
         session_state["stream_a"] = "stream_completed"
         return StepOutput(content="Stream A done")
@@ -433,11 +436,13 @@ def test_streaming_parallel_modifications(shared_db):
 
     workflow = Workflow(
         name="Streaming Parallel Test",
-        steps=[Parallel(
-            Step(name="Stream Step A", executor=func_stream_a),
-            Step(name="Stream Step B", executor=func_stream_b),
-            Step(name="Stream Step C", executor=func_stream_c),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Stream Step A", executor=func_stream_a),
+                Step(name="Stream Step B", executor=func_stream_b),
+                Step(name="Stream Step C", executor=func_stream_c),
+            )
+        ],
         session_state={"initial_data": "exists", "shared_stream": 5},
         db=shared_db,
     )
@@ -445,16 +450,16 @@ def test_streaming_parallel_modifications(shared_db):
     # Test streaming execution - collect all events
     events = list(workflow.run("test", stream=True))
     final_state = workflow.get_session_state()
-    
+
     # Verify that session state was properly modified by all parallel steps
     expected = {
         "initial_data": "exists",
         "shared_stream": 6,  # Should be incremented by func_stream_c
         "stream_a": "stream_completed",
-        "stream_b": "stream_completed"
+        "stream_b": "stream_completed",
     }
     assert final_state == expected
-    
+
     # Verify that we received streaming events
     assert len(events) > 0
 
@@ -462,7 +467,7 @@ def test_streaming_parallel_modifications(shared_db):
 @pytest.mark.asyncio
 async def test_async_streaming_parallel_modifications(shared_db):
     """Test async parallel execution with streaming and session state modifications"""
-    
+
     async def async_func_stream_a(step_input: StepInput, session_state: dict) -> StepOutput:
         # Simulate async work
         await asyncio.sleep(0.01)
@@ -483,11 +488,13 @@ async def test_async_streaming_parallel_modifications(shared_db):
 
     workflow = Workflow(
         name="Async Streaming Parallel Test",
-        steps=[Parallel(
-            Step(name="Async Stream Step A", executor=async_func_stream_a),
-            Step(name="Async Stream Step B", executor=async_func_stream_b),
-            Step(name="Async Stream Shared", executor=async_func_stream_shared),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Async Stream Step A", executor=async_func_stream_a),
+                Step(name="Async Stream Step B", executor=async_func_stream_b),
+                Step(name="Async Stream Shared", executor=async_func_stream_shared),
+            )
+        ],
         session_state={"initial_async_data": "exists", "shared_async_counter": 100},
         db=shared_db,
     )
@@ -496,25 +503,25 @@ async def test_async_streaming_parallel_modifications(shared_db):
     events = []
     async for event in await workflow.arun("test", stream=True):
         events.append(event)
-    
+
     final_state = workflow.get_session_state()
-    
+
     # Verify that session state was properly modified by all async parallel steps
     expected = {
         "initial_async_data": "exists",
         "shared_async_counter": 110,  # Should be incremented by async_func_stream_shared
         "async_stream_a": "async_stream_completed",
-        "async_stream_b": "async_stream_completed"
+        "async_stream_b": "async_stream_completed",
     }
     assert final_state == expected
-    
+
     # Verify that we received streaming events
     assert len(events) > 0
 
 
 def test_streaming_parallel_with_nested_modifications(shared_db):
     """Test streaming parallel execution with nested dictionary modifications"""
-    
+
     def func_update_config_stream(step_input: StepInput, session_state: dict) -> StepOutput:
         if "config" not in session_state:
             session_state["config"] = {}
@@ -529,10 +536,12 @@ def test_streaming_parallel_with_nested_modifications(shared_db):
 
     workflow = Workflow(
         name="Streaming Nested Parallel Test",
-        steps=[Parallel(
-            Step(name="Config Stream", executor=func_update_config_stream),
-            Step(name="Stats Stream", executor=func_update_stats_stream),
-        )],
+        steps=[
+            Parallel(
+                Step(name="Config Stream", executor=func_update_config_stream),
+                Step(name="Stats Stream", executor=func_update_stats_stream),
+            )
+        ],
         session_state={"stats": {"existing_count": 5}},
         db=shared_db,
     )
@@ -540,57 +549,45 @@ def test_streaming_parallel_with_nested_modifications(shared_db):
     # Test streaming execution
     events = list(workflow.run("test", stream=True))
     final_state = workflow.get_session_state()
-    
+
     # Verify nested dictionary modifications
-    expected = {
-        "stats": {
-            "existing_count": 5,
-            "stream_count": 1
-        },
-        "config": {
-            "streaming": True
-        }
-    }
+    expected = {"stats": {"existing_count": 5, "stream_count": 1}, "config": {"streaming": True}}
     assert final_state == expected
     assert len(events) > 0
 
+
 def test_merge_parallel_session_states_directly():
     """Test the merge_parallel_session_states utility function directly"""
-    
+
     original = {"a": 1, "b": 2, "unchanged": "value"}
-    
+
     # Simulate what parallel functions would produce
     modified_states = [
         {"a": 10, "b": 2, "unchanged": "value"},  # Changed 'a'
         {"a": 1, "b": 20, "unchanged": "value"},  # Changed 'b'
-        {"a": 1, "b": 2, "unchanged": "value", "new_key": "new_value"}  # Added new key
+        {"a": 1, "b": 2, "unchanged": "value", "new_key": "new_value"},  # Added new key
     ]
-    
+
     merge_parallel_session_states(original, modified_states)
-    
-    expected = {
-        "a": 10,
-        "b": 20,
-        "unchanged": "value",
-        "new_key": "new_value"
-    }
+
+    expected = {"a": 10, "b": 20, "unchanged": "value", "new_key": "new_value"}
     assert original == expected
 
 
 def test_merge_with_empty_modifications():
     """Test merge function with empty or None modifications"""
-    
+
     original = {"key": "value"}
     original_copy = deepcopy(original)
-    
+
     # Test with empty list
     merge_parallel_session_states(original, [])
     assert original == original_copy
-    
+
     # Test with None values in list
     merge_parallel_session_states(original, [None, None])
     assert original == original_copy
-    
+
     # Test with empty dicts
     merge_parallel_session_states(original, [{}, {}])
     assert original == original_copy
@@ -598,18 +595,14 @@ def test_merge_with_empty_modifications():
 
 def test_merge_with_no_changes():
     """Test merge function when modified states have no actual changes"""
-    
+
     original = {"a": 1, "b": 2, "c": 3}
     original_copy = deepcopy(original)
-    
+
     # All "modified" states are identical to original
-    identical_states = [
-        {"a": 1, "b": 2, "c": 3},
-        {"a": 1, "b": 2, "c": 3},
-        {"a": 1, "b": 2, "c": 3}
-    ]
-    
+    identical_states = [{"a": 1, "b": 2, "c": 3}, {"a": 1, "b": 2, "c": 3}, {"a": 1, "b": 2, "c": 3}]
+
     merge_parallel_session_states(original, identical_states)
-    
+
     # Should remain unchanged
     assert original == original_copy

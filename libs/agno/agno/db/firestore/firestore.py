@@ -682,9 +682,7 @@ class FirestoreDb(BaseDb):
             log_error(f"Error deleting memories: {e}")
             raise e
 
-    def get_all_memory_topics(
-        self, create_collection_if_not_found: Optional[bool] = True
-    ) -> List[str]:
+    def get_all_memory_topics(self, create_collection_if_not_found: Optional[bool] = True) -> List[str]:
         """Get all memory topics from the database.
 
         Returns:

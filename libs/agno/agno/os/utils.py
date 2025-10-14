@@ -89,16 +89,17 @@ def get_session_name(session: Dict[str, Any]) -> str:
 
     # Otherwise use the original user message
     else:
-        runs = session.get("runs", [])
+        runs = session.get("runs", []) or []
 
         # For teams, identify the first Team run and avoid using the first member's run
         if session.get("session_type") == "team":
             run = None
             for r in runs:
                 # If agent_id is not present, it's a team run
-                if not r.get("agent_id"):  
+                if not r.get("agent_id"):
                     run = r
                     break
+
             # Fallback to first run if no team run found
             if run is None and runs:
                 run = runs[0]
@@ -112,6 +113,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
                 elif isinstance(workflow_input, dict):
                     try:
                         import json
+
                         return json.dumps(workflow_input)
                     except (TypeError, ValueError):
                         pass
