@@ -134,7 +134,8 @@ def bulk_upsert_metrics(
                 {"record": RecordID(table, metric["id"]), "content": metric},
                 dict,
             )
-            results.append(result)
+            if result:
+                results.append(result)
         return results
 
     except Exception as e:
