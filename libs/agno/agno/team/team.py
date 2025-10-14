@@ -78,8 +78,8 @@ from agno.utils.events import (
     create_team_run_error_event,
     create_team_run_output_content_event,
     create_team_run_started_event,
-    create_team_session_summary_creation_completed_event,
-    create_team_session_summary_creation_started_event,
+    create_team_session_summary_completed_event,
+    create_team_session_summary_started_event,
     create_team_tool_call_completed_event,
     create_team_tool_call_started_event,
 )
@@ -1451,7 +1451,7 @@ class Team:
             if self.session_summary_manager is not None:
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
-                        create_team_session_summary_creation_started_event(from_run_response=run_response), run_response
+                        create_team_session_summary_started_event(from_run_response=run_response), run_response
                     )
                 try:
                     self.session_summary_manager.create_session_summary(session=session)
@@ -1459,7 +1459,7 @@ class Team:
                     log_warning(f"Error in session summary creation: {str(e)}")
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
-                        create_team_session_summary_creation_completed_event(
+                        create_team_session_summary_completed_event(
                             from_run_response=run_response, session_summary=session.summary
                         ),
                         run_response,
@@ -2221,7 +2221,7 @@ class Team:
             if self.session_summary_manager is not None:
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
-                        create_team_session_summary_creation_started_event(from_run_response=run_response), run_response
+                        create_team_session_summary_started_event(from_run_response=run_response), run_response
                     )
                 try:
                     await self.session_summary_manager.acreate_session_summary(session=session)
@@ -2229,7 +2229,7 @@ class Team:
                     log_warning(f"Error in session summary creation: {str(e)}")
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
-                        create_team_session_summary_creation_completed_event(
+                        create_team_session_summary_completed_event(
                             from_run_response=run_response, session_summary=session.summary
                         ),
                         run_response,

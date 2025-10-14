@@ -339,16 +339,16 @@ def test_intermediate_steps_with_session_summary(shared_db):
         TeamRunEvent.run_content,
         TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
-        TeamRunEvent.session_summary_creation_started,
-        TeamRunEvent.session_summary_creation_completed,
+        TeamRunEvent.session_summary_started,
+        TeamRunEvent.session_summary_completed,
     }
 
     assert len(events[TeamRunEvent.run_started]) == 1
     assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_content_completed]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
-    assert len(events[TeamRunEvent.session_summary_creation_started]) == 1
-    assert len(events[TeamRunEvent.session_summary_creation_completed]) == 1
+    assert len(events[TeamRunEvent.session_summary_started]) == 1
+    assert len(events[TeamRunEvent.session_summary_completed]) == 1
 
 
 def test_pre_hook_events_are_emitted(shared_db):

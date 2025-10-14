@@ -84,8 +84,8 @@ from agno.utils.events import (
     create_run_output_content_event,
     create_run_paused_event,
     create_run_started_event,
-    create_session_summary_creation_completed_event,
-    create_session_summary_creation_started_event,
+    create_session_summary_completed_event,
+    create_session_summary_started_event,
     create_tool_call_completed_event,
     create_tool_call_started_event,
 )
@@ -1189,7 +1189,7 @@ class Agent:
             if self.session_summary_manager is not None:
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
-                        create_session_summary_creation_started_event(from_run_response=run_response), run_response
+                        create_session_summary_started_event(from_run_response=run_response), run_response
                     )
                 try:
                     self.session_summary_manager.create_session_summary(session=session)
@@ -1197,7 +1197,7 @@ class Agent:
                     log_warning(f"Error in session summary creation: {str(e)}")
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
-                        create_session_summary_creation_completed_event(
+                        create_session_summary_completed_event(
                             from_run_response=run_response, session_summary=session.summary
                         ),
                         run_response,
@@ -1959,7 +1959,7 @@ class Agent:
             if self.session_summary_manager is not None:
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
-                        create_session_summary_creation_started_event(from_run_response=run_response), run_response
+                        create_session_summary_started_event(from_run_response=run_response), run_response
                     )
                 try:
                     await self.session_summary_manager.acreate_session_summary(session=session)
@@ -1967,7 +1967,7 @@ class Agent:
                     log_warning(f"Error in session summary creation: {str(e)}")
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
-                        create_session_summary_creation_completed_event(
+                        create_session_summary_completed_event(
                             from_run_response=run_response, session_summary=session.summary
                         ),
                         run_response,
@@ -2693,7 +2693,7 @@ class Agent:
         if self.session_summary_manager is not None:
             if self.stream_intermediate_steps:
                 yield self._handle_event(
-                    create_session_summary_creation_started_event(from_run_response=run_response), run_response
+                    create_session_summary_started_event(from_run_response=run_response), run_response
                 )
             try:
                 self.session_summary_manager.create_session_summary(session=session)
@@ -2701,7 +2701,7 @@ class Agent:
                 log_warning(f"Error in session summary creation: {str(e)}")
             if self.stream_intermediate_steps:
                 yield self._handle_event(
-                    create_session_summary_creation_completed_event(
+                    create_session_summary_completed_event(
                         from_run_response=run_response, session_summary=session.summary
                     ),
                     run_response,
@@ -3118,7 +3118,7 @@ class Agent:
         if self.session_summary_manager is not None:
             if self.stream_intermediate_steps:
                 yield self._handle_event(
-                    create_session_summary_creation_started_event(from_run_response=run_response), run_response
+                    create_session_summary_started_event(from_run_response=run_response), run_response
                 )
             try:
                 await self.session_summary_manager.acreate_session_summary(session=session)
@@ -3126,7 +3126,7 @@ class Agent:
                 log_warning(f"Error in session summary creation: {str(e)}")
             if self.stream_intermediate_steps:
                 yield self._handle_event(
-                    create_session_summary_creation_completed_event(
+                    create_session_summary_completed_event(
                         from_run_response=run_response, session_summary=session.summary
                     ),
                     run_response,
@@ -4293,7 +4293,7 @@ class Agent:
         )
         if user_message_str is not None and self.memory_manager is not None:
             log_debug("Creating user memories.")
-            await self.memory_manager.acreate_user_memories( # type: ignore
+            await self.memory_manager.acreate_user_memories(  # type: ignore
                 message=user_message_str,
                 user_id=user_id,
                 agent_id=self.id,
@@ -4314,7 +4314,7 @@ class Agent:
                     continue
 
             if len(parsed_messages) > 0 and self.memory_manager is not None:
-                await self.memory_manager.acreate_user_memories( # type: ignore
+                await self.memory_manager.acreate_user_memories(  # type: ignore
                     messages=parsed_messages, user_id=user_id, agent_id=self.id
                 )
             else:

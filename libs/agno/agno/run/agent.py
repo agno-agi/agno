@@ -134,8 +134,8 @@ class RunEvent(str, Enum):
     memory_update_started = "MemoryUpdateStarted"
     memory_update_completed = "MemoryUpdateCompleted"
 
-    session_summary_creation_started = "SessionSummaryCreationStarted"
-    session_summary_creation_completed = "SessionSummaryCreationCompleted"
+    session_summary_started = "SessionSummaryStarted"
+    session_summary_completed = "SessionSummaryCompleted"
 
     parser_model_response_started = "ParserModelResponseStarted"
     parser_model_response_completed = "ParserModelResponseCompleted"
@@ -300,13 +300,13 @@ class MemoryUpdateCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
-class SessionSummaryCreationStartedEvent(BaseAgentRunEvent):
-    event: str = RunEvent.session_summary_creation_started.value
+class SessionSummaryStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.session_summary_started.value
 
 
 @dataclass
-class SessionSummaryCreationCompletedEvent(BaseAgentRunEvent):
-    event: str = RunEvent.session_summary_creation_completed.value
+class SessionSummaryCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.session_summary_completed.value
     session_summary: Optional["SessionSummary"] = None
 
 
@@ -388,8 +388,8 @@ RunOutputEvent = Union[
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
-    SessionSummaryCreationStartedEvent,
-    SessionSummaryCreationCompletedEvent,
+    SessionSummaryStartedEvent,
+    SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
@@ -418,8 +418,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     RunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
-    RunEvent.session_summary_creation_started.value: SessionSummaryCreationStartedEvent,
-    RunEvent.session_summary_creation_completed.value: SessionSummaryCreationCompletedEvent,
+    RunEvent.session_summary_started.value: SessionSummaryStartedEvent,
+    RunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     RunEvent.tool_call_started.value: ToolCallStartedEvent,
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,

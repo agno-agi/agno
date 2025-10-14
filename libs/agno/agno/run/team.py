@@ -127,8 +127,8 @@ class TeamRunEvent(str, Enum):
     memory_update_started = "TeamMemoryUpdateStarted"
     memory_update_completed = "TeamMemoryUpdateCompleted"
 
-    session_summary_creation_started = "TeamSessionSummaryCreationStarted"
-    session_summary_creation_completed = "TeamSessionSummaryCreationCompleted"
+    session_summary_started = "TeamSessionSummaryStarted"
+    session_summary_completed = "TeamSessionSummaryCompleted"
 
     parser_model_response_started = "TeamParserModelResponseStarted"
     parser_model_response_completed = "TeamParserModelResponseCompleted"
@@ -283,13 +283,13 @@ class MemoryUpdateCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
-class SessionSummaryCreationStartedEvent(BaseTeamRunEvent):
-    event: str = TeamRunEvent.session_summary_creation_started.value
+class SessionSummaryStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.session_summary_started.value
 
 
 @dataclass
-class SessionSummaryCreationCompletedEvent(BaseTeamRunEvent):
-    event: str = TeamRunEvent.session_summary_creation_completed.value
+class SessionSummaryCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.session_summary_completed.value
     session_summary: Optional[Any] = None
 
 
@@ -369,8 +369,8 @@ TeamRunOutputEvent = Union[
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
-    SessionSummaryCreationStartedEvent,
-    SessionSummaryCreationCompletedEvent,
+    SessionSummaryStartedEvent,
+    SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
@@ -396,8 +396,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     TeamRunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     TeamRunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
-    TeamRunEvent.session_summary_creation_started.value: SessionSummaryCreationStartedEvent,
-    TeamRunEvent.session_summary_creation_completed.value: SessionSummaryCreationCompletedEvent,
+    TeamRunEvent.session_summary_started.value: SessionSummaryStartedEvent,
+    TeamRunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     TeamRunEvent.tool_call_started.value: ToolCallStartedEvent,
     TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     TeamRunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,

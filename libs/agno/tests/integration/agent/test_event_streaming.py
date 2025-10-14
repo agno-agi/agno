@@ -360,16 +360,16 @@ def test_intermediate_steps_with_session_summary(shared_db):
         RunEvent.run_content,
         RunEvent.run_content_completed,
         RunEvent.run_completed,
-        RunEvent.session_summary_creation_started,
-        RunEvent.session_summary_creation_completed,
+        RunEvent.session_summary_started,
+        RunEvent.session_summary_completed,
     }
 
     assert len(events[RunEvent.run_started]) == 1
     assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_content_completed]) == 1
     assert len(events[RunEvent.run_completed]) == 1
-    assert len(events[RunEvent.session_summary_creation_started]) == 1
-    assert len(events[RunEvent.session_summary_creation_completed]) == 1
+    assert len(events[RunEvent.session_summary_started]) == 1
+    assert len(events[RunEvent.session_summary_completed]) == 1
 
 
 def test_pre_hook_events_are_emitted(shared_db):
