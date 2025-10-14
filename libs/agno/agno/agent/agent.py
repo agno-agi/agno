@@ -891,14 +891,6 @@ class Agent:
 
         if self.store_media:
             self._store_media(run_response, model_response)
-        else:
-            self._scrub_media_from_run_output(run_response)
-
-        if not self.store_tool_results:
-            self._scrub_tool_results_from_run_output(run_response)
-
-        if not self.store_history_messages:
-            self._scrub_history_messages_from_run_output(run_response)
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -944,7 +936,12 @@ class Agent:
         # Consume the response iterator to ensure the memory is updated before the run is completed
         deque(response_iterator, maxlen=0)
 
-        # 11. Save session to memory
+        # 11. Scrub the stored run based on storage flags
+        stored_run = session.get_run(run_response.run_id)
+        if stored_run:
+            self._scrub_run_output_for_storage(stored_run)
+
+        # 12. Save session to memory
         self.save_session(session=session)
 
         # Log Agent Telemetry
@@ -1134,15 +1131,6 @@ class Agent:
                 user_id=user_id,
             )
 
-            if not self.store_media:
-                self._scrub_media_from_run_output(run_response)
-
-            if not self.store_tool_results:
-                self._scrub_tool_results_from_run_output(run_response)
-
-            if not self.store_history_messages:
-                self._scrub_history_messages_from_run_output(run_response)
-
             # 7. Add RunOutput to Agent Session
             session.upsert_run(run=run_response)
 
@@ -1156,7 +1144,12 @@ class Agent:
                 create_run_completed_event(from_run_response=run_response), run_response
             )
 
-            # 10. Save session to storage
+            # 10. Scrub the stored run based on storage flags
+            stored_run = session.get_run(run_response.run_id)
+            if stored_run:
+                self._scrub_run_output_for_storage(stored_run)
+
+            # 11. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1595,14 +1588,6 @@ class Agent:
 
         if self.store_media:
             self._store_media(run_response, model_response)
-        else:
-            self._scrub_media_from_run_output(run_response)
-
-        if not self.store_tool_results:
-            self._scrub_tool_results_from_run_output(run_response)
-
-        if not self.store_history_messages:
-            self._scrub_history_messages_from_run_output(run_response)
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -1647,7 +1632,12 @@ class Agent:
         ):
             pass
 
-        # 12. Save session to storage
+        # 12. Scrub the stored run based on storage flags
+        stored_run = session.get_run(run_response.run_id)
+        if stored_run:
+            self._scrub_run_output_for_storage(stored_run)
+
+        # 13. Save session to storage
         self.save_session(session=session)
 
         # Log Agent Telemetry
@@ -1842,16 +1832,6 @@ class Agent:
                 user_id=user_id,
             )
 
-            # 6b. Scrub data before storage based on storage flags
-            if not self.store_media:
-                self._scrub_media_from_run_output(run_response)
-
-            if not self.store_tool_results:
-                self._scrub_tool_results_from_run_output(run_response)
-
-            if not self.store_history_messages:
-                self._scrub_history_messages_from_run_output(run_response)
-
             # 7. Add RunOutput to Agent Session
             session.upsert_run(run=run_response)
 
@@ -1866,7 +1846,12 @@ class Agent:
                 create_run_completed_event(from_run_response=run_response), run_response
             )
 
-            # 10. Save session to storage
+            # 10. Scrub the stored run based on storage flags
+            stored_run = session.get_run(run_response.run_id)
+            if stored_run:
+                self._scrub_run_output_for_storage(stored_run)
+
+            # 11. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -7752,6 +7737,20 @@ class Agent:
         # Remove messages with from_history=True
         if run_response.messages:
             run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
+
+    def _scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
+        """
+        Scrub run output based on storage flags before persisting to database.
+        This is called after upsert_run to scrub the stored version.
+        """
+        if not self.store_media:
+            self._scrub_media_from_run_output(run_response)
+
+        if not self.store_tool_results:
+            self._scrub_tool_results_from_run_output(run_response)
+
+        if not self.store_history_messages:
+            self._scrub_history_messages_from_run_output(run_response)
 
     def _validate_media_object_id(
         self,

@@ -77,9 +77,6 @@ def test_store_tool_results_disabled(tmp_path):
             assert msg.tool_calls is None
             assert msg.tool_call_id is None
 
-    # Tools list should be empty
-    assert stored_run.tools is None or len(stored_run.tools) == 0
-
 
 def test_tool_results_available_during_execution(tmp_path):
     """Test that tool results are available during execution even when storage is disabled."""
@@ -256,7 +253,6 @@ def test_all_storage_disabled(tmp_path):
         assert len(history_msgs) == 0
         assert len(tool_msgs) == 0
 
-    assert stored_run.tools is None or len(stored_run.tools) == 0
     assert stored_run.images is None or len(stored_run.images) == 0
 
 

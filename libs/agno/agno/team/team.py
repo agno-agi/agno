@@ -1197,12 +1197,6 @@ class Team:
                 debug_mode=debug_mode,
                 **kwargs,
             )
-        
-        if not self.store_tool_results:
-            self._scrub_tool_results_from_run_output(run_response)
-        
-        if not self.store_history_messages:
-            self._scrub_history_messages_from_run_output(run_response)
 
         # 7. Add the RunOutput to Team Session
         session.upsert_run(run_response=run_response)
@@ -1219,7 +1213,12 @@ class Team:
         )
         deque(response_iterator, maxlen=0)
 
-        # 10. Save session to storage
+        # 10. Scrub the stored run based on storage flags
+        stored_run = session.get_run(run_response.run_id)
+        if stored_run:
+            self._scrub_run_output_for_storage(stored_run)
+
+        # 11. Save session to storage
         self.save_session(session=session)
 
         # Log Team Telemetry
@@ -1402,15 +1401,6 @@ class Team:
 
             # TODO: For now we don't run post-hooks during streaming
 
-            if not self.store_media:
-                self._scrub_media_from_run_output(run_response)
-            
-            if not self.store_tool_results:
-                self._scrub_tool_results_from_run_output(run_response)
-            
-            if not self.store_history_messages:
-                self._scrub_history_messages_from_run_output(run_response)
-
             # 5. Add the run to Team Session
             session.upsert_run(run_response=run_response)
 
@@ -1433,7 +1423,12 @@ class Team:
             # 8. Calculate session metrics
             self._update_session_metrics(session=session)
 
-            # 9. Save session to storage
+            # 9. Scrub the stored run based on storage flags
+            stored_run = session.get_run(run_response.run_id)
+            if stored_run:
+                self._scrub_run_output_for_storage(stored_run)
+
+            # 10. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1901,17 +1896,11 @@ class Team:
         # Set the run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
-        
-        if not self.store_tool_results:
-            self._scrub_tool_results_from_run_output(run_response)
-        
-        if not self.store_history_messages:
-            self._scrub_history_messages_from_run_output(run_response)
 
         # 6. Add the run to session
         session.upsert_run(run_response=run_response)
 
-        # 6. Update Team Memory
+        # 7. Update Team Memory
         async for _ in self._amake_memories_and_summaries(
             run_response=run_response,
             session=session,
@@ -1920,10 +1909,15 @@ class Team:
         ):
             pass
 
-        # 7. Calculate session metrics
+        # 8. Calculate session metrics
         self._update_session_metrics(session=session)
 
-        # 8. Save session to storage
+        # 9. Scrub the stored run based on storage flags
+        stored_run = session.get_run(run_response.run_id)
+        if stored_run:
+            self._scrub_run_output_for_storage(stored_run)
+
+        # 10. Save session to storage
         self.save_session(session=session)
 
         # Log Team Telemetry
@@ -2117,15 +2111,6 @@ class Team:
             if run_response.metrics:
                 run_response.metrics.stop_timer()
 
-            if not self.store_media:
-                self._scrub_media_from_run_output(run_response)
-            
-            if not self.store_tool_results:
-                self._scrub_tool_results_from_run_output(run_response)
-            
-            if not self.store_history_messages:
-                self._scrub_history_messages_from_run_output(run_response)
-
             # 5. Add the run to Team Session
             session.upsert_run(run_response=run_response)
 
@@ -2146,7 +2131,12 @@ class Team:
             # 8. Calculate session metrics
             self._update_session_metrics(session=session)
 
-            # 9. Save session to storage
+            # 9. Scrub the stored run based on storage flags
+            stored_run = session.get_run(run_response.run_id)
+            if stored_run:
+                self._scrub_run_output_for_storage(stored_run)
+
+            # 10. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -3656,10 +3646,7 @@ class Team:
         """
         # Remove tool results (messages with role="tool")
         if run_response.messages:
-            run_response.messages = [
-                msg for msg in run_response.messages 
-                if msg.role != "tool"
-            ]
+            run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
             # Also scrub tool-related fields from remaining messages
             for message in run_response.messages:
                 self._scrub_tool_data_from_message(message)
@@ -3676,10 +3663,21 @@ class Team:
         """
         # Remove messages with from_history=True
         if run_response.messages:
-            run_response.messages = [
-                msg for msg in run_response.messages 
-                if not msg.from_history
-            ]
+            run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
+
+    def _scrub_run_output_for_storage(self, run_response: TeamRunOutput) -> None:
+        """
+        Scrub run output based on storage flags before persisting to database.
+        This is called after upsert_run to scrub the stored version.
+        """
+        if not self.store_media:
+            self._scrub_media_from_run_output(run_response)
+
+        if not self.store_tool_results:
+            self._scrub_tool_results_from_run_output(run_response)
+
+        if not self.store_history_messages:
+            self._scrub_history_messages_from_run_output(run_response)
 
     def _validate_media_object_id(
         self,
