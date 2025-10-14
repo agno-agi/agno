@@ -978,6 +978,7 @@ class PaginationInfo(BaseModel):
     limit: Optional[int] = 20
     total_pages: Optional[int] = 0
     total_count: Optional[int] = 0
+    search_time_ms: Optional[float] = 0
 
 
 class PaginatedResponse(BaseModel, Generic[T]):
