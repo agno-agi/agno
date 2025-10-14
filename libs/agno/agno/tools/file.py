@@ -187,7 +187,7 @@ class FileTools(Toolkit):
             log_info(f"Reading files in : {self.base_dir}/{directory}")
             safe, d = self.check_escape(directory)
             if safe:
-                return json.dumps([str(file_path) for file_path in d.iterdir()], indent=4)
+                return json.dumps([str(file_path.relative_to(self.base_dir)) for file_path in d.iterdir()], indent=4)
             else:
                 return "{}"
         except Exception as e:

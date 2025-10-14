@@ -9,8 +9,12 @@ from agno.tools.file import FileTools
 
 def test_list_files():
     """Test listing files."""
-    wd = "."
-    f = FileTools(base_dir=Path(wd))
+
+    f = FileTools(base_dir=Path("libs/agno/tests/unit/tools/testdir"))
+    response = f.list_files()
+    file_list = json.loads(response)
+    assert file_list == ["testfile"]
+    f = FileTools(base_dir=Path("."))
     response = f.list_files(directory="libs")
     file_list = json.loads(response)
     assert len(file_list) > 0
@@ -20,8 +24,7 @@ def test_list_files():
     response = f.list_files(directory="..")
     file_list = json.loads(response)
     assert len(file_list) == 0
-    wd = "libs"
-    f = FileTools(base_dir=Path(wd))
+    f = FileTools(base_dir=Path("libs"))
     response = f.list_files(directory="agno")
     file_list = json.loads(response)
     assert len(file_list) > 0
