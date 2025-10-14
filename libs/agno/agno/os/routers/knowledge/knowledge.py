@@ -571,8 +571,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
 
         # Calculate pagination parameters
         meta = request.meta
-        limit = meta.limit if meta else 20
-        page = meta.page if meta else 1
+        limit = (meta.limit if meta and meta.limit is not None else 20)
+        page = (meta.page if meta and meta.page is not None else 1)
 
         # Use max_results if specified, otherwise use a higher limit for search then paginate
         search_limit = request.max_results
