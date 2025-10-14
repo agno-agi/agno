@@ -33,6 +33,9 @@ class MongoDb(VectorDb):
     def __init__(
         self,
         collection_name: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         db_url: Optional[str] = "mongodb://localhost:27017/",
         database: str = "agno",
         embedder: Optional[Embedder] = None,
@@ -56,6 +59,8 @@ class MongoDb(VectorDb):
 
         Args:
             collection_name (str): Name of the MongoDB collection.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             db_url (Optional[str]): MongoDB connection string.
             database (str): Database name.
             embedder (Embedder): Embedder instance for generating embeddings.
@@ -74,11 +79,24 @@ class MongoDb(VectorDb):
             hybrid_rank_constant (int): Default rank constant (k) for Reciprocal Rank Fusion in hybrid search. This constant is added to the rank before taking the reciprocal, helping to smooth scores. A common value is 60.
             **kwargs: Additional arguments for MongoClient.
         """
+        # Validate required parameters
         if not collection_name:
             raise ValueError("Collection name must not be empty.")
         if not database:
             raise ValueError("Database name must not be empty.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            connection_identifier = db_url or "mongodb://localhost:27017/"
+            seed = f"{connection_identifier}#{database}#{collection_name}"
+            id = generate_id(seed)
+
         self.collection_name = collection_name
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         self.database = database
         self.search_index_name = search_index_name
         self.cosmos_compatibility = cosmos_compatibility
@@ -1018,8 +1036,44 @@ class MongoDb(VectorDb):
         log_debug(f"Inserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
-        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-        await asyncio.gather(*embed_tasks, return_exceptions=True)
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in documents]
+
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(documents):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    raise e
+                else:
+                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+        else:
+            # Use individual embedding
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         prepared_docs = []
         for document in documents:
@@ -1047,8 +1101,44 @@ class MongoDb(VectorDb):
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
-        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-        await asyncio.gather(*embed_tasks, return_exceptions=True)
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in documents]
+
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(documents):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    raise e
+                else:
+                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+        else:
+            # Use individual embedding
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         for document in documents:
             try:
@@ -1310,3 +1400,7 @@ class MongoDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.hybrid]

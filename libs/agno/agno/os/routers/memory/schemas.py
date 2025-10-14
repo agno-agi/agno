@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 class DeleteMemoriesRequest(BaseModel):
     memory_ids: List[str]
+    user_id: Optional[str] = None
 
 
 class UserMemorySchema(BaseModel):
@@ -36,7 +37,7 @@ class UserMemoryCreateSchema(BaseModel):
     """Define the payload expected for creating a new user memory"""
 
     memory: str
-    user_id: str
+    user_id: Optional[str] = None
     topics: Optional[List[str]] = None
 
 

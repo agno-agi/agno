@@ -28,6 +28,9 @@ class Milvus(VectorDb):
     def __init__(
         self,
         collection: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         uri: str = "http://localhost:19530",
@@ -42,6 +45,8 @@ class Milvus(VectorDb):
 
         Args:
             collection (str): Name of the Milvus collection.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             embedder (Embedder): Embedder to use for embedding documents.
             distance (Distance): Distance metric to use for vector similarity.
             uri (Optional[str]): URI of the Milvus server.
@@ -63,6 +68,20 @@ class Milvus(VectorDb):
             reranker (Optional[Reranker]): Reranker to use for hybrid search results
             **kwargs: Additional keyword arguments to pass to the MilvusClient.
         """
+        # Validate required parameters
+        if not collection:
+            raise ValueError("Collection name must be provided.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            seed = f"{uri or 'milvus'}#{collection}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         self.collection: str = collection
 
         if embedder is None:
@@ -457,8 +476,44 @@ class Milvus(VectorDb):
         """Insert documents asynchronously based on search type."""
         log_info(f"Inserting {len(documents)} documents asynchronously")
 
-        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-        await asyncio.gather(*embed_tasks, return_exceptions=True)
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in documents]
+
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(documents):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    log_error(f"Rate limit detected during batch embedding. {e}")
+                    raise e
+                else:
+                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+        else:
+            # Use individual embedding
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         if self.search_type == SearchType.hybrid:
             await asyncio.gather(
@@ -547,8 +602,44 @@ class Milvus(VectorDb):
     ) -> None:
         log_debug(f"Upserting {len(documents)} documents asynchronously")
 
-        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-        await asyncio.gather(*embed_tasks, return_exceptions=True)
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in documents]
+
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(documents):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    log_error(f"Rate limit detected during batch embedding. {e}")
+                    raise e
+                else:
+                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+        else:
+            # Use individual embedding
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         async def process_document(document):
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -1069,3 +1160,7 @@ class Milvus(VectorDb):
         except Exception as e:
             log_error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.hybrid]

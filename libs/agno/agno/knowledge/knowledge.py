@@ -89,7 +89,7 @@ class Knowledge:
                     url=argument.get("url"),
                     metadata=argument.get("metadata"),
                     topics=argument.get("topics"),
-                    text_contents=argument.get("text_contents"),
+                    text_content=argument.get("text_content"),
                     reader=argument.get("reader"),
                     include=argument.get("include"),
                     exclude=argument.get("exclude"),
@@ -251,7 +251,9 @@ class Knowledge:
     ) -> None:
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
-            log_info("At least one of 'path', 'url', 'text_content', 'topics', or 'remote_content' must be provided.")
+            log_warning(
+                "At least one of 'path', 'url', 'text_content', 'topics', or 'remote_content' must be provided."
+            )
             return
 
         if not skip_if_exists:
@@ -481,7 +483,6 @@ class Knowledge:
         3. Read the content
         4. Prepare and insert the content in the vector database
         """
-
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -534,7 +535,6 @@ class Knowledge:
         reader = content.reader
         name = content.name if content.name else content.url
         # Else select based on file extension
-
         if reader is None:
             if file_extension == ".csv":
                 name = basename(parsed_url.path) or "data.csv"
@@ -570,6 +570,7 @@ class Knowledge:
                         read_documents = reader.read(bytes_content, name=name)
                     else:
                         read_documents = reader.read(content.url, name=name)
+
         except Exception as e:
             log_error(f"Error reading URL: {content.url} - {str(e)}")
             content.status = ContentStatus.FAILED
@@ -580,7 +581,6 @@ class Knowledge:
         # 6. Chunk documents if needed
         if reader and not reader.chunk:
             read_documents = await reader.chunk_documents_async(read_documents)
-
         # 7. Prepare and insert the content in the vector database
         file_size = 0
         if read_documents:
@@ -677,6 +677,7 @@ class Knowledge:
                     content.status = ContentStatus.FAILED
                     content.status_message = "Content could not be read"
                     self._update_content(content)
+                    return
 
         else:
             content.status = ContentStatus.FAILED
@@ -1313,13 +1314,24 @@ class Knowledge:
                 return
 
     def search(
-        self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        max_results: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        search_type: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
-
         from agno.vectordb import VectorDb
+        from agno.vectordb.search import SearchType
 
         self.vector_db = cast(VectorDb, self.vector_db)
+
+        if (
+            hasattr(self.vector_db, "search_type")
+            and isinstance(self.vector_db.search_type, SearchType)
+            and search_type
+        ):
+            self.vector_db.search_type = SearchType(search_type)
         try:
             if self.vector_db is None:
                 log_warning("No vector db provided")
@@ -1333,13 +1345,23 @@ class Knowledge:
             return []
 
     async def async_search(
-        self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        max_results: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        search_type: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
-
         from agno.vectordb import VectorDb
+        from agno.vectordb.search import SearchType
 
         self.vector_db = cast(VectorDb, self.vector_db)
+        if (
+            hasattr(self.vector_db, "search_type")
+            and isinstance(self.vector_db.search_type, SearchType)
+            and search_type
+        ):
+            self.vector_db.search_type = SearchType(search_type)
         try:
             if self.vector_db is None:
                 log_warning("No vector db provided")
@@ -1355,6 +1377,12 @@ class Knowledge:
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
+
+    def get_valid_filters(self) -> Set[str]:
+        if self.valid_metadata_filters is None:
+            self.valid_metadata_filters = set()
+        self.valid_metadata_filters.update(self._get_filters_from_db)
+        return self.valid_metadata_filters
 
     def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
         if self.valid_metadata_filters is None:

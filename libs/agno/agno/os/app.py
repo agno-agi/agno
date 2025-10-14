@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -40,6 +40,8 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
+    find_conflicting_routes,
+    load_yaml_config,
     update_cors_middleware,
 )
 from agno.team.team import Team
@@ -49,7 +51,7 @@ from agno.workflow.workflow import Workflow
 
 
 @asynccontextmanager
-async def mcp_lifespan(app, mcp_tools):
+async def mcp_lifespan(_, mcp_tools):
     """Manage MCP connection lifecycle inside a FastAPI app"""
     # Startup logic: connect to all contextual MCP servers
     for tool in mcp_tools:
@@ -62,10 +64,34 @@ async def mcp_lifespan(app, mcp_tools):
         await tool.close()
 
 
+def _combine_app_lifespans(lifespans: list) -> Any:
+    """Combine multiple FastAPI app lifespan context managers into one."""
+    if len(lifespans) == 1:
+        return lifespans[0]
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def combined_lifespan(app):
+        async def _run_nested(index: int):
+            if index >= len(lifespans):
+                yield
+                return
+
+            async with lifespans[index](app):
+                async for _ in _run_nested(index + 1):
+                    yield
+
+        async for _ in _run_nested(0):
+            yield
+
+    return combined_lifespan
+
+
 class AgentOS:
     def __init__(
         self,
-        os_id: Optional[str] = None,
+        id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
         version: Optional[str] = None,
@@ -73,18 +99,23 @@ class AgentOS:
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
+        a2a_interface: bool = False,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
-        fastapi_app: Optional[FastAPI] = None,
         lifespan: Optional[Any] = None,
-        enable_mcp: bool = False,
-        replace_routes: bool = True,
+        enable_mcp_server: bool = False,
+        base_app: Optional[FastAPI] = None,
+        on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         telemetry: bool = True,
+        os_id: Optional[str] = None,  # Deprecated
+        enable_mcp: bool = False,  # Deprecated
+        fastapi_app: Optional[FastAPI] = None,  # Deprecated
+        replace_routes: Optional[bool] = None,  # Deprecated
     ):
         """Initialize AgentOS.
 
         Args:
-            os_id: Unique identifier for this AgentOS instance
+            id: Unique identifier for this AgentOS instance
             name: Name of the AgentOS instance
             description: Description of the AgentOS instance
             version: Version of the AgentOS instance
@@ -92,50 +123,66 @@ class AgentOS:
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
             interfaces: List of interfaces to include in the OS
+            a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
-            fastapi_app: Optional custom FastAPI app to use instead of creating a new one
             lifespan: Optional lifespan context manager for the FastAPI app
-            enable_mcp: Whether to enable MCP (Model Context Protocol)
-            replace_routes: If False and using a custom fastapi_app, skip AgentOS routes that
-                          conflict with existing routes, preferring the user's custom routes.
-                          If True (default), AgentOS routes will override conflicting custom routes.
+            enable_mcp_server: Whether to enable MCP (Model Context Protocol)
+            base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
+            on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             telemetry: Whether to enable telemetry
+
         """
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
 
-        self.config = self._load_yaml_config(config) if isinstance(config, str) else config
+        self.config = load_yaml_config(config) if isinstance(config, str) else config
 
         self.agents: Optional[List[Agent]] = agents
         self.workflows: Optional[List[Workflow]] = workflows
         self.teams: Optional[List[Team]] = teams
         self.interfaces = interfaces or []
+        self.a2a_interface = a2a_interface
 
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
 
         self._app_set = False
-        self.fastapi_app: Optional[FastAPI] = None
-        if fastapi_app:
-            self.fastapi_app = fastapi_app
+
+        if base_app:
+            self.base_app: Optional[FastAPI] = base_app
             self._app_set = True
+            self.on_route_conflict = on_route_conflict
+        elif fastapi_app:
+            self.base_app = fastapi_app
+            self._app_set = True
+            if replace_routes is not None:
+                self.on_route_conflict = "preserve_agentos" if replace_routes else "preserve_base_app"
+            else:
+                self.on_route_conflict = on_route_conflict
+        else:
+            self.base_app = None
+            self._app_set = False
+            self.on_route_conflict = on_route_conflict
 
         self.interfaces = interfaces or []
 
-        self.os_id = os_id
         self.name = name
+
+        self.id = id or os_id
+        if not self.id:
+            self.id = generate_id(self.name) if self.name else str(uuid4())
+
         self.version = version
         self.description = description
 
-        self.replace_routes = replace_routes
-
         self.telemetry = telemetry
 
-        self.enable_mcp = enable_mcp
+        self.enable_mcp_server = enable_mcp or enable_mcp_server
         self.lifespan = lifespan
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
+        self._mcp_app: Optional[Any] = None
 
         if self.agents:
             for agent in self.agents:
@@ -160,9 +207,6 @@ class AgentOS:
 
                 team.initialize_team()
 
-                # Required for the built-in routes to work
-                team.store_events = True
-
                 for member in team.members:
                     if isinstance(member, Agent):
                         member.team_id = None
@@ -170,20 +214,24 @@ class AgentOS:
                     elif isinstance(member, Team):
                         member.initialize_team()
 
+                # Required for the built-in routes to work
+                team.store_events = True
+
         if self.workflows:
             for workflow in self.workflows:
                 # Track MCP tools recursively in workflow members
                 collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
+
                 if not workflow.id:
                     workflow.id = generate_id_from_name(workflow.name)
 
-        if not self.os_id:
-            self.os_id = generate_id(self.name) if self.name else str(uuid4())
+                # Required for the built-in routes to work
+                workflow.store_events = True
 
         if self.telemetry:
             from agno.api.os import OSLaunch, log_os_telemetry
 
-            log_os_telemetry(launch=OSLaunch(os_id=self.os_id, data=self._get_telemetry_data()))
+            log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
@@ -200,7 +248,7 @@ class AgentOS:
                         async with mcp_tools_lifespan(app):  # type: ignore
                             yield
 
-                app_lifespan = combined_lifespan  # type: ignore
+                app_lifespan = combined_lifespan
             else:
                 app_lifespan = mcp_tools_lifespan
 
@@ -215,39 +263,78 @@ class AgentOS:
         )
 
     def get_app(self) -> FastAPI:
-        if not self.fastapi_app:
-            if self.enable_mcp:
+        if self.base_app:
+            fastapi_app = self.base_app
+
+            # Initialize MCP server if enabled
+            if self.enable_mcp_server:
+                from agno.os.mcp import get_mcp_server
+
+                self._mcp_app = get_mcp_server(self)
+
+            # Collect all lifespans that need to be combined
+            lifespans = []
+
+            if fastapi_app.router.lifespan_context:
+                lifespans.append(fastapi_app.router.lifespan_context)
+
+            if self.mcp_tools:
+                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
+
+            if self.enable_mcp_server and self._mcp_app:
+                lifespans.append(self._mcp_app.lifespan)
+
+            if self.lifespan:
+                lifespans.append(self.lifespan)
+
+            # Combine lifespans and set them in the app
+            if lifespans:
+                fastapi_app.router.lifespan_context = _combine_app_lifespans(lifespans)
+
+        else:
+            if self.enable_mcp_server:
                 from contextlib import asynccontextmanager
 
                 from agno.os.mcp import get_mcp_server
 
-                self.mcp_app = get_mcp_server(self)
+                self._mcp_app = get_mcp_server(self)
 
-                final_lifespan = self.mcp_app.lifespan
+                final_lifespan = self._mcp_app.lifespan  # type: ignore
                 if self.lifespan is not None:
                     # Combine both lifespans
                     @asynccontextmanager
                     async def combined_lifespan(app: FastAPI):
                         # Run both lifespans
                         async with self.lifespan(app):  # type: ignore
-                            async with self.mcp_app.lifespan(app):  # type: ignore
+                            async with self._mcp_app.lifespan(app):  # type: ignore
                                 yield
 
-                    final_lifespan = combined_lifespan  # type: ignore
+                    final_lifespan = combined_lifespan
 
-                self.fastapi_app = self._make_app(lifespan=final_lifespan)
+                fastapi_app = self._make_app(lifespan=final_lifespan)
             else:
-                self.fastapi_app = self._make_app(lifespan=self.lifespan)
+                fastapi_app = self._make_app(lifespan=self.lifespan)
 
-        # Add routes with conflict detection
-        self._add_router(get_base_router(self, settings=self.settings))
-        self._add_router(get_websocket_router(self, settings=self.settings))
-        self._add_router(get_health_router())
-        self._add_router(get_home_router(self))
+        # Add routes
+        self._add_router(fastapi_app, get_base_router(self, settings=self.settings))
+        self._add_router(fastapi_app, get_websocket_router(self, settings=self.settings))
+        self._add_router(fastapi_app, get_health_router())
+        self._add_router(fastapi_app, get_home_router(self))
 
+        has_a2a_interface = False
         for interface in self.interfaces:
+            if not has_a2a_interface and interface.__class__.__name__ == "A2A":
+                has_a2a_interface = True
             interface_router = interface.get_router()
-            self._add_router(interface_router)
+            self._add_router(fastapi_app, interface_router)
+
+        # Add A2A interface if requested and not provided in self.interfaces
+        if self.a2a_interface and not has_a2a_interface:
+            from agno.os.interfaces.a2a import A2A
+
+            a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
+            self.interfaces.append(a2a_interface)
+            self._add_router(fastapi_app, a2a_interface.get_router())
 
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
@@ -261,17 +348,19 @@ class AgentOS:
         ]
 
         for router in routers:
-            self._add_router(router)
+            self._add_router(fastapi_app, router)
 
         # Mount MCP if needed
-        if self.enable_mcp and self.mcp_app:
-            self.fastapi_app.mount("/", self.mcp_app)
+        if self.enable_mcp_server and self._mcp_app:
+            fastapi_app.mount("/", self._mcp_app)
+        else:
+            # Add the home router
+            self._add_router(fastapi_app, get_home_router(self))
 
-        # Add middleware (only if app is not set)
         if not self._app_set:
 
-            @self.fastapi_app.exception_handler(HTTPException)
-            async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+            @fastapi_app.exception_handler(HTTPException)
+            async def http_exception_handler(_, exc: HTTPException) -> JSONResponse:
                 return JSONResponse(
                     status_code=exc.status_code,
                     content={"detail": str(exc.detail)},
@@ -286,12 +375,12 @@ class AgentOS:
                         content={"detail": str(e)},
                     )
 
-            self.fastapi_app.middleware("http")(general_exception_handler)
+            fastapi_app.middleware("http")(general_exception_handler)
 
         # Update CORS middleware
-        update_cors_middleware(self.fastapi_app, self.settings.cors_origin_list)  # type: ignore
+        update_cors_middleware(fastapi_app, self.settings.cors_origin_list)  # type: ignore
 
-        return self.fastapi_app
+        return fastapi_app
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.
@@ -303,73 +392,18 @@ class AgentOS:
 
         return app.routes
 
-    def _get_existing_route_paths(self) -> Dict[str, List[str]]:
-        """Get all existing route paths and methods from the FastAPI app.
-
-        Returns:
-            Dict[str, List[str]]: Dictionary mapping paths to list of HTTP methods
-        """
-        if not self.fastapi_app:
-            return {}
-
-        existing_paths: Dict[str, Any] = {}
-        for route in self.fastapi_app.routes:
-            if isinstance(route, APIRoute):
-                path = route.path
-                methods = list(route.methods) if route.methods else []
-                if path in existing_paths:
-                    existing_paths[path].extend(methods)
-                else:
-                    existing_paths[path] = methods
-        return existing_paths
-
-    def _add_router(self, router: APIRouter) -> None:
+    def _add_router(self, fastapi_app: FastAPI, router: APIRouter) -> None:
         """Add a router to the FastAPI app, avoiding route conflicts.
 
         Args:
             router: The APIRouter to add
         """
-        if not self.fastapi_app:
-            return
 
-        # Get existing routes
-        existing_paths = self._get_existing_route_paths()
-
-        # Check for conflicts
-        conflicts = []
-        conflicting_routes = []
-
-        for route in router.routes:
-            if isinstance(route, APIRoute):
-                full_path = route.path
-                route_methods = list(route.methods) if route.methods else []
-
-                if full_path in existing_paths:
-                    conflicting_methods: Set[str] = set(route_methods) & set(existing_paths[full_path])
-                    if conflicting_methods:
-                        conflicts.append({"path": full_path, "methods": list(conflicting_methods), "route": route})
-                        conflicting_routes.append(route)
+        conflicts = find_conflicting_routes(fastapi_app, router)
+        conflicting_routes = [conflict["route"] for conflict in conflicts]
 
         if conflicts and self._app_set:
-            if self.replace_routes:
-                # Log warnings but still add all routes (AgentOS routes will override)
-                for conflict in conflicts:
-                    methods_str = ", ".join(conflict["methods"])  # type: ignore
-                    logger.warning(
-                        f"Route conflict detected: {methods_str} {conflict['path']} - "
-                        f"AgentOS route will override existing custom route"
-                    )
-
-                # Remove conflicting routes
-                for route in self.fastapi_app.routes:
-                    for conflict in conflicts:
-                        if isinstance(route, APIRoute):
-                            if route.path == conflict["path"] and list(route.methods) == list(conflict["methods"]):  # type: ignore
-                                self.fastapi_app.routes.pop(self.fastapi_app.routes.index(route))
-
-                self.fastapi_app.include_router(router)
-
-            else:
+            if self.on_route_conflict == "preserve_base_app":
                 # Skip conflicting AgentOS routes, prefer user's existing routes
                 for conflict in conflicts:
                     methods_str = ", ".join(conflict["methods"])  # type: ignore
@@ -386,10 +420,33 @@ class AgentOS:
 
                 # Use the filtered router if it has any routes left
                 if filtered_router.routes:
-                    self.fastapi_app.include_router(filtered_router)
+                    fastapi_app.include_router(filtered_router)
+
+            elif self.on_route_conflict == "preserve_agentos":
+                # Log warnings but still add all routes (AgentOS routes will override)
+                for conflict in conflicts:
+                    methods_str = ", ".join(conflict["methods"])  # type: ignore
+                    logger.warning(
+                        f"Route conflict detected: {methods_str} {conflict['path']} - "
+                        f"AgentOS route will override existing custom route"
+                    )
+
+                # Remove conflicting routes
+                for route in fastapi_app.routes:
+                    for conflict in conflicts:
+                        if isinstance(route, APIRoute):
+                            if route.path == conflict["path"] and list(route.methods) == list(conflict["methods"]):  # type: ignore
+                                fastapi_app.routes.pop(fastapi_app.routes.index(route))
+
+                fastapi_app.include_router(router)
+
+            elif self.on_route_conflict == "error":
+                conflicting_paths = [conflict["path"] for conflict in conflicts]
+                raise ValueError(f"Route conflict detected: {conflicting_paths}")
+
         else:
             # No conflicts, add router normally
-            self.fastapi_app.include_router(router)
+            fastapi_app.include_router(router)
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
         """Get the telemetry data for the OS"""
@@ -399,21 +456,6 @@ class AgentOS:
             "workflows": [workflow.id for workflow in self.workflows] if self.workflows else None,
             "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
         }
-
-    def _load_yaml_config(self, config_file_path: str) -> AgentOSConfig:
-        """Load a YAML config file and return the configuration as an AgentOSConfig instance."""
-        from pathlib import Path
-
-        import yaml
-
-        # Validate that the path points to a YAML file
-        path = Path(config_file_path)
-        if path.suffix.lower() not in [".yaml", ".yml"]:
-            raise ValueError(f"Config file must have a .yaml or .yml extension, got: {config_file_path}")
-
-        # Load the YAML file
-        with open(config_file_path, "r") as f:
-            return AgentOSConfig.model_validate(yaml.safe_load(f))
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover the databases used by all contextual agents, teams and workflows."""
@@ -427,18 +469,12 @@ class AgentOS:
                 self._register_db_with_validation(dbs, agent.db)
             if agent.knowledge and agent.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
-                # Also add to general dbs if it's used for both purposes
-                if agent.knowledge.contents_db.id not in dbs:
-                    self._register_db_with_validation(dbs, agent.knowledge.contents_db)
 
         for team in self.teams or []:
             if team.db:
                 self._register_db_with_validation(dbs, team.db)
             if team.knowledge and team.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, team.knowledge.contents_db)
-                # Also add to general dbs if it's used for both purposes
-                if team.knowledge.contents_db.id not in dbs:
-                    self._register_db_with_validation(dbs, team.knowledge.contents_db)
 
         for workflow in self.workflows or []:
             if workflow.db:
@@ -515,7 +551,6 @@ class AgentOS:
         if session_config.dbs is None:
             session_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in session_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -523,9 +558,7 @@ class AgentOS:
                 session_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=SessionDomainConfig(
-                            display_name="Sessions" if not multiple_dbs else "Sessions in database '" + db_id + "'"
-                        ),
+                        domain_config=SessionDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -537,7 +570,6 @@ class AgentOS:
         if memory_config.dbs is None:
             memory_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in memory_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -545,9 +577,7 @@ class AgentOS:
                 memory_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=MemoryDomainConfig(
-                            display_name="Memory" if not multiple_dbs else "Memory in database '" + db_id + "'"
-                        ),
+                        domain_config=MemoryDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -559,7 +589,6 @@ class AgentOS:
         if knowledge_config.dbs is None:
             knowledge_config.dbs = []
 
-        multiple_knowledge_dbs: bool = len(self.knowledge_dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
         # Only add databases that are actually used for knowledge contents
@@ -568,9 +597,7 @@ class AgentOS:
                 knowledge_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=KnowledgeDomainConfig(
-                            display_name="Knowledge" if not multiple_knowledge_dbs else "Knowledge in database " + db_id
-                        ),
+                        domain_config=KnowledgeDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -582,7 +609,6 @@ class AgentOS:
         if metrics_config.dbs is None:
             metrics_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in metrics_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -590,9 +616,7 @@ class AgentOS:
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=MetricsDomainConfig(
-                            display_name="Metrics" if not multiple_dbs else "Metrics in database '" + db_id + "'"
-                        ),
+                        domain_config=MetricsDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -604,7 +628,6 @@ class AgentOS:
         if evals_config.dbs is None:
             evals_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in evals_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -612,9 +635,7 @@ class AgentOS:
                 evals_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=EvalsDomainConfig(
-                            display_name="Evals" if not multiple_dbs else "Evals in database '" + db_id + "'"
-                        ),
+                        domain_config=EvalsDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -628,6 +649,7 @@ class AgentOS:
         port: int = 7777,
         reload: bool = False,
         workers: Optional[int] = None,
+        access_log: bool = False,
         **kwargs,
     ):
         import uvicorn
@@ -641,11 +663,10 @@ class AgentOS:
         from rich.align import Align
         from rich.console import Console, Group
 
-        panel_group = []
-        panel_group.append(Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]"))
-        panel_group.append(
-            Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}")
-        )
+        panel_group = [
+            Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]"),
+            Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}"),
+        ]
         if bool(self.settings.os_security_key):
             panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: Security Enabled[/bold chartreuse3]"))
 
@@ -661,4 +682,4 @@ class AgentOS:
             )
         )
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, **kwargs)
+        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, access_log=access_log, **kwargs)
