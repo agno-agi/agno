@@ -339,7 +339,7 @@ class TestKnowledgeContentEndpoints:
         assert data["filters"] == ["filter_tag_1", "filter_tag2"]
 
     def test_get_config_with_vector_db_no_name(self, test_app, mock_knowledge):
-        """Test getting configuration with vector database that has no name (falls back to class name)."""
+        """Test getting configuration with vector database that has no name (returns None)."""
         # Mock the get_readers and filters
         mock_knowledge.get_readers.return_value = {}
         mock_knowledge.get_filters.return_value = []
@@ -355,11 +355,11 @@ class TestKnowledgeContentEndpoints:
         assert response.status_code == 200
         data = response.json()
 
-        # Verify vector database uses class name as fallback
+        # Verify vector database name is None when not set
         assert len(data["vector_dbs"]) == 1
         vector_db_info = data["vector_dbs"][0]
 
-        assert vector_db_info["name"] == "PgVector"  # Should use class name
+        assert vector_db_info["name"] == None  # Should be None as no fallback is implemented
         assert vector_db_info["description"] == "Vector DB without name"
         assert vector_db_info["search_types"] == ["vector"]
 
@@ -414,7 +414,7 @@ class TestKnowledgeSearchEndpoint:
 
         # Verify knowledge.search was called correctly
         mock_knowledge.search.assert_called_once_with(
-            query="Jordan Mitchell skills", max_results=200, filters=None, search_type=None
+            query="Jordan Mitchell skills", max_results=None, filters=None, search_type=None
         )
 
     def test_search_knowledge_with_search_type(self, test_app, mock_knowledge):
@@ -439,7 +439,7 @@ class TestKnowledgeSearchEndpoint:
 
         # Verify knowledge.search was called with search_type
         mock_knowledge.search.assert_called_once_with(
-            query="test query", max_results=200, filters=None, search_type="vector"
+            query="test query", max_results=None, filters=None, search_type="vector"
         )
 
     def test_search_knowledge_with_db_id(self, test_app, mock_knowledge):
@@ -465,7 +465,7 @@ class TestKnowledgeSearchEndpoint:
         assert data["meta"]["total_count"] == 1
 
         # Note: db_id affects which knowledge instance is selected, not the search call itself
-        mock_knowledge.search.assert_called_once_with(query="test", max_results=200, filters=None, search_type=None)
+        mock_knowledge.search.assert_called_once_with(query="test", max_results=None, filters=None, search_type=None)
 
     def test_search_knowledge_no_results(self, test_app, mock_knowledge):
         """Test search that returns no results."""
@@ -543,7 +543,7 @@ class TestKnowledgeSearchEndpoint:
         assert doc["size"] == 100
 
         mock_knowledge.search.assert_called_once_with(
-            query="full test", max_results=200, filters=None, search_type="hybrid"
+            query="full test", max_results=None, filters=None, search_type="hybrid"
         )
 
     def test_search_knowledge_timing(self, test_app, mock_knowledge):
