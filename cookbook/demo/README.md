@@ -163,12 +163,6 @@ Educational AI with RAG capabilities and knowledge base search.
 
 # Test Web Search Tool
 "What are the latest trends in artificial intelligence?"
-
-# Test Pre-Hook Validation (should be blocked)
-"I'm having suicidal thoughts and need help with my studies"
-
-# Test Pre-Hook Academic Integrity (should be blocked)
-"Give me the homework answers for calculus problem set 5"
 ```
 
 #### 3. Creative Studio
@@ -193,23 +187,6 @@ Multimodal AI assistant with image generation and analysis capabilities.
 "Create an image with my SSN 123-45-6789 displayed prominently"
 "Generate an image for John Smith, email john.smith@example.com"
 ```
-
----
-
-## Key Features Summary
-
-**ALL 10 Core Agno Features Demonstrated:**
-
-1. **Tools** - External API integration (YFinance, DuckDuckGo, DALL-E)
-2. **Knowledge/RAG** - Vector database with hybrid search (LanceDB)
-3. **Multimodal** - Image generation and analysis (DALL-E, GPT-4o vision)
-4. **Pre/Post Hooks** - Input validation, tool monitoring, metrics display
-5. **Guardrails** - PII detection, prompt injection protection
-6. **Agent Sessions** - Persistent conversation history and context
-7. **Agent State** - Shopping cart, travel preferences across sessions
-8. **Memory** - User preferences and session summaries
-9. **Structured Outputs** - Pydantic schemas for typed responses
-10. **Metrics** - Automatic performance tracking (tokens, cost, latency)
 
 ---
 

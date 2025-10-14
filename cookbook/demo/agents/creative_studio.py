@@ -59,7 +59,6 @@ def log_tool_call(fc: FunctionCall):
     """
     Pre-hook: Log tool execution for monitoring and debugging
 
-    In production, this could:
     - Track API usage and costs
     - Implement rate limiting
     - Validate input parameters
@@ -74,7 +73,6 @@ def validate_tool_result(fc: FunctionCall):
     """
     Post-hook: Validate and enrich tool results
 
-    In production, this could:
     - Validate response format
     - Add metadata (timestamp, source, etc.)
     - Filter sensitive content
