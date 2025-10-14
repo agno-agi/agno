@@ -19,9 +19,11 @@
 
 ## What is Agno?
 
-Agno is the multi-agent framework, runtime and UI built for speed.
+Agno is the multi-agent framework, runtime and UI built for speed. Agno gives you:
 
-Use it to build multi-agent systems with memory, knowledge, human in the loop and MCP support. You can orchestrate agents as multi-agent teams (more autonomy) or step-based agentic workflows (more control).
+1. a Framework for building multi-agent systems
+2. a Runtime for deploying multi-agent systems
+3. a Control Plane for managing multi-agent system
 
 Here’s an example of an Agent that connects to an MCP server, manages conversation state in a database, and is served using a FastAPI application that you can interact with using the [AgentOS UI](https://os.agno.com).
 
@@ -32,26 +34,18 @@ from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
 
-# ************* Create Agent *************
 agno_agent = Agent(
     name="Agno Agent",
     model=Claude(id="claude-sonnet-4-5"),
-    # Add a database to the Agent
     db=SqliteDb(db_file="agno.db"),
-    # Add the Agno MCP server to the Agent
     tools=[MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")],
-    # Add the previous session history to the context
     add_history_to_context=True,
     markdown=True,
 )
 
-
-# ************* Create AgentOS *************
 agent_os = AgentOS(agents=[agno_agent])
-# Get the FastAPI app for the AgentOS
 app = agent_os.get_app()
 
-# ************* Run AgentOS *************
 if __name__ == "__main__":
     agent_os.serve(app="agno_agent:app", reload=True)
 ```
