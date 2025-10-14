@@ -6163,18 +6163,34 @@ class Agent:
 
     def _calculate_run_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
         """Sum the metrics of the given messages into a Metrics object"""
-        metrics = current_run_metrics or Metrics()
+        metrics = Metrics()
 
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 metrics += m.metrics
 
-        # If the run metrics were already initialized, keep the time related metrics
+        # If the run metrics were already initialized, keep the time related metrics and custom fields
         if current_run_metrics is not None:
             metrics.timer = current_run_metrics.timer
-            metrics.duration = current_run_metrics.duration
-            metrics.time_to_first_token = current_run_metrics.time_to_first_token
+
+            if current_run_metrics.duration is not None:
+                metrics.duration = current_run_metrics.duration
+
+            if current_run_metrics.time_to_first_token is not None:
+                metrics.time_to_first_token = current_run_metrics.time_to_first_token
+
+            if current_run_metrics.provider_metrics:
+                merged_provider_metrics = dict(current_run_metrics.provider_metrics)
+                if metrics.provider_metrics:
+                    merged_provider_metrics.update(metrics.provider_metrics)
+                metrics.provider_metrics = merged_provider_metrics
+
+            if current_run_metrics.additional_metrics:
+                merged_additional_metrics = dict(current_run_metrics.additional_metrics)
+                if metrics.additional_metrics:
+                    merged_additional_metrics.update(metrics.additional_metrics)
+                metrics.additional_metrics = merged_additional_metrics
 
         return metrics
 
