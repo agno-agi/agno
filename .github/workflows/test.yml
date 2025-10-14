@@ -11,7 +11,6 @@ on:
       - reopened
     branches:
       - "main"
-      - "v2.0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -41,9 +40,9 @@ jobs:
             pip setuptools wheel \
             ruff mypy pytest types-pyyaml
           pip install --no-deps -r requirements.txt
-      - name: Ruff format
+      - name: Ruff format check
         run: |
-          ruff format .
+          ruff format --diff --check .
       - name: Ruff check
         run: |
           ruff check .
@@ -74,9 +73,9 @@ jobs:
             pip setuptools wheel \
             ruff mypy pytest
           pip install --no-deps -r ../libs/agno/requirements.txt
-      - name: Ruff format
+      - name: Ruff format check
         run: |
-          ruff format .
+          ruff format --diff --check .
       - name: Ruff check
         run: |
           ruff check .
@@ -108,9 +107,9 @@ jobs:
             pip setuptools wheel \
             ruff mypy pytest
           pip install -r requirements.txt
-      - name: Ruff format
+      - name: Ruff format check
         run: |
-          ruff format .
+          ruff format --diff --check .
       - name: Ruff check
         run: |
           ruff check .
