@@ -73,7 +73,7 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
 
     if run_dict.get("messages") is not None:
         for message in reversed(run_dict["messages"]):
-            if message.get("role") == "user":
+            if message.get("role") == "user" and not message.get("generated"): 
                 return message.get("content", "")
 
     return ""
