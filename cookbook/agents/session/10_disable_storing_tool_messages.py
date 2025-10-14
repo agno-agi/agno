@@ -28,6 +28,3 @@ if __name__ == "__main__":
         print("\n Storage info:")
         print(f"   Total messages stored: {len(stored_run.messages)}")
         print(f"   Tool result messages: {len(tool_messages)} (scrubbed!)")
-        print(
-            f"   Tools list: {len(stored_run.tools) if stored_run.tools else 0} (scrubbed!)"
-        )
