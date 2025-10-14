@@ -80,7 +80,7 @@ export GROQ_API_KEY=***
 
 ### 6. Run demos
 
-**Option A: Real-World Showcase Demo (production-ready use cases)**
+**Option A: Real-World Showcase Demo**
 
 ```shell
 # Activate your virtual environment
@@ -96,7 +96,7 @@ python cookbook/demo/real_world_showcase.py
 
 Then open [os.agno.com](https://os.agno.com/) and connect to http://localhost:7780 to interact with real-world use cases.
 
-**Option B: Full AgentOS production setup**
+**Option B: Alternative to Real World Examples**
 
 ```shell
 # Run full AgentOS with more agents, teams, and workflows
