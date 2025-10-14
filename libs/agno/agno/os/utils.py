@@ -146,7 +146,7 @@ def extract_output_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
         "videos": [],
         "audio": [],
         "files": [],
-        "response_audio": None,
+        "response_audio": [],
     }
 
 
@@ -167,7 +167,10 @@ def extract_output_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
             response_audio = message.get("response_audio") or message.get("audio_output")
 
             if response_audio:
-                output_media["response_audio"] = response_audio
+                if isinstance(response_audio, list):
+                    output_media["response_audio"].extend(response_audio)
+                else:
+                    output_media["response_audio"].append(response_audio)
     
     return output_media
 

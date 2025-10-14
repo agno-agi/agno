@@ -847,7 +847,7 @@ class RunSchema(BaseModel):
     videos: Optional[List[dict]]
     audio: Optional[List[dict]]
     files: Optional[List[dict]]
-    response_audio: Optional[dict]
+    response_audio: Optional[List[dict]]
     input_media: Optional[Dict[str, Any]]
 
     @classmethod
@@ -874,7 +874,7 @@ class RunSchema(BaseModel):
             videos=extract_output_media(run_dict).get("videos", []),
             audio=extract_output_media(run_dict).get("audio", []),
             files=extract_output_media(run_dict).get("files", []),
-            response_audio=extract_output_media(run_dict).get("response_audio", None),
+            response_audio=extract_output_media(run_dict).get("response_audio", []),
             input_media=extract_input_media(run_dict),
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
@@ -903,7 +903,7 @@ class TeamRunSchema(BaseModel):
     videos: Optional[List[dict]]
     audio: Optional[List[dict]]
     files: Optional[List[dict]]
-    response_audio: Optional[dict]
+    response_audio: Optional[List[dict]]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -931,7 +931,7 @@ class TeamRunSchema(BaseModel):
             videos=extract_output_media(run_dict).get("videos", []),
             audio=extract_output_media(run_dict).get("audio", []),
             files=extract_output_media(run_dict).get("files", []),
-            response_audio=extract_output_media(run_dict).get("response_audio", None),
+            response_audio=extract_output_media(run_dict).get("response_audio", []),
             input_media=extract_input_media(run_dict),
         )
 
@@ -957,7 +957,7 @@ class WorkflowRunSchema(BaseModel):
     videos: Optional[List[dict]]
     audio: Optional[List[dict]]
     files: Optional[List[dict]]
-    response_audio: Optional[dict]
+    response_audio: Optional[List[dict]]
     input_media: Optional[Dict[str, Any]]
 
     @classmethod
@@ -984,7 +984,7 @@ class WorkflowRunSchema(BaseModel):
             videos=extract_output_media(run_response).get("videos", []),
             audio=extract_output_media(run_response).get("audio", []),
             files=extract_output_media(run_response).get("files", []),
-            response_audio=extract_output_media(run_response).get("response_audio", None),
+            response_audio=extract_output_media(run_response).get("response_audio", []),
             input_media=extract_input_media(run_response),
         )
 
