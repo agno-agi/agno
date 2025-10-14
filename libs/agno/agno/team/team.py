@@ -259,6 +259,10 @@ class Team:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If True, store tool results in run output
+    store_tool_results: bool = True
+    # If True, store history messages in run output
+    store_history_messages: bool = True
 
     # --- Team Tools ---
     # A list of tools provided to the Model.
@@ -418,6 +422,8 @@ class Team:
         search_knowledge: bool = True,
         read_team_history: bool = False,
         store_media: bool = True,
+        store_tool_results: bool = True,
+        store_history_messages: bool = True,
         send_media_to_model: bool = True,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
@@ -518,6 +524,8 @@ class Team:
         self.read_team_history = read_team_history
 
         self.store_media = store_media
+        self.store_tool_results = store_tool_results
+        self.store_history_messages = store_history_messages
         self.send_media_to_model = send_media_to_model
 
         self.tools = tools
@@ -1205,7 +1213,11 @@ class Team:
         )
         deque(response_iterator, maxlen=0)
 
-        # 10. Save session to storage
+        # 10. Scrub the stored run based on storage flags
+        if self._scrub_run_output_for_storage(run_response):
+            session.upsert_run(run_response=run_response)
+
+        # 11. Save session to storage
         self.save_session(session=session)
 
         # Log Team Telemetry
@@ -1410,7 +1422,11 @@ class Team:
             # 8. Calculate session metrics
             self._update_session_metrics(session=session)
 
-            # 9. Save session to storage
+            # 9. Scrub the stored run based on storage flags
+            if self._scrub_run_output_for_storage(run_response):
+                session.upsert_run(run_response=run_response)
+
+            # 10. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1882,7 +1898,7 @@ class Team:
         # 6. Add the run to session
         session.upsert_run(run_response=run_response)
 
-        # 6. Update Team Memory
+        # 7. Update Team Memory
         async for _ in self._amake_memories_and_summaries(
             run_response=run_response,
             session=session,
@@ -1891,10 +1907,14 @@ class Team:
         ):
             pass
 
-        # 7. Calculate session metrics
+        # 8. Calculate session metrics
         self._update_session_metrics(session=session)
 
-        # 8. Save session to storage
+        # 9. Scrub the stored run based on storage flags
+        if self._scrub_run_output_for_storage(run_response):
+            session.upsert_run(run_response=run_response)
+
+        # 10. Save session to storage
         self.save_session(session=session)
 
         # Log Team Telemetry
@@ -2108,7 +2128,11 @@ class Team:
             # 8. Calculate session metrics
             self._update_session_metrics(session=session)
 
-            # 9. Save session to storage
+            # 9. Scrub the stored run based on storage flags
+            if self._scrub_run_output_for_storage(run_response):
+                session.upsert_run(run_response=run_response)
+
+            # 10. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -3610,6 +3634,53 @@ class Team:
         message.audio_output = None
         message.image_output = None
         message.video_output = None
+
+    def _scrub_tool_results_from_run_output(self, run_response: TeamRunOutput) -> None:
+        """
+        Remove all tool-related data from TeamRunOutput when store_tool_results=False.
+        This includes tool calls, tool results, and tool-related message fields.
+        """
+        # Remove tool results (messages with role="tool")
+        if run_response.messages:
+            run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
+            # Also scrub tool-related fields from remaining messages
+            for message in run_response.messages:
+                self._scrub_tool_data_from_message(message)
+
+    def _scrub_tool_data_from_message(self, message: Message) -> None:
+        """Remove tool-related data from a Message object."""
+        message.tool_calls = None
+        message.tool_call_id = None
+
+    def _scrub_history_messages_from_run_output(self, run_response: TeamRunOutput) -> None:
+        """
+        Remove all history messages from TeamRunOutput when store_history_messages=False.
+        This removes messages that were loaded from the team's memory.
+        """
+        # Remove messages with from_history=True
+        if run_response.messages:
+            run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
+
+    def _scrub_run_output_for_storage(self, run_response: TeamRunOutput) -> bool:
+        """
+        Scrub run output based on storage flags before persisting to database.
+        Returns True if any scrubbing was done, False otherwise.
+        """
+        scrubbed = False
+        
+        if not self.store_media:
+            self._scrub_media_from_run_output(run_response)
+            scrubbed = True
+
+        if not self.store_tool_results:
+            self._scrub_tool_results_from_run_output(run_response)
+            scrubbed = True
+
+        if not self.store_history_messages:
+            self._scrub_history_messages_from_run_output(run_response)
+            scrubbed = True
+        
+        return scrubbed
 
     def _validate_media_object_id(
         self,
