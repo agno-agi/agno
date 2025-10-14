@@ -669,15 +669,20 @@ class Knowledge:
                     reader = self._select_reader(content.file_data.type)
                 name = content.name if content.name else f"content_{content.file_data.type}"
                 read_documents = reader.read(content_io, name=name)
+
                 for read_document in read_documents:
                     if content.metadata:
                         read_document.meta_data.update(content.metadata)
                     read_document.content_id = content.id
 
+                print("READ DOCUMENTS", read_documents)
                 if len(read_documents) == 0:
+                    log_error("No documents read from content, setting failed")
                     content.status = ContentStatus.FAILED
                     content.status_message = "Content could not be read"
                     self._update_content(content)
+                    return
+
 
         else:
             content.status = ContentStatus.FAILED
