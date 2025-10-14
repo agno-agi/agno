@@ -19,7 +19,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools(search=True)],
+    tools=[DuckDuckGoTools(enable_search=True)],
     instructions=[
         "You are a financial data specialist. Provide concise and accurate data.",
         "Use tables to display stock prices, fundamentals (P/E, Market Cap), and recommendations.",

@@ -123,7 +123,7 @@ app.add_middleware(
 agent_os = AgentOS(
     description="JWT Cookie-Based AgentOS",
     agents=[profile_agent],
-    fastapi_app=app,
+    base_app=app,
 )
 
 # Get the final app

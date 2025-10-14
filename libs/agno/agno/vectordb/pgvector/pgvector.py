@@ -55,7 +55,6 @@ class PgVector(VectorDb):
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
         reranker: Optional[Reranker] = None,
-        use_batch: bool = False,
     ):
         """
         Initialize the PgVector instance.
@@ -96,7 +95,6 @@ class PgVector(VectorDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = db_engine
         self.metadata: MetaData = MetaData(schema=self.schema)
-        self.use_batch: bool = use_batch
 
         # Embedder for embedding the document contents
         if embedder is None:
@@ -337,8 +335,8 @@ class PgVector(VectorDb):
                     batch_docs = documents[i : i + batch_size]
                     log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
-                        embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
-                        await asyncio.gather(*embed_tasks, return_exceptions=True)
+                        # Embed all documents in the batch
+                        await self._async_embed_documents(batch_docs)
 
                         # Prepare documents for insertion
                         batch_records = []
@@ -493,6 +491,52 @@ class PgVector(VectorDb):
             "content_id": doc.content_id,
         }
 
+    async def _async_embed_documents(self, batch_docs: List[Document]) -> None:
+        """
+        Embed a batch of documents using either batch embedding or individual embedding.
+
+        Args:
+            batch_docs: List of documents to embed
+        """
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in batch_docs]
+
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(batch_docs):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    logger.error(f"Rate limit detected during batch embedding.  {e}")
+                    raise e
+                else:
+                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+        else:
+            # Use individual embedding
+            embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
+            await asyncio.gather(*embed_tasks, return_exceptions=True)
+
     async def async_upsert(
         self,
         content_hash: str,
@@ -530,8 +574,8 @@ class PgVector(VectorDb):
                     batch_docs = documents[i : i + batch_size]
                     log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
-                        embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
-                        await asyncio.gather(*embed_tasks, return_exceptions=True)
+                        # Embed all documents in the batch
+                        await self._async_embed_documents(batch_docs)
 
                         # Prepare documents for upserting
                         batch_records_dict = {}  # Use dict to deduplicate by ID

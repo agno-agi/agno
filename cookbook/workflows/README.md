@@ -674,7 +674,7 @@ fast_workflow = Workflow(
 ```
 
 **See Examples**:
-- [`store_events_and_events_to_skip_in_a_workflow.py`](_06_advanced_concepts/_06_other/store_events_and_events_to_skip_in_a_workflow.py)
+- [`store_events_and_events_to_skip_in_a_workflow.py`](_06_advanced_concepts/_07_other/store_events_and_events_to_skip_in_a_workflow.py)
 
 ### Additional Data
 

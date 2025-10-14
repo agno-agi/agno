@@ -56,7 +56,7 @@ evaluation = AccuracyEval(
 
 agent_os = AgentOS(
     description="Example app for basic agent with Firestore database capabilities",
-    os_id="firestore-app",
+    id="firestore-app",
     agents=[basic_agent],
     teams=[basic_team],
 )

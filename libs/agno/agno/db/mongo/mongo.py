@@ -16,7 +16,7 @@ from agno.db.mongo.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
+from agno.db.utils import deserialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -282,7 +282,6 @@ class MongoDb(BaseDb):
                 return None
 
             session = deserialize_session_json_fields(result)
-
             if not deserialize:
                 return session
 
@@ -385,7 +384,6 @@ class MongoDb(BaseDb):
             records = list(cursor)
             if records is None:
                 return [] if deserialize else ([], 0)
-
             sessions_raw = [deserialize_session_json_fields(record) for record in records]
 
             if not deserialize:
@@ -489,25 +487,25 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
-            serialized_session_dict = serialize_session_json_fields(session.to_dict())
+            session_dict = session.to_dict()
 
             if isinstance(session, AgentSession):
                 record = {
-                    "session_id": serialized_session_dict.get("session_id"),
+                    "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.AGENT.value,
-                    "agent_id": serialized_session_dict.get("agent_id"),
-                    "user_id": serialized_session_dict.get("user_id"),
-                    "runs": serialized_session_dict.get("runs"),
-                    "agent_data": serialized_session_dict.get("agent_data"),
-                    "session_data": serialized_session_dict.get("session_data"),
-                    "summary": serialized_session_dict.get("summary"),
-                    "metadata": serialized_session_dict.get("metadata"),
-                    "created_at": serialized_session_dict.get("created_at"),
+                    "agent_id": session_dict.get("agent_id"),
+                    "user_id": session_dict.get("user_id"),
+                    "runs": session_dict.get("runs"),
+                    "agent_data": session_dict.get("agent_data"),
+                    "session_data": session_dict.get("session_data"),
+                    "summary": session_dict.get("summary"),
+                    "metadata": session_dict.get("metadata"),
+                    "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
 
                 result = collection.find_one_and_replace(
-                    filter={"session_id": serialized_session_dict.get("session_id")},
+                    filter={"session_id": session_dict.get("session_id")},
                     replacement=record,
                     upsert=True,
                     return_document=ReturnDocument.AFTER,
@@ -515,7 +513,7 @@ class MongoDb(BaseDb):
                 if not result:
                     return None
 
-                session = deserialize_session_json_fields(result)  # type: ignore
+                session = result  # type: ignore
 
                 if not deserialize:
                     return session
@@ -524,21 +522,21 @@ class MongoDb(BaseDb):
 
             elif isinstance(session, TeamSession):
                 record = {
-                    "session_id": serialized_session_dict.get("session_id"),
+                    "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.TEAM.value,
-                    "team_id": serialized_session_dict.get("team_id"),
-                    "user_id": serialized_session_dict.get("user_id"),
-                    "runs": serialized_session_dict.get("runs"),
-                    "team_data": serialized_session_dict.get("team_data"),
-                    "session_data": serialized_session_dict.get("session_data"),
-                    "summary": serialized_session_dict.get("summary"),
-                    "metadata": serialized_session_dict.get("metadata"),
-                    "created_at": serialized_session_dict.get("created_at"),
+                    "team_id": session_dict.get("team_id"),
+                    "user_id": session_dict.get("user_id"),
+                    "runs": session_dict.get("runs"),
+                    "team_data": session_dict.get("team_data"),
+                    "session_data": session_dict.get("session_data"),
+                    "summary": session_dict.get("summary"),
+                    "metadata": session_dict.get("metadata"),
+                    "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
 
                 result = collection.find_one_and_replace(
-                    filter={"session_id": serialized_session_dict.get("session_id")},
+                    filter={"session_id": session_dict.get("session_id")},
                     replacement=record,
                     upsert=True,
                     return_document=ReturnDocument.AFTER,
@@ -546,7 +544,8 @@ class MongoDb(BaseDb):
                 if not result:
                     return None
 
-                session = deserialize_session_json_fields(result)  # type: ignore
+                # MongoDB stores native objects, no deserialization needed for document fields
+                session = result  # type: ignore
 
                 if not deserialize:
                     return session
@@ -555,21 +554,21 @@ class MongoDb(BaseDb):
 
             else:
                 record = {
-                    "session_id": serialized_session_dict.get("session_id"),
+                    "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.WORKFLOW.value,
-                    "workflow_id": serialized_session_dict.get("workflow_id"),
-                    "user_id": serialized_session_dict.get("user_id"),
-                    "runs": serialized_session_dict.get("runs"),
-                    "workflow_data": serialized_session_dict.get("workflow_data"),
-                    "session_data": serialized_session_dict.get("session_data"),
-                    "summary": serialized_session_dict.get("summary"),
-                    "metadata": serialized_session_dict.get("metadata"),
-                    "created_at": serialized_session_dict.get("created_at"),
+                    "workflow_id": session_dict.get("workflow_id"),
+                    "user_id": session_dict.get("user_id"),
+                    "runs": session_dict.get("runs"),
+                    "workflow_data": session_dict.get("workflow_data"),
+                    "session_data": session_dict.get("session_data"),
+                    "summary": session_dict.get("summary"),
+                    "metadata": session_dict.get("metadata"),
+                    "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
 
                 result = collection.find_one_and_replace(
-                    filter={"session_id": serialized_session_dict.get("session_id")},
+                    filter={"session_id": session_dict.get("session_id")},
                     replacement=record,
                     upsert=True,
                     return_document=ReturnDocument.AFTER,
@@ -577,7 +576,7 @@ class MongoDb(BaseDb):
                 if not result:
                     return None
 
-                session = deserialize_session_json_fields(result)  # type: ignore
+                session = result  # type: ignore
 
                 if not deserialize:
                     return session
@@ -628,48 +627,48 @@ class MongoDb(BaseDb):
                 if session is None:
                     continue
 
-                serialized_session_dict = serialize_session_json_fields(session.to_dict())
+                session_dict = session.to_dict()
 
                 if isinstance(session, AgentSession):
                     record = {
-                        "session_id": serialized_session_dict.get("session_id"),
+                        "session_id": session_dict.get("session_id"),
                         "session_type": SessionType.AGENT.value,
-                        "agent_id": serialized_session_dict.get("agent_id"),
-                        "user_id": serialized_session_dict.get("user_id"),
-                        "runs": serialized_session_dict.get("runs"),
-                        "agent_data": serialized_session_dict.get("agent_data"),
-                        "session_data": serialized_session_dict.get("session_data"),
-                        "summary": serialized_session_dict.get("summary"),
-                        "metadata": serialized_session_dict.get("metadata"),
-                        "created_at": serialized_session_dict.get("created_at"),
+                        "agent_id": session_dict.get("agent_id"),
+                        "user_id": session_dict.get("user_id"),
+                        "runs": session_dict.get("runs"),
+                        "agent_data": session_dict.get("agent_data"),
+                        "session_data": session_dict.get("session_data"),
+                        "summary": session_dict.get("summary"),
+                        "metadata": session_dict.get("metadata"),
+                        "created_at": session_dict.get("created_at"),
                         "updated_at": int(time.time()),
                     }
                 elif isinstance(session, TeamSession):
                     record = {
-                        "session_id": serialized_session_dict.get("session_id"),
+                        "session_id": session_dict.get("session_id"),
                         "session_type": SessionType.TEAM.value,
-                        "team_id": serialized_session_dict.get("team_id"),
-                        "user_id": serialized_session_dict.get("user_id"),
-                        "runs": serialized_session_dict.get("runs"),
-                        "team_data": serialized_session_dict.get("team_data"),
-                        "session_data": serialized_session_dict.get("session_data"),
-                        "summary": serialized_session_dict.get("summary"),
-                        "metadata": serialized_session_dict.get("metadata"),
-                        "created_at": serialized_session_dict.get("created_at"),
+                        "team_id": session_dict.get("team_id"),
+                        "user_id": session_dict.get("user_id"),
+                        "runs": session_dict.get("runs"),
+                        "team_data": session_dict.get("team_data"),
+                        "session_data": session_dict.get("session_data"),
+                        "summary": session_dict.get("summary"),
+                        "metadata": session_dict.get("metadata"),
+                        "created_at": session_dict.get("created_at"),
                         "updated_at": int(time.time()),
                     }
                 elif isinstance(session, WorkflowSession):
                     record = {
-                        "session_id": serialized_session_dict.get("session_id"),
+                        "session_id": session_dict.get("session_id"),
                         "session_type": SessionType.WORKFLOW.value,
-                        "workflow_id": serialized_session_dict.get("workflow_id"),
-                        "user_id": serialized_session_dict.get("user_id"),
-                        "runs": serialized_session_dict.get("runs"),
-                        "workflow_data": serialized_session_dict.get("workflow_data"),
-                        "session_data": serialized_session_dict.get("session_data"),
-                        "summary": serialized_session_dict.get("summary"),
-                        "metadata": serialized_session_dict.get("metadata"),
-                        "created_at": serialized_session_dict.get("created_at"),
+                        "workflow_id": session_dict.get("workflow_id"),
+                        "user_id": session_dict.get("user_id"),
+                        "runs": session_dict.get("runs"),
+                        "workflow_data": session_dict.get("workflow_data"),
+                        "session_data": session_dict.get("session_data"),
+                        "summary": session_dict.get("summary"),
+                        "metadata": session_dict.get("metadata"),
+                        "created_at": session_dict.get("created_at"),
                         "updated_at": int(time.time()),
                     }
                 else:
@@ -688,7 +687,7 @@ class MongoDb(BaseDb):
                 cursor = collection.find({"session_id": {"$in": session_ids}})
 
                 for doc in cursor:
-                    session_dict = deserialize_session_json_fields(doc)
+                    session_dict = doc
 
                     if deserialize:
                         session_type = doc.get("session_type")
@@ -728,11 +727,12 @@ class MongoDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete if the memory belongs to this user.
 
         Returns:
             bool: True if the memory was deleted, False otherwise.
@@ -745,7 +745,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return
 
-            result = collection.delete_one({"memory_id": memory_id})
+            query = {"memory_id": memory_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+
+            result = collection.delete_one(query)
 
             success = result.deleted_count > 0
             if success:
@@ -757,11 +761,12 @@ class MongoDb(BaseDb):
             log_error(f"Error deleting memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete memories that belong to this user.
 
         Raises:
             Exception: If there is an error deleting the memories.
@@ -771,7 +776,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return
 
-            result = collection.delete_many({"memory_id": {"$in": memory_ids}})
+            query: Dict[str, Any] = {"memory_id": {"$in": memory_ids}}
+            if user_id is not None:
+                query["user_id"] = user_id
+
+            result = collection.delete_many(query)
 
             if result.deleted_count == 0:
                 log_debug(f"No memories found with ids: {memory_ids}")
@@ -794,19 +803,22 @@ class MongoDb(BaseDb):
             if collection is None:
                 return []
 
-            topics = collection.distinct("topics")
+            topics = collection.distinct("topics", {})
             return [topic for topic in topics if topic]
 
         except Exception as e:
             log_error(f"Exception reading from collection: {e}")
             raise e
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[UserMemory]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only return the memory if it belongs to this user.
 
         Returns:
             Optional[UserMemory]:
@@ -821,7 +833,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
-            result = collection.find_one({"memory_id": memory_id})
+            query = {"memory_id": memory_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+
+            result = collection.find_one(query)
             if result is None or not deserialize:
                 return result
 
@@ -934,8 +950,10 @@ class MongoDb(BaseDb):
             if collection is None:
                 return [], 0
 
+            match_stage = {"user_id": {"$ne": None}}
+
             pipeline = [
-                {"$match": {"user_id": {"$ne": None}}},
+                {"$match": match_stage},
                 {
                     "$group": {
                         "_id": "$user_id",
