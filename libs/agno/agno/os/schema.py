@@ -849,7 +849,6 @@ class RunSchema(BaseModel):
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
         run_input = get_run_input(run_dict)
-        print("run_dict", run_dict)
         run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
         return cls(
             run_id=run_dict.get("run_id", ""),
