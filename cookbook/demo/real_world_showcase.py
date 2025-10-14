@@ -86,8 +86,6 @@ if __name__ == "__main__":
     # Initialize knowledge bases
     asyncio.run(initialize_knowledge_bases())
 
-    print("\n✅ All systems ready!")
-    print("\n📋 Quality-Focused Agno Framework Showcase:")
     print("\n   AGENTS (3) - Each demonstrates multiple features:")
     print("   • Lifestyle Concierge - Multi-domain (finance/shopping/travel)")
     print("     Features: Tools, Structured Outputs, Guardrails, Memory, Storage, Agent State, Metrics")
@@ -95,7 +93,6 @@ if __name__ == "__main__":
     print("     Features: Vector Search, Input Validation, Tool Hooks, Memory, Metrics")
     print("   • Creative Studio - Multimodal AI assistant")
     print("     Features: Image Generation/Analysis, Tool Hooks, Guardrails, Metrics")
-    print("\n   📊 Total: 3 agents demonstrating ALL 10 core Agno features")
 
     print("\n🌐 Starting AgentOS on http://localhost:7780")
     print("=" * 80 + "\n")
