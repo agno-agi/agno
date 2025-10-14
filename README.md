@@ -19,7 +19,7 @@
 
 ## What is Agno?
 
-Agno is the multi-agent framework, runtime, and UI built for speed.
+Agno is the multi-agent framework, runtime and UI built for speed.
 
 Use it to build multi-agent systems with memory, knowledge, human in the loop and MCP support. You can orchestrate agents as multi-agent teams (more autonomy) or step-based agentic workflows (more control).
 
