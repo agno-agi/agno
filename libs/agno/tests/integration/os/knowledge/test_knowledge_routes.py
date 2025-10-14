@@ -359,7 +359,7 @@ class TestKnowledgeContentEndpoints:
         assert len(data["vector_dbs"]) == 1
         vector_db_info = data["vector_dbs"][0]
 
-        assert vector_db_info["name"] == None  # Should be None as no fallback is implemented
+        assert vector_db_info["name"] is None  # Should be None as no fallback is implemented
         assert vector_db_info["description"] == "Vector DB without name"
         assert vector_db_info["search_types"] == ["vector"]
 

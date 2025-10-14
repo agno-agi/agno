@@ -193,7 +193,7 @@ class GoogleSheetsTools(Toolkit):
             self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
 
         if not self.creds or not self.creds.valid:
-            if self.creds and self.creds.expired and self.creds.refresh_token: # type: ignore
+            if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
                 self.creds.refresh(Request())
             else:
                 client_config = {
@@ -214,7 +214,7 @@ class GoogleSheetsTools(Toolkit):
                     flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
                 # Opens up a browser window for OAuth authentication
                 self.creds = flow.run_local_server(port=self.oauth_port)
-            token_file.write_text(self.creds.to_json()) if self.creds else None # type: ignore
+            token_file.write_text(self.creds.to_json()) if self.creds else None  # type: ignore
 
     @authenticate
     def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:
