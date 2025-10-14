@@ -675,7 +675,6 @@ class Knowledge:
                         read_document.meta_data.update(content.metadata)
                     read_document.content_id = content.id
 
-                print("READ DOCUMENTS", read_documents)
                 if len(read_documents) == 0:
                     log_error("No documents read from content, setting failed")
                     content.status = ContentStatus.FAILED
