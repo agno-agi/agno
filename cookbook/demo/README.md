@@ -107,49 +107,124 @@ Then open [os.agno.com](https://os.agno.com/) to connect and interact with the d
 
 ---
 
-## 🎯 Demo Files Overview
+## Demo Files Overview
 
-### 🟡 `real_world_showcase.py` - Production-Ready Use Cases
+### `real_world_showcase.py` - Production-Ready Use Cases
 
 **3 Comprehensive Consumer/Lifestyle Agents:**
-1. **Lifestyle Concierge** - Multi-domain personal assistant (finance/shopping/travel)
-   - Stock analysis with YFinance, product recommendations, travel planning
-   - Demonstrates: Tools, Structured Outputs, Guardrails, Memory, Storage, Agent State, Metrics
-2. **Study Buddy** - Educational AI with RAG capabilities
-   - Knowledge base search, educational resources, learning assessments
-   - Demonstrates: Vector Search, Input Validation Hooks, Tool Monitoring, Memory, Metrics
-3. **Creative Studio** - Multimodal AI assistant
-   - Image generation with DALL-E, image analysis with GPT-4o vision
-   - Demonstrates: Multimodal Capabilities, Tool Hooks, Guardrails, Metrics
 
-**Key Features Demonstrated (ALL 10 Core Agno Features):**
-- 🔧 Tools - External API integration (YFinance, DuckDuckGo, DALL-E)
-- 📚 Knowledge/RAG - Vector database with hybrid search (LanceDB)
-- 🎨 Multimodal - Image generation and analysis (DALL-E, GPT-4o vision)
-- 🪝 Pre/Post Hooks - Input validation, tool monitoring, metrics display
-- 🛡️ Guardrails - PII detection, prompt injection protection
-- 💾 Agent Sessions - Persistent conversation history and context
-- 🗂️ Agent State - Shopping cart, travel preferences across sessions
-- 🧠 Memory - User preferences and session summaries
-- 📊 Structured Outputs - Pydantic schemas for all responses
-- 📈 Metrics - Automatic performance tracking (tokens, cost, latency)
+#### 1. Lifestyle Concierge
+Multi-domain personal assistant for finance, shopping, and travel planning.
 
-**Run AgentOS:**
+**Features Demonstrated:**
+- Tools (YFinanceTools, DuckDuckGoTools)
+- Structured Outputs (Pydantic schemas for finance/shopping/travel)
+- Guardrails (PII detection, prompt injection protection)
+- Memory (user preferences, conversation history)
+- Storage (persistent SQLite database)
+- Agent State (shopping cart, travel preferences)
+
+**Sample Prompts:**
+```
+# Test Tools + Structured Outputs
+"Analyze AAPL stock and give me investment recommendations with key metrics"
+
+# Test Tools + Agent State (Shopping Cart)
+"Help me find the best noise-cancelling headphones under $300"
+"Add the Sony WH-1000XM5 to my cart at $299"
+"Show me my shopping cart"
+
+# Test Tools + Agent State (Travel Preferences)
+"Plan a 5-day trip to Tokyo with daily activities and budget breakdown"
+"Save my travel preferences: destination Tokyo, budget $3000, interests food and technology"
+"What are my saved travel preferences?"
+
+# Test Guardrails (should be blocked)
+"My email is john@example.com and SSN is 123-45-6789. Help me invest."
+```
+
+#### 2. Study Buddy
+Educational AI with RAG capabilities and knowledge base search.
+
+**Features Demonstrated:**
+- Knowledge/RAG (LanceDB vector database with hybrid search)
+- Pre-Hooks (input validation, crisis detection, academic integrity)
+- Tool Hooks (monitoring and logging with pre/post hooks)
+- Memory (learning progress tracking)
+- Storage (persistent conversation history)
+
+**Sample Prompts:**
+```
+# Test Knowledge Base (RAG)
+"Explain Python functions and data structures with examples and best practices"
+
+# Test Tool Hooks (monitoring visible in logs)
+"Search for educational resources about machine learning and assess my understanding"
+
+# Test Web Search Tool
+"What are the latest trends in artificial intelligence?"
+
+# Test Pre-Hook Validation (should be blocked)
+"I'm having suicidal thoughts and need help with my studies"
+
+# Test Pre-Hook Academic Integrity (should be blocked)
+"Give me the homework answers for calculus problem set 5"
+```
+
+#### 3. Creative Studio
+Multimodal AI assistant with image generation and analysis capabilities.
+
+**Features Demonstrated:**
+- Multimodal (DALL-E image generation, GPT-4o vision)
+- Tool Hooks (pre/post hooks for monitoring)
+- Guardrails (PII detection, prompt injection protection)
+- Storage (persistent conversation history)
+
+**Sample Prompts:**
+```
+# Test Multimodal (Image Generation)
+"Create a futuristic cityscape with flying cars at sunset in cyberpunk style"
+"Generate an image of a minimalist logo for a tech startup"
+
+# Test Tool Hooks (monitoring visible in logs)
+"Find creative inspiration for a minimalist website design with modern color palettes"
+
+# Test Guardrails (should be blocked)
+"Create an image with my SSN 123-45-6789 displayed prominently"
+"Generate an image for John Smith, email john.smith@example.com"
+```
+
+---
+
+## Key Features Summary
+
+**ALL 10 Core Agno Features Demonstrated:**
+
+1. **Tools** - External API integration (YFinance, DuckDuckGo, DALL-E)
+2. **Knowledge/RAG** - Vector database with hybrid search (LanceDB)
+3. **Multimodal** - Image generation and analysis (DALL-E, GPT-4o vision)
+4. **Pre/Post Hooks** - Input validation, tool monitoring, metrics display
+5. **Guardrails** - PII detection, prompt injection protection
+6. **Agent Sessions** - Persistent conversation history and context
+7. **Agent State** - Shopping cart, travel preferences across sessions
+8. **Memory** - User preferences and session summaries
+9. **Structured Outputs** - Pydantic schemas for typed responses
+10. **Metrics** - Automatic performance tracking (tokens, cost, latency)
+
+---
+
+## Running the Demo
+
 ```bash
 # Start the Real-World Showcase server
 python cookbook/demo/real_world_showcase.py
 
 # Then connect to https://os.agno.com to interact with all agents
 # API available at http://localhost:7780
-# Quick prompts available in showcase_config.yaml
 ```
 
 ---
 
-## 📚 Additional Documentation
+## Additional Resources
 
-- **[REAL_WORLD_SHOWCASE.md](./REAL_WORLD_SHOWCASE.md)** - Comprehensive documentation for all 10 real-world use cases
-
----
-
-### 7. Message us on [discord](https://agno.link/discord) if you have any questions
+For questions or support, message us on [Discord](https://agno.link/discord)
