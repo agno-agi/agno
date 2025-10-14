@@ -1247,7 +1247,7 @@ class Agent:
     ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
         """Run the Agent and return the response."""
         if self._has_async_db():
-            raise Exception("`run()` is not supported with an async DB. Please use `arun()`.")
+            raise RuntimeError("`run` method is not supported with an async database. Please use `arun` method instead.")
 
         # Create a run_id for this specific run
         run_id = str(uuid4())

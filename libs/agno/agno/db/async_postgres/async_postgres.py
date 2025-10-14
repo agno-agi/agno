@@ -255,7 +255,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             raise
 
     # -- Session methods --
-
     async def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.
