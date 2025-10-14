@@ -678,6 +678,7 @@ class Knowledge:
                     content.status = ContentStatus.FAILED
                     content.status_message = "Content could not be read"
                     self._update_content(content)
+                    return
 
         else:
             content.status = ContentStatus.FAILED
