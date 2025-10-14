@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional, Set, Union, Literal
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Union
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -140,7 +140,9 @@ def get_session_name(session: Dict[str, Any]) -> str:
     return ""
 
 
-def extract_media(run_dict: Dict[str, Any], media_type: Literal["images", "videos", "audio", "files", "response_audio"] = "images"):
+def extract_media(
+    run_dict: Dict[str, Any], media_type: Literal["images", "videos", "audio", "files", "response_audio"] = "images"
+):
     media = []
     for message in run_dict.get("messages", []):
         if message.get("role") != "assistant":
@@ -150,7 +152,7 @@ def extract_media(run_dict: Dict[str, Any], media_type: Literal["images", "video
             value = message.get("response_audio") or message.get("audio_output")
         else:
             value = message.get(media_type)
-            
+
         if value is None:
             continue
         if isinstance(value, list):
@@ -160,7 +162,8 @@ def extract_media(run_dict: Dict[str, Any], media_type: Literal["images", "video
             media.append(value)
     return media
 
-def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:    
+
+def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
     input_media = {
         "images": [],
         "videos": [],
@@ -175,6 +178,7 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
             input_media["audio"].extend(message.get("audio", []))
             input_media["files"].extend(message.get("files", []))
     return input_media
+
 
 def process_image(file: UploadFile) -> Image:
     content = file.file.read()
