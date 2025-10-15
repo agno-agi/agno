@@ -140,39 +140,27 @@ def get_session_name(session: Dict[str, Any]) -> str:
     return ""
 
 
-def extract_output_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
-    output_media = {
-        "images": [],
-        "videos": [],
-        "audio": [],
-        "files": [],
-        "response_audio": [],
-    }
 
-
+def extract_output_media(run_dict: Dict[str, Any], media_type: Literal["images", "videos", "audio", "files", "response_audio"] = "images"):
+    media = []
     for message in run_dict.get("messages", []):
-        if message.get("role") == "user" and message.get("generated") is True:
-            output_media["images"].extend(message.get("images", []))
-            output_media["videos"].extend(message.get("videos", []))
-            output_media["audio"].extend(message.get("audio", []))
-            output_media["files"].extend(message.get("files", []))
+        # For response_audio, check both response_audio and audio_output
+        if message.get("generated") is True or message.get("role") == "assistant":
 
-        if message.get("role") == "assistant":        
-            output_media["images"].extend(message.get("images", []))
-            output_media["videos"].extend(message.get("videos", []))
-            output_media["audio"].extend(message.get("audio", []))
-            output_media["files"].extend(message.get("files", []))
+            if media_type == "response_audio":
+                value = message.get("response_audio") or message.get("audio_output")
+            else:
+                value = message.get(media_type)
+            
+            if value is None:
+                continue
+            if isinstance(value, list):
+                media.extend(value)
+            else:
+                # If media is not list and is string or dict, then append it to the media list
+                media.append(value)
+    return media
 
-            # For response_audio, check both response_audio and audio_output
-            response_audio = message.get("response_audio") or message.get("audio_output")
-
-            if response_audio:
-                if isinstance(response_audio, list):
-                    output_media["response_audio"].extend(response_audio)
-                else:
-                    output_media["response_audio"].append(response_audio)
-    
-    return output_media
 
 
 def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
