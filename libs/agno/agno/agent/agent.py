@@ -1908,7 +1908,7 @@ class Agent:
 
             # 13. Scrub the stored run based on storage flags
             if self._scrub_run_output_for_storage(run_response):
-                session.upsert_run(run=run_response)
+                agent_session.upsert_run(run=run_response)
 
             # 14. Save session to storage
             if self._has_async_db():
