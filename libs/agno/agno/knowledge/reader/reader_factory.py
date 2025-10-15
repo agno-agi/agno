@@ -16,8 +16,7 @@ class ReaderFactory:
         from agno.knowledge.reader.pdf_reader import PDFReader
 
         config: Dict[str, Any] = {
-            "chunk": True,
-            "chunk_size": 100,
+            "name": "PDF Reader",
             "description": "Processes PDF documents with OCR support for images and text extraction",
         }
         config.update(kwargs)
@@ -201,7 +200,7 @@ class ReaderFactory:
             return cls.create_reader("pdf")
         elif extension in [".csv", "text/csv"]:
             return cls.create_reader("csv")
-        elif extension in [".docx", ".doc"]:
+        elif extension in [".docx", ".doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
             return cls.create_reader("docx")
         elif extension == ".json":
             return cls.create_reader("json")

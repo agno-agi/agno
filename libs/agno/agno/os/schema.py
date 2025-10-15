@@ -10,6 +10,7 @@ from agno.db.base import SessionType
 from agno.models.message import Message
 from agno.os.config import ChatConfig, EvalsConfig, KnowledgeConfig, MemoryConfig, MetricsConfig, SessionConfig
 from agno.os.utils import (
+    extract_input_media,
     format_team_tools,
     format_tools,
     get_run_input,
@@ -842,6 +843,12 @@ class RunSchema(BaseModel):
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
     session_state: Optional[dict] = None
+    images: Optional[List[dict]]
+    videos: Optional[List[dict]]
+    audio: Optional[List[dict]]
+    files: Optional[List[dict]]
+    response_audio: Optional[List[dict]]
+    input_media: Optional[Dict[str, Any]]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -864,6 +871,12 @@ class RunSchema(BaseModel):
             references=run_dict.get("references", []),
             reasoning_messages=run_dict.get("reasoning_messages", []),
             session_state=run_dict.get("session_state"),
+            images=run_dict.get("images", []),
+            videos=run_dict.get("videos", []),
+            audio=run_dict.get("audio", []),
+            files=run_dict.get("files", []),
+            response_audio=run_dict.get("response_audio", []),
+            input_media=extract_input_media(run_dict),
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
             else None,
@@ -887,6 +900,12 @@ class TeamRunSchema(BaseModel):
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
     session_state: Optional[dict] = None
+    input_media: Optional[Dict[str, Any]]
+    images: Optional[List[dict]]
+    videos: Optional[List[dict]]
+    audio: Optional[List[dict]]
+    files: Optional[List[dict]]
+    response_audio: Optional[List[dict]]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -911,6 +930,12 @@ class TeamRunSchema(BaseModel):
             references=run_dict.get("references", []),
             reasoning_messages=run_dict.get("reasoning_messages", []),
             session_state=run_dict.get("session_state"),
+            images=run_dict.get("images", []),
+            videos=run_dict.get("videos", []),
+            audio=run_dict.get("audio", []),
+            files=run_dict.get("files", []),
+            response_audio=run_dict.get("response_audio", []),
+            input_media=extract_input_media(run_dict),
         )
 
 
@@ -931,6 +956,11 @@ class WorkflowRunSchema(BaseModel):
     reasoning_steps: Optional[List[dict]]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
+    images: Optional[List[dict]]
+    videos: Optional[List[dict]]
+    audio: Optional[List[dict]]
+    files: Optional[List[dict]]
+    response_audio: Optional[List[dict]]
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
@@ -952,6 +982,11 @@ class WorkflowRunSchema(BaseModel):
             reasoning_steps=run_response.get("reasoning_steps", []),
             references=run_response.get("references", []),
             reasoning_messages=run_response.get("reasoning_messages", []),
+            images=run_response.get("images", []),
+            videos=run_response.get("videos", []),
+            audio=run_response.get("audio", []),
+            files=run_response.get("files", []),
+            response_audio=run_response.get("response_audio", []),
         )
 
 
@@ -968,6 +1003,7 @@ class PaginationInfo(BaseModel):
     limit: Optional[int] = 20
     total_pages: Optional[int] = 0
     total_count: Optional[int] = 0
+    search_time_ms: Optional[float] = 0
 
 
 class PaginatedResponse(BaseModel, Generic[T]):
