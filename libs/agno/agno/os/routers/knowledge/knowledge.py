@@ -19,6 +19,9 @@ from agno.os.routers.knowledge.schemas import (
     ContentStatusResponse,
     ContentUpdateSchema,
     ReaderSchema,
+    VectorDbSchema,
+    VectorSearchRequestSchema,
+    VectorSearchResult,
 )
 from agno.os.schema import (
     BadRequestResponse,
@@ -513,6 +516,102 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
 
         return ContentStatusResponse(status=status, status_message=status_message or "")
 
+    @router.post(
+        "/knowledge/search",
+        status_code=200,
+        operation_id="search_vectors",
+        summary="Search Vectors",
+        description="Search the knowledge base for relevant vectors using query, filters and search type.",
+        response_model=PaginatedResponse[VectorSearchResult],
+        responses={
+            200: {
+                "description": "Search results retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "data": [
+                                {
+                                    "id": "doc_123",
+                                    "content": "Jordan Mitchell - Software Engineer with skills in JavaScript, React, Python",
+                                    "name": "cv_1",
+                                    "meta_data": {"page": 1, "chunk": 1},
+                                    "usage": {"total_tokens": 14},
+                                    "reranking_score": 0.95,
+                                    "content_id": "content_456",
+                                }
+                            ],
+                            "meta": {"page": 1, "limit": 20, "total_pages": 2, "total_count": 35},
+                        }
+                    }
+                },
+            },
+            400: {"description": "Invalid search parameters"},
+            404: {"description": "No documents found"},
+        },
+    )
+    def search_vectors(request: VectorSearchRequestSchema) -> PaginatedResponse[VectorSearchResult]:
+        import time
+
+        start_time = time.time()
+
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, request.db_id)
+
+        # For now, validate the vector db ids exist in the knowledge base
+        # We will add more logic around this once we have multi vectordb support
+        # If vector db ids are provided, check if any of them match the knowledge's vector db
+        if request.vector_db_ids:
+            if knowledge.vector_db and knowledge.vector_db.id:
+                if knowledge.vector_db.id not in request.vector_db_ids:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"None of the provided Vector DB IDs {request.vector_db_ids} match the knowledge base Vector DB ID {knowledge.vector_db.id}",
+                    )
+            else:
+                raise HTTPException(status_code=400, detail="Knowledge base has no vector database configured")
+
+        # Calculate pagination parameters
+        meta = request.meta
+        limit = meta.limit if meta and meta.limit is not None else 20
+        page = meta.page if meta and meta.page is not None else 1
+
+        # Use max_results if specified, otherwise use a higher limit for search then paginate
+        search_limit = request.max_results
+
+        results = knowledge.search(
+            query=request.query, max_results=search_limit, filters=request.filters, search_type=request.search_type
+        )
+
+        # Calculate pagination
+        total_results = len(results)
+        start_idx = (page - 1) * limit
+
+        # Ensure start_idx doesn't exceed the total results
+        if start_idx >= total_results and total_results > 0:
+            # If page is beyond available results, return empty results
+            paginated_results = []
+        else:
+            end_idx = min(start_idx + limit, total_results)
+            paginated_results = results[start_idx:end_idx]
+
+        search_time_ms = (time.time() - start_time) * 1000
+
+        # Convert Document objects to serializable format
+        document_results = [VectorSearchResult.from_document(doc) for doc in paginated_results]
+
+        # Calculate pagination info
+        total_pages = (total_results + limit - 1) // limit  # Ceiling division
+
+        return PaginatedResponse(
+            data=document_results,
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=total_pages,
+                total_count=total_results,
+                search_time_ms=search_time_ms,
+            ),
+        )
+
     @router.get(
         "/knowledge/config",
         status_code=200,
@@ -735,6 +834,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                     "description": "A chunking strategy that splits markdown based on structure like headers, paragraphs and sections",
                                 },
                             },
+                            "vector_dbs": [
+                                {
+                                    "id": "vector_db_1",
+                                    "name": "Vector DB 1",
+                                    "description": "Vector DB 1 description",
+                                    "search_types": ["vector", "keyword", "hybrid"],
+                                }
+                            ],
                             "filters": ["filter_tag_1", "filter_tag2"],
                         }
                     }
@@ -793,8 +900,23 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                     key=chunker_key, name=chunker_info.get("name"), description=chunker_info.get("description")
                 )
 
+        vector_dbs = []
+        if knowledge.vector_db:
+            search_types = knowledge.vector_db.get_supported_search_types()
+            name = knowledge.vector_db.name
+            db_id = knowledge.vector_db.id
+            vector_dbs.append(
+                VectorDbSchema(
+                    id=db_id,
+                    name=name,
+                    description=knowledge.vector_db.description,
+                    search_types=search_types,
+                )
+            )
+
         return ConfigResponseSchema(
             readers=reader_schemas,
+            vector_dbs=vector_dbs,
             readersForType=types_of_readers,
             chunkers=chunkers_dict,
             filters=knowledge.get_filters(),

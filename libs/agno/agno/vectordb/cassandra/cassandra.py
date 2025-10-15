@@ -15,6 +15,8 @@ class Cassandra(VectorDb):
         keyspace: str,
         embedder: Optional[Embedder] = None,
         session=None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> None:
         if not table_name:
             raise ValueError("Table name must be provided.")
@@ -30,6 +32,9 @@ class Cassandra(VectorDb):
 
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
+        # Initialize base class with name and description
+        super().__init__(name=name, description=description)
+
         self.table_name: str = table_name
         self.embedder: Embedder = embedder
         self.session = session
@@ -483,3 +488,7 @@ class Cassandra(VectorDb):
         except Exception as e:
             log_error(f"Error updating metadata for content_id {content_id}: {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # Cassandra doesn't use SearchType enum
