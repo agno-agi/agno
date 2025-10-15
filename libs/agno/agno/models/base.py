@@ -145,7 +145,7 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
-    def _forget_tool_calls(self, messages: List[Message], max_tool_calls_in_context: int) -> None:
+    def _filter_messages(self, messages: List[Message], max_tool_calls_in_context: int) -> None:
         """
         Filter messages (in-place) to keep only the most recent N tool calls.
 
