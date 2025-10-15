@@ -588,7 +588,7 @@ class MongoDb(BaseDb):
             raise e
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk upsert multiple sessions for improved performance on large datasets.
@@ -596,6 +596,7 @@ class MongoDb(BaseDb):
         Args:
             sessions (List[Session]): List of sessions to upsert.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the session object.
 
         Returns:
             List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
@@ -629,6 +630,13 @@ class MongoDb(BaseDb):
 
                 session_dict = session.to_dict()
 
+                # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                updated_at = (
+                    session_dict.get("updated_at")
+                    if preserve_updated_at and session_dict.get("updated_at")
+                    else int(time.time())
+                )
+
                 if isinstance(session, AgentSession):
                     record = {
                         "session_id": session_dict.get("session_id"),
@@ -641,7 +649,7 @@ class MongoDb(BaseDb):
                         "summary": session_dict.get("summary"),
                         "metadata": session_dict.get("metadata"),
                         "created_at": session_dict.get("created_at"),
-                        "updated_at": int(time.time()),
+                        "updated_at": updated_at,
                     }
                 elif isinstance(session, TeamSession):
                     record = {
@@ -655,7 +663,7 @@ class MongoDb(BaseDb):
                         "summary": session_dict.get("summary"),
                         "metadata": session_dict.get("metadata"),
                         "created_at": session_dict.get("created_at"),
-                        "updated_at": int(time.time()),
+                        "updated_at": updated_at,
                     }
                 elif isinstance(session, WorkflowSession):
                     record = {
@@ -669,7 +677,7 @@ class MongoDb(BaseDb):
                         "summary": session_dict.get("summary"),
                         "metadata": session_dict.get("metadata"),
                         "created_at": session_dict.get("created_at"),
-                        "updated_at": int(time.time()),
+                        "updated_at": updated_at,
                     }
                 else:
                     continue
@@ -1044,7 +1052,7 @@ class MongoDb(BaseDb):
             raise e
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk upsert multiple user memories for improved performance on large datasets.
@@ -1079,12 +1087,16 @@ class MongoDb(BaseDb):
             operations = []
             results: List[Union[UserMemory, Dict[str, Any]]] = []
 
+            current_time = int(time.time())
             for memory in memories:
                 if memory is None:
                     continue
 
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
+
+                # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at and memory.updated_at else current_time
 
                 record = {
                     "user_id": memory.user_id,
@@ -1093,7 +1105,7 @@ class MongoDb(BaseDb):
                     "memory_id": memory.memory_id,
                     "memory": memory.memory,
                     "topics": memory.topics,
-                    "updated_at": int(time.time()),
+                    "updated_at": updated_at,
                 }
 
                 operations.append(ReplaceOne(filter={"memory_id": memory.memory_id}, replacement=record, upsert=True))

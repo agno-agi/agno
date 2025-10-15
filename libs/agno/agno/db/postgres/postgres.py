@@ -704,7 +704,7 @@ class PostgresDb(BaseDb):
             raise e
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk insert or update multiple sessions.
@@ -712,6 +712,7 @@ class PostgresDb(BaseDb):
         Args:
             sessions (List[Session]): The list of session data to upsert.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the session object.
 
         Returns:
             List[Union[Session, Dict[str, Any]]]: List of upserted sessions
@@ -739,6 +740,12 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for agent_session in agent_sessions:
                     session_dict = agent_session.to_dict()
+                    # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                    updated_at = (
+                        session_dict.get("updated_at")
+                        if preserve_updated_at and session_dict.get("updated_at")
+                        else int(time.time())
+                    )
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -751,7 +758,7 @@ class PostgresDb(BaseDb):
                             "metadata": session_dict.get("metadata"),
                             "runs": session_dict.get("runs"),
                             "created_at": session_dict.get("created_at"),
-                            "updated_at": int(time.time()),
+                            "updated_at": updated_at,
                         }
                     )
 
@@ -782,6 +789,12 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for team_session in team_sessions:
                     session_dict = team_session.to_dict()
+                    # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                    updated_at = (
+                        session_dict.get("updated_at")
+                        if preserve_updated_at and session_dict.get("updated_at")
+                        else int(time.time())
+                    )
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -794,7 +807,7 @@ class PostgresDb(BaseDb):
                             "metadata": session_dict.get("metadata"),
                             "runs": session_dict.get("runs"),
                             "created_at": session_dict.get("created_at"),
-                            "updated_at": int(time.time()),
+                            "updated_at": updated_at,
                         }
                     )
 
@@ -825,6 +838,12 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for workflow_session in workflow_sessions:
                     session_dict = workflow_session.to_dict()
+                    # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                    updated_at = (
+                        session_dict.get("updated_at")
+                        if preserve_updated_at and session_dict.get("updated_at")
+                        else int(time.time())
+                    )
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -837,7 +856,7 @@ class PostgresDb(BaseDb):
                             "metadata": session_dict.get("metadata"),
                             "runs": session_dict.get("runs"),
                             "created_at": session_dict.get("created_at"),
-                            "updated_at": int(time.time()),
+                            "updated_at": updated_at,
                         }
                     )
 
@@ -1234,7 +1253,7 @@ class PostgresDb(BaseDb):
             raise e
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk insert or update multiple memories in the database for improved performance.
@@ -1242,6 +1261,8 @@ class PostgresDb(BaseDb):
         Args:
             memories (List[UserMemory]): The list of memories to upsert.
             deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the memory object.
+                                       If False (default), set updated_at to current time.
 
         Returns:
             List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories
@@ -1265,6 +1286,8 @@ class PostgresDb(BaseDb):
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at and memory.updated_at else current_time
                 memory_records.append(
                     {
                         "memory_id": memory.memory_id,
@@ -1274,7 +1297,7 @@ class PostgresDb(BaseDb):
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
-                        "updated_at": current_time,
+                        "updated_at": updated_at,
                     }
                 )
 
