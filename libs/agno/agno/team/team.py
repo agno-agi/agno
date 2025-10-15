@@ -3684,6 +3684,38 @@ class Team:
 
         return scrubbed
 
+    def _scrub_member_responses(self, member_responses: List[Union[TeamRunOutput, RunOutput]]) -> None:
+        """
+        Scrub member responses based on each member's storage flags.
+        This is called when saving the team session to ensure member data is scrubbed per member settings.
+        """
+        for member_response in member_responses:
+            member_id = None
+            if isinstance(member_response, RunOutput):
+                member_id = member_response.agent_id
+            elif isinstance(member_response, TeamRunOutput):
+                member_id = member_response.team_id
+            
+            if not member_id:
+                log_info(f"Skipping member response with no ID")
+                continue
+            
+            member_result = self._find_member_by_id(member_id)
+            if not member_result:
+                log_debug(f"Could not find member with ID: {member_id}")
+                continue
+            
+            _, member = member_result
+            
+            if not member.store_media:
+                member._scrub_media_from_run_output(member_response)
+            
+            if not member.store_tool_results:
+                member._scrub_tool_results_from_run_output(member_response)
+            
+            if not member.store_history_messages:
+                member._scrub_history_messages_from_run_output(member_response)
+
     def _validate_media_object_id(
         self,
         images: Optional[Sequence[Image]] = None,
@@ -6753,11 +6785,16 @@ class Team:
                 session.session_data["session_state"].pop("current_user_id", None)  # type: ignore
                 session.session_data["session_state"].pop("current_run_id", None)  # type: ignore
 
-            # scrub the member responses if not storing them
-            if not self.store_member_responses and session.runs is not None:
+            # scrub the member responses based on storage settings
+            if session.runs is not None:
                 for run in session.runs:
                     if hasattr(run, "member_responses"):
-                        run.member_responses = []
+                        if not self.store_member_responses:
+                            # Remove all member responses
+                            run.member_responses = []
+                        else:
+                            # Scrub individual member responses based on their storage flags
+                            self._scrub_member_responses(run.member_responses)
             self._upsert_session(session=session)
             log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
