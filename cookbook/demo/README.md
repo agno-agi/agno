@@ -1,4 +1,4 @@
-# Agno Demo
+# AgentOS Demo
 
 This cookbook contains comprehensive demonstrations of Agno's capabilities including both basic functionality and enterprise-grade advanced features.
 
