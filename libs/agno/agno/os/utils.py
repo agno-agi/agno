@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.routing import APIRoute, APIRouter
