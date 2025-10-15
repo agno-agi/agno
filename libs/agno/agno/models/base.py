@@ -145,25 +145,25 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
-    def _forget_tool_calls(self, messages: List[Message], num_tool_calls_in_context: int) -> None:
+    def _forget_tool_calls(self, messages: List[Message], max_tool_calls_in_context: int) -> None:
         """
         Filter messages (in-place) to keep only the most recent N tool calls.
 
         Args:
             messages: List of messages
-            num_tool_calls_in_context: Number of recent tool calls to keep
+            max_tool_calls_in_context: Number of recent tool calls to keep
         """
         # Count total tool calls (not messages) - each tool result = 1 tool call
         total_tool_calls = sum(1 for m in messages if m.role == "tool")
 
-        if total_tool_calls <= num_tool_calls_in_context:
+        if total_tool_calls <= max_tool_calls_in_context:
             return
 
         # Collect tool_call_ids to keep (most recent N)
         tool_call_ids_list: List[str] = []
         for msg in reversed(messages):
             if msg.role == "tool":
-                if len(tool_call_ids_list) < num_tool_calls_in_context:
+                if len(tool_call_ids_list) < max_tool_calls_in_context:
                     if msg.tool_call_id:
                         tool_call_ids_list.append(msg.tool_call_id)
 
