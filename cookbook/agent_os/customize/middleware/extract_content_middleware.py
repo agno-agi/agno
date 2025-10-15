@@ -1,4 +1,7 @@
-"""Example for AgentOS to show how to extract metadata from headers."""
+"""Example for AgentOS to show how to extract content from a response and send it to a notification service.
+
+This example middleware can extract content from both streaming and non-streaming responses.
+"""
 
 import json
 
@@ -15,20 +18,22 @@ from starlette.middleware.base import (
 
 
 # Setup Middleware
-class MetadataExtractionMiddleware(BaseHTTPMiddleware):
+class ContentExtractionMiddleware(BaseHTTPMiddleware):
     """
-    Middleware that extracts X-APP-UUID from request headers for /runs endpoints
+    Middleware that extracts content from the response body for /runs endpoints
     and captures the response body for notifications.
     Only processes POST requests to paths ending with /runs.
+
+    It also extracts X-APP-UUID from the request headers for notifications.
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        # Only extract metadata for POST requests to /runs endpoints
+        # Only extract content for POST requests to /runs endpoints
         is_runs_endpoint = request.method == "POST" and request.url.path.endswith(
             "/runs"
         )
 
-        # Extract X-APP-UUID from headers
+        # Extract X-APP-UUID from request headers
         app_uuid = request.headers.get("X-APP-UUID")
 
         if app_uuid:
@@ -141,23 +146,23 @@ db = SqliteDb(id="basic-db", db_file="tmp/agent_os.db")
 # Setup basic agents, teams and workflows
 user_request_bot = Agent(
     id="user-agent",
-    name="User Request Bot",
+    name="User Agent",
     description="Answer queries about the user.",
     db=db,
     markdown=True,
     enable_user_memories=True,
-    instructions="You are a user request bot. You are asked to answer queries about the user.",
+    instructions="You are a user agent. You are asked to answer queries about the user.",
 )
 
 # Setup our AgentOS app
 agent_os = AgentOS(
-    description="Example AgentOS to show how to pass metadata to an agent",
+    description="Example AgentOS to show how to extract content from a response",
     agents=[user_request_bot],
 )
 app = agent_os.get_app()
 
 # Add the metadata extraction middleware
-app.add_middleware(MetadataExtractionMiddleware)
+app.add_middleware(ContentExtractionMiddleware)
 
 
 if __name__ == "__main__":
