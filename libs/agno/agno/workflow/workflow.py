@@ -148,6 +148,8 @@ class Workflow:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Workflow
     stream_intermediate_steps: bool = False
+    # Stream events from executors (agents/teams/functions) within steps
+    stream_executor_events: bool = True
 
     # Persist the events on the run response
     store_events: bool = False
@@ -189,6 +191,7 @@ class Workflow:
         debug_mode: Optional[bool] = False,
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         store_events: bool = False,
         events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent, TeamRunEvent]]] = None,
         store_executor_outputs: bool = True,
@@ -212,6 +215,7 @@ class Workflow:
         self.events_to_skip = events_to_skip or []
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
+        self.stream_executor_events = stream_executor_events
         self.store_executor_outputs = store_executor_outputs
         self.input_schema = input_schema
         self.metadata = metadata
@@ -1158,6 +1162,7 @@ class Workflow:
                         session_id=session.session_id,
                         user_id=self.user_id,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        stream_executor_events=self.stream_executor_events,
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         step_index=i,
@@ -1228,7 +1233,8 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+                            if self.stream_executor_events:
+                                yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -1643,6 +1649,7 @@ class Workflow:
                         session_id=session.session_id,
                         user_id=self.user_id,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        stream_executor_events=self.stream_executor_events,
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         step_index=i,
@@ -1714,9 +1721,10 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            yield self._handle_event(
-                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                            )  # type: ignore
+                            if self.stream_executor_events:
+                                yield self._handle_event(
+                                    enriched_event, workflow_run_response, websocket_handler=websocket_handler
+                                )  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -2727,27 +2735,27 @@ class Workflow:
         **kwargs: Any,
     ) -> None:
         """
-            Run an interactive command-line interface to interact with the workflow.
-        
-            This method creates a CLI interface that allows users to interact with the workflow
-            either by providing a single input or through continuous interactive prompts.
-            
-            Arguments:
-                input: Optional initial input to process before starting interactive mode.
-                session_id: Optional session identifier for maintaining conversation context.
-                user_id: Optional user identifier for tracking user-specific data.
-                user: Display name for the user in the CLI prompt. Defaults to "User".
-                emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
-                stream: Whether to stream the workflow response. If None, uses workflow default.
-                stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
-                markdown: Whether to render output as markdown. Defaults to True.
-                show_time: Whether to display timestamps in the output. Defaults to True.
-                show_step_details: Whether to show detailed step information. Defaults to True.
-                exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
-                **kwargs: Additional keyword arguments passed to the workflow's print_response method.
-            
-            Returns:
-                None: This method runs interactively and does not return a value.
+        Run an interactive command-line interface to interact with the workflow.
+
+        This method creates a CLI interface that allows users to interact with the workflow
+        either by providing a single input or through continuous interactive prompts.
+
+        Arguments:
+            input: Optional initial input to process before starting interactive mode.
+            session_id: Optional session identifier for maintaining conversation context.
+            user_id: Optional user identifier for tracking user-specific data.
+            user: Display name for the user in the CLI prompt. Defaults to "User".
+            emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
+            stream: Whether to stream the workflow response. If None, uses workflow default.
+            stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
+            markdown: Whether to render output as markdown. Defaults to True.
+            show_time: Whether to display timestamps in the output. Defaults to True.
+            show_step_details: Whether to show detailed step information. Defaults to True.
+            exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
+            **kwargs: Additional keyword arguments passed to the workflow's print_response method.
+
+        Returns:
+            None: This method runs interactively and does not return a value.
         """
 
         from rich.prompt import Prompt
@@ -2799,27 +2807,27 @@ class Workflow:
         **kwargs: Any,
     ) -> None:
         """
-            Run an interactive command-line interface to interact with the workflow.
-        
-            This method creates a CLI interface that allows users to interact with the workflow
-            either by providing a single input or through continuous interactive prompts.
-            
-            Arguments:
-                input: Optional initial input to process before starting interactive mode.
-                session_id: Optional session identifier for maintaining conversation context.
-                user_id: Optional user identifier for tracking user-specific data.
-                user: Display name for the user in the CLI prompt. Defaults to "User".
-                emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
-                stream: Whether to stream the workflow response. If None, uses workflow default.
-                stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
-                markdown: Whether to render output as markdown. Defaults to True.
-                show_time: Whether to display timestamps in the output. Defaults to True.
-                show_step_details: Whether to show detailed step information. Defaults to True.
-                exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
-                **kwargs: Additional keyword arguments passed to the workflow's print_response method.
-            
-            Returns:
-                None: This method runs interactively and does not return a value.
+        Run an interactive command-line interface to interact with the workflow.
+
+        This method creates a CLI interface that allows users to interact with the workflow
+        either by providing a single input or through continuous interactive prompts.
+
+        Arguments:
+            input: Optional initial input to process before starting interactive mode.
+            session_id: Optional session identifier for maintaining conversation context.
+            user_id: Optional user identifier for tracking user-specific data.
+            user: Display name for the user in the CLI prompt. Defaults to "User".
+            emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
+            stream: Whether to stream the workflow response. If None, uses workflow default.
+            stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
+            markdown: Whether to render output as markdown. Defaults to True.
+            show_time: Whether to display timestamps in the output. Defaults to True.
+            show_step_details: Whether to show detailed step information. Defaults to True.
+            exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
+            **kwargs: Additional keyword arguments passed to the workflow's print_response method.
+
+        Returns:
+            None: This method runs interactively and does not return a value.
         """
 
         from rich.prompt import Prompt

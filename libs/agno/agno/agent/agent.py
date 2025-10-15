@@ -247,6 +247,10 @@ class Agent:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If True, store tool results in run output
+    store_tool_results: bool = True
+    # If True, store history messages in run output
+    store_history_messages: bool = True
 
     # --- System message settings ---
     # Provide the system message as a string or function
@@ -384,6 +388,8 @@ class Agent:
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
         store_media: bool = True,
+        store_tool_results: bool = True,
+        store_history_messages: bool = True,
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
@@ -484,6 +490,8 @@ class Agent:
             )
 
         self.store_media = store_media
+        self.store_tool_results = store_tool_results
+        self.store_history_messages = store_history_messages
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
@@ -883,8 +891,6 @@ class Agent:
 
         if self.store_media:
             self._store_media(run_response, model_response)
-        else:
-            self._scrub_media_from_run_output(run_response)
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -930,7 +936,11 @@ class Agent:
         # Consume the response iterator to ensure the memory is updated before the run is completed
         deque(response_iterator, maxlen=0)
 
-        # 11. Save session to memory
+        # 11. Scrub the stored run based on storage flags
+        if self._scrub_run_output_for_storage(run_response):
+            session.upsert_run(run=run_response)
+
+        # 12. Save session to memory
         self.save_session(session=session)
 
         # Log Agent Telemetry
@@ -1133,7 +1143,11 @@ class Agent:
                 create_run_completed_event(from_run_response=run_response), run_response
             )
 
-            # 10. Save session to storage
+            # 10. Scrub the stored run based on storage flags
+            if self._scrub_run_output_for_storage(run_response):
+                session.upsert_run(run=run_response)
+
+            # 11. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1572,8 +1586,6 @@ class Agent:
 
         if self.store_media:
             self._store_media(run_response, model_response)
-        else:
-            self._scrub_media_from_run_output(run_response)
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -1618,7 +1630,11 @@ class Agent:
         ):
             pass
 
-        # 12. Save session to storage
+        # 12. Scrub the stored run based on storage flags
+        if self._scrub_run_output_for_storage(run_response):
+            session.upsert_run(run=run_response)
+
+        # 13. Save session to storage
         self.save_session(session=session)
 
         # Log Agent Telemetry
@@ -1827,7 +1843,11 @@ class Agent:
                 create_run_completed_event(from_run_response=run_response), run_response
             )
 
-            # 10. Save session to storage
+            # 10. Scrub the stored run based on storage flags
+            if self._scrub_run_output_for_storage(run_response):
+                session.upsert_run(run=run_response)
+
+            # 11. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -4125,7 +4145,7 @@ class Agent:
 
             tasks.append(
                 self.memory_manager.acreate_user_memories(
-                    message=run_messages.user_message.get_content_string(), user_id=user_id
+                    message=run_messages.user_message.get_content_string(), user_id=user_id, agent_id=self.id
                 )
             )
 
@@ -4149,7 +4169,9 @@ class Agent:
                     continue
 
             if len(parsed_messages) > 0:
-                tasks.append(self.memory_manager.acreate_user_memories(messages=parsed_messages, user_id=user_id))
+                tasks.append(
+                    self.memory_manager.acreate_user_memories(messages=parsed_messages, user_id=user_id, agent_id=self.id)
+                )
             else:
                 log_warning("Unable to add messages to memory")
 
@@ -6264,12 +6286,15 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
+            from agno.reasoning.anthropic import is_anthropic_reasoning_model
             from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
             from agno.reasoning.deepseek import is_deepseek_reasoning_model
+            from agno.reasoning.gemini import is_gemini_reasoning_model
             from agno.reasoning.groq import is_groq_reasoning_model
             from agno.reasoning.helpers import get_reasoning_agent
             from agno.reasoning.ollama import is_ollama_reasoning_model
             from agno.reasoning.openai import is_openai_reasoning_model
+            from agno.reasoning.vertexai import is_vertexai_reasoning_model
 
             reasoning_agent = self.reasoning_agent or get_reasoning_agent(
                 reasoning_model=reasoning_model,
@@ -6285,8 +6310,20 @@ class Agent:
             is_openai = is_openai_reasoning_model(reasoning_model)
             is_ollama = is_ollama_reasoning_model(reasoning_model)
             is_ai_foundry = is_ai_foundry_reasoning_model(reasoning_model)
+            is_gemini = is_gemini_reasoning_model(reasoning_model)
+            is_anthropic = is_anthropic_reasoning_model(reasoning_model)
+            is_vertexai = is_vertexai_reasoning_model(reasoning_model)
 
-            if is_deepseek or is_groq or is_openai or is_ollama or is_ai_foundry:
+            if (
+                is_deepseek
+                or is_groq
+                or is_openai
+                or is_ollama
+                or is_ai_foundry
+                or is_gemini
+                or is_anthropic
+                or is_vertexai
+            ):
                 reasoning_message: Optional[Message] = None
                 if is_deepseek:
                     from agno.reasoning.deepseek import get_deepseek_reasoning
@@ -6321,6 +6358,27 @@ class Agent:
 
                     log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
                     reasoning_message = get_ai_foundry_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_gemini:
+                    from agno.reasoning.gemini import get_gemini_reasoning
+
+                    log_debug("Starting Gemini Reasoning", center=True, symbol="=")
+                    reasoning_message = get_gemini_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_anthropic:
+                    from agno.reasoning.anthropic import get_anthropic_reasoning
+
+                    log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
+                    reasoning_message = get_anthropic_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_vertexai:
+                    from agno.reasoning.vertexai import get_vertexai_reasoning
+
+                    log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
+                    reasoning_message = get_vertexai_reasoning(
                         reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
                     )
 
@@ -6496,12 +6554,15 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
+            from agno.reasoning.anthropic import is_anthropic_reasoning_model
             from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
             from agno.reasoning.deepseek import is_deepseek_reasoning_model
+            from agno.reasoning.gemini import is_gemini_reasoning_model
             from agno.reasoning.groq import is_groq_reasoning_model
             from agno.reasoning.helpers import get_reasoning_agent
             from agno.reasoning.ollama import is_ollama_reasoning_model
             from agno.reasoning.openai import is_openai_reasoning_model
+            from agno.reasoning.vertexai import is_vertexai_reasoning_model
 
             reasoning_agent = self.reasoning_agent or get_reasoning_agent(
                 reasoning_model=reasoning_model,
@@ -6517,8 +6578,20 @@ class Agent:
             is_openai = is_openai_reasoning_model(reasoning_model)
             is_ollama = is_ollama_reasoning_model(reasoning_model)
             is_ai_foundry = is_ai_foundry_reasoning_model(reasoning_model)
+            is_gemini = is_gemini_reasoning_model(reasoning_model)
+            is_anthropic = is_anthropic_reasoning_model(reasoning_model)
+            is_vertexai = is_vertexai_reasoning_model(reasoning_model)
 
-            if is_deepseek or is_groq or is_openai or is_ollama or is_ai_foundry:
+            if (
+                is_deepseek
+                or is_groq
+                or is_openai
+                or is_ollama
+                or is_ai_foundry
+                or is_gemini
+                or is_anthropic
+                or is_vertexai
+            ):
                 reasoning_message: Optional[Message] = None
                 if is_deepseek:
                     from agno.reasoning.deepseek import aget_deepseek_reasoning
@@ -6553,6 +6626,27 @@ class Agent:
 
                     log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
                     reasoning_message = get_ai_foundry_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_gemini:
+                    from agno.reasoning.gemini import aget_gemini_reasoning
+
+                    log_debug("Starting Gemini Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_gemini_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_anthropic:
+                    from agno.reasoning.anthropic import aget_anthropic_reasoning
+
+                    log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_anthropic_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_vertexai:
+                    from agno.reasoning.vertexai import aget_vertexai_reasoning
+
+                    log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_vertexai_reasoning(
                         reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
                     )
 
@@ -7684,6 +7778,56 @@ class Agent:
         message.audio_output = None
         message.image_output = None
         message.video_output = None
+
+    def _scrub_tool_results_from_run_output(self, run_response: RunOutput) -> None:
+        """
+        Remove all tool-related data from RunOutput when store_tool_results=False.
+        This includes tool calls, tool results, and tool-related message fields.
+        """
+        # Remove tool results (messages with role="tool")
+        if run_response.messages:
+            run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
+            # Also scrub tool-related fields from remaining messages
+            for message in run_response.messages:
+                self._scrub_tool_data_from_message(message)
+
+    def _scrub_tool_data_from_message(self, message: Message) -> None:
+        """Remove all tool-related data from a Message object."""
+        message.tool_calls = None
+        message.tool_call_id = None
+        message.tool_name = None
+        message.tool_args = None
+        message.tool_call_error = None
+
+    def _scrub_history_messages_from_run_output(self, run_response: RunOutput) -> None:
+        """
+        Remove all history messages from RunOutput when store_history_messages=False.
+        This removes messages that were loaded from the agent's memory.
+        """
+        # Remove messages with from_history=True
+        if run_response.messages:
+            run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
+
+    def _scrub_run_output_for_storage(self, run_response: RunOutput) -> bool:
+        """
+        Scrub run output based on storage flags before persisting to database.
+        Returns True if any scrubbing was done, False otherwise.
+        """
+        scrubbed = False
+
+        if not self.store_media:
+            self._scrub_media_from_run_output(run_response)
+            scrubbed = True
+
+        if not self.store_tool_results:
+            self._scrub_tool_results_from_run_output(run_response)
+            scrubbed = True
+
+        if not self.store_history_messages:
+            self._scrub_history_messages_from_run_output(run_response)
+            scrubbed = True
+
+        return scrubbed
 
     def _validate_media_object_id(
         self,
