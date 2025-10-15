@@ -3,6 +3,8 @@ from hashlib import md5
 from math import sqrt
 from typing import Any, Dict, List, Optional, Union, cast
 
+from agno.utils.string import generate_id
+
 try:
     from sqlalchemy import update
     from sqlalchemy.dialects import postgresql
@@ -43,6 +45,9 @@ class PgVector(VectorDb):
         self,
         table_name: str,
         schema: str = "ai",
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         db_url: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         embedder: Optional[Embedder] = None,
@@ -62,6 +67,8 @@ class PgVector(VectorDb):
         Args:
             table_name (str): Name of the table to store vector data.
             schema (str): Database schema name.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             db_url (Optional[str]): Database connection URL.
             db_engine (Optional[Engine]): SQLAlchemy database engine.
             embedder (Optional[Embedder]): Embedder instance for creating embeddings.
@@ -79,6 +86,15 @@ class PgVector(VectorDb):
 
         if db_engine is None and db_url is None:
             raise ValueError("Either 'db_url' or 'db_engine' must be provided.")
+
+        if id is None:
+            base_seed = db_url or str(db_engine.url)  # type: ignore
+            schema_suffix = table_name if table_name is not None else "ai"
+            seed = f"{base_seed}#{schema_suffix}"
+            id = generate_id(seed)
+
+        # Initialize base class with name and description
+        super().__init__(id=id, name=name, description=description)
 
         if db_engine is None:
             if db_url is None:
@@ -1383,3 +1399,6 @@ class PgVector(VectorDb):
         copied_obj.table = copied_obj.get_table()
 
         return copied_obj
+
+    def get_supported_search_types(self) -> List[str]:
+        return [SearchType.vector, SearchType.keyword, SearchType.hybrid]
