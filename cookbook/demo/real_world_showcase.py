@@ -29,6 +29,8 @@ from agents.study_buddy import study_buddy, load_education_knowledge
 from agents.creative_studio import creative_studio
 from agents.lifestyle_concierge import lifestyle_concierge
 
+from teams.oss_maintainer_team import oss_maintainer_team
+
 # ============================================================================
 # Knowledge Base Initialization
 # ============================================================================
@@ -50,11 +52,6 @@ async def initialize_knowledge_bases():
 agent_os = AgentOS(
     description=dedent("""\
         Real-World Use Cases Showcase - Agno Framework Demo
-
-        Quality-focused demonstration of Agno framework capabilities.
-
-        Each component demonstrates multiple features:
-
         AGENTS (3):
         • Lifestyle Concierge - Multi-domain (finance/shopping/travel) with tools,
           structured outputs, guardrails, memory, storage, and agent state
@@ -63,13 +60,13 @@ agent_os = AgentOS(
         • Creative Studio - Multimodal (image generation/analysis) with
           tool hooks and comprehensive guardrails
 
-        Total: 3 agents demonstrating ALL 10 core Agno features with real-world depth
     """),
     agents=[
         lifestyle_concierge,  # Multi-domain: Tools + Structured Outputs + Guardrails + Memory + Storage + Agent State + Metrics
         study_buddy,  # Study Buddy: RAG + Input Validation + Tool Hooks + Memory + Metrics
         creative_studio,  # Creative Studio: Multimodal + Tool Hooks + Guardrails + Metrics
     ],
+    teams=[oss_maintainer_team],
     config=str(Path(__file__).parent / "showcase_config.yaml"),
 )
 
