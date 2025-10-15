@@ -18,7 +18,12 @@ def is_gemini_reasoning_model(reasoning_model: Model) -> bool:
     has_thinking_support = "2.5" in model_id
 
     # Also check if thinking parameters are set
-    has_thinking_budget = hasattr(reasoning_model, "thinking_budget") and reasoning_model.thinking_budget is not None
+    # Note: thinking_budget=0 explicitly disables thinking mode per Google's API docs
+    has_thinking_budget = (
+        hasattr(reasoning_model, "thinking_budget")
+        and reasoning_model.thinking_budget is not None
+        and reasoning_model.thinking_budget > 0
+    )
     has_include_thoughts = hasattr(reasoning_model, "include_thoughts") and reasoning_model.include_thoughts is not None
 
     return is_gemini_class and (has_thinking_support or has_thinking_budget or has_include_thoughts)
