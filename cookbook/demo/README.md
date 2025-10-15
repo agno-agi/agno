@@ -1,8 +1,8 @@
-# Agno Demo Suite - Client Showcase
+# Agno Demo
 
-This cookbook contains comprehensive demonstrations of Agno's capabilities for client presentations, including both basic functionality and enterprise-grade advanced features.
+This cookbook contains comprehensive demonstrations of Agno's capabilities including both basic functionality and enterprise-grade advanced features.
 
-## 📁 Demo Files
+## Demo Files
 
 - **`real_world_showcase.py`** - 3 comprehensive consumer/lifestyle agents (Lifestyle Concierge + Study Buddy + Creative Studio)
 - **`run.py`** - AgentOS production setup with agents, teams, and workflows
