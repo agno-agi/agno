@@ -67,20 +67,21 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
         if isinstance(input_data, dict) and "input_content" in input_data:
             return input_content_string(input_data["input_content"])
 
-    if is_workflow_run:
-        step_executor_runs = run_dict.get("step_executor_runs", [])
-        if step_executor_runs:
-            for message in reversed(step_executor_runs[0].get("messages", [])):
-                if message.get("role") == "user":
-                    return message.get("content", "")
-
-        # Check the input field directly as final fallback
+    if is_workflow_run: 
+        # Check the input field directly
         if run_dict.get("input") is not None:
             input_value = run_dict.get("input")
             if isinstance(input_value, str):
                 return input_value
             else:
                 return str(input_value)
+        
+        # Check the step executor runs for fallback
+        step_executor_runs = run_dict.get("step_executor_runs", [])
+        if step_executor_runs:
+            for message in reversed(step_executor_runs[0].get("messages", [])):
+                if message.get("role") == "user":
+                    return message.get("content", "")
 
     # Final fallback: scan messages
     if run_dict.get("messages") is not None:
