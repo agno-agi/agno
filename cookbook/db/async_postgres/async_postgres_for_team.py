@@ -1,22 +1,21 @@
 """
-Use JSON files as the database for a Team.
-Useful for simple demos where performance is not critical.
-
-Run `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
+1. Run: `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
+2. Run: `python cookbook/db/async_postgres/async_postgres_for_team.py` to run the team
 """
 
+import asyncio
 from typing import List
 
 from agno.agent import Agent
-from agno.db.json import JsonDb
+from agno.db.async_postgres import AsyncPostgresDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel
 
-# Setup the JSON database
-db = JsonDb(db_path="tmp/json_db")
+db_url = "postgresql+psycopg_async://ai:ai@localhost:5532/ai"
+db = AsyncPostgresDb(db_url=db_url)
 
 
 class Article(BaseModel):
@@ -56,4 +55,6 @@ hn_team = Team(
     show_members_responses=True,
 )
 
-hn_team.print_response("Write an article about the top 2 stories on hackernews")
+asyncio.run(
+    hn_team.aprint_response("Write an article about the top 2 stories on hackernews")
+)

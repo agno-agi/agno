@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.agent.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -19,7 +19,7 @@ from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
 
-def get_db(dbs: dict[str, BaseDb], db_id: Optional[str] = None) -> BaseDb:
+def get_db(dbs: dict[str, Union[BaseDb, AsyncBaseDb]], db_id: Optional[str] = None) -> Union[BaseDb, AsyncBaseDb]:
     """Return the database with the given ID, or the first database if no ID is provided."""
 
     # Raise if multiple databases are provided but no db_id is provided
@@ -156,14 +156,14 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
     input_media: Dict[str, List[Any]] = {
         "images": [],
         "videos": [],
-        "audio": [],
+        "audios": [],
         "files": [],
     }
 
     input = run_dict.get("input", [])
     input_media["images"].extend(input.get("images", []))
     input_media["videos"].extend(input.get("videos", []))
-    input_media["audio"].extend(input.get("audio", []))
+    input_media["audios"].extend(input.get("audios", []))
     input_media["files"].extend(input.get("files", []))
     
     return input_media
