@@ -60,7 +60,7 @@ class Claude(Model):
     """
 
     # Models that DO NOT support extended thinking
-    # All other models are assumed to support thinking (future-proof design)
+    # All future models are assumed to support thinking
     # Based on official Anthropic documentation: https://docs.claude.com/en/docs/about-claude/models/overview
     NON_THINKING_MODELS = {
         # Claude Haiku 3 family (does not support thinking)
