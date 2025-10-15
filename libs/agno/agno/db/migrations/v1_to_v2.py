@@ -410,7 +410,7 @@ def migrate_table_in_batches(
                 if hasattr(db, "Session"):
                     db.Session.remove()  # type: ignore
 
-                db.upsert_sessions(sessions)  # type: ignore
+                db.upsert_sessions(sessions, preserve_updated_at=True)  # type: ignore
                 total_migrated += len(sessions)
                 log_info(f"Bulk upserted {len(sessions)} sessions in batch {batch_count}")
 
@@ -420,7 +420,7 @@ def migrate_table_in_batches(
                 if hasattr(db, "Session"):
                     db.Session.remove()  # type: ignore
 
-                db.upsert_memories(memories)
+                db.upsert_memories(memories, preserve_updated_at=True)
                 total_migrated += len(memories)
                 log_info(f"Bulk upserted {len(memories)} memories in batch {batch_count}")
 
