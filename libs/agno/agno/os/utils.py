@@ -73,7 +73,7 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
 
     if run_dict.get("messages") is not None:
         for message in reversed(run_dict["messages"]):
-            if message.get("role") == "user" and not message.get("generated"): 
+            if message.get("role") == "user" and not message.get("generated"):
                 return message.get("content", "")
 
     return ""
@@ -140,18 +140,18 @@ def get_session_name(session: Dict[str, Any]) -> str:
     return ""
 
 
-
-def extract_output_media(run_dict: Dict[str, Any], media_type: Literal["images", "videos", "audio", "files", "response_audio"] = "images"):
+def extract_output_media(
+    run_dict: Dict[str, Any], media_type: Literal["images", "videos", "audio", "files", "response_audio"] = "images"
+):
     media = []
     for message in run_dict.get("messages", []):
         # For response_audio, check both response_audio and audio_output
         if message.get("generated") is True or message.get("role") == "assistant":
-
             if media_type == "response_audio":
                 value = message.get("response_audio") or message.get("audio_output")
             else:
                 value = message.get(media_type)
-            
+
             if value is None:
                 continue
             if isinstance(value, list):
@@ -162,9 +162,8 @@ def extract_output_media(run_dict: Dict[str, Any], media_type: Literal["images",
     return media
 
 
-
 def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
-    input_media = {
+    input_media: Dict[str, List[Any]] = {
         "images": [],
         "videos": [],
         "audio": [],
