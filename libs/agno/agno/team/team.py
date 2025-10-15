@@ -278,6 +278,8 @@ class Team:
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
+    # Maximum number of tool calls to keep in context (for memory management)
+    max_tool_calls_in_context: Optional[int] = None
     # A list of hooks to be called before and after the tool call
     tool_hooks: Optional[List[Callable]] = None
 
@@ -427,6 +429,7 @@ class Team:
         send_media_to_model: bool = True,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
+        max_tool_calls_in_context: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
@@ -531,6 +534,7 @@ class Team:
         self.tools = tools
         self.tool_choice = tool_choice
         self.tool_call_limit = tool_call_limit
+        self.max_tool_calls_in_context = max_tool_calls_in_context
         self.tool_hooks = tool_hooks
 
         # Initialize hooks with backward compatibility
@@ -1153,6 +1157,10 @@ class Team:
         # Check for cancellation before model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
+        # Log if max_tool_calls_in_context is set
+        if self.max_tool_calls_in_context is not None:
+            log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
+
         # 4. Get the model response for the team leader
         self.model = cast(Model, self.model)
         model_response: ModelResponse = self.model.response(
@@ -1162,6 +1170,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            max_tool_calls_in_context=self.max_tool_calls_in_context,
             send_media_to_model=self.send_media_to_model,
         )
 
@@ -1347,6 +1356,10 @@ class Team:
 
             # Check for cancellation before model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # Log if max_tool_calls_in_context is set
+            if self.max_tool_calls_in_context is not None:
+                log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
 
             # 4. Get a response from the model
             if self.output_model is None:
@@ -1885,6 +1898,10 @@ class Team:
         # Check for cancellation before model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
+        # Log if max_tool_calls_in_context is set
+        if self.max_tool_calls_in_context is not None:
+            log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
+
         # 7. Get the model response for the team leader
         self.model = cast(Model, self.model)
         model_response = await self.model.aresponse(
@@ -1893,6 +1910,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            max_tool_calls_in_context=self.max_tool_calls_in_context,
             response_format=response_format,
             send_media_to_model=self.send_media_to_model,
         )  # type: ignore
@@ -2099,6 +2117,10 @@ class Team:
 
             # Check for cancellation before model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # Log if max_tool_calls_in_context is set
+            if self.max_tool_calls_in_context is not None:
+                log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
 
             # 9. Get a response from the model
             if self.output_model is None:
@@ -2585,6 +2607,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            max_tool_calls_in_context=self.max_tool_calls_in_context,
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
         ):
@@ -2665,6 +2688,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            max_tool_calls_in_context=self.max_tool_calls_in_context,
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
         )  # type: ignore

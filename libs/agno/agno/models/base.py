@@ -29,7 +29,7 @@ from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEve
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
 
@@ -154,9 +154,10 @@ class Model(ABC):
             max_tool_calls_in_context: Number of recent tool calls to keep
         """
         # Count total tool calls (not messages) - each tool result = 1 tool call
-        total_tool_calls = sum(1 for m in messages if m.role == "tool")
+        tool_call_count = sum(1 for m in messages if m.role == "tool")
 
-        if total_tool_calls <= max_tool_calls_in_context:
+        # No filtering needed
+        if tool_call_count <= max_tool_calls_in_context:
             return
 
         # Collect tool_call_ids to keep (most recent N)
@@ -206,8 +207,9 @@ class Model(ABC):
                 filtered_messages.append(msg)
 
         messages[:] = filtered_messages
-        num_filtered = total_tool_calls - len(tool_call_ids_to_keep)
-        
+
+        # Log filtering information
+        num_filtered = tool_call_count - len(tool_call_ids_to_keep)
         log_debug(f"Filtered {num_filtered} tool calls, kept {len(tool_call_ids_to_keep)}")
 
     @abstractmethod
@@ -279,7 +281,7 @@ class Model(ABC):
         while True:
             # Apply message filtering before each model call
             if max_tool_calls_in_context is not None:
-                self._forget_tool_calls(messages, max_tool_calls_in_context)
+                self._filter_messages(messages, max_tool_calls_in_context)
 
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
@@ -431,7 +433,7 @@ class Model(ABC):
         while True:
             # Apply message filtering before each API call if max_tool_calls_in_context is set
             if max_tool_calls_in_context is not None:
-                self._forget_tool_calls(messages, max_tool_calls_in_context)
+                self._filter_messages(messages, max_tool_calls_in_context)
 
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
@@ -803,7 +805,7 @@ class Model(ABC):
         while True:
             # Apply message filtering before each API call if max_tool_calls_in_context is set
             if max_tool_calls_in_context is not None:
-                self._forget_tool_calls(messages, max_tool_calls_in_context)
+                self._filter_messages(messages, max_tool_calls_in_context)
 
             assistant_message = Message(role=self.assistant_message_role)
             # Create assistant message and stream data
@@ -978,7 +980,7 @@ class Model(ABC):
         while True:
             # Apply message filtering before each API call if max_tool_calls_in_context is set
             if max_tool_calls_in_context is not None:
-                self._forget_tool_calls(messages, max_tool_calls_in_context)
+                self._filter_messages(messages, max_tool_calls_in_context)
 
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)

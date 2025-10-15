@@ -1596,21 +1596,10 @@ class Agent:
             await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # Log if max_tool_calls_in_context is set
-        if self.max_tool_calls_in_context is not None:
-            log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
+            # Log if max_tool_calls_in_context is set
+            if self.max_tool_calls_in_context is not None:
+                log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
 
-        # 5. Generate a response from the Model (includes running function calls)
-        model_response: ModelResponse = await self.model.aresponse(
-            messages=run_messages.messages,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
-            tool_choice=self.tool_choice,
-            tool_call_limit=self.tool_call_limit,
-            response_format=response_format,
-            send_media_to_model=self.send_media_to_model,
-            max_tool_calls_in_context=self.max_tool_calls_in_context,
-        )
             # 8. Generate a response from the Model (includes running function calls)
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
@@ -1620,6 +1609,7 @@ class Agent:
                 tool_call_limit=self.tool_call_limit,
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
+                max_tool_calls_in_context=self.max_tool_calls_in_context,
             )
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2879,20 +2869,6 @@ class Agent:
             # The run is continued from a run_id. This requires the updated tools to be passed.
             if updated_tools is None:
                 raise ValueError("Updated tools are required to continue a run from a run_id.")
-
-        # Log if max_tool_calls_in_context is set
-        if self.max_tool_calls_in_context is not None:
-            log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
-
-        # 2. Generate a response from the Model (includes running function calls)
-        model_response: ModelResponse = await self.model.aresponse(
-            messages=run_messages.messages,
-            response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
-            tool_choice=self.tool_choice,
-            tool_call_limit=self.tool_call_limit,
-            max_tool_calls_in_context=self.max_tool_calls_in_context,
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
@@ -2926,6 +2902,10 @@ class Agent:
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
+        # Log if max_tool_calls_in_context is set
+        if self.max_tool_calls_in_context is not None:
+            log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
+
         try:
             # 7. Handle the updated tools
             await self._ahandle_tool_call_updates(run_response=run_response, run_messages=run_messages)
@@ -2938,6 +2918,7 @@ class Agent:
                 functions=self._functions_for_model,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
+                max_tool_calls_in_context=self.max_tool_calls_in_context,
             )
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4472,7 +4453,9 @@ class Agent:
 
             if len(parsed_messages) > 0:
                 tasks.append(
-                    self.memory_manager.acreate_user_memories(messages=parsed_messages, user_id=user_id, agent_id=self.id)
+                    self.memory_manager.acreate_user_memories(
+                        messages=parsed_messages, user_id=user_id, agent_id=self.id
+                    )
                 )
             else:
                 log_warning("Unable to add messages to memory")

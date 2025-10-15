@@ -1,206 +1,133 @@
+"""Tests for max_tool_calls_in_context feature."""
+
+import random
+
 import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.playwright import PlaywrightTools
 
 
 @pytest.fixture
-def playwright_tools():
-    """Create PlaywrightTools instance for testing."""
-    return PlaywrightTools(
-        headless=True,
-        timeout=30000,
-        enable_navigate_to=True,
-        enable_get_current_url=True,
-        enable_extract_page_text=True,
-        enable_screenshot=False,  # Disable to speed up tests
-        enable_get_page_content=False,
-        enable_close_session=True,
-    )
+def agent_with_max_tool_calls(shared_db):
+    """Create an agent with max_tool_calls_in_context=2."""
 
+    def get_weather_for_city(city: str) -> str:
+        conditions = ["Sunny", "Cloudy", "Rainy", "Snowy", "Foggy", "Windy"]
+        temperature = random.randint(-10, 35)
+        condition = random.choice(conditions)
 
-@pytest.fixture
-def agent_with_forget(shared_db, playwright_tools):
-    """Create an agent with max_tool_calls_in_context set."""
+        return f"{city}: {temperature}°C, {condition}"
+
     return Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[playwright_tools],
+        model=OpenAIChat(id="gpt-5-mini"),
+        tools=[get_weather_for_city],
         db=shared_db,
-        session_id="test_forget_tool_calls",
-        max_tool_calls_in_context=2,
-        tool_call_limit=6,  # Prevent infinite loops
-        instructions=(
-            "You are a web browser agent. Use navigate_to to visit websites, "
-            "extract_page_text to read content, and get_current_url to check your location. "
-            "Always close_session when done."
-        ),
-        telemetry=False,
-    )
-
-
-@pytest.fixture
-def agent_with_forget_and_history(shared_db, playwright_tools):
-    """Create an agent with both max_tool_calls_in_context and add_history enabled."""
-    return Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[playwright_tools],
-        db=shared_db,
-        session_id="test_forget_with_history",
-        max_tool_calls_in_context=2,
         add_history_to_context=True,
-        tool_call_limit=5,  # Prevent infinite loops
-        instructions=(
-            "You are a web browser agent. Use navigate_to to visit websites and "
-            "extract_page_text to read content. Always close_session when done."
-        ),
-        telemetry=False,
+        max_tool_calls_in_context=2,  # Keep only last 2 tool calls
+        debug_mode=False,
     )
 
 
-def test_forget_tool_calls_basic(agent_with_forget):
-    """Test that max_tool_calls_in_context limits tool calls in context with browser automation."""
-    response = agent_with_forget.run("Navigate to https://example.com, extract the page text, then close the session.")
+def test_max_tool_calls_basic(agent_with_max_tool_calls):
+    """Test that max_tool_calls_in_context works across multiple runs."""
+    agent = agent_with_max_tool_calls
 
-    assert response.content is not None
-    assert response.messages is not None
+    # Run 1: First tool call
+    response1 = agent.run("What's the weather in Tokyo?")
+    assert response1.messages is not None
+    # Should have: system, user, assistant (with tool_call), tool, assistant
+    tool_messages_1 = [m for m in response1.messages if m.role == "tool"]
+    assert len(tool_messages_1) == 1
 
-    # Count tool calls and tool results in the response
-    tool_call_count = 0
-    tool_result_count = 0
-    tool_call_ids = []
+    # Run 2: Second tool call (total 2, at limit)
+    response2 = agent.run("What's the weather in Paris?")
+    assert response2.messages is not None
+    tool_messages_2 = [m for m in response2.messages if m.role == "tool"]
+    # History should have 1 tool + 1 new = 2 total
+    assert len(tool_messages_2) == 2
 
-    for msg in response.messages:
-        if msg.role == "assistant" and msg.tool_calls:
-            for tc in msg.tool_calls:
-                tool_call_count += 1
-                tool_call_ids.append(tc.get("id"))
-        elif msg.role == "tool":
-            tool_result_count += 1
+    # Run 3: Third tool call (should trigger filtering)
+    response3 = agent.run("What's the weather in London?")
+    assert response3.messages is not None
+    tool_messages_3 = [m for m in response3.messages if m.role == "tool"]
+    # Should keep only last 2 tool calls (filtered 1 old one)
+    assert len(tool_messages_3) == 2, "Should keep only last 2 tool calls"
 
-    # Should have made at least 2 tool calls (navigate + one other action)
-    assert tool_call_count >= 2, f"Expected at least 2 tool calls, got {tool_call_count}"
-    assert tool_result_count >= 2, f"Expected at least 2 tool results, got {tool_result_count}"
-
-    # All tool calls should have unique IDs
-    assert len(tool_call_ids) == len(set(tool_call_ids)), "Tool call IDs should be unique"
-
-    # Agent should complete successfully
-    assert response.content is not None
-    assert len(response.content) > 0
+    # Run 4: Fourth tool call (filtering continues)
+    response4 = agent.run("What's the weather in Berlin?")
+    assert response4.messages is not None
+    tool_messages_4 = [m for m in response4.messages if m.role == "tool"]
+    # Should still keep only last 2 tool calls
+    assert len(tool_messages_4) == 2, "Should keep only last 2 tool calls"
 
 
-def test_forget_tool_calls_with_history(agent_with_forget_and_history):
-    """Test that max_tool_calls_in_context works with add_history_to_context."""
-    # First run: Navigate to a website
-    response1 = agent_with_forget_and_history.run("Navigate to https://example.com")
-    assert response1.content is not None
+def test_max_tool_calls_preserves_recent(agent_with_max_tool_calls):
+    """Test that filtering keeps the most recent tool calls, not the oldest."""
+    agent = agent_with_max_tool_calls
 
-    # Second run: Navigate to another website
-    # With add_history=True, previous messages should be in context
-    # With max_tool_calls_in_context=2, only recent tool calls should be kept
-    response2 = agent_with_forget_and_history.run("Navigate to https://example.org and close the session.")
-    assert response2.content is not None
+    # Run 3 queries to build up history
+    agent.run("Weather in Tokyo?")
+    agent.run("Weather in Paris?")
+    response3 = agent.run("Weather in London?")
+
+    # Get all tool messages
+    tool_messages = [m for m in response3.messages if m.role == "tool"]
+    assert len(tool_messages) == 2
+
+    # Verify we kept the RECENT ones (Paris and London), not the old one (Tokyo)
+    tool_results = [m.content for m in tool_messages]
+
+    # Should NOT have Tokyo (it was the oldest)
+    assert not any("Tokyo" in result for result in tool_results), "Tokyo should be filtered out"
+
+    # Should have Paris and London (most recent 2)
+    assert any("Paris" in result for result in tool_results), "Paris should be kept"
+    assert any("London" in result for result in tool_results), "London should be kept"
+
+
+def test_max_tool_calls_no_filtering_when_under_limit(shared_db):
+    """Test that no filtering occurs when under the limit."""
+
+    def simple_tool(query: str) -> str:
+        return f"Result: {query}"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-5-mini"),
+        tools=[simple_tool],
+        db=shared_db,
+        add_history_to_context=True,
+        max_tool_calls_in_context=5,  # High limit
+        debug_mode=False,
+    )
+
+    # Run 3 queries (well under limit of 5)
+    agent.run("Query 1")
+    agent.run("Query 2")
+    response3 = agent.run("Query 3")
+
+    # Should have all 3 tool calls (no filtering)
+    tool_messages = [m for m in response3.messages if m.role == "tool"]
+    assert len(tool_messages) == 3, "All tool calls should be kept when under limit"
+
+
+def test_max_tool_calls_with_history_messages(agent_with_max_tool_calls):
+    """Test that tool messages in history are properly tagged."""
+    agent = agent_with_max_tool_calls
+
+    # Run 1
+    agent.run("Weather in Tokyo?")
+
+    # Run 2 - should have history
+    response2 = agent.run("Weather in Paris?")
+
     assert response2.messages is not None
 
-    # Verify messages include history
-    has_history_messages = any(hasattr(msg, "from_history") and msg.from_history for msg in response2.messages)
-    assert has_history_messages, "Expected history messages in second run"
+    # Check that history messages are tagged
+    history_messages = [m for m in response2.messages if m.from_history]
+    assert len(history_messages) > 0, "Should have messages from history"
 
-    # Count tool calls in second response (includes history)
-    tool_call_count = 0
-    history_tool_calls = 0
-    current_tool_calls = 0
-
-    for msg in response2.messages:
-        if msg.role == "assistant" and msg.tool_calls:
-            for _ in msg.tool_calls:
-                tool_call_count += 1
-                if hasattr(msg, "from_history") and msg.from_history:
-                    history_tool_calls += 1
-                else:
-                    current_tool_calls += 1
-
-    # Should have tool calls from both history and current run
-    assert tool_call_count >= 2, f"Expected at least 2 total tool calls, got {tool_call_count}"
-    assert current_tool_calls >= 1, f"Expected current tool calls, got {current_tool_calls}"
-
-
-def test_forget_tool_calls_preserves_content(shared_db, playwright_tools):
-    """Test that assistant messages with content are preserved even if tool calls are filtered."""
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[playwright_tools],
-        db=shared_db,
-        session_id="test_preserve_content",
-        max_tool_calls_in_context=1,  # Very small window
-        add_history_to_context=True,  # Enable history to test filtering across runs
-        tool_call_limit=3,  # Prevent infinite loops
-        instructions=(
-            "You are a web browser agent. Navigate to websites. "
-            "Explain your actions briefly. Always close_session when done."
-        ),
-        telemetry=False,
-    )
-
-    # First call
-    response1 = agent.run("Navigate to https://example.com")
-    assert response1.content is not None
-
-    # Second call - first tool call should now be filtered out (window=1)
-    response2 = agent.run("Navigate to https://example.org and close the session")
-    assert response2.content is not None
-    assert response2.messages is not None
-
-    # Verify we have assistant messages
-    assistant_messages = [msg for msg in response2.messages if msg.role == "assistant"]
-    assert len(assistant_messages) > 0, "Expected assistant messages"
-
-    # The key is that the agent completes successfully with a small window
-    # (proving that max_tool_calls_in_context prevents infinite loops)
-
-
-def test_forget_tool_calls_tool_call_ids(shared_db, playwright_tools):
-    """Test that tool call IDs are correctly generated and matched."""
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[playwright_tools],
-        db=shared_db,
-        session_id="test_tool_call_ids",
-        max_tool_calls_in_context=3,
-        tool_call_limit=5,  # Prevent infinite loops
-        instructions=(
-            "You are a web browser agent. Navigate to websites and extract content. Always close_session when done."
-        ),
-        telemetry=False,
-    )
-
-    response = agent.run("Navigate to https://example.com, get the current URL, and close the session.")
-
-    assert response.messages is not None
-
-    # Collect all tool call IDs and tool result IDs
-    tool_call_ids = set()
-    tool_result_ids = set()
-
-    for msg in response.messages:
-        if msg.role == "assistant" and msg.tool_calls:
-            for tc in msg.tool_calls:
-                tc_id = tc.get("id")
-                assert tc_id is not None, "Tool call missing ID"
-                assert isinstance(tc_id, str), "Tool call ID must be string"
-                assert tc_id.startswith("call_"), f"Tool call ID has unexpected format: {tc_id}"
-                tool_call_ids.add(tc_id)
-        elif msg.role == "tool":
-            assert msg.tool_call_id is not None, "Tool result missing tool_call_id"
-            tool_result_ids.add(msg.tool_call_id)
-
-    # Every tool result should reference a tool call
-    assert len(tool_result_ids) > 0, "Expected tool results"
-    assert len(tool_call_ids) > 0, "Expected tool calls"
-    assert tool_result_ids.issubset(tool_call_ids), (
-        f"Tool results reference unknown tool calls. Tool calls: {tool_call_ids}, Tool results: {tool_result_ids}"
-    )
-
-    # All IDs should be unique
-    assert len(tool_call_ids) == len(set(tool_call_ids)), "Tool call IDs not unique"
+    # Verify tool messages from history are tagged
+    history_tool_messages = [m for m in history_messages if m.role == "tool"]
+    assert len(history_tool_messages) > 0, "Should have tool messages from history"
+    assert all(m.from_history for m in history_tool_messages), "All history tool messages should be tagged"
