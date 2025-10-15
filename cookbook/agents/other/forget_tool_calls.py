@@ -57,33 +57,45 @@ cities = [
     "Paris",
 ]
 
-print(f"{'City':<20} | {'History':<8} | {'Current':<8} | {'Total in Context':<8} | {'Total in Session':<8}")
+print(
+    f"{'City':<20} | {'History':<8} | {'Current':<8} | {'Total in Context':<8} | {'Total in Session':<8}"
+)
 print("-" * 70)
 
 for city in cities:
     run_response = agent.run(f"What's the weather in {city}?")
-    
+
     # Count tool calls from history vs current
     history_tool_calls = sum(
         len(msg.tool_calls)
         for msg in run_response.messages
-        if msg.role == "assistant" and msg.tool_calls and getattr(msg, "from_history", False)
+        if msg.role == "assistant"
+        and msg.tool_calls
+        and getattr(msg, "from_history", False)
     )
-    
+
     current_tool_calls = sum(
         len(msg.tool_calls)
         for msg in run_response.messages
-        if msg.role == "assistant" and msg.tool_calls and not getattr(msg, "from_history", False)
+        if msg.role == "assistant"
+        and msg.tool_calls
+        and not getattr(msg, "from_history", False)
     )
-    
+
     total_in_response = history_tool_calls + current_tool_calls
-    
+
     # What's saved after filtering (get messages from session)
     saved_messages = agent.get_messages_for_session()
-    saved_tool_calls = sum(
-        len(msg.tool_calls)
-        for msg in saved_messages
-        if msg.role == "assistant" and msg.tool_calls
-    ) if saved_messages else 0
-    
-    print(f"{city:<20} | {history_tool_calls:<8} | {current_tool_calls:<8} | {total_in_response:<8} | {saved_tool_calls:<8}")
+    saved_tool_calls = (
+        sum(
+            len(msg.tool_calls)
+            for msg in saved_messages
+            if msg.role == "assistant" and msg.tool_calls
+        )
+        if saved_messages
+        else 0
+    )
+
+    print(
+        f"{city:<20} | {history_tool_calls:<8} | {current_tool_calls:<8} | {total_in_response:<8} | {saved_tool_calls:<8}"
+    )

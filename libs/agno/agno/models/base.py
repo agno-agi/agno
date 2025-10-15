@@ -63,41 +63,6 @@ def _log_messages(messages: List[Message]) -> None:
         m.log(metrics=False)
 
 
-def _log_messages_sent_to_api(messages: List[Message]) -> None:
-    """
-    Log message structure being sent to API, with focus on tool_calls.
-    This helps verify that forgotten tool calls are properly removed.
-    """
-    log_info("=" * 80)
-    log_info("📤 MESSAGES BEING SENT TO MODEL API")
-    log_info("=" * 80)
-
-    for i, msg in enumerate(messages):
-        role_info = f"[{i}] {msg.role.upper()}"
-
-        if msg.role == "assistant" and msg.tool_calls:
-            tool_call_ids = [tc.get("id", "no-id") for tc in msg.tool_calls]
-            log_info(f"{role_info} (tool_calls: {len(msg.tool_calls)}) IDs: {tool_call_ids}")
-        elif msg.role == "tool":
-            log_info(f"{role_info} (tool_call_id: {msg.tool_call_id})")
-        else:
-            content_preview = str(msg.content)[:60] if msg.content else "(empty)"
-            log_info(f"{role_info}: {content_preview}...")
-
-    # Summary
-    assistant_msgs = [m for m in messages if m.role == "assistant"]
-    tool_result_msgs = [m for m in messages if m.role == "tool"]
-    total_tool_calls = sum(len(m.tool_calls or []) for m in assistant_msgs)
-
-    log_info("-" * 80)
-    log_info(
-        f"📊 Summary: {len(messages)} messages | "
-        f"{total_tool_calls} tool_use blocks | "
-        f"{len(tool_result_msgs)} tool_result blocks"
-    )
-    log_info("=" * 80)
-
-
 def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional[List[Message]] = None) -> None:
     """Handle AgentRunException and collect additional messages."""
     if additional_input is None:
@@ -197,9 +162,10 @@ class Model(ABC):
         # Collect tool_call_ids to keep (most recent N)
         tool_call_ids_list: List[str] = []
         for msg in reversed(messages):
-            if msg.role == "tool" and len(tool_call_ids_list) <= num_tool_calls_in_context:
-                if msg.tool_call_id:
-                    tool_call_ids_list.append(msg.tool_call_id)
+            if msg.role == "tool":
+                if len(tool_call_ids_list) < num_tool_calls_in_context:
+                    if msg.tool_call_id:
+                        tool_call_ids_list.append(msg.tool_call_id)
 
         tool_call_ids_to_keep: set[str] = set(tool_call_ids_list)
 
@@ -239,15 +205,10 @@ class Model(ABC):
             else:
                 filtered_messages.append(msg)
 
-        # Replace messages list in-place
         messages[:] = filtered_messages
-
-        # Log filtering information
         num_filtered = total_tool_calls - len(tool_call_ids_to_keep)
-        if num_filtered > 0:
-            log_info(
-                f"Keeping last {num_tool_calls_in_context} tool call cycles (filtered out {num_filtered} older tool calls)"
-            )
+        
+        log_debug(f"Filtered {num_filtered} tool calls, kept {len(tool_call_ids_to_keep)}")
 
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
@@ -316,6 +277,10 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
+            # Apply message filtering before each model call
+            if max_tool_calls_in_context is not None:
+                self._forget_tool_calls(messages, max_tool_calls_in_context)
+
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
             self._process_model_response(
@@ -416,11 +381,6 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
-                # Apply message filtering if max_tool_calls_in_context is set
-                # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
-                if max_tool_calls_in_context is not None:
-                    self._forget_tool_calls(messages, max_tool_calls_in_context)
-
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -469,6 +429,10 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
+            # Apply message filtering before each API call if max_tool_calls_in_context is set
+            if max_tool_calls_in_context is not None:
+                self._forget_tool_calls(messages, max_tool_calls_in_context)
+
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
             await self._aprocess_model_response(
@@ -567,11 +531,6 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
-                # Apply message filtering if max_tool_calls_in_context is set
-                # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
-                if max_tool_calls_in_context is not None:
-                    self._forget_tool_calls(messages, max_tool_calls_in_context)
-
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -613,9 +572,6 @@ class Model(ABC):
         Returns:
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
-        # Log messages being sent to API (helps verify tool call forgetting)
-        # _log_messages_sent_to_api(messages)
-
         # Generate response
         provider_response = self.invoke(
             assistant_message=assistant_message,
@@ -669,9 +625,6 @@ class Model(ABC):
         Returns:
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
-        # Log messages being sent to API (helps verify tool call forgetting)
-        # _log_messages_sent_to_api(messages)
-
         # Generate response
         provider_response = await self.ainvoke(
             messages=messages,
@@ -848,6 +801,10 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
+            # Apply message filtering before each API call if max_tool_calls_in_context is set
+            if max_tool_calls_in_context is not None:
+                self._forget_tool_calls(messages, max_tool_calls_in_context)
+
             assistant_message = Message(role=self.assistant_message_role)
             # Create assistant message and stream data
             stream_data = MessageData()
@@ -940,11 +897,6 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
-                # Apply message filtering if max_tool_calls_in_context is set
-                # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
-                if max_tool_calls_in_context is not None:
-                    self._forget_tool_calls(messages, max_tool_calls_in_context)
-
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -1024,6 +976,10 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
+            # Apply message filtering before each API call if max_tool_calls_in_context is set
+            if max_tool_calls_in_context is not None:
+                self._forget_tool_calls(messages, max_tool_calls_in_context)
+
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
             stream_data = MessageData()
@@ -1115,11 +1071,6 @@ class Model(ABC):
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
-
-                # Apply message filtering if max_tool_calls_in_context is set
-                # This filters AFTER tool results are added, ensuring parallel tool calls execute fully
-                if max_tool_calls_in_context is not None:
-                    self._forget_tool_calls(messages, max_tool_calls_in_context)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
