@@ -42,7 +42,7 @@ def surrealize_dates(record: dict) -> dict:
     for key, value in copy.items():
         if isinstance(value, date):
             copy[key] = datetime.combine(value, datetime.min.time()).replace(tzinfo=timezone.utc)
-        elif key in ["created_at", "updated_at"] and isinstance(value, int):
+        elif key in ["created_at", "updated_at"] and isinstance(value, (int, float)):
             copy[key] = datetime.fromtimestamp(value).replace(tzinfo=timezone.utc)
     return copy
 
@@ -69,6 +69,10 @@ def serialize_session(session: Session, table_names: dict[TableType, str]) -> di
     elif isinstance(session, WorkflowSession):
         _dict["workflow"] = RecordID(table_names["workflows"], session.workflow_id)
         del _dict["workflow_id"]
+
+    # surrealize dates
+    _dict = surrealize_dates(_dict)
+
     return _dict
 
 

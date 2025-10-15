@@ -16,6 +16,8 @@
 # pytest libs/agno/tests/integration/db/surrealdb/test_surrealdb_session.py
 # ```
 
+from datetime import datetime
+
 import pytest
 from surrealdb import RecordID
 
@@ -48,7 +50,8 @@ def test_crud_sessions(db: SurrealDb):
     _, count = db.get_sessions(SessionType.AGENT, deserialize=False)
     assert count == 0
 
-    session = AgentSession(session_id="1", agent_id="1")
+    now = int(datetime.now().timestamp())
+    session = AgentSession(session_id="1", agent_id="1", created_at=now)
     session2 = AgentSession(session_id="2", agent_id="2")
 
     # upsert
