@@ -45,7 +45,7 @@ jobs:
           ruff check .
       - name: Mypy
         run: |
-          mypy .
+          mypy . --config-file pyproject.toml
 
   style-check-cookbook:
     runs-on: ubuntu-latest
