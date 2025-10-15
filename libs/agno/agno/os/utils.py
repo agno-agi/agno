@@ -65,7 +65,7 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
     if not is_workflow_run and run_dict.get("input") is not None:
         input_data = run_dict.get("input")
         if isinstance(input_data, dict) and input_data.get("input_content") is not None:
-            return input_content_string(input_data["input_content"])
+            return stringify_input_content(input_data["input_content"])
 
     if is_workflow_run: 
         # Check the input field directly

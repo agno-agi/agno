@@ -10,7 +10,6 @@ Sign up to Logfire at https://logfire.dev
 """
 
 import asyncio
-import base64
 import os
 
 from agno.agent import Agent
