@@ -1,7 +1,5 @@
 """Unit tests for reasoning model checker functions."""
 
-import pytest
-
 from agno.reasoning.anthropic import is_anthropic_reasoning_model
 from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
 from agno.reasoning.deepseek import is_deepseek_reasoning_model
