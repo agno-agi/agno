@@ -3708,13 +3708,13 @@ class Team:
             _, member = member_result
             
             if not member.store_media:
-                member._scrub_media_from_run_output(member_response)
+                member._scrub_media_from_run_output(member_response) # type: ignore
             
             if not member.store_tool_results:
-                member._scrub_tool_results_from_run_output(member_response)
+                member._scrub_tool_results_from_run_output(member_response) # type: ignore
             
             if not member.store_history_messages:
-                member._scrub_history_messages_from_run_output(member_response)
+                member._scrub_history_messages_from_run_output(member_response) # type: ignore
 
     def _validate_media_object_id(
         self,
