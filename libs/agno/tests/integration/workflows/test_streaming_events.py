@@ -807,3 +807,104 @@ def test_comprehensive_workflow_events_with_stream_intermediate_steps_false(shar
 
     assert len(workflow_events) == 2  # Started + completed
     assert len(step_outputs) >= 1  # At least one aggregated output from the workflow
+
+
+# ============================================================================
+# STREAM EXECUTOR EVENTS TESTS
+# ============================================================================
+
+def test_stream_executor_events_false_with_agent(shared_db, test_agent):
+    """Test that stream_executor_events=False filters out agent internal events."""
+    agent = test_agent
+
+    workflow = Workflow(
+        name="Executor Events Test",
+        db=shared_db,
+        steps=[Step(name="agent_step", agent=agent)],
+        stream_executor_events=False,  # Filter out executor events
+    )
+
+    events = list(
+        workflow.run(
+            input="Say hello",
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+    )
+
+    event_types = [type(event).__name__ for event in events]
+
+    # Should have workflow and step events
+    assert "WorkflowStartedEvent" in event_types
+    assert "WorkflowCompletedEvent" in event_types
+    assert "StepStartedEvent" in event_types
+    assert "StepCompletedEvent" in event_types
+
+    # Should NOT have agent run events
+    assert "RunContentEvent" not in event_types
+
+def test_stream_executor_events_true_with_agent(shared_db, test_agent):
+    """Test that stream_executor_events=True includes agent internal events."""
+    agent = test_agent
+
+    workflow = Workflow(
+        name="Executor Events Test",
+        db=shared_db,
+        steps=[Step(name="agent_step", agent=agent)],
+        stream_executor_events=True,  # Include executor events
+    )
+
+    events = list(
+        workflow.run(
+            input="Say hello",
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+    )
+
+    event_types = [type(event).__name__ for event in events]
+
+    # Should have workflow and step events
+    assert "WorkflowStartedEvent" in event_types
+    assert "WorkflowCompletedEvent" in event_types
+    assert "StepStartedEvent" in event_types
+    assert "StepCompletedEvent" in event_types
+
+    # Should also have agent internal events
+    has_agent_events = any(
+        event_type in event_types
+        for event_type in ["RunContentEvent"]
+    )
+    assert has_agent_events, "Expected at least some agent internal events when stream_executor_events=True"
+
+
+@pytest.mark.asyncio
+async def test_stream_executor_events_false_async_with_agent(shared_db, test_agent):
+    """Test stream_executor_events=False in async context with agent."""
+    agent = test_agent
+
+    workflow = Workflow(
+        name="Async Executor Events Test",
+        db=shared_db,
+        steps=[Step(name="agent_step", agent=agent)],
+        stream_executor_events=False,  # Filter out executor events
+    )
+
+    events = []
+    async for event in await workflow.arun(
+        input="Say hello",
+        stream=True,
+        stream_intermediate_steps=True,
+    ):
+        events.append(event)
+
+    event_types = [type(event).__name__ for event in events]
+
+    # Should have workflow and step events
+    assert "WorkflowStartedEvent" in event_types
+    assert "WorkflowCompletedEvent" in event_types
+    assert "StepStartedEvent" in event_types
+    assert "StepCompletedEvent" in event_types
+
+    # Should NOT have agent internal events
+    assert "RunContentEvent" not in event_types

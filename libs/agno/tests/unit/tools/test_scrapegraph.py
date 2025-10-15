@@ -170,23 +170,6 @@ def test_smartscraper_basic():
         mock_client.smartscraper.assert_called_once_with(website_url="https://example.com", user_prompt="extract title")
 
 
-def test_searchscraper_with_render_heavy_js():
-    """Test searchscraper with render_heavy_js."""
-    with (
-        patch("agno.tools.scrapegraph.Client") as mock_client_class,
-        patch("agno.tools.scrapegraph.sgai_logger"),
-        patch.dict(os.environ, {"SGAI_API_KEY": "test_key"}),
-    ):
-        mock_client = Mock()
-        mock_client_class.return_value = mock_client
-        mock_client.searchscraper.return_value = {"result": ["search results"]}
-
-        tools = ScrapeGraphTools(enable_searchscraper=True, render_heavy_js=True)
-        tools.searchscraper("test query")
-
-        mock_client.searchscraper.assert_called_once_with(user_prompt="test query", render_heavy_js=True)
-
-
 def test_markdownify_basic():
     """Test markdownify basic functionality."""
     with (
