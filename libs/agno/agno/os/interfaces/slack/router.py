@@ -33,9 +33,8 @@ def attach_routes(
     @router.post(
         "/events",
         operation_id=f"slack_events_{entity_type}",
-        summary=f"Process Slack Events for {entity_type.title()}",
-        description=f"Process incoming Slack events and route them to the configured {entity_type}: {entity_name}",
-        tags=["Slack", f"Slack-{entity_type.title()}"],
+        name="slack_events",
+        description=f"Process incoming Slack events",
         response_model=SlackEventResponse,
         response_model_exclude_none=True,
         responses={
