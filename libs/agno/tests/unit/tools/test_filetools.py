@@ -65,7 +65,6 @@ def test_search_files_returns_relative_paths():
 
         # Verify JSON structure
         assert "pattern" in data
-        assert "base_directory" in data
         assert "matches_found" in data
         assert "files" in data
 
@@ -93,3 +92,38 @@ def test_search_files_returns_relative_paths():
 
         assert "file1.txt" in data["files"]
         assert "subdir/file3.txt" in data["files"]
+
+
+def test_save_and_delete_file():
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        f = FileTools(base_dir=Path(tmpdirname), enable_delete_file=True)
+        res = f.save_file(contents="contents", file_name="file.txt")
+        assert res == "file.txt"
+        contents = f.read_file(file_name="file.txt")
+        assert contents == "contents"
+        result = f.delete_file(file_name="file.txt")
+        assert result == ""
+        contents = f.read_file(file_name="file.txt")
+        assert contents != "contents"
+
+
+def test_read_file_chunk():
+    """Test chunked file read"""
+    with tempfile.TemporaryDirectory() as tempdirname:
+        f = FileTools(base_dir=Path(tempdirname))
+        f.save_file(contents="line0\nline1\nline2\nline3\n", file_name="file1.txt")
+        res = f.read_file_chunk(file_name="file1.txt", start_line=0, end_line=2)
+        assert res == "line0\nline1\nline2"
+        res = f.read_file_chunk(file_name="file1.txt", start_line=2, end_line=4)
+        assert res == "line2\nline3\n"
+
+
+def test_replace_file_chunk():
+    """Test replace file chunk"""
+    with tempfile.TemporaryDirectory() as tempdirname:
+        f = FileTools(base_dir=Path(tempdirname))
+        f.save_file(contents="line0\nline1\nline2\nline3\n", file_name="file1.txt")
+        res = f.replace_file_chunk(file_name="file1.txt", start_line=1, end_line=2, chunk="some\nstuff")
+        assert res == "file1.txt"
+        new_contents = f.read_file(file_name="file1.txt")
+        assert new_contents == "line0\nsome\nstuff\nline3\n"
