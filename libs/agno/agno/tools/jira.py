@@ -15,34 +15,35 @@ class JiraTools(Toolkit):
     def __init__(
         self,
         server_url: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        token: Optional[str] = None,
         enable_get_issue: bool = True,
         enable_create_issue: bool = True,
         enable_search_issues: bool = True,
         enable_add_comment: bool = True,
+        basic_auth: Optional[tuple[str, str]] = None,
+        oauth: Optional[dict[str, Any]] = None,
+        token_auth: Optional[str] = None,
         all: bool = False,
+        options: dict[str, Any] = None,
         **kwargs,
     ):
         self.server_url = server_url or getenv("JIRA_SERVER_URL")
-        self.username = username or getenv("JIRA_USERNAME")
-        self.password = password or getenv("JIRA_PASSWORD")
-        self.token = token or getenv("JIRA_TOKEN")
-
         if not self.server_url:
             raise ValueError("JIRA server URL not provided.")
 
-        # Initialize JIRA client
-        if self.token and self.username:
-            auth = (self.username, self.token)
-        elif self.username and self.password:
-            auth = (self.username, self.password)
-        else:
-            auth = None
+        # Initialize JIRA client with the good authentification method
+        args_methods = sum(x is not None for x in [basic_auth, oauth, token_auth])
+        if args_methods > 1:
+            raise ValueError("JIRA cannot have multiple authentification methods")
 
-        if auth:
-            self.jira = JIRA(server=self.server_url, basic_auth=cast(tuple[str, str], auth))
+        if options:
+            options = {}
+
+        if basic_auth:
+            self.jira = JIRA(server=self.server_url, basic_auth=basic_auth, options=options)
+        elif oauth:
+            self.jira = JIRA(server=self.server_url, oauth=oauth, options=options)
+        elif token_auth:
+            self.jira = JIRA(server=self.server_url, token_auth=token_auth, options=options)
         else:
             self.jira = JIRA(server=self.server_url)
 
@@ -82,7 +83,9 @@ class JiraTools(Toolkit):
             logger.error(f"Error retrieving issue {issue_key}: {e}")
             return json.dumps({"error": str(e)})
 
-    def create_issue(self, project_key: str, summary: str, description: str, issuetype: str = "Task") -> str:
+    def create_issue(
+        self, project_key: str, summary: str, description: str, issuetype: str = "Task"
+    ) -> str:
         """
         Creates a new issue in Jira.
 
@@ -124,7 +127,9 @@ class JiraTools(Toolkit):
                     "key": issue.key,
                     "summary": issue.fields.summary,
                     "status": issue.fields.status.name,
-                    "assignee": issue.fields.assignee.displayName if issue.fields.assignee else "Unassigned",
+                    "assignee": (
+                        issue.fields.assignee.displayName if issue.fields.assignee else "Unassigned"
+                    ),
                 }
                 results.append(issue_details)
             log_debug(f"Found {len(results)} issues for JQL '{jql_str}'")
