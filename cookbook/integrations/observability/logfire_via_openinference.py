@@ -5,12 +5,11 @@ Sign up to Logfire at https://logfire.dev
 
 1. Install dependencies: pip install openai langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
 2. Either self-host or sign up for an account at https://logfire.dev
-3. Set your Langfuse API key as an environment variables:
+3. Set your Logfire API key as an environment variables:
   - export LOGFIRE_WRITE_TOKEN=<your-key>
 """
 
 import asyncio
-import base64
 import os
 
 from agno.agent import Agent
