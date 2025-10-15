@@ -7,7 +7,6 @@ Tests the stringify_input_content and get_run_input utility functions.
 import json
 
 import pytest
-from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.os.utils import get_run_input, stringify_input_content
