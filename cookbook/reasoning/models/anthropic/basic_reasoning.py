@@ -8,8 +8,6 @@ Requirements:
 Environment:
     export ANTHROPIC_API_KEY="sk-ant-..."
 
-Usage:
-    python cookbook/reasoning/models/anthropic/basic_reasoning.py
 
 What to expect:
     - Claude will use extended thinking to solve the problem
