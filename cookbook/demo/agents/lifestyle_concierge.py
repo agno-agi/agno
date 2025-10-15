@@ -33,12 +33,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 from pydantic import BaseModel, Field
 
-# METRICS: Import automatic metrics display hook
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.metrics_display import display_metrics_post_hook
-
 # ============================================================================
 # Database Configuration
 # ============================================================================
@@ -343,8 +337,6 @@ lifestyle_concierge = Agent(
         PIIDetectionGuardrail(),  # Catch sensitive personal information
         PromptInjectionGuardrail(),  # Prevent prompt injection attacks
     ],
-    # METRICS: Automatic metrics display in console
-    post_hooks=[display_metrics_post_hook],
     # MEMORY: Remember user preferences and past conversations
     enable_user_memories=True,
     enable_session_summaries=True,
@@ -355,52 +347,3 @@ lifestyle_concierge = Agent(
     # For demo purposes, it will intelligently structure responses
     markdown=True,
 )
-
-
-# ============================================================================
-# Usage Examples
-# ============================================================================
-
-if __name__ == "__main__":
-    print("\n" + "=" * 80)
-    print("🤖 Lifestyle Concierge Demo")
-    print("=" * 80)
-
-    # Example 1: Financial Advice
-    print("\n💰 Example 1: Financial Analysis")
-    print("-" * 80)
-    lifestyle_concierge.print_response(
-        "I have $10,000 to invest. What's the current state of AAPL and TSLA? Should I invest in them?",
-        stream=True,
-    )
-
-    # Example 2: Shopping Recommendation
-    print("\n\n🛍️  Example 2: Product Recommendation")
-    print("-" * 80)
-    lifestyle_concierge.print_response(
-        "I need a new laptop for software development, budget around $1500. What do you recommend?",
-        stream=True,
-    )
-
-    # Example 3: Travel Planning
-    print("\n\n✈️  Example 3: Travel Planning")
-    print("-" * 80)
-    lifestyle_concierge.print_response(
-        "Plan a 5-day trip to Tokyo for me. Budget is $3000. I love food and technology.",
-        stream=True,
-    )
-
-    # Example 4: Test PII Guardrail
-    print("\n\n🛡️  Example 4: PII Detection (should be blocked)")
-    print("-" * 80)
-    try:
-        lifestyle_concierge.print_response(
-            "My email is john.doe@example.com and SSN is 123-45-6789. Help me invest.",
-            stream=True,
-        )
-    except Exception as e:
-        print(f"✅ Guardrail blocked request: {e}")
-
-    print("\n" + "=" * 80)
-    print("✨ Demo Complete!")
-    print("=" * 80)

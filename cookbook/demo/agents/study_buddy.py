@@ -35,12 +35,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 from pydantic import BaseModel, Field
 
-# METRICS: Import automatic metrics display hook
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.metrics_display import display_metrics_post_hook
-
 # ============================================================================
 # Database Configuration
 # ============================================================================
@@ -255,7 +249,6 @@ study_buddy = Agent(
     ],
     db=db,
     pre_hooks=[validate_education_query],  # INPUT VALIDATION HOOK
-    post_hooks=[display_metrics_post_hook],  # METRICS: Automatic metrics display
     description=dedent("""\
         Comprehensive AI knowledge expert with advanced learning capabilities.
 
