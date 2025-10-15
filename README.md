@@ -19,7 +19,7 @@
 
 ## What is Agno?
 
-Agno is an incredibly fast multi-agent framework, runtime and UI.
+Agno is the multi-agent framework, runtime and UI built for speed.
 
 Use it to build multi-agent systems with memory, knowledge, human in the loop and MCP support. You can orchestrate agents as multi-agent teams (more autonomy) or step-based agentic workflows (more control).
 
@@ -66,7 +66,7 @@ AgentOS is a high-performance runtime for multi-agent systems. Key features incl
 
 3. **Private by design**: AgentOS runs entirely in your cloud, ensuring complete data privacy. No data ever leaves your system. This is ideal for security-conscious enterprises.
 
-Here's how the [AgentOS UI](https://os.agno.com) looks like:
+Here's what the [AgentOS UI](https://os.agno.com) looks like:
 
 https://github.com/user-attachments/assets/feb23db8-15cc-4e88-be7c-01a21a03ebf6
 

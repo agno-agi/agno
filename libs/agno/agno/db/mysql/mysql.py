@@ -1654,9 +1654,9 @@ class MySQLDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                    result = sess.execute(stmt).fetchall()
-                    if not result:
-                        return [], 0
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], 0
 
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 

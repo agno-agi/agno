@@ -247,6 +247,10 @@ class Agent:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If True, store tool results in run output
+    store_tool_results: bool = True
+    # If True, store history messages in run output
+    store_history_messages: bool = True
 
     # --- System message settings ---
     # Provide the system message as a string or function
@@ -384,6 +388,8 @@ class Agent:
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
         store_media: bool = True,
+        store_tool_results: bool = True,
+        store_history_messages: bool = True,
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
@@ -484,6 +490,8 @@ class Agent:
             )
 
         self.store_media = store_media
+        self.store_tool_results = store_tool_results
+        self.store_history_messages = store_history_messages
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
@@ -887,8 +895,6 @@ class Agent:
 
         if self.store_media:
             self._store_media(run_response, model_response)
-        else:
-            self._scrub_media_from_run_output(run_response)
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -934,7 +940,11 @@ class Agent:
         # Consume the response iterator to ensure the memory is updated before the run is completed
         deque(response_iterator, maxlen=0)
 
-        # 11. Save session to memory
+        # 11. Scrub the stored run based on storage flags
+        if self._scrub_run_output_for_storage(run_response):
+            session.upsert_run(run=run_response)
+
+        # 12. Save session to memory
         self.save_session(session=session)
 
         # Log Agent Telemetry
@@ -1137,7 +1147,11 @@ class Agent:
                 create_run_completed_event(from_run_response=run_response), run_response
             )
 
-            # 10. Save session to storage
+            # 10. Scrub the stored run based on storage flags
+            if self._scrub_run_output_for_storage(run_response):
+                session.upsert_run(run=run_response)
+
+            # 11. Save session to storage
             self.save_session(session=session)
 
             if stream_intermediate_steps:
@@ -1489,7 +1503,8 @@ class Agent:
         10. Execute post-hooks
         11. Add RunOutput to Agent Session
         12. Update Agent Memory
-        13. Save session to storage
+        13. Scrub the stored run if needed
+        14. Save session to storage
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -1594,8 +1609,6 @@ class Agent:
             # Optional: Store media
             if self.store_media:
                 self._store_media(run_response, model_response)
-            else:
-                self._scrub_media_from_run_output(run_response)
 
             # Break out of the run function if a tool call is paused
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -1645,7 +1658,11 @@ class Agent:
             ):
                 pass
 
-            # 13. Save session to storage
+            # 13. Scrub the stored run based on storage flags
+            if self._scrub_run_output_for_storage(run_response):
+                agent_session.upsert_run(run=run_response)
+
+            # 14. Save session to storage
             if self._has_async_db():
                 await self.asave_session(session=agent_session)
             else:
@@ -1889,7 +1906,11 @@ class Agent:
                 create_run_completed_event(from_run_response=run_response), run_response
             )
 
-            # 13. Save session to storage
+            # 13. Scrub the stored run based on storage flags
+            if self._scrub_run_output_for_storage(run_response):
+                session.upsert_run(run=run_response)
+
+            # 14. Save session to storage
             if self._has_async_db():
                 await self.asave_session(session=agent_session)
             else:
@@ -8773,6 +8794,56 @@ class Agent:
         message.audio_output = None
         message.image_output = None
         message.video_output = None
+
+    def _scrub_tool_results_from_run_output(self, run_response: RunOutput) -> None:
+        """
+        Remove all tool-related data from RunOutput when store_tool_results=False.
+        This includes tool calls, tool results, and tool-related message fields.
+        """
+        # Remove tool results (messages with role="tool")
+        if run_response.messages:
+            run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
+            # Also scrub tool-related fields from remaining messages
+            for message in run_response.messages:
+                self._scrub_tool_data_from_message(message)
+
+    def _scrub_tool_data_from_message(self, message: Message) -> None:
+        """Remove all tool-related data from a Message object."""
+        message.tool_calls = None
+        message.tool_call_id = None
+        message.tool_name = None
+        message.tool_args = None
+        message.tool_call_error = None
+
+    def _scrub_history_messages_from_run_output(self, run_response: RunOutput) -> None:
+        """
+        Remove all history messages from RunOutput when store_history_messages=False.
+        This removes messages that were loaded from the agent's memory.
+        """
+        # Remove messages with from_history=True
+        if run_response.messages:
+            run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
+
+    def _scrub_run_output_for_storage(self, run_response: RunOutput) -> bool:
+        """
+        Scrub run output based on storage flags before persisting to database.
+        Returns True if any scrubbing was done, False otherwise.
+        """
+        scrubbed = False
+
+        if not self.store_media:
+            self._scrub_media_from_run_output(run_response)
+            scrubbed = True
+
+        if not self.store_tool_results:
+            self._scrub_tool_results_from_run_output(run_response)
+            scrubbed = True
+
+        if not self.store_history_messages:
+            self._scrub_history_messages_from_run_output(run_response)
+            scrubbed = True
+
+        return scrubbed
 
     def _validate_media_object_id(
         self,
