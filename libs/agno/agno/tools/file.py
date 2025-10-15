@@ -24,10 +24,8 @@ class FileTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        if base_dir is None:
-            self.base_dir: Path = Path.cwd()
-        else:
-            self.base_dir: Path = base_dir.resolve()
+        self.base_dir: Path = base_dir or Path.cwd()
+        self.base_dir = self.base_dir.resolve()
 
         tools: List[Any] = []
         self.max_file_length = max_file_length
