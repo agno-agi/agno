@@ -107,6 +107,9 @@ class SurrealDb(VectorDb):
         m: int = 12,
         search_ef: int = 40,
         embedder: Optional[Embedder] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
     ):
         """Initialize SurrealDB connection.
 
@@ -122,6 +125,17 @@ class SurrealDb(VectorDb):
             embedder: Embedder instance for creating embeddings (default: OpenAIEmbedder)
 
         """
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            client_info = str(client) if client else str(async_client) if async_client else "default"
+            seed = f"{client_info}#{collection}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         # Embedder for embedding the document contents
         if embedder is None:
             from agno.knowledge.embedder.openai import OpenAIEmbedder
@@ -131,7 +145,6 @@ class SurrealDb(VectorDb):
         self.embedder: Embedder = embedder
         self.dimensions = self.embedder.dimensions
         self.collection = collection
-
         # Convert Distance enum to SurrealDB distance type
         self.distance = {Distance.cosine: "COSINE", Distance.l2: "EUCLIDEAN", Distance.max_inner_product: "DOT"}[
             distance
@@ -671,3 +684,7 @@ class SurrealDb(VectorDb):
         except Exception as e:
             log_error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # SurrealDb doesn't use SearchType enum

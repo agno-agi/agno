@@ -33,4 +33,4 @@ if __name__ == "__main__":
         --data-urlencode 'message=Write me a 5 line story.' \
         --data-urlencode 'dependencies={"robot_name": "Anna"}'
     """
-    agent_os.serve(app="dependencies_to_agent:app", reload=True)
+    agent_os.serve(app="pass_dependencies_to_agent:app", reload=True)
