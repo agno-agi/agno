@@ -628,6 +628,13 @@ class TeamRunOutput:
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
 
+        # Remove fields that are not part of TeamRunOutput but might be in the data
+        # (e.g., user_id, workflow_id, agent_id from Agent/Workflow runs stored in the same session)
+        data.pop("user_id", None)
+        data.pop("workflow_id", None)
+        data.pop("agent_id", None)
+        data.pop("agent_name", None)
+
         return cls(
             messages=messages,
             metrics=metrics,

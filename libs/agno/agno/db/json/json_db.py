@@ -200,15 +200,24 @@ class JsonDb(BaseDb):
                     if session_data.get("session_type") != session_type_value:
                         continue
 
+                    log_debug(f"JsonDb.get_session: Found session {session_id}, calling hydrate_session")
                     session = hydrate_session(session_data)
+                    runs = session.get('runs')
+                    runs_count = len(runs) if runs is not None else 0
+                    log_debug(f"JsonDb.get_session: After hydrate_session, runs type: {type(runs)}, count: {runs_count}")
+                    if runs and len(runs) > 0:
+                        log_debug(f"JsonDb.get_session: First run type after hydration: {type(runs[0])}")
 
                     if not deserialize:
                         return session
 
+                    log_debug(f"JsonDb.get_session: Calling {session_type}.from_dict")
                     if session_type == SessionType.AGENT:
                         return AgentSession.from_dict(session)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session)
+                        result = TeamSession.from_dict(session)
+                        log_debug(f"JsonDb.get_session: TeamSession.from_dict returned, runs count: {len(result.runs) if result and result.runs else 0}")
+                        return result
                     elif session_type == SessionType.WORKFLOW:
                         return WorkflowSession.from_dict(session)
                     else:

@@ -24,10 +24,26 @@ def hydrate_session(session: dict) -> dict:
     if session.get("summary") is not None:
         session["summary"] = SessionSummary.from_dict(session["summary"])
     if session.get("runs") is not None:
+        log_debug(f"hydrate_session: Processing {len(session['runs'])} runs for session_type={session['session_type']}")
         if session["session_type"] == SessionType.AGENT:
+            log_debug("hydrate_session: AGENT session - deserializing all as RunOutput")
             session["runs"] = [RunOutput.from_dict(run) for run in session["runs"]]
         elif session["session_type"] == SessionType.TEAM:
-            session["runs"] = [TeamRunOutput.from_dict(run) for run in session["runs"]]
+            # Team sessions can contain both Team runs and Agent runs (from member agents)
+            # Check each run individually to determine its type based on the presence of agent_id or team_id
+            log_debug("hydrate_session: TEAM session - checking each run type individually")
+            hydrated_runs = []
+            for run in session["runs"]:
+                if "agent_id" in run:
+                    # This is an Agent run (from a member agent)
+                    log_debug(f"  - Found RunOutput with agent_id={run.get('agent_id')}")
+                    hydrated_runs.append(RunOutput.from_dict(run))
+                elif "team_id" in run:
+                    # This is a Team run
+                    log_debug(f"  - Found TeamRunOutput with team_id={run.get('team_id')}")
+                    hydrated_runs.append(TeamRunOutput.from_dict(run))
+            log_debug(f"hydrate_session: Hydrated {len(hydrated_runs)} runs")
+            session["runs"] = hydrated_runs
 
     return session
 

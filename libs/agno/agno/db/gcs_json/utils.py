@@ -27,7 +27,14 @@ def hydrate_session(session: dict) -> dict:
         if session["session_type"] == SessionType.AGENT:
             session["runs"] = [RunOutput.from_dict(run) for run in session["runs"]]
         elif session["session_type"] == SessionType.TEAM:
-            session["runs"] = [TeamRunOutput.from_dict(run) for run in session["runs"]]
+            # Team sessions can contain both Team runs and Agent runs (from member agents)
+            hydrated_runs = []
+            for run in session["runs"]:
+                if "agent_id" in run:
+                    hydrated_runs.append(RunOutput.from_dict(run))
+                elif "team_id" in run:
+                    hydrated_runs.append(TeamRunOutput.from_dict(run))
+            session["runs"] = hydrated_runs
 
     return session
 

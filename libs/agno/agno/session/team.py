@@ -60,12 +60,26 @@ class TeamSession:
 
         runs = data.get("runs")
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
-        if runs is not None and isinstance(runs[0], dict):
-            for run in runs:
-                if "agent_id" in run:
-                    serialized_runs.append(RunOutput.from_dict(run))
-                elif "team_id" in run:
-                    serialized_runs.append(TeamRunOutput.from_dict(run))
+        if runs is not None:
+            log_debug(f"TeamSession.from_dict: Processing {len(runs)} runs")
+            if len(runs) > 0 and isinstance(runs[0], dict):
+                # Runs are still dictionaries, need to deserialize them
+                log_debug("TeamSession.from_dict: Runs are dicts, deserializing...")
+                for run in runs:
+                    if "agent_id" in run:
+                        log_debug(f"  - Deserializing RunOutput (agent_id: {run.get('agent_id')})")
+                        serialized_runs.append(RunOutput.from_dict(run))
+                    elif "team_id" in run:
+                        log_debug(f"  - Deserializing TeamRunOutput (team_id: {run.get('team_id')})")
+                        serialized_runs.append(TeamRunOutput.from_dict(run))
+            elif len(runs) > 0 and isinstance(runs[0], (RunOutput, TeamRunOutput)):
+                # Runs are already deserialized objects (e.g., from hydrate_session)
+                log_debug(f"TeamSession.from_dict: Runs are already objects ({type(runs[0]).__name__}), using as-is")
+                serialized_runs = runs  # type: ignore
+            else:
+                # Empty list or unknown type
+                log_debug("TeamSession.from_dict: Runs list is empty or unknown type")
+                serialized_runs = []
 
         return cls(
             session_id=data.get("session_id"),  # type: ignore

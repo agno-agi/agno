@@ -287,3 +287,109 @@ async def test_multi_user_multi_session_team(team, shared_db):
     user_3_sessions = shared_db.get_sessions(user_id=user_3_id, session_type=SessionType.TEAM)
     assert len(user_3_sessions) == 1
     assert user_3_session_1_id in [session.session_id for session in user_3_sessions]
+
+
+@pytest.mark.asyncio
+async def test_team_session_mixed_run_types_deserialization(shared_db):
+    """
+    Test for issue #4894: Verify that Team sessions with mixed run types
+    (both TeamRunOutput and RunOutput from member agents) can be correctly
+    deserialized from database storage.
+
+    This test ensures that:
+    1. Agent runs (with agent_id) and Team runs (with team_id) are both stored
+    2. Fresh reads from database correctly deserialize both types
+    3. No TypeError occurs when hydrating sessions with mixed run types
+    """
+
+    def get_test_data() -> str:
+        """Simple test function for the agent."""
+        return "Test data from agent tool"
+
+    # Create a member agent
+    member_agent = Agent(
+        name="Data Agent",
+        id="data_agent",
+        model=OpenAIChat(id="gpt-4o"),
+        tools=[get_test_data],
+        db=shared_db,
+    )
+
+    # Create team with member - using respond_directly=False to force delegation
+    team_with_delegation = Team(
+        name="Test Team",
+        id="test_team",
+        model=OpenAIChat(id="gpt-4o"),
+        members=[member_agent],
+        db=shared_db,
+        respond_directly=False,  # Force delegation to members
+        instructions=["Always delegate data requests to the Data Agent"],
+    )
+
+    user_id = "test_user@example.com"
+    session_id = "issue_4894_test_session"
+
+    # Clear any existing data
+    shared_db.clear_memories()
+
+    # Run 1: This should cause delegation to the member agent
+    response1 = await team_with_delegation.arun(
+        "Get me some test data", user_id=user_id, session_id=session_id, stream=False
+    )
+
+    assert response1.status == RunStatus.completed
+
+    # Verify session has both agent and team runs
+    session_after_first_run = team_with_delegation.get_session(session_id=session_id)
+    assert session_after_first_run is not None
+    assert session_after_first_run.runs is not None
+    assert len(session_after_first_run.runs) >= 2  # At least agent run + team run
+
+    # Check we have both types of runs
+    has_agent_run = any(hasattr(run, "agent_id") and run.agent_id is not None for run in session_after_first_run.runs)
+    has_team_run = any(hasattr(run, "team_id") and run.team_id is not None for run in session_after_first_run.runs)
+
+    assert has_agent_run, "Session should contain at least one Agent run (RunOutput)"
+    assert has_team_run, "Session should contain at least one Team run (TeamRunOutput)"
+
+    # Create a FRESH team instance to force a database read
+    # This simulates the scenario in issue #4894
+    team_fresh = Team(
+        name="Test Team Fresh",
+        id="test_team_fresh",
+        model=OpenAIChat(id="gpt-4o"),
+        members=[member_agent],
+        db=shared_db,
+        cache_session=False,  # Disable caching to force DB reads
+    )
+
+    # Run 2: This should read the existing session from DB and deserialize correctly
+    # Before fix: This would fail with "TeamRunOutput.__init__() got an unexpected keyword argument 'agent_id'"
+    response2 = await team_fresh.arun(
+        "Get me more test data", user_id=user_id, session_id=session_id, stream=False
+    )
+
+    assert response2.status == RunStatus.completed
+
+    # Verify the session was correctly deserialized with mixed run types
+    session_after_fresh_read = team_fresh.get_session(session_id=session_id)
+    assert session_after_fresh_read is not None
+    assert session_after_fresh_read.runs is not None
+
+    # Verify both run types are present and correctly typed
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+
+    agent_runs = [run for run in session_after_fresh_read.runs if isinstance(run, RunOutput)]
+    team_runs = [run for run in session_after_fresh_read.runs if isinstance(run, TeamRunOutput)]
+
+    assert len(agent_runs) > 0, "Should have deserialized at least one RunOutput (agent run)"
+    assert len(team_runs) > 0, "Should have deserialized at least one TeamRunOutput (team run)"
+
+    # Verify the agent runs have agent_id
+    for agent_run in agent_runs:
+        assert agent_run.agent_id is not None, "Agent runs should have agent_id"
+
+    # Verify the team runs have team_id
+    for team_run in team_runs:
+        assert team_run.team_id is not None, "Team runs should have team_id"
