@@ -2892,6 +2892,8 @@ class Workflow:
         if session is None:
             raise Exception("Session not found")
 
+        return self._get_session_metrics(session=session)
+
     def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
         """Get the session metrics for the given session ID and user ID."""
         session_id = session_id or self.session_id

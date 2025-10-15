@@ -6201,6 +6201,7 @@ class Team:
             if self.db is None:
                 return "Previous session messages not available"
 
+            self.db = cast(BaseDb, self.db)
             selected_sessions = self.db.get_sessions(
                 session_type=SessionType.TEAM,
                 limit=num_history_sessions,
@@ -6240,7 +6241,62 @@ class Team:
 
             return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
 
-        return get_previous_session_messages
+        async def aget_previous_session_messages() -> str:
+            """Use this function to retrieve messages from previous chat sessions.
+            USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+
+            Returns:
+                str: JSON formatted list of message pairs from previous sessions
+            """
+            import json
+
+            if self.db is None:
+                return "Previous session messages not available"
+
+            self.db = cast(AsyncBaseDb, self.db)
+            selected_sessions = await self.db.get_sessions(
+                session_type=SessionType.TEAM,
+                limit=num_history_sessions,
+                user_id=user_id,
+                sort_by="created_at",
+                sort_order="desc",
+            )
+
+            all_messages = []
+            seen_message_pairs = set()
+
+            for session in selected_sessions:
+                if isinstance(session, TeamSession) and session.runs:
+                    message_count = 0
+                    for run in session.runs:
+                        messages = run.messages
+                        if messages is not None:
+                            for i in range(0, len(messages) - 1, 2):
+                                if i + 1 < len(messages):
+                                    try:
+                                        user_msg = messages[i]
+                                        assistant_msg = messages[i + 1]
+                                        user_content = user_msg.content
+                                        assistant_content = assistant_msg.content
+                                        if user_content is None or assistant_content is None:
+                                            continue  # Skip this pair if either message has no content
+
+                                        msg_pair_id = f"{user_content}:{assistant_content}"
+                                        if msg_pair_id not in seen_message_pairs:
+                                            seen_message_pairs.add(msg_pair_id)
+                                            all_messages.append(Message.model_validate(user_msg))
+                                            all_messages.append(Message.model_validate(assistant_msg))
+                                            message_count += 1
+                                    except Exception as e:
+                                        log_warning(f"Error processing message pair: {e}")
+                                        continue
+
+            return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
+
+        if self._has_async_db():
+            return aget_previous_session_messages
+        else:
+            return get_previous_session_messages
 
     def _get_history_for_member_agent(self, session: TeamSession, member_agent: Union[Agent, "Team"]) -> List[Message]:
         from copy import deepcopy
