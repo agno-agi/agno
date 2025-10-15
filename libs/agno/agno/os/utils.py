@@ -71,7 +71,7 @@ def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> st
         # Check the input field directly
         if run_dict.get("input") is not None:
             input_value = run_dict.get("input")
-return str(input_value)
+            return str(input_value)
         
         # Check the step executor runs for fallback
         step_executor_runs = run_dict.get("step_executor_runs", [])
