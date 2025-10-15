@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from datetime import date, datetime, timezone
 from textwrap import dedent
 from typing import List, Literal, Optional, Sequence
@@ -44,6 +45,8 @@ def surrealize_dates(record: dict) -> dict:
             copy[key] = datetime.combine(value, datetime.min.time()).replace(tzinfo=timezone.utc)
         elif key in ["created_at", "updated_at"] and isinstance(value, (int, float)):
             copy[key] = datetime.fromtimestamp(value).replace(tzinfo=timezone.utc)
+        elif isinstance(value, datetime):
+            copy[key] = value.replace(tzinfo=timezone.utc)
     return copy
 
 
@@ -57,9 +60,11 @@ def desurrealize_dates(record: dict) -> dict:
 
 def serialize_session(session: Session, table_names: dict[TableType, str]) -> dict:
     _dict = session.to_dict()
+
     if session.session_id is not None:
         _dict["id"] = RecordID(table_names["sessions"], session.session_id)
         del _dict["session_id"]
+
     if isinstance(session, AgentSession):
         _dict["agent"] = RecordID(table_names["agents"], session.agent_id)
         del _dict["agent_id"]
@@ -149,13 +154,17 @@ def deserialize_user_memories(memories_raw: Sequence[dict]) -> List[UserMemory]:
 
 
 def serialize_user_memory(memory: UserMemory, memory_table_name: str, user_table_name: str) -> dict:
-    dict_ = memory.to_dict()
+    dict_ = asdict(memory)
     if memory.memory_id is not None:
         dict_["id"] = RecordID(memory_table_name, memory.memory_id)
         del dict_["memory_id"]
     if memory.user_id is not None:
         dict_["user"] = RecordID(user_table_name, memory.user_id)
         del dict_["user_id"]
+
+    # surrealize dates
+    dict_ = surrealize_dates(dict_)
+
     return dict_
 
 
@@ -169,9 +178,13 @@ def deserialize_knowledge_row(knowledge_row_raw: dict) -> KnowledgeRow:
 
 
 def serialize_knowledge_row(knowledge_row: KnowledgeRow, knowledge_table_name: str) -> dict:
-    dict_ = knowledge_row.to_dict()
+    dict_ = knowledge_row.model_dump()
     if knowledge_row.id is not None:
         dict_["id"] = RecordID(knowledge_table_name, knowledge_row.id)
+
+    # surrealize dates
+    dict_ = surrealize_dates(dict_)
+
     return dict_
 
 

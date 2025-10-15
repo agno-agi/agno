@@ -16,6 +16,8 @@
 # pytest libs/agno/tests/integration/db/surrealdb/test_surrealdb_knowledge.py
 # ```
 
+from datetime import datetime
+
 import pytest
 
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -42,8 +44,10 @@ def db() -> SurrealDb:
 
 def test_crud_knowledge(db: SurrealDb):
     db.clear_knowledge()
+    now = int(datetime.now().timestamp())
+
     # upsert
-    new_kl = KnowledgeRow(name="name", description="description")
+    new_kl = KnowledgeRow(name="name", description="description", created_at=now, updated_at=now)
     upserted_knowledge = db.upsert_knowledge_content(new_kl)
     assert upserted_knowledge is not None
     assert upserted_knowledge.id is not None

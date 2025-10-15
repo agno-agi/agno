@@ -16,6 +16,8 @@
 # pytest libs/agno/tests/integration/db/surrealdb/test_surrealdb_memory.py
 # ```
 
+from datetime import datetime
+
 import pytest
 
 from agno.db.schemas.memory import UserMemory
@@ -41,8 +43,12 @@ def db() -> SurrealDb:
 
 
 def test_crud_memory(db: SurrealDb):
+    now = datetime.now()
     new_mem = UserMemory(
-        "Gavilar was Dalinar's brother and King of Alethkar", user_id="1", topics=["cosmere", "stormlight"]
+        "Gavilar was Dalinar's brother and King of Alethkar",
+        user_id="1",
+        topics=["cosmere", "stormlight"],
+        updated_at=now,
     )
     new_mem_2 = UserMemory("Reen was Vin's brother", user_id="2", topics=["cosmere", "mistborn"])
     new_mem_3 = UserMemory("Zeen was Spensa's father", user_id="2", topics=["cosmere", "skyward"])
