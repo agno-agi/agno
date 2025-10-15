@@ -119,15 +119,14 @@ class TravelItinerary(BaseModel):
 # These tools allow the agent to manage persistent session state
 
 
-@tool
-def add_to_shopping_cart(agent: Agent, item_name: str, price: float, quantity: int = 1) -> str:
+def add_to_shopping_cart(session_state, item_name: str, price: float, quantity: int = 1) -> str:
     """
     Add an item to the shopping cart.
 
     This demonstrates AGENT STATE management - state persists across sessions.
 
     Args:
-        agent: The agent instance (automatically provided)
+        session_state: The session state (automatically injected by Agno)
         item_name: Name of the item to add
         price: Price of the item
         quantity: Quantity to add (default: 1)
@@ -135,12 +134,9 @@ def add_to_shopping_cart(agent: Agent, item_name: str, price: float, quantity: i
     Returns:
         Confirmation message with cart update
     """
-    # Get current cart from session state
-    if agent.session_state is None:
-        agent.session_state = {}
-
-    if "shopping_cart" not in agent.session_state:
-        agent.session_state["shopping_cart"] = []
+    # Initialize cart if needed
+    if "shopping_cart" not in session_state:
+        session_state["shopping_cart"] = []
 
     # Add item to cart
     cart_item = {
@@ -149,32 +145,31 @@ def add_to_shopping_cart(agent: Agent, item_name: str, price: float, quantity: i
         "quantity": quantity,
         "subtotal": price * quantity,
     }
-    agent.session_state["shopping_cart"].append(cart_item)
+    session_state["shopping_cart"].append(cart_item)
 
     # Calculate totals
-    total_items = sum(item["quantity"] for item in agent.session_state["shopping_cart"])
-    total_cost = sum(item["subtotal"] for item in agent.session_state["shopping_cart"])
+    total_items = sum(item["quantity"] for item in session_state["shopping_cart"])
+    total_cost = sum(item["subtotal"] for item in session_state["shopping_cart"])
 
     return f"✅ Added {quantity}x {item_name} (${price:.2f} each) to cart.\nCart now has {total_items} items totaling ${total_cost:.2f}"
 
 
-@tool
-def view_shopping_cart(agent: Agent) -> str:
+def view_shopping_cart(session_state) -> str:
     """
     View current shopping cart contents.
 
     Demonstrates reading from AGENT STATE.
 
     Args:
-        agent: The agent instance (automatically provided)
+        session_state: The session state (automatically injected by Agno)
 
     Returns:
         Formatted cart contents with totals
     """
-    if agent.session_state is None or "shopping_cart" not in agent.session_state:
+    if "shopping_cart" not in session_state:
         return "🛒 Your shopping cart is empty."
 
-    cart = agent.session_state["shopping_cart"]
+    cart = session_state["shopping_cart"]
     if not cart:
         return "🛒 Your shopping cart is empty."
 
@@ -192,35 +187,30 @@ def view_shopping_cart(agent: Agent) -> str:
     return cart_display
 
 
-@tool
-def clear_shopping_cart(agent: Agent) -> str:
+def clear_shopping_cart(session_state) -> str:
     """
     Clear all items from the shopping cart.
 
     Demonstrates updating AGENT STATE.
 
     Args:
-        agent: The agent instance (automatically provided)
+        session_state: The session state (automatically injected by Agno)
 
     Returns:
         Confirmation message
     """
-    if agent.session_state is None:
-        agent.session_state = {}
-
-    agent.session_state["shopping_cart"] = []
+    session_state["shopping_cart"] = []
     return "✅ Shopping cart cleared successfully."
 
 
-@tool
-def save_travel_preferences(agent: Agent, destination: str, budget: float, interests: str) -> str:
+def save_travel_preferences(session_state, destination: str, budget: float, interests: str) -> str:
     """
     Save travel preferences for future trip planning.
 
     Demonstrates AGENT STATE for travel domain.
 
     Args:
-        agent: The agent instance (automatically provided)
+        session_state: The session state (automatically injected by Agno)
         destination: Desired travel destination
         budget: Budget for the trip
         interests: User interests (e.g., "food, culture, tech")
@@ -228,10 +218,7 @@ def save_travel_preferences(agent: Agent, destination: str, budget: float, inter
     Returns:
         Confirmation message
     """
-    if agent.session_state is None:
-        agent.session_state = {}
-
-    agent.session_state["travel_preferences"] = {
+    session_state["travel_preferences"] = {
         "destination": destination,
         "budget": budget,
         "interests": interests.split(","),
@@ -240,23 +227,22 @@ def save_travel_preferences(agent: Agent, destination: str, budget: float, inter
     return f"✅ Saved travel preferences:\n- Destination: {destination}\n- Budget: ${budget:.2f}\n- Interests: {interests}"
 
 
-@tool
-def view_travel_preferences(agent: Agent) -> str:
+def view_travel_preferences(session_state) -> str:
     """
     View saved travel preferences.
 
     Demonstrates reading from AGENT STATE.
 
     Args:
-        agent: The agent instance (automatically provided)
+        session_state: The session state (automatically injected by Agno)
 
     Returns:
         Formatted travel preferences
     """
-    if agent.session_state is None or "travel_preferences" not in agent.session_state:
+    if "travel_preferences" not in session_state:
         return "No travel preferences saved yet. Use save_travel_preferences to set them."
 
-    prefs = agent.session_state["travel_preferences"]
+    prefs = session_state["travel_preferences"]
 
     # Check if preferences are empty or missing required fields
     if not prefs or not all(key in prefs for key in ["destination", "budget", "interests"]):
