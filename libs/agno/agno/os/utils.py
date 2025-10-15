@@ -140,26 +140,6 @@ def get_session_name(session: Dict[str, Any]) -> str:
     return ""
 
 
-def extract_output_media(
-    run_dict: Dict[str, Any], media_type: Literal["images", "videos", "audio", "files", "response_audio"] = "images"
-):
-    media = []
-    for message in run_dict.get("messages", []):
-        # For response_audio, check both response_audio and audio_output
-        if message.get("generated") is True or message.get("role") == "assistant":
-            if media_type == "response_audio":
-                value = message.get("response_audio") or message.get("audio_output")
-            else:
-                value = message.get(media_type)
-
-            if value is None:
-                continue
-            if isinstance(value, list):
-                media.extend(value)
-            else:
-                # If media is not list and is string or dict, then append it to the media list
-                media.append(value)
-    return media
 
 
 def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -170,14 +150,12 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
         "files": [],
     }
 
-    for message in run_dict.get("messages", []):
-        if message.get("role") == "user":
-            if message.get("generated") is True:
-                continue
-            input_media["images"].extend(message.get("images", []))
-            input_media["videos"].extend(message.get("videos", []))
-            input_media["audio"].extend(message.get("audio", []))
-            input_media["files"].extend(message.get("files", []))
+    input = run_dict.get("input", [])
+    input_media["images"].extend(input.get("images", []))
+    input_media["videos"].extend(input.get("videos", []))
+    input_media["audio"].extend(input.get("audio", []))
+    input_media["files"].extend(input.get("files", []))
+    
     return input_media
 
 
