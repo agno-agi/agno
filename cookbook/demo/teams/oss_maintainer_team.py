@@ -35,6 +35,7 @@ Usage Examples:
 - "Plan release v2.2.0 with breaking changes and security fixes"
 """
 
+import asyncio
 from os import getenv
 from textwrap import dedent
 
@@ -60,10 +61,13 @@ project_knowledge = Knowledge(
     vector_db=LanceDb(uri="tmp/oss_maintainer_kb", table_name="project_docs")
 )
 
-# Load project documentation (in production, load actual project docs)
-project_knowledge.add_contents(
-    documents=[
-        """
+
+# Async function to load project documentation
+async def _load_project_knowledge():
+    """Load project documentation into knowledge base asynchronously."""
+    await project_knowledge.add_contents_async(
+        documents=[
+            """
 # Agno Project Documentation
 
 ## Architecture
@@ -100,7 +104,7 @@ Agno is built on a modular architecture with three core components:
 - Breaking changes need documentation updates
 - Large PRs should be broken into smaller chunks
 """,
-        """
+            """
 # Common Security Vulnerabilities
 
 ## SQL Injection
@@ -129,8 +133,12 @@ Agno is built on a modular architecture with three core components:
 - Use tools like Safety, Snyk for vulnerability scanning
 - Pin dependency versions for reproducibility
 """,
-    ]
-)
+        ]
+    )
+
+
+# Load knowledge base at module initialization
+asyncio.run(_load_project_knowledge())
 # *******************************
 
 
