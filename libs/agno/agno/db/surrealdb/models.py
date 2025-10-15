@@ -217,13 +217,13 @@ def get_schema(table_type: TableType, table_name: str) -> str:
     elif table_type == "knowledge":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now() READONLY;
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     elif table_type == "sessions":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now() READONLY;
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     else:

@@ -26,8 +26,9 @@ def _query_aux(
         response = client.query(query, vars)
         logger.debug(f"-- Query: {query} with {vars}\n-- Response: {response}")
     except Exception as e:
-        logger.error(f"!! Query execution error: {query} with {vars}, Error: {e}")
-        raise e
+        msg = f"!! Query execution error: {query} with {vars}, Error: {e}"
+        logger.error(msg)
+        raise RuntimeError(msg)
     return response
 
 
