@@ -101,7 +101,10 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
 
     encoder = EventEncoder()
 
-    @router.post("/agui")
+    @router.post(
+        "/agui",
+        name="run_agent",
+    )
     async def run_agent_agui(run_input: RunAgentInput):
         async def event_generator():
             if agent:
