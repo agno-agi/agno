@@ -516,8 +516,6 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
 
     if isinstance(input_content, str):
         return input_content
-    elif isinstance(input_content, BaseModel):
-        return input_content.model_dump_json(exclude_none=True)
     elif isinstance(input_content, Message):
         return json.dumps(input_content.to_dict())
     elif isinstance(input_content, dict):

@@ -13,33 +13,12 @@ from agno.models.message import Message
 from agno.os.utils import get_run_input, stringify_input_content
 
 
-class SampleModel(BaseModel):
-    """Sample Pydantic model for testing."""
-
-    name: str
-    age: int
-    active: bool = True
-
-
 def test_stringify_string_input():
     """Test that string inputs are returned as-is."""
     input_str = "generate an image of dog flying"
     result = stringify_input_content(input_str)
     assert result == input_str
     assert isinstance(result, str)
-
-
-def test_stringify_basemodel_input():
-    """Test that BaseModel inputs are serialized to JSON."""
-    model = SampleModel(name="John", age=30)
-    result = stringify_input_content(model)
-
-    # Should be valid JSON
-    parsed = json.loads(result)
-    assert parsed["name"] == "John"
-    assert parsed["age"] == 30
-    assert parsed["active"] is True
-
 
 def test_stringify_message_object_input():
     """Test that Message objects are serialized correctly."""
