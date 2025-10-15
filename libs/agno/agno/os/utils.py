@@ -510,10 +510,10 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         collect_mcp_tools_from_workflow(step, mcp_tools)
 
 
-def input_content_string(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:
-    """Convert input_content to a string representation.
+def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:
+    """Convert any given input_content into its string representation.
     
-    Handles both serialized (dict) and live (object) formats.
+    This handles both serialized (dict) and live (object) input_content formats.
     """
     import json
 
