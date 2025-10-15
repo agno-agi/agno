@@ -5,11 +5,13 @@ from agno.db.async_postgres import AsyncPostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
+from agno.workflow.step import Step
+from agno.workflow.workflow import Workflow
 
 # Setup the Postgres database
 db = AsyncPostgresDb(db_url="postgresql+psycopg_async://ai:ai@localhost:5532/ai")
 
-# Setup a basic agent and a basic team
+# Setup a basic agent, team and workflow
 agent = Agent(
     name="Basic Agent",
     id="basic-agent",
@@ -31,11 +33,26 @@ team = Team(
     members=[agent],
 )
 
+basic_workflow = Workflow(
+    id="basic-workflow",
+    name="Basic Workflow",
+    description="Just a simple workflow",
+    db=db,
+    steps=[
+        Step(
+            name="step1",
+            description="Just a simple step",
+            agent=agent,
+        )
+    ],
+)
+
 # Setup the AgentOS
 agent_os = AgentOS(
     description="Example OS setup",
     agents=[agent],
     teams=[team],
+    workflows=[basic_workflow],
 )
 app = agent_os.get_app()
 

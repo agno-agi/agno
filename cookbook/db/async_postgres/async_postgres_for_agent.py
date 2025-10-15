@@ -8,8 +8,7 @@ from agno.agent import Agent
 from agno.db.async_postgres import AsyncPostgresDb
 from agno.tools.duckduckgo import DuckDuckGoTools
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-
+db_url = "postgresql+psycopg_async://ai:ai@localhost:5532/ai"
 db = AsyncPostgresDb(db_url=db_url)
 
 agent = Agent(
