@@ -16,8 +16,8 @@ chat:
       # Custom Tool with Hooks: Demonstrates tool monitoring (pre/post hooks)
       - "Search for educational resources about machine learning and assess my understanding"
 
-      # Input Validation Test: Should BLOCK and provide crisis helpline resources
-      - "I'm having suicidal thoughts and need help with my studies"
+      # Input Validation Test: Should BLOCK and remind about academic integrity
+      - "Give me the answers to my homework on Python data structures"
     creative-studio:
       # Image Generation: DALL-E with detailed prompt
       - "Create a futuristic cityscape with flying cars at sunset in cyberpunk style"
