@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.1.4"
+version = "2.1.5"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -128,6 +128,7 @@ neo4j = ["neo4j"]
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary"]
+async_postgres = ["asyncpg"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
@@ -247,6 +248,7 @@ tools = [
 storage = [
   "agno[sql]",
   "agno[postgres]",
+  "agno[async_postgres]",
   "agno[sqlite]",
   "agno[gcs]",
   "agno[firestore]",
