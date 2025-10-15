@@ -952,12 +952,6 @@ class WorkflowRunSchema(BaseModel):
     reasoning_steps: Optional[List[dict]]
     references: Optional[List[dict]]
     reasoning_messages: Optional[List[dict]]
-    images: Optional[List[dict]]
-    videos: Optional[List[dict]]
-    audio: Optional[List[dict]]
-    files: Optional[List[dict]]
-    response_audio: Optional[List[dict]]
-    input_media: Optional[Dict[str, Any]]
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
@@ -979,12 +973,6 @@ class WorkflowRunSchema(BaseModel):
             reasoning_steps=run_response.get("reasoning_steps", []),
             references=run_response.get("references", []),
             reasoning_messages=run_response.get("reasoning_messages", []),
-            images=run_response.get("images", []),
-            videos=run_response.get("videos", []),
-            audio=run_response.get("audio", []),
-            files=run_response.get("files", []),
-            response_audio=run_response.get("response_audio", []),
-            input_media=extract_input_media(run_response),
         )
 
 
