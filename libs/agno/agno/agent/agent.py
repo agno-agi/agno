@@ -217,7 +217,7 @@ class Agent:
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
     # --- Context Management ---
-    # If None, all tool calls are kept. If set to N, only the last N tool calls are kept.
+    # If None, all tool calls are added to the context. If set to N, only the last N tool calls are added.
     max_tool_calls_in_context: Optional[int] = None
 
     # A function that acts as middleware and is called around tool calls.
