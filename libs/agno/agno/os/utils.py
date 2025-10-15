@@ -156,7 +156,7 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
     input_media: Dict[str, List[Any]] = {
         "images": [],
         "videos": [],
-        "audio": [],
+        "audios": [],
         "files": [],
     }
 
