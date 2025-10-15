@@ -51,5 +51,9 @@ reasoning_agent.print_response(task, stream=True, show_full_reasoning=True)
 console.rule("[bold cyan]Accessing Reasoning Content[/bold cyan]")
 response = reasoning_agent.run(task, stream=False)
 if response.reasoning_content:
-    console.print(f"[dim]Reasoning tokens used: {len(response.reasoning_content.split())}[/dim]")
-    console.print(f"\n[bold]First 300 chars of reasoning:[/bold]\n{response.reasoning_content[:300]}...")
+    console.print(
+        f"[dim]Reasoning tokens used: {len(response.reasoning_content.split())}[/dim]"
+    )
+    console.print(
+        f"\n[bold]First 300 chars of reasoning:[/bold]\n{response.reasoning_content[:300]}..."
+    )

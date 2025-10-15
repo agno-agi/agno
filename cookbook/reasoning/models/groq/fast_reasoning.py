@@ -19,6 +19,7 @@ What to expect:
 """
 
 import time
+
 from agno.agent import Agent
 from agno.models.groq import Groq
 from rich.console import Console

@@ -43,7 +43,9 @@ try:
     agent_qwq.print_response(task, stream=True, show_full_reasoning=True)
 except Exception as e:
     console.print(f"[red]Error: {e}[/red]")
-    console.print("[yellow]Make sure Ollama is running and qwq:32b is installed:[/yellow]")
+    console.print(
+        "[yellow]Make sure Ollama is running and qwq:32b is installed:[/yellow]"
+    )
     console.print("  ollama pull qwq:32b")
 
 # Test with DeepSeek-R1:8B (smaller, faster)
@@ -58,5 +60,7 @@ try:
     agent_deepseek.print_response(task, stream=True, show_full_reasoning=True)
 except Exception as e:
     console.print(f"[red]Error: {e}[/red]")
-    console.print("[yellow]Make sure Ollama is running and deepseek-r1:8b is installed:[/yellow]")
+    console.print(
+        "[yellow]Make sure Ollama is running and deepseek-r1:8b is installed:[/yellow]"
+    )
     console.print("  ollama pull deepseek-r1:8b")

@@ -813,6 +813,7 @@ def test_comprehensive_workflow_events_with_stream_intermediate_steps_false(shar
 # STREAM EXECUTOR EVENTS TESTS
 # ============================================================================
 
+
 def test_stream_executor_events_false_with_agent(shared_db, test_agent):
     """Test that stream_executor_events=False filters out agent internal events."""
     agent = test_agent
@@ -843,6 +844,7 @@ def test_stream_executor_events_false_with_agent(shared_db, test_agent):
     # Should NOT have agent run events
     assert "RunContentEvent" not in event_types
 
+
 def test_stream_executor_events_true_with_agent(shared_db, test_agent):
     """Test that stream_executor_events=True includes agent internal events."""
     agent = test_agent
@@ -871,10 +873,7 @@ def test_stream_executor_events_true_with_agent(shared_db, test_agent):
     assert "StepCompletedEvent" in event_types
 
     # Should also have agent internal events
-    has_agent_events = any(
-        event_type in event_types
-        for event_type in ["RunContentEvent"]
-    )
+    has_agent_events = any(event_type in event_types for event_type in ["RunContentEvent"])
     assert has_agent_events, "Expected at least some agent internal events when stream_executor_events=True"
 
 

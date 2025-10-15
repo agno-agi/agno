@@ -51,7 +51,11 @@ reasoning_agent.print_response(task, stream=True, show_full_reasoning=True)
 console.rule("[bold cyan]Accessing Reasoning Content[/bold cyan]")
 response = reasoning_agent.run(task, stream=False)
 if response.reasoning_content:
-    console.print(f"[dim]Reasoning tokens used: ~{len(response.reasoning_content.split())}[/dim]")
-    console.print(f"\n[bold]Reasoning process:[/bold]\n{response.reasoning_content[:400]}...")
+    console.print(
+        f"[dim]Reasoning tokens used: ~{len(response.reasoning_content.split())}[/dim]"
+    )
+    console.print(
+        f"\n[bold]Reasoning process:[/bold]\n{response.reasoning_content[:400]}..."
+    )
 else:
     console.print("[yellow]No reasoning content available[/yellow]")
