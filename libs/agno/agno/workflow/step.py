@@ -384,10 +384,10 @@ class Step:
         """Enrich event with step and workflow context information"""
         if workflow_run_response is None:
             return event
-            
-        if hasattr(event, 'workflow_id'):
+
+        if hasattr(event, "workflow_id"):
             event.workflow_id = workflow_run_response.workflow_id
-        if hasattr(event, 'workflow_run_id'):
+        if hasattr(event, "workflow_run_id"):
             event.workflow_run_id = workflow_run_response.run_id
         if hasattr(event, "step_id"):
             event.step_id = self.step_id
@@ -407,6 +407,7 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -475,7 +476,9 @@ class Step:
                                     enriched_event = self._enrich_event_with_context(
                                         event, workflow_run_response, step_index
                                     )
-                                    yield enriched_event  # type: ignore[misc]
+                                    # Only yield executor events if stream_executor_events is True
+                                    if stream_executor_events:
+                                        yield enriched_event  # type: ignore[misc]
 
                             # Merge session_state changes back
                             if session_state is not None:
@@ -559,10 +562,10 @@ class Step:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 break
-                            enriched_event = self._enrich_event_with_context(
-                                event, workflow_run_response, step_index
-                            )
-                            yield enriched_event  # type: ignore[misc]
+                            enriched_event = self._enrich_event_with_context(event, workflow_run_response, step_index)
+                            # Only yield executor events if stream_executor_events is True
+                            if stream_executor_events:
+                                yield enriched_event  # type: ignore[misc]
 
                         if session_state is not None:
                             # Update workflow session state
@@ -809,6 +812,7 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -876,7 +880,9 @@ class Step:
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
-                                yield enriched_event  # type: ignore[misc]
+                                # Only yield executor events if stream_executor_events is True
+                                if stream_executor_events:
+                                    yield enriched_event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
                     elif inspect.iscoroutinefunction(self.active_executor):
@@ -907,7 +913,9 @@ class Step:
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
-                                yield enriched_event  # type: ignore[misc]
+                                # Only yield executor events if stream_executor_events is True
+                                if stream_executor_events:
+                                    yield enriched_event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
                     else:
@@ -981,10 +989,10 @@ class Step:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 break
-                            enriched_event = self._enrich_event_with_context(
-                                event, workflow_run_response, step_index
-                            )
-                            yield enriched_event  # type: ignore[misc]
+                            enriched_event = self._enrich_event_with_context(event, workflow_run_response, step_index)
+                            # Only yield executor events if stream_executor_events is True
+                            if stream_executor_events:
+                                yield enriched_event  # type: ignore[misc]
 
                         if session_state is not None:
                             # Update workflow session state

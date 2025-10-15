@@ -36,9 +36,9 @@ except ImportError:
 class SqliteDb(BaseDb):
     def __init__(
         self,
+        db_file: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         db_url: Optional[str] = None,
-        db_file: Optional[str] = None,
         session_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
@@ -56,9 +56,9 @@ class SqliteDb(BaseDb):
             4. Create a new database in the current directory
 
         Args:
+            db_file (Optional[str]): The database file to connect to.
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_url (Optional[str]): The database URL to connect to.
-            db_file (Optional[str]): The database file to connect to.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
             memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
@@ -664,7 +664,7 @@ class SqliteDb(BaseDb):
             raise e
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk upsert multiple sessions for improved performance on large datasets.
@@ -672,6 +672,7 @@ class SqliteDb(BaseDb):
         Args:
             sessions (List[Session]): List of sessions to upsert.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the session object.
 
         Returns:
             List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
@@ -715,6 +716,12 @@ class SqliteDb(BaseDb):
                     agent_data = []
                     for session in agent_sessions:
                         serialized_session = serialize_session_json_fields(session.to_dict())
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = (
+                            serialized_session.get("updated_at")
+                            if preserve_updated_at and serialized_session.get("updated_at")
+                            else int(time.time())
+                        )
                         agent_data.append(
                             {
                                 "session_id": serialized_session.get("session_id"),
@@ -727,7 +734,7 @@ class SqliteDb(BaseDb):
                                 "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
                                 "created_at": serialized_session.get("created_at"),
-                                "updated_at": serialized_session.get("created_at"),
+                                "updated_at": updated_at,
                             }
                         )
 
@@ -743,7 +750,7 @@ class SqliteDb(BaseDb):
                                 metadata=stmt.excluded.metadata,
                                 runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
-                                updated_at=int(time.time()),
+                                updated_at=stmt.excluded.updated_at,
                             ),
                         )
                         sess.execute(stmt, agent_data)
@@ -768,6 +775,12 @@ class SqliteDb(BaseDb):
                     team_data = []
                     for session in team_sessions:
                         serialized_session = serialize_session_json_fields(session.to_dict())
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = (
+                            serialized_session.get("updated_at")
+                            if preserve_updated_at and serialized_session.get("updated_at")
+                            else int(time.time())
+                        )
                         team_data.append(
                             {
                                 "session_id": serialized_session.get("session_id"),
@@ -777,7 +790,7 @@ class SqliteDb(BaseDb):
                                 "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
                                 "created_at": serialized_session.get("created_at"),
-                                "updated_at": serialized_session.get("created_at"),
+                                "updated_at": updated_at,
                                 "team_data": serialized_session.get("team_data"),
                                 "session_data": serialized_session.get("session_data"),
                                 "metadata": serialized_session.get("metadata"),
@@ -796,7 +809,7 @@ class SqliteDb(BaseDb):
                                 metadata=stmt.excluded.metadata,
                                 runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
-                                updated_at=int(time.time()),
+                                updated_at=stmt.excluded.updated_at,
                             ),
                         )
                         sess.execute(stmt, team_data)
@@ -821,6 +834,12 @@ class SqliteDb(BaseDb):
                     workflow_data = []
                     for session in workflow_sessions:
                         serialized_session = serialize_session_json_fields(session.to_dict())
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = (
+                            serialized_session.get("updated_at")
+                            if preserve_updated_at and serialized_session.get("updated_at")
+                            else int(time.time())
+                        )
                         workflow_data.append(
                             {
                                 "session_id": serialized_session.get("session_id"),
@@ -830,7 +849,7 @@ class SqliteDb(BaseDb):
                                 "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
                                 "created_at": serialized_session.get("created_at"),
-                                "updated_at": serialized_session.get("created_at"),
+                                "updated_at": updated_at,
                                 "workflow_data": serialized_session.get("workflow_data"),
                                 "session_data": serialized_session.get("session_data"),
                                 "metadata": serialized_session.get("metadata"),
@@ -849,7 +868,7 @@ class SqliteDb(BaseDb):
                                 metadata=stmt.excluded.metadata,
                                 runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
-                                updated_at=int(time.time()),
+                                updated_at=stmt.excluded.updated_at,
                             ),
                         )
                         sess.execute(stmt, workflow_data)
@@ -1224,7 +1243,7 @@ class SqliteDb(BaseDb):
             raise e
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk upsert multiple user memories for improved performance on large datasets.
@@ -1255,10 +1274,13 @@ class SqliteDb(BaseDb):
                 ]
             # Prepare bulk data
             bulk_data = []
+            current_time = int(time.time())
             for memory in memories:
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at and memory.updated_at else current_time
                 bulk_data.append(
                     {
                         "user_id": memory.user_id,
@@ -1267,7 +1289,7 @@ class SqliteDb(BaseDb):
                         "memory_id": memory.memory_id,
                         "memory": memory.memory,
                         "topics": memory.topics,
-                        "updated_at": int(time.time()),
+                        "updated_at": updated_at,
                     }
                 )
 
@@ -1284,7 +1306,7 @@ class SqliteDb(BaseDb):
                         input=stmt.excluded.input,
                         agent_id=stmt.excluded.agent_id,
                         team_id=stmt.excluded.team_id,
-                        updated_at=int(time.time()),
+                        updated_at=stmt.excluded.updated_at,
                     ),
                 )
                 sess.execute(stmt, bulk_data)

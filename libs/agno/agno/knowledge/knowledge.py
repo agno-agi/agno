@@ -483,7 +483,6 @@ class Knowledge:
         3. Read the content
         4. Prepare and insert the content in the vector database
         """
-
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -678,6 +677,7 @@ class Knowledge:
                     content.status = ContentStatus.FAILED
                     content.status_message = "Content could not be read"
                     self._update_content(content)
+                    return
 
         else:
             content.status = ContentStatus.FAILED
@@ -1314,13 +1314,24 @@ class Knowledge:
                 return
 
     def search(
-        self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        max_results: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        search_type: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
-
         from agno.vectordb import VectorDb
+        from agno.vectordb.search import SearchType
 
         self.vector_db = cast(VectorDb, self.vector_db)
+
+        if (
+            hasattr(self.vector_db, "search_type")
+            and isinstance(self.vector_db.search_type, SearchType)
+            and search_type
+        ):
+            self.vector_db.search_type = SearchType(search_type)
         try:
             if self.vector_db is None:
                 log_warning("No vector db provided")
@@ -1334,13 +1345,23 @@ class Knowledge:
             return []
 
     async def async_search(
-        self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        max_results: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        search_type: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
-
         from agno.vectordb import VectorDb
+        from agno.vectordb.search import SearchType
 
         self.vector_db = cast(VectorDb, self.vector_db)
+        if (
+            hasattr(self.vector_db, "search_type")
+            and isinstance(self.vector_db.search_type, SearchType)
+            and search_type
+        ):
+            self.vector_db.search_type = SearchType(search_type)
         try:
             if self.vector_db is None:
                 log_warning("No vector db provided")
