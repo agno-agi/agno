@@ -3697,7 +3697,7 @@ class Team:
                 member_id = member_response.team_id
             
             if not member_id:
-                log_info(f"Skipping member response with no ID")
+                log_info("Skipping member response with no ID")
                 continue
             
             member_result = self._find_member_by_id(member_id)
