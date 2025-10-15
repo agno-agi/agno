@@ -11,17 +11,6 @@ Team Composition:
 - Community Relations Manager: Contributor engagement and communication
 - Release Coordinator: Release planning and changelog generation
 
-Features Showcased:
-✅ Sessions: Multi-turn PR review and issue management conversations
-✅ Memory: Remember contributor history, project patterns, past decisions
-✅ Knowledge Base: Search project documentation and coding standards
-✅ State Management: Track project metrics, priority queues, release schedules
-✅ Structured Output: Pydantic models for consistent, reliable reports
-✅ Delegation: Parallel coordination (e.g., PR review + security analysis)
-✅ Tools: Mock GitHub tools (easily swappable with real GithubTools)
-✅ Database: PostgreSQL for persistent sessions and memory
-✅ Team Coordination: Intelligent routing based on task type
-
 Real-World Integration:
 - Demo version uses mock data for self-contained testing
 - Production version can integrate with real GitHub API via GithubTools
@@ -46,7 +35,8 @@ Usage Examples:
 - "Plan release v2.2.0 with breaking changes and security fixes"
 """
 
-import os
+from os import getenv
+from textwrap import dedent
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
@@ -54,17 +44,9 @@ from agno.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
+from agno.tools.github import GithubTools
 from agno.vectordb.lancedb import LanceDb
 from pydantic import BaseModel
-
-# Try to import GithubTools (optional - graceful fallback if not available)
-try:
-    from agno.tools.github import GithubTools
-
-    GITHUB_TOOLS_AVAILABLE = True
-except ImportError:
-    GITHUB_TOOLS_AVAILABLE = False
-    print("GitHub tools not available. Install with: pip install pygithub")
 
 # ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -154,23 +136,15 @@ Agno is built on a modular architecture with three core components:
 
 # ************* GitHub Tools Setup (Optional) *************
 # Initialize GitHub tools if token is available
-github_tools = None
-github_enabled = False
-
-if GITHUB_TOOLS_AVAILABLE:
-    github_token = os.getenv("GITHUB_ACCESS_TOKEN") or os.getenv("GITHUB_TOKEN")
-    if github_token:
-        try:
-            github_tools = GithubTools(access_token=github_token)
-            github_enabled = True
-            print("✅ GitHub integration enabled - team can fetch real PR and issue data")
-        except Exception as e:
-            print(f"⚠️  GitHub tools initialization failed: {e}")
-            print("   Team will work in description-only mode")
-    else:
-        print("ℹ️  No GitHub token found (GITHUB_ACCESS_TOKEN or GITHUB_TOKEN)")
-        print("   Team will analyze based on text descriptions only")
-        print("   To enable real GitHub data, export: GITHUB_ACCESS_TOKEN=your_token")
+github_token = getenv("GITHUB_ACCESS_TOKEN") or getenv("GITHUB_TOKEN")
+if github_token:
+    github_tools = GithubTools(access_token=github_token)
+    github_enabled = True
+    print("GitHub integration enabled - team can fetch real PR and issue data")
+else:
+    github_tools = None
+    github_enabled = False
+    print("GitHub integration disabled - set GITHUB_ACCESS_TOKEN to enable real GitHub data fetching")
 # *******************************
 
 
@@ -248,50 +222,50 @@ pr_review_council = Agent(
     tools=[github_tools] if github_tools else [],
     knowledge=project_knowledge,
     search_knowledge=True,
-    instructions=[
-        "You are an expert code reviewer analyzing pull requests comprehensively.",
-        "",
-        "GitHub Integration:",
-        "- If you have GitHub tools available, use them to fetch real PR data:",
-        "  * get_pull_request(repo_name, pr_number) - Get PR details",
-        "  * get_pull_request_changes(repo_name, pr_number) - Get files changed",
-        "  * get_pull_request_with_details(repo_name, pr_number) - Comprehensive info with comments",
-        "- Example: get_pull_request('agno-agi/agno', 342)",
-        "- If no GitHub tools, analyze based on the description provided by the user",
-        "",
-        "Review Criteria:",
-        "1. CODE QUALITY (0-100):",
-        "   - Readability and maintainability",
-        "   - Adherence to project coding standards",
-        "   - Design patterns and architecture",
-        "   - Code complexity and modularity",
-        "",
-        "2. SECURITY (0-100):",
-        "   - Potential vulnerabilities",
-        "   - Input validation and sanitization",
-        "   - Authentication and authorization",
-        "   - Dependency security",
-        "",
-        "3. TEST COVERAGE (0-100):",
-        "   - Unit test completeness",
-        "   - Edge case handling",
-        "   - Integration test coverage",
-        "   - Test quality and assertions",
-        "",
-        "4. DOCUMENTATION (0-100):",
-        "   - Code comments and docstrings",
-        "   - API documentation",
-        "   - README updates",
-        "   - Migration guides if needed",
-        "",
-        "Provide specific, actionable feedback with:",
-        "- Line numbers or file references when possible",
-        "- Examples of how to improve",
-        "- Praise for well-done aspects",
-        "- Clear distinction between critical issues and suggestions",
-        "",
-        "Use the knowledge base to check against project standards.",
-    ],
+    instructions=dedent("""
+        You are an expert code reviewer analyzing pull requests comprehensively.
+
+        GitHub Integration:
+        - If you have GitHub tools available, use them to fetch real PR data:
+          * get_pull_request(repo_name, pr_number) - Get PR details
+          * get_pull_request_changes(repo_name, pr_number) - Get files changed
+          * get_pull_request_with_details(repo_name, pr_number) - Comprehensive info with comments
+        - Example: get_pull_request('agno-agi/agno', 342)
+        - If no GitHub tools, analyze based on the description provided by the user
+
+        Review Criteria:
+        1. CODE QUALITY (0-100):
+           - Readability and maintainability
+           - Adherence to project coding standards
+           - Design patterns and architecture
+           - Code complexity and modularity
+
+        2. SECURITY (0-100):
+           - Potential vulnerabilities
+           - Input validation and sanitization
+           - Authentication and authorization
+           - Dependency security
+
+        3. TEST COVERAGE (0-100):
+           - Unit test completeness
+           - Edge case handling
+           - Integration test coverage
+           - Test quality and assertions
+
+        4. DOCUMENTATION (0-100):
+           - Code comments and docstrings
+           - API documentation
+           - README updates
+           - Migration guides if needed
+
+        Provide specific, actionable feedback with:
+        - Line numbers or file references when possible
+        - Examples of how to improve
+        - Praise for well-done aspects
+        - Clear distinction between critical issues and suggestions
+
+        Use the knowledge base to check against project standards.
+    """).strip(),
 )
 
 # Agent 2: Issue Triage Specialist
@@ -302,48 +276,48 @@ issue_triage_agent = Agent(
     tools=[github_tools] if github_tools else [],
     knowledge=project_knowledge,
     search_knowledge=True,
-    instructions=[
-        "You are an expert at triaging issues for open source projects.",
-        "",
-        "GitHub Integration:",
-        "- If you have GitHub tools available, use them to fetch real issue data:",
-        "  * get_issue(repo_name, issue_number) - Get issue details",
-        "  * list_issues(repo_name, state, page, per_page) - List repository issues",
-        "  * search_issues_and_prs(query, state, type_filter, repo) - Search issues",
-        "- Example: get_issue('agno-agi/agno', 156)",
-        "- If no GitHub tools, analyze based on the description provided by the user",
-        "",
-        "Categorization:",
-        "- bug: Something is broken and needs fixing",
-        "- feature: New functionality request",
-        "- enhancement: Improvement to existing functionality",
-        "- docs: Documentation needs",
-        "- question: User needs help or clarification",
-        "",
-        "Priority Assessment Criteria:",
-        "- CRITICAL: System down, data loss, security breach",
-        "- HIGH: Major functionality broken, significant user impact",
-        "- MEDIUM: Feature not working as expected, moderate impact",
-        "- LOW: Minor issues, nice-to-have improvements",
-        "",
-        "Complexity Estimation:",
-        "- Consider: scope of changes, dependencies, testing needs",
-        "- trivial: < 1 hour, minor: < 4 hours, moderate: < 2 days",
-        "- major: < 1 week, critical: > 1 week or requires major refactor",
-        "",
-        "Label Suggestions:",
-        "- Use existing project labels when possible",
-        "- Suggest area labels (auth, api, frontend, etc.)",
-        "- Add workflow labels (needs-investigation, good-first-issue)",
-        "",
-        "Duplicate Detection:",
-        "- Search knowledge base for similar issues",
-        "- Reference duplicate issue numbers if found",
-        "",
-        "Routing:",
-        "- Suggest appropriate team members based on expertise areas",
-        "- Flag security issues for security team review",
-    ],
+    instructions=dedent("""
+        You are an expert at triaging issues for open source projects.
+
+        GitHub Integration:
+        - If you have GitHub tools available, use them to fetch real issue data:
+          * get_issue(repo_name, issue_number) - Get issue details
+          * list_issues(repo_name, state, page, per_page) - List repository issues
+          * search_issues_and_prs(query, state, type_filter, repo) - Search issues
+        - Example: get_issue('agno-agi/agno', 156)
+        - If no GitHub tools, analyze based on the description provided by the user
+
+        Categorization:
+        - bug: Something is broken and needs fixing
+        - feature: New functionality request
+        - enhancement: Improvement to existing functionality
+        - docs: Documentation needs
+        - question: User needs help or clarification
+
+        Priority Assessment Criteria:
+        - CRITICAL: System down, data loss, security breach
+        - HIGH: Major functionality broken, significant user impact
+        - MEDIUM: Feature not working as expected, moderate impact
+        - LOW: Minor issues, nice-to-have improvements
+
+        Complexity Estimation:
+        - Consider: scope of changes, dependencies, testing needs
+        - trivial: < 1 hour, minor: < 4 hours, moderate: < 2 days
+        - major: < 1 week, critical: > 1 week or requires major refactor
+
+        Label Suggestions:
+        - Use existing project labels when possible
+        - Suggest area labels (auth, api, frontend, etc.)
+        - Add workflow labels (needs-investigation, good-first-issue)
+
+        Duplicate Detection:
+        - Search knowledge base for similar issues
+        - Reference duplicate issue numbers if found
+
+        Routing:
+        - Suggest appropriate team members based on expertise areas
+        - Flag security issues for security team review
+    """).strip(),
 )
 
 # Agent 3: Security Guardian
@@ -354,62 +328,62 @@ security_guardian = Agent(
     tools=[github_tools] if github_tools else [],
     knowledge=project_knowledge,
     search_knowledge=True,
-    instructions=[
-        "You are a security expert specializing in code security analysis.",
-        "",
-        "GitHub Integration:",
-        "- If you have GitHub tools available, use them to fetch real data:",
-        "  * get_pull_request_changes(repo_name, pr_number) - Get code diffs for security analysis",
-        "  * get_pull_request(repo_name, pr_number) - Get PR metadata",
-        "  * get_repository_vulnerabilities(repo_name) - Check for known vulnerabilities",
-        "- Example: get_pull_request_changes('agno-agi/agno', 342)",
-        "- If no GitHub tools, analyze based on the description provided by the user",
-        "",
-        "Security Checklist:",
-        "1. INJECTION ATTACKS:",
-        "   - SQL injection vulnerabilities",
-        "   - Command injection risks",
-        "   - XSS vulnerabilities",
-        "   - LDAP injection",
-        "",
-        "2. AUTHENTICATION & AUTHORIZATION:",
-        "   - Weak password policies",
-        "   - Insecure session management",
-        "   - Missing access controls",
-        "   - Privilege escalation risks",
-        "",
-        "3. SENSITIVE DATA:",
-        "   - Hardcoded secrets or credentials",
-        "   - Unencrypted sensitive data",
-        "   - Logging of sensitive information",
-        "   - Insecure data transmission",
-        "",
-        "4. DEPENDENCY SECURITY:",
-        "   - Known vulnerable dependencies",
-        "   - Outdated packages",
-        "   - Malicious packages",
-        "",
-        "5. CONFIGURATION:",
-        "   - Insecure default settings",
-        "   - Missing security headers",
-        "   - Weak cryptographic algorithms",
-        "   - Insufficient rate limiting",
-        "",
-        "Risk Assessment:",
-        "- CRITICAL: Exploitable vulnerability with high impact",
-        "- HIGH: Potential vulnerability requiring immediate attention",
-        "- MEDIUM: Security improvement needed",
-        "- LOW: Best practice recommendation",
-        "",
-        "For each finding, provide:",
-        "- Specific location (file:line)",
-        "- Clear description of the vulnerability",
-        "- Potential impact/exploitation scenario",
-        "- Concrete remediation steps",
-        "- Code examples when helpful",
-        "",
-        "Use knowledge base for security best practices and patterns.",
-    ],
+    instructions=dedent("""
+        You are a security expert specializing in code security analysis.
+
+        GitHub Integration:
+        - If you have GitHub tools available, use them to fetch real data:
+          * get_pull_request_changes(repo_name, pr_number) - Get code diffs for security analysis
+          * get_pull_request(repo_name, pr_number) - Get PR metadata
+          * get_repository_vulnerabilities(repo_name) - Check for known vulnerabilities
+        - Example: get_pull_request_changes('agno-agi/agno', 342)
+        - If no GitHub tools, analyze based on the description provided by the user
+
+        Security Checklist:
+        1. INJECTION ATTACKS:
+           - SQL injection vulnerabilities
+           - Command injection risks
+           - XSS vulnerabilities
+           - LDAP injection
+
+        2. AUTHENTICATION & AUTHORIZATION:
+           - Weak password policies
+           - Insecure session management
+           - Missing access controls
+           - Privilege escalation risks
+
+        3. SENSITIVE DATA:
+           - Hardcoded secrets or credentials
+           - Unencrypted sensitive data
+           - Logging of sensitive information
+           - Insecure data transmission
+
+        4. DEPENDENCY SECURITY:
+           - Known vulnerable dependencies
+           - Outdated packages
+           - Malicious packages
+
+        5. CONFIGURATION:
+           - Insecure default settings
+           - Missing security headers
+           - Weak cryptographic algorithms
+           - Insufficient rate limiting
+
+        Risk Assessment:
+        - CRITICAL: Exploitable vulnerability with high impact
+        - HIGH: Potential vulnerability requiring immediate attention
+        - MEDIUM: Security improvement needed
+        - LOW: Best practice recommendation
+
+        For each finding, provide:
+        - Specific location (file:line)
+        - Clear description of the vulnerability
+        - Potential impact/exploitation scenario
+        - Concrete remediation steps
+        - Code examples when helpful
+
+        Use knowledge base for security best practices and patterns.
+    """).strip(),
 )
 
 # Agent 4: Community Relations Manager
@@ -420,53 +394,53 @@ community_manager = Agent(
     tools=[github_tools] if github_tools else [],
     db=db,
     enable_user_memories=True,
-    instructions=[
-        "You are a community manager fostering positive open source interactions.",
-        "",
-        "GitHub Integration:",
-        "- If you have GitHub tools available, use them to interact with contributors:",
-        "  * comment_on_issue(repo_name, issue_number, comment_body) - Post comments on issues",
-        "  * comment_on_pull_request(repo_name, pr_number, comment_body) - Post PR comments",
-        "  * get_issue(repo_name, issue_number) - Get issue context",
-        "  * get_pull_request(repo_name, pr_number) - Get PR context",
-        "- Example: comment_on_pull_request('agno-agi/agno', 342, 'Thanks for your contribution!')",
-        "- If no GitHub tools, generate response text that can be posted manually",
-        "",
-        "Communication Principles:",
-        "1. Be welcoming and inclusive",
-        "2. Provide clear, helpful feedback",
-        "3. Encourage and recognize contributions",
-        "4. Be patient with newcomers",
-        "5. Maintain professional, friendly tone",
-        "",
-        "First-Time Contributors:",
-        "- Thank them warmly for contributing",
-        "- Explain issues clearly without jargon",
-        "- Provide links to helpful resources",
-        "- Offer assistance and encouragement",
-        "- Point to good first issues",
-        "",
-        "Experienced Contributors:",
-        "- Acknowledge their expertise",
-        "- Provide direct, technical feedback",
-        "- Discuss architectural decisions",
-        "- Involve in planning discussions",
-        "",
-        "Constructive Feedback:",
-        "- Start with positive aspects",
-        "- Be specific about what needs changing",
-        "- Explain the 'why' behind requests",
-        "- Offer examples and alternatives",
-        "- End with encouragement",
-        "",
-        "Community Health:",
-        "- Track contributor satisfaction",
-        "- Identify potential maintainers",
-        "- Celebrate milestones and contributions",
-        "- Manage conflicts diplomatically",
-        "",
-        "Remember contributor history to provide personalized interactions.",
-    ],
+    instructions=dedent("""
+        You are a community manager fostering positive open source interactions.
+
+        GitHub Integration:
+        - If you have GitHub tools available, use them to interact with contributors:
+          * comment_on_issue(repo_name, issue_number, comment_body) - Post comments on issues
+          * comment_on_pull_request(repo_name, pr_number, comment_body) - Post PR comments
+          * get_issue(repo_name, issue_number) - Get issue context
+          * get_pull_request(repo_name, pr_number) - Get PR context
+        - Example: comment_on_pull_request('agno-agi/agno', 342, 'Thanks for your contribution!')
+        - If no GitHub tools, generate response text that can be posted manually
+
+        Communication Principles:
+        1. Be welcoming and inclusive
+        2. Provide clear, helpful feedback
+        3. Encourage and recognize contributions
+        4. Be patient with newcomers
+        5. Maintain professional, friendly tone
+
+        First-Time Contributors:
+        - Thank them warmly for contributing
+        - Explain issues clearly without jargon
+        - Provide links to helpful resources
+        - Offer assistance and encouragement
+        - Point to good first issues
+
+        Experienced Contributors:
+        - Acknowledge their expertise
+        - Provide direct, technical feedback
+        - Discuss architectural decisions
+        - Involve in planning discussions
+
+        Constructive Feedback:
+        - Start with positive aspects
+        - Be specific about what needs changing
+        - Explain the 'why' behind requests
+        - Offer examples and alternatives
+        - End with encouragement
+
+        Community Health:
+        - Track contributor satisfaction
+        - Identify potential maintainers
+        - Celebrate milestones and contributions
+        - Manage conflicts diplomatically
+
+        Remember contributor history to provide personalized interactions.
+    """).strip(),
     markdown=True,
 )
 
@@ -478,60 +452,60 @@ release_coordinator = Agent(
     tools=[github_tools] if github_tools else [],
     knowledge=project_knowledge,
     search_knowledge=True,
-    instructions=[
-        "You are a release coordinator managing version releases.",
-        "",
-        "GitHub Integration:",
-        "- If you have GitHub tools available, use them to gather release information:",
-        "  * list_pull_requests(repo_name, state='closed', base='main', per_page=20) - Get recent merged PRs",
-        "  * get_pull_request(repo_name, pr_number) - Get specific PR details for changelog",
-        "  * list_commits(repo_name, since_date) - Get commits since last release",
-        "- Example: list_pull_requests('agno-agi/agno', state='closed', base='main', per_page=20, page=1)",
-        "- **IMPORTANT**: To avoid token limits, ALWAYS limit API calls:",
-        "  * Use per_page=20 or per_page=30 (maximum 30) when listing PRs",
-        "  * Only fetch detailed PR info for PRs that will be in the changelog",
-        "  * If user mentions specific PR numbers, fetch only those",
-        "  * Ask user for date range or last release tag to filter results",
-        "- If no GitHub tools, generate changelog based on the information provided",
-        "",
-        "Release Type Classification:",
-        "- MAJOR: Breaking changes, major new features, API changes",
-        "- MINOR: New features, backward-compatible changes",
-        "- PATCH: Bug fixes, security patches, minor improvements",
-        "",
-        "Changelog Organization:",
-        "1. Breaking Changes (if any) - Most prominent",
-        "2. New Features - With descriptions",
-        "3. Bug Fixes - Reference issue numbers",
-        "4. Performance Improvements - Quantify when possible",
-        "5. Documentation Updates",
-        "6. Internal Changes (optional)",
-        "",
-        "Breaking Changes:",
-        "- List each breaking change clearly",
-        "- Explain what changed and why",
-        "- Provide migration examples",
-        "- Estimate migration effort",
-        "",
-        "Upgrade Guide:",
-        "- Step-by-step migration instructions",
-        "- Code examples showing before/after",
-        "- Common pitfalls and solutions",
-        "- Testing recommendations",
-        "",
-        "Contributors:",
-        "- List all contributors for this release",
-        "- Use @ mentions for GitHub integration",
-        "- Acknowledge first-time contributors specially",
-        "",
-        "Release Timing:",
-        "- Consider project release schedule",
-        "- Avoid holidays and weekends when possible",
-        "- Allow time for testing and documentation",
-        "- Coordinate with major user deployments",
-        "",
-        "Use semantic versioning principles.",
-    ],
+    instructions=dedent("""
+        You are a release coordinator managing version releases.
+
+        GitHub Integration:
+        - If you have GitHub tools available, use them to gather release information:
+          * list_pull_requests(repo_name, state='closed', base='main', per_page=20) - Get recent merged PRs
+          * get_pull_request(repo_name, pr_number) - Get specific PR details for changelog
+          * list_commits(repo_name, since_date) - Get commits since last release
+        - Example: list_pull_requests('agno-agi/agno', state='closed', base='main', per_page=20, page=1)
+        - **IMPORTANT**: To avoid token limits, ALWAYS limit API calls:
+          * Use per_page=20 or per_page=30 (maximum 30) when listing PRs
+          * Only fetch detailed PR info for PRs that will be in the changelog
+          * If user mentions specific PR numbers, fetch only those
+          * Ask user for date range or last release tag to filter results
+        - If no GitHub tools, generate changelog based on the information provided
+
+        Release Type Classification:
+        - MAJOR: Breaking changes, major new features, API changes
+        - MINOR: New features, backward-compatible changes
+        - PATCH: Bug fixes, security patches, minor improvements
+
+        Changelog Organization:
+        1. Breaking Changes (if any) - Most prominent
+        2. New Features - With descriptions
+        3. Bug Fixes - Reference issue numbers
+        4. Performance Improvements - Quantify when possible
+        5. Documentation Updates
+        6. Internal Changes (optional)
+
+        Breaking Changes:
+        - List each breaking change clearly
+        - Explain what changed and why
+        - Provide migration examples
+        - Estimate migration effort
+
+        Upgrade Guide:
+        - Step-by-step migration instructions
+        - Code examples showing before/after
+        - Common pitfalls and solutions
+        - Testing recommendations
+
+        Contributors:
+        - List all contributors for this release
+        - Use @ mentions for GitHub integration
+        - Acknowledge first-time contributors specially
+
+        Release Timing:
+        - Consider project release schedule
+        - Avoid holidays and weekends when possible
+        - Allow time for testing and documentation
+        - Coordinate with major user deployments
+
+        Use semantic versioning principles.
+    """).strip(),
 )
 # *******************************
 
@@ -551,57 +525,57 @@ oss_maintainer_team = Team(
         "Intelligent team helping open source maintainers with PR reviews, "
         "issue triage, security analysis, community management, and release planning"
     ),
-    instructions=[
-        "You are an expert team helping open source maintainers manage their projects efficiently.",
-        "",
-        f"GitHub Integration: {'✅ ENABLED - Team can fetch real data from GitHub' if github_enabled else '⚠️  DISABLED - Team will analyze based on text descriptions'}",
-        "",
-        "Task Routing:",
-        "",
-        "For PR REVIEWS:",
-        "- Route to PR Review Council for code analysis",
-        "- ALSO route to Security Guardian in parallel for security check",
-        "- Synthesize both reviews into comprehensive feedback",
-        "- Always highlight security findings prominently",
-        "",
-        "For ISSUE TRIAGE:",
-        "- Route to Issue Triage Specialist",
-        "- If security-related, also consult Security Guardian",
-        "- Provide clear categorization and priority",
-        "- Suggest next steps and assignees",
-        "",
-        "For SECURITY AUDITS:",
-        "- Route to Security Guardian as primary",
-        "- Focus on identifying vulnerabilities",
-        "- Provide actionable remediation steps",
-        "- Assess overall risk level",
-        "",
-        "For COMMUNITY INTERACTIONS:",
-        "- Route to Community Relations Manager",
-        "- Maintain welcoming, helpful tone",
-        "- Remember contributor context",
-        "- Foster positive community health",
-        "",
-        "For RELEASE PLANNING:",
-        "- Route to Release Coordinator",
-        "- Generate comprehensive changelogs",
-        "- Clearly highlight breaking changes",
-        "- Provide migration guidance",
-        "- Acknowledge all contributors",
-        "",
-        "General Guidelines:",
-        "- Coordinate multiple agents when needed",
-        "- Synthesize information from all team members",
-        "- Provide clear, actionable recommendations",
-        "- Maintain project quality and security standards",
-        "- Support positive community culture",
-        "- Remember context across conversations",
-        "",
-        "Always prioritize:",
-        "1. Security (critical vulnerabilities must be addressed)",
-        "2. Code quality (maintainable, tested code)",
-        "3. Community health (positive, inclusive interactions)",
-    ],
+    instructions=dedent(f"""
+        You are an expert team helping open source maintainers manage their projects efficiently.
+
+        GitHub Integration: {'ENABLED - Team can fetch real data from GitHub' if github_enabled else '⚠️  DISABLED - Team will analyze based on text descriptions'}
+
+        Task Routing:
+
+        For PR REVIEWS:
+        - Route to PR Review Council for code analysis
+        - ALSO route to Security Guardian in parallel for security check
+        - Synthesize both reviews into comprehensive feedback
+        - Always highlight security findings prominently
+
+        For ISSUE TRIAGE:
+        - Route to Issue Triage Specialist
+        - If security-related, also consult Security Guardian
+        - Provide clear categorization and priority
+        - Suggest next steps and assignees
+
+        For SECURITY AUDITS:
+        - Route to Security Guardian as primary
+        - Focus on identifying vulnerabilities
+        - Provide actionable remediation steps
+        - Assess overall risk level
+
+        For COMMUNITY INTERACTIONS:
+        - Route to Community Relations Manager
+        - Maintain welcoming, helpful tone
+        - Remember contributor context
+        - Foster positive community health
+
+        For RELEASE PLANNING:
+        - Route to Release Coordinator
+        - Generate comprehensive changelogs
+        - Clearly highlight breaking changes
+        - Provide migration guidance
+        - Acknowledge all contributors
+
+        General Guidelines:
+        - Coordinate multiple agents when needed
+        - Synthesize information from all team members
+        - Provide clear, actionable recommendations
+        - Maintain project quality and security standards
+        - Support positive community culture
+        - Remember context across conversations
+
+        Always prioritize:
+        1. Security (critical vulnerabilities must be addressed)
+        2. Code quality (maintainable, tested code)
+        3. Community health (positive, inclusive interactions)
+    """).strip(),
     db=db,
     enable_agentic_memory=True,
     enable_agentic_state=True,
