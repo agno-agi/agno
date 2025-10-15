@@ -28,13 +28,12 @@ def attach_routes(
 ) -> APIRouter:
     # Determine entity type for documentation
     entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"
-    entity_name = getattr(agent or team or workflow, "name", f"Unnamed {entity_type}")
 
     @router.post(
         "/events",
         operation_id=f"slack_events_{entity_type}",
         name="slack_events",
-        description=f"Process incoming Slack events",
+        description="Process incoming Slack events",
         response_model=SlackEventResponse,
         response_model_exclude_none=True,
         responses={
