@@ -460,8 +460,12 @@ class SurrealDb(BaseDb):
         table = self._get_table("memories")
         _ = self.client.delete(table)
 
-    def delete_user_memory(self, memory_id: str) -> None:
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         """Delete a user memory from the database.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
@@ -470,24 +474,41 @@ class SurrealDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         table = self._get_table("memories")
-        self.client.delete(RecordID(table, memory_id))
+        mem_rec_id = RecordID(table, memory_id)
+        if user_id is None:
+            self.client.delete(mem_rec_id)
+        else:
+            user_rec_id = RecordID(self._get_table("users"), user_id)
+            self.client.query(
+                f"DELETE FROM {table} WHERE user = $user AND id = $memory",
+                {"user": user_rec_id, "memory": mem_rec_id},
+            )
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         table = self._get_table("memories")
         records = [RecordID(table, memory_id) for memory_id in memory_ids]
-        print(f"------------- {records}")
-        _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
+        if user_id is None:
+            _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
+        else:
+            user_rec_id = RecordID(self._get_table("users"), user_id)
+            _ = self.client.query(
+                f"DELETE FROM {table} WHERE id IN $records AND user = $user", {"records": records, "user": user_rec_id}
+            )
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             List[str]: List of memory topics.
@@ -496,25 +517,39 @@ class SurrealDb(BaseDb):
         vars: dict[str, Any] = {}
 
         # Query
-        query = dedent(f"""
-            RETURN (
-                SELECT
-                    array::flatten(topics) as topics
-                FROM ONLY {table}
-                GROUP ALL
-            ).topics.distinct();
-        """)
+        if user_id is None:
+            query = dedent(f"""
+                RETURN (
+                    SELECT
+                        array::flatten(topics) as topics
+                    FROM ONLY {table}
+                    GROUP ALL
+                ).topics.distinct();
+            """)
+        else:
+            query = dedent(f"""
+                RETURN (
+                    SELECT
+                        array::flatten(topics) as topics
+                    FROM ONLY {table}
+                    WHERE user = $user
+                    GROUP ALL
+                ).topics.distinct();
+            """)
+            vars["user"] = RecordID(self._get_table("users"), user_id)
+
         result = self._query(query, vars, str)
         return list(result)
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -526,8 +561,15 @@ class SurrealDb(BaseDb):
         """
         table_name = self._get_table("memories")
         record = RecordID(table_name, memory_id)
-        query = "SELECT * FROM ONLY $record"
-        result = self._query_one(query, {"record": record}, dict)
+        vars = {"record": record}
+
+        if user_id is None:
+            query = "SELECT * FROM ONLY $record"
+        else:
+            query = "SELECT * FROM ONLY $record WHERE user = $user"
+            vars["user"] = RecordID(self._get_table("users"), user_id)
+
+        result = self._query_one(query, vars, dict)
         if result is None or not deserialize:
             return result
         return deserialize_user_memory(result)
@@ -605,12 +647,14 @@ class SurrealDb(BaseDb):
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -629,7 +673,12 @@ class SurrealDb(BaseDb):
         """
         memories_table_name = self._get_table("memories")
         where = WhereClause()
-        where.and_("!!user", True, "=")
+
+        if user_id is None:
+            where.and_("!!user", True, "=")  # this checks that user is not falsy
+        else:
+            where.and_("user", RecordID(self._get_table("users"), user_id), "=")
+
         where_clause, where_vars = where.build()
         # Group
         group_clause = "GROUP BY user"
