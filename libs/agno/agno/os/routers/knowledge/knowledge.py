@@ -520,7 +520,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         "/knowledge/search",
         status_code=200,
         operation_id="search_vectors",
-        summary="Search Knowledge Base Vectors",
+        summary="Search Vectors",
         description="Search the knowledge base for relevant vectors using query, filters and search type.",
         response_model=PaginatedResponse[VectorSearchResult],
         responses={
