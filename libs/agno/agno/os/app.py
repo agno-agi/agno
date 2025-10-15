@@ -207,9 +207,6 @@ class AgentOS:
 
                 team.initialize_team()
 
-                # Required for the built-in routes to work
-                team.store_events = True
-
                 for member in team.members:
                     if isinstance(member, Agent):
                         member.team_id = None
@@ -217,15 +214,19 @@ class AgentOS:
                     elif isinstance(member, Team):
                         member.initialize_team()
 
+                # Required for the built-in routes to work
+                team.store_events = True
+
         if self.workflows:
             for workflow in self.workflows:
-                # Required for the built-in routes to work
-                workflow.store_events = True
-
                 # Track MCP tools recursively in workflow members
                 collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
+
                 if not workflow.id:
                     workflow.id = generate_id_from_name(workflow.name)
+
+                # Required for the built-in routes to work
+                workflow.store_events = True
 
         if self.telemetry:
             from agno.api.os import OSLaunch, log_os_telemetry
@@ -648,6 +649,7 @@ class AgentOS:
         port: int = 7777,
         reload: bool = False,
         workers: Optional[int] = None,
+        access_log: bool = False,
         **kwargs,
     ):
         import uvicorn
@@ -680,4 +682,4 @@ class AgentOS:
             )
         )
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, **kwargs)
+        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, access_log=access_log, **kwargs)
