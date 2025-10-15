@@ -1,8 +1,6 @@
 """
 AgentOS Demo
 
-Set the OS_SECURITY_KEY environment variable to your OS security key to enable authentication.
-
 Prerequisites:
 pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs yfinance
 """
@@ -19,6 +17,7 @@ from agno.os.interfaces.agui import AGUI
 from agno.workflow.step import Step
 from agno.os.interfaces.slack import Slack
 from agno.os.interfaces.whatsapp import Whatsapp
+from agno.os.interfaces.a2a import A2A
 
 
 # Database connection
@@ -76,6 +75,7 @@ simple_workflow = Workflow(
 slack_interface = Slack(agent=simple_team)
 whatsapp_interface = Whatsapp(agent=simple_agent)
 agui_interface = AGUI(agent=simple_agent)
+a2a_interface = A2A(agents=[simple_agent])
 
 
 
@@ -85,8 +85,7 @@ agent_os = AgentOS(
     agents=[simple_agent],
     teams=[simple_team],
     workflows=[simple_workflow],
-    interfaces=[slack_interface, whatsapp_interface, agui_interface],
-    a2a_interface=True,
+    interfaces=[slack_interface, whatsapp_interface, agui_interface, a2a_interface],
 )
 app = agent_os.get_app()
 
