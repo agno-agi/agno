@@ -10,15 +10,14 @@ from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.team import Team
-from agno.workflow import Workflow
-from agno.vectordb.pgvector import PgVector
+from agno.os.interfaces.a2a import A2A
 from agno.os.interfaces.agui import AGUI
-from agno.workflow.step import Step
 from agno.os.interfaces.slack import Slack
 from agno.os.interfaces.whatsapp import Whatsapp
-from agno.os.interfaces.a2a import A2A
-
+from agno.team import Team
+from agno.vectordb.pgvector import PgVector
+from agno.workflow import Workflow
+from agno.workflow.step import Step
 
 # Database connection
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -76,7 +75,6 @@ slack_interface = Slack(agent=simple_team)
 whatsapp_interface = Whatsapp(agent=simple_agent)
 agui_interface = AGUI(agent=simple_agent)
 a2a_interface = A2A(agents=[simple_agent])
-
 
 
 # Create the AgentOS
