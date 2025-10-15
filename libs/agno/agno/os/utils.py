@@ -3,7 +3,9 @@ from typing import Any, Callable, Dict, List, Optional, Set, Union
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.routing import APIRoute, APIRouter
 from starlette.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
+from agno.models.message import Message
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb
 from agno.knowledge.knowledge import Knowledge
@@ -54,23 +56,31 @@ def get_knowledge_instance_by_db_id(knowledge_instances: List[Knowledge], db_id:
 
 
 def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> str:
-    """Get the run input from the given run dictionary"""
+    """Get the run input from the given run dictionary
+    
+    Uses the RunInput/TeamRunInput object which stores the original user input.
+    """
 
-    if is_workflow_run:
+    # For agent or team runs, use the stored input_content
+    if not is_workflow_run and run_dict.get("input") is not None:
+        input_data = run_dict.get("input")
+        if isinstance(input_data, dict) and input_data.get("input_content") is not None:
+            return stringify_input_content(input_data["input_content"])
+
+    if is_workflow_run: 
+        # Check the input field directly
+        if run_dict.get("input") is not None:
+            input_value = run_dict.get("input")
+            return str(input_value)
+        
+        # Check the step executor runs for fallback
         step_executor_runs = run_dict.get("step_executor_runs", [])
         if step_executor_runs:
             for message in reversed(step_executor_runs[0].get("messages", [])):
                 if message.get("role") == "user":
                     return message.get("content", "")
 
-        # Check the input field directly as final fallback
-        if run_dict.get("input") is not None:
-            input_value = run_dict.get("input")
-            if isinstance(input_value, str):
-                return input_value
-            else:
-                return str(input_value)
-
+    # Final fallback: scan messages
     if run_dict.get("messages") is not None:
         for message in reversed(run_dict["messages"]):
             if message.get("role") == "user":
@@ -138,6 +148,25 @@ def get_session_name(session: Dict[str, Any]) -> str:
                 if message["role"] == "user":
                     return message["content"]
     return ""
+
+
+
+
+def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
+    input_media: Dict[str, List[Any]] = {
+        "images": [],
+        "videos": [],
+        "audio": [],
+        "files": [],
+    }
+
+    input = run_dict.get("input", [])
+    input_media["images"].extend(input.get("images", []))
+    input_media["videos"].extend(input.get("videos", []))
+    input_media["audio"].extend(input.get("audio", []))
+    input_media["files"].extend(input.get("files", []))
+    
+    return input_media
 
 
 def process_image(file: UploadFile) -> Image:
@@ -495,3 +524,29 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
     elif isinstance(step, Workflow):
         # Nested workflow
         collect_mcp_tools_from_workflow(step, mcp_tools)
+
+
+def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:
+    """Convert any given input_content into its string representation.
+    
+    This handles both serialized (dict) and live (object) input_content formats.
+    """
+    import json
+
+    if isinstance(input_content, str):
+        return input_content
+    elif isinstance(input_content, Message):
+        return json.dumps(input_content.to_dict())
+    elif isinstance(input_content, dict):
+        return json.dumps(input_content, indent=2, default=str)
+    elif isinstance(input_content, list):
+        if input_content:
+            # Handle live Message objects
+            if isinstance(input_content[0], Message):
+                return json.dumps([m.to_dict() for m in input_content])
+            # Handle serialized Message dicts
+            elif isinstance(input_content[0], dict) and input_content[0].get("role") == "user":
+                return input_content[0].get("content", str(input_content))
+        return str(input_content)
+    else:
+        return str(input_content)
