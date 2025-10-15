@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from agents.agno_assist import agno_assist
+from agents.agno_assist import agno_assist, agno_assist2
 from agents.web_search import web_search_agent
 from agno.os import AgentOS
 from knowledge.basic import knowledge as knowledge_base

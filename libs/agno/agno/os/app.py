@@ -469,6 +469,7 @@ class AgentOS:
 
         for agent in self.agents or []:
             if agent.db:
+                print(f"Agent {agent.id} has database {agent.db.id}")
                 self._register_db_with_validation(dbs, agent.db)
             if agent.knowledge and agent.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
@@ -496,8 +497,19 @@ class AgentOS:
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
 
-    def _register_db_with_validation(self, registered_dbs: Dict[str, Any], db: Union[BaseDb, AsyncBaseDb]) -> None:
+    def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
+        """Get the table names for a database"""
+        return {
+            "session_table_name": db.session_table_name,
+            "memory_table_name": db.memory_table_name,
+            "metrics_table_name": db.metrics_table_name,
+            "evals_table_name": db.eval_table_name,
+            "knowledge_table_name": db.knowledge_table_name,
+        }
+        
+    def _register_db_with_validation(self, registered_dbs: Dict[str, Any], db: BaseDb) -> None:
         """Register a database in the contextual OS after validating it is not conflicting with registered databases"""
+        print(f"Registering database {db.id} with table names {self._get_db_table_names(db)}")
         if db.id in registered_dbs:
             existing_db = registered_dbs[db.id]
             if not self._are_db_instances_compatible(existing_db, db):
