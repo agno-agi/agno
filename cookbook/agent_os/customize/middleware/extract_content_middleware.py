@@ -132,7 +132,7 @@ class ContentExtractionMiddleware(BaseHTTPMiddleware):
                 else:
                     preview = response_body[:500]
                     print(f"Response Preview:\n{preview}...")
-            except Exception as e:
+            except Exception as _:
                 # If parsing fails, just show the raw response preview
                 preview = response_body[:500]
                 print(f"Response Preview:\n{preview}...")
