@@ -815,8 +815,6 @@ def test_comprehensive_workflow_events_with_stream_intermediate_steps_false(shar
 
 def test_stream_executor_events_false_with_agent(shared_db, test_agent):
     """Test that stream_executor_events=False filters out agent internal events."""
-    from agno.agent import Agent
-
     agent = test_agent
 
     workflow = Workflow(
@@ -847,8 +845,6 @@ def test_stream_executor_events_false_with_agent(shared_db, test_agent):
 
 def test_stream_executor_events_true_with_agent(shared_db, test_agent):
     """Test that stream_executor_events=True includes agent internal events."""
-    from agno.agent import Agent
-
     agent = test_agent
 
     workflow = Workflow(
@@ -885,8 +881,6 @@ def test_stream_executor_events_true_with_agent(shared_db, test_agent):
 @pytest.mark.asyncio
 async def test_stream_executor_events_false_async_with_agent(shared_db, test_agent):
     """Test stream_executor_events=False in async context with agent."""
-    from agno.agent import Agent
-
     agent = test_agent
 
     workflow = Workflow(
