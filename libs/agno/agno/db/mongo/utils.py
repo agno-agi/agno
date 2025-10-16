@@ -16,8 +16,6 @@ except ImportError:
 
 
 # -- DB util methods --
-
-
 def create_collection_indexes(collection: Collection, collection_type: str) -> None:
     """Create all required indexes for a collection"""
     try:
@@ -58,8 +56,6 @@ def apply_pagination(
 
 
 # -- Metrics util methods --
-
-
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
     """Calculate metrics for the given single date."""
     metrics = {
