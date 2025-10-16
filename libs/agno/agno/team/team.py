@@ -260,7 +260,7 @@ class Team:
     # If True, store media in run output
     store_media: bool = True
     # If True, store tool results in run output
-    store_tool_results: bool = True
+    store_tool_messages: bool = True
     # If True, store history messages in run output
     store_history_messages: bool = True
 
@@ -422,7 +422,7 @@ class Team:
         search_knowledge: bool = True,
         read_team_history: bool = False,
         store_media: bool = True,
-        store_tool_results: bool = True,
+        store_tool_messages: bool = True,
         store_history_messages: bool = True,
         send_media_to_model: bool = True,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
@@ -524,7 +524,7 @@ class Team:
         self.read_team_history = read_team_history
 
         self.store_media = store_media
-        self.store_tool_results = store_tool_results
+        self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
         self.send_media_to_model = send_media_to_model
 
@@ -3672,7 +3672,7 @@ class Team:
 
     def _scrub_tool_results_from_run_output(self, run_response: TeamRunOutput) -> None:
         """
-        Remove all tool-related data from RunOutput when store_tool_results=False.
+        Remove all tool-related data from RunOutput when store_tool_messages=False.
         This removes both the tool call and its corresponding result to maintain API consistency.
         """
         if not run_response.messages:
@@ -3723,7 +3723,7 @@ class Team:
             self._scrub_media_from_run_output(run_response)
             scrubbed = True
 
-        if not self.store_tool_results:
+        if not self.store_tool_messages:
             self._scrub_tool_results_from_run_output(run_response)
             scrubbed = True
 
@@ -3756,7 +3756,7 @@ class Team:
 
             _, member = member_result
 
-            if not member.store_media or not member.store_tool_results or not member.store_history_messages:
+            if not member.store_media or not member.store_tool_messages or not member.store_history_messages:
                 member._scrub_run_output_for_storage(member_response)  # type: ignore
 
     def _validate_media_object_id(
@@ -6601,7 +6601,7 @@ class Team:
             if member_agent_run_response:
                 if (
                     not member_agent.store_media
-                    or not member_agent.store_tool_results
+                    or not member_agent.store_tool_messages
                     or not member_agent.store_history_messages
                 ):
                     member_agent._scrub_run_output_for_storage(member_agent_run_response)  # type: ignore

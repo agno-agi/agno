@@ -248,7 +248,7 @@ class Agent:
     # If True, store media in run output
     store_media: bool = True
     # If True, store tool results in run output
-    store_tool_results: bool = True
+    store_tool_messages: bool = True
     # If True, store history messages in run output
     store_history_messages: bool = True
 
@@ -388,7 +388,7 @@ class Agent:
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
         store_media: bool = True,
-        store_tool_results: bool = True,
+        store_tool_messages: bool = True,
         store_history_messages: bool = True,
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
@@ -490,7 +490,7 @@ class Agent:
             )
 
         self.store_media = store_media
-        self.store_tool_results = store_tool_results
+        self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
 
         self.knowledge = knowledge
@@ -8865,7 +8865,7 @@ class Agent:
 
     def _scrub_tool_results_from_run_output(self, run_response: RunOutput) -> None:
         """
-        Remove all tool-related data from RunOutput when store_tool_results=False.
+        Remove all tool-related data from RunOutput when store_tool_messages=False.
         This removes both the tool call and its corresponding result to maintain API consistency.
         """
         if not run_response.messages:
@@ -8916,7 +8916,7 @@ class Agent:
             self._scrub_media_from_run_output(run_response)
             scrubbed = True
 
-        if not self.store_tool_results:
+        if not self.store_tool_messages:
             self._scrub_tool_results_from_run_output(run_response)
             scrubbed = True
 
