@@ -2068,7 +2068,7 @@ class Workflow:
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
-        stream_intermediate_steps: bool = False,
+        stream: bool = False,
     ) -> None:
         """Initialize the workflow agent with tools (but NOT context - that's passed per-run)"""
         from agno.tools.function import Function
@@ -2078,7 +2078,7 @@ class Workflow:
             session=session,
             execution_input=execution_input,
             session_state=session_state,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream=stream,
         )
         workflow_tool = Function.from_callable(workflow_tool_func)
 
@@ -2110,7 +2110,6 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
         stream: bool = False,
-        stream_intermediate_steps: bool = False,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """
@@ -2143,7 +2142,7 @@ class Workflow:
                 session=session,
                 execution_input=execution_input,
                 session_state=session_state,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream=stream,
                 **kwargs,
             )
         else:
@@ -2152,6 +2151,7 @@ class Workflow:
                 session=session,
                 execution_input=execution_input,
                 session_state=session_state,
+                stream=stream,
             )
 
     def _execute_workflow_agent_streaming(
@@ -2160,7 +2160,7 @@ class Workflow:
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
-        stream_intermediate_steps: bool = False,
+        stream: bool = False,
         **kwargs: Any,
     ) -> Iterator[WorkflowRunOutputEvent]:
         """
@@ -2181,7 +2181,7 @@ class Workflow:
         log_debug(f"User input: {agent_input}")
 
         # Initialize agent with stream_intermediate_steps=True so tool yields events
-        self._initialize_workflow_agent(session, execution_input, session_state, stream_intermediate_steps=True)
+        self._initialize_workflow_agent(session, execution_input, session_state, stream=stream)
 
         # Build dependencies with workflow context
         dependencies = self._get_workflow_agent_dependencies(session)
@@ -2199,7 +2199,7 @@ class Workflow:
         for event in self.agent.run(  # type: ignore[union-attr]
             input=agent_input,
             stream=True,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream_intermediate_steps=True,
             yield_run_response=True,
             dependencies=dependencies,  # Pass context dynamically per-run
         ):  # type: ignore
@@ -2302,6 +2302,7 @@ class Workflow:
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
+        stream: bool = False,
     ) -> WorkflowRunOutput:
         """
         Execute the workflow agent in non-streaming mode.
@@ -2321,7 +2322,7 @@ class Workflow:
         log_debug(f"User input: {agent_input}")
 
         # Initialize the agent
-        self._initialize_workflow_agent(session, execution_input, session_state)
+        self._initialize_workflow_agent(session, execution_input, session_state, stream=stream)
 
         # Build dependencies with workflow context
         dependencies = self._get_workflow_agent_dependencies(session)
@@ -2331,6 +2332,7 @@ class Workflow:
         agent_response: RunOutput = self.agent.run(  # type: ignore[union-attr]
             input=agent_input,
             dependencies=dependencies,
+            stream=stream,
         )  # type: ignore
 
         # Check if the agent called the workflow tool
@@ -2489,7 +2491,6 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
         stream: bool = False,
-        stream_intermediate_steps: bool = False,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """
@@ -2503,7 +2504,6 @@ class Workflow:
             execution_input: The execution input
             session_state: The session state
             stream: Whether to stream the response
-            stream_intermediate_steps: Whether to stream intermediate steps
 
         Returns:
             WorkflowRunOutput if stream=False, AsyncIterator[WorkflowRunOutputEvent] if stream=True
@@ -2522,7 +2522,7 @@ class Workflow:
                 session=session,
                 execution_input=execution_input,
                 session_state=session_state,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream=stream,
                 **kwargs,
             )
         else:
@@ -2531,6 +2531,7 @@ class Workflow:
                 session=session,
                 execution_input=execution_input,
                 session_state=session_state,
+                stream=stream,
             )
 
     async def _aexecute_workflow_agent_streaming(
@@ -2539,7 +2540,7 @@ class Workflow:
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
-        stream_intermediate_steps: bool = False,
+        stream: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """
@@ -2559,7 +2560,7 @@ class Workflow:
         logger.info("Workflow agent enabled - async streaming mode")
         log_debug(f"User input: {agent_input}")
 
-        self._async_initialize_workflow_agent(session, execution_input, session_state, stream_intermediate_steps=True)
+        self._async_initialize_workflow_agent(session, execution_input, session_state, stream=stream)
 
         dependencies = self._get_workflow_agent_dependencies(session)
 
@@ -2575,7 +2576,7 @@ class Workflow:
         async for event in self.agent.arun(  # type: ignore[union-attr]
             input=agent_input,
             stream=True,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream_intermediate_steps=True,
             yield_run_response=True,
             dependencies=dependencies,  # Pass context dynamically per-run
         ):  # type: ignore
@@ -2677,6 +2678,7 @@ class Workflow:
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
+        stream: bool = False,
     ) -> WorkflowRunOutput:
         """
         Execute the workflow agent asynchronously in non-streaming mode.
@@ -2690,7 +2692,7 @@ class Workflow:
         log_debug(f"User input: {agent_input}")
 
         # Initialize the agent
-        self._async_initialize_workflow_agent(session, execution_input, session_state)
+        self._async_initialize_workflow_agent(session, execution_input, session_state, stream=stream)
 
         # Build dependencies with workflow context
         dependencies = self._get_workflow_agent_dependencies(session)
@@ -2700,6 +2702,7 @@ class Workflow:
         agent_response: RunOutput = await self.agent.arun(  # type: ignore[union-attr]
             input=agent_input,
             dependencies=dependencies,
+            stream=stream,
         )  # type: ignore
 
         # Check if the agent called the workflow tool
@@ -2924,7 +2927,6 @@ class Workflow:
                 execution_input=inputs,
                 session_state=session_state,
                 stream=stream,
-                stream_intermediate_steps=stream_intermediate_steps,
                 **kwargs,
             )
 
@@ -3106,7 +3108,6 @@ class Workflow:
                 execution_input=inputs,
                 session_state=session_state,
                 stream=stream,
-                stream_intermediate_steps=stream_intermediate_steps,
                 **kwargs,
             )
 

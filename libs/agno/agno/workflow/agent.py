@@ -69,7 +69,7 @@ class WorkflowAgent(Agent):
         session: "WorkflowSession",
         execution_input: "WorkflowExecutionInput",
         session_state: Optional[Dict[str, Any]],
-        stream_intermediate_steps: bool = False,
+        stream: bool = False,
     ) -> Callable:
         """
         Create the workflow execution tool that this agent can call.
@@ -79,6 +79,7 @@ class WorkflowAgent(Agent):
             session: The workflow session
             execution_input: The execution input
             session_state: The session state
+            stream: Whether to stream the workflow execution
         Returns:
             Callable tool function
         """
@@ -134,7 +135,7 @@ class WorkflowAgent(Agent):
             )
 
             # ===== EXECUTION LOGIC (Based on streaming mode) =====
-            if stream_intermediate_steps:
+            if stream:
                 # STREAMING MODE: Yield workflow events
                 log_debug("Executing workflow with streaming...")
 
@@ -192,7 +193,7 @@ class WorkflowAgent(Agent):
         session: "WorkflowSession",
         execution_input: "WorkflowExecutionInput",
         session_state: Optional[Dict[str, Any]],
-        stream_intermediate_steps: bool = False,
+        stream: bool = False,
     ) -> Callable:
         """
         Create the async workflow execution tool that this agent can call.
@@ -203,7 +204,7 @@ class WorkflowAgent(Agent):
             session: The workflow session
             execution_input: The execution input
             session_state: The session state
-            stream_intermediate_steps: Whether to stream intermediate steps
+            stream: Whether to stream the workflow execution
 
         Returns:
             Async callable tool function
@@ -260,7 +261,7 @@ class WorkflowAgent(Agent):
                 files=execution_input.files,
             )
 
-            if stream_intermediate_steps:
+            if stream:
                 log_debug("Executing workflow with async streaming...")
 
                 final_content = ""
@@ -269,7 +270,7 @@ class WorkflowAgent(Agent):
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
                     session_state=session_state,
-                    stream_intermediate_steps=True,
+                    stream=True,
                 ):
                     yield event
 
