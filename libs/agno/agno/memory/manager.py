@@ -721,15 +721,15 @@ class MemoryManager:
         memory_capture_instructions = self.memory_capture_instructions or dedent("""\
             Memories should include details that could personalize ongoing interactions with the user, such as:
               - Personal facts: name, age, occupation, location, interests, preferences, etc.
+              - Preferences and opinions: what the user likes, dislikes, enjoys, or finds annoying
               - Significant life events or experiences shared by the user
               - Important context about the user's current situation, challenges or goals
-              - What the user likes or dislikes, their opinions, beliefs, values, etc.
               - Any other details that provide valuable insights into the user's personality, perspective or needs\
         """)
 
         # -*- Return a system message for the memory manager
         system_prompt_lines = [
-            "You are a MemoryConnector that is responsible for manging key information about the user. "
+            "You are a MemoryConnector that is responsible for managing information and preferences about the user. "
             "You will be provided with a criteria for memories to capture in the <memories_to_capture> section and a list of existing memories in the <existing_memories> section.",
             "",
             "## When to add or update memories",

@@ -5877,9 +5877,7 @@ class Agent:
             user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
             if user_memories and len(user_memories) > 0:
-                system_message_content += (
-                    "You have access to memories from previous interactions with the user that you can use:\n\n"
-                )
+                system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
                 system_message_content += "<memories_from_previous_interactions>"
                 for _memory in user_memories:  # type: ignore
                     system_message_content += f"\n- {_memory.memory}"
@@ -6153,9 +6151,7 @@ class Agent:
                 user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
             if user_memories and len(user_memories) > 0:
-                system_message_content += (
-                    "You have access to memories from previous interactions with the user that you can use:\n\n"
-                )
+                system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
                 system_message_content += "<memories_from_previous_interactions>"
                 for _memory in user_memories:  # type: ignore
                     system_message_content += f"\n- {_memory.memory}"
