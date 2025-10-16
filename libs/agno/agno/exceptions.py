@@ -130,7 +130,10 @@ class InputCheckError(Exception):
     ):
         super().__init__(message)
         self.type = "input_check_error"
-        self.error_id = check_trigger.value
+        if isinstance(check_trigger, CheckTrigger):
+            self.error_id = check_trigger.value
+        else:
+            self.error_id = str(check_trigger)
 
         self.message = message
         self.check_trigger = check_trigger
@@ -148,7 +151,10 @@ class OutputCheckError(Exception):
     ):
         super().__init__(message)
         self.type = "output_check_error"
-        self.error_id = check_trigger.value
+        if isinstance(check_trigger, CheckTrigger):
+            self.error_id = check_trigger.value
+        else:
+            self.error_id = str(check_trigger)
 
         self.message = message
         self.check_trigger = check_trigger
