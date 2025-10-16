@@ -148,7 +148,7 @@ def add_to_shopping_cart(
     total_items = sum(item["quantity"] for item in session_state["shopping_cart"])
     total_cost = sum(item["subtotal"] for item in session_state["shopping_cart"])
 
-    return f"✅ Added {quantity}x {item_name} (${price:.2f} each) to cart.\nCart now has {total_items} items totaling ${total_cost:.2f}"
+    return f"Added {quantity}x {item_name} (${price:.2f} each) to cart.\nCart now has {total_items} items totaling ${total_cost:.2f}"
 
 
 def view_shopping_cart(session_state) -> str:
@@ -187,7 +187,7 @@ def clear_shopping_cart(session_state) -> str:
         Confirmation message
     """
     session_state["shopping_cart"] = []
-    return "✅ Shopping cart cleared successfully."
+    return "Shopping cart cleared successfully."
 
 
 def save_travel_preferences(
@@ -210,7 +210,7 @@ def save_travel_preferences(
         "interests": interests.split(","),
     }
 
-    return f"✅ Saved travel preferences:\n- Destination: {destination}\n- Budget: ${budget:.2f}\n- Interests: {interests}"
+    return f"Saved travel preferences:\n- Destination: {destination}\n- Budget: ${budget:.2f}\n- Interests: {interests}"
 
 
 def view_travel_preferences(session_state) -> str:

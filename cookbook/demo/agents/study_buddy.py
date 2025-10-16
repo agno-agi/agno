@@ -80,7 +80,7 @@ def validate_education_query(run_input: RunInput, agent: Agent) -> None:
 
     if any(keyword in query for keyword in crisis_keywords):
         raise InputCheckError(
-            "⚠️  CRISIS SUPPORT NEEDED: Please contact a crisis helpline immediately:\n"
+            " CRISIS SUPPORT NEEDED: Please contact a crisis helpline immediately:\n"
             "• National Suicide Prevention Lifeline: 988 (US)\n"
             "• Crisis Text Line: Text HOME to 741741\n"
             "• International Association for Suicide Prevention: https://www.iasp.info/resources/Crisis_Centres/\n\n"
@@ -130,8 +130,6 @@ def validate_knowledge_result(fc: FunctionCall):
     - Adding metadata to responses
     - Tracking successful knowledge retrievals
     """
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n✅ [{timestamp}] Knowledge Retrieved: {fc.function.name}")
     if fc.result:
         result_size = len(str(fc.result))
         print(f"   Result Size: {result_size} characters")
