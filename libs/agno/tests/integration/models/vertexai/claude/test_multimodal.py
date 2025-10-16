@@ -1,0 +1,16 @@
+from agno.agent.agent import Agent
+from agno.media import Image
+from agno.models.vertexai.claude import Claude
+
+
+def test_image_input():
+    agent = Agent(model=Claude(id="claude-sonnet-4@20250514"), markdown=True, telemetry=False)
+
+    response = agent.run(
+        "Tell me about this image.",
+        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+    )
+
+    assert response.content is not None
+    assert "golden" in response.content.lower()
+    assert "bridge" in response.content.lower()

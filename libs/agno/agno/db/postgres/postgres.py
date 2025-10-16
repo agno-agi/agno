@@ -704,7 +704,7 @@ class PostgresDb(BaseDb):
             raise e
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk insert or update multiple sessions.
@@ -712,6 +712,7 @@ class PostgresDb(BaseDb):
         Args:
             sessions (List[Session]): The list of session data to upsert.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the session object.
 
         Returns:
             List[Union[Session, Dict[str, Any]]]: List of upserted sessions
@@ -739,6 +740,8 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for agent_session in agent_sessions:
                     session_dict = agent_session.to_dict()
+                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -751,7 +754,7 @@ class PostgresDb(BaseDb):
                             "metadata": session_dict.get("metadata"),
                             "runs": session_dict.get("runs"),
                             "created_at": session_dict.get("created_at"),
-                            "updated_at": int(time.time()),
+                            "updated_at": updated_at,
                         }
                     )
 
@@ -782,6 +785,8 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for team_session in team_sessions:
                     session_dict = team_session.to_dict()
+                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -794,7 +799,7 @@ class PostgresDb(BaseDb):
                             "metadata": session_dict.get("metadata"),
                             "runs": session_dict.get("runs"),
                             "created_at": session_dict.get("created_at"),
-                            "updated_at": int(time.time()),
+                            "updated_at": updated_at,
                         }
                     )
 
@@ -825,6 +830,8 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for workflow_session in workflow_sessions:
                     session_dict = workflow_session.to_dict()
+                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -837,7 +844,7 @@ class PostgresDb(BaseDb):
                             "metadata": session_dict.get("metadata"),
                             "runs": session_dict.get("runs"),
                             "created_at": session_dict.get("created_at"),
-                            "updated_at": int(time.time()),
+                            "updated_at": updated_at,
                         }
                     )
 
@@ -870,8 +877,12 @@ class PostgresDb(BaseDb):
             return []
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
@@ -886,6 +897,10 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+
                 result = sess.execute(delete_stmt)
 
                 success = result.rowcount > 0
@@ -898,11 +913,12 @@ class PostgresDb(BaseDb):
             log_error(f"Error deleting user memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -914,6 +930,10 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+
                 result = sess.execute(delete_stmt)
 
                 if result.rowcount == 0:
@@ -938,6 +958,7 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
+
                 result = sess.execute(stmt).fetchall()
 
                 return list(set([record[0] for record in result]))
@@ -947,13 +968,14 @@ class PostgresDb(BaseDb):
             return []
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -970,6 +992,9 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
 
                 result = sess.execute(stmt).fetchone()
                 if not result:
@@ -1216,7 +1241,7 @@ class PostgresDb(BaseDb):
             raise e
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk insert or update multiple memories in the database for improved performance.
@@ -1224,6 +1249,8 @@ class PostgresDb(BaseDb):
         Args:
             memories (List[UserMemory]): The list of memories to upsert.
             deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the memory object.
+                                       If False (default), set updated_at to current time.
 
         Returns:
             List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories
@@ -1247,6 +1274,8 @@ class PostgresDb(BaseDb):
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at else current_time
                 memory_records.append(
                     {
                         "memory_id": memory.memory_id,
@@ -1256,7 +1285,7 @@ class PostgresDb(BaseDb):
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
-                        "updated_at": current_time,
+                        "updated_at": updated_at,
                     }
                 )
 

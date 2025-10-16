@@ -32,6 +32,7 @@ class MCPServerConfiguration:
 
 ROLE_MAP = {
     "system": "system",
+    "developer": "system",
     "user": "user",
     "assistant": "assistant",
     "tool": "user",
@@ -217,7 +218,8 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 
     for message in messages:
         content = message.content or ""
-        if message.role == "system":
+        # Both "system" and "developer" roles should be extracted as system messages
+        if message.role in ("system", "developer"):
             if content is not None:
                 system_messages.append(content)  # type: ignore
             continue

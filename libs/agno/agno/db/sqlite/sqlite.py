@@ -1,7 +1,7 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
@@ -24,7 +24,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, Table, and_, func, select, text, update
+    from sqlalchemy import Column, MetaData, Table, and_, func, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -36,9 +36,9 @@ except ImportError:
 class SqliteDb(BaseDb):
     def __init__(
         self,
+        db_file: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         db_url: Optional[str] = None,
-        db_file: Optional[str] = None,
         session_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
@@ -56,9 +56,9 @@ class SqliteDb(BaseDb):
             4. Create a new database in the current directory
 
         Args:
+            db_file (Optional[str]): The database file to connect to.
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_url (Optional[str]): The database URL to connect to.
-            db_file (Optional[str]): The database file to connect to.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
             memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
@@ -442,11 +442,7 @@ class SqliteDb(BaseDb):
                 if end_timestamp is not None:
                     stmt = stmt.where(table.c.created_at <= end_timestamp)
                 if session_name is not None:
-                    stmt = stmt.where(
-                        func.coalesce(func.json_extract(table.c.session_data, "$.session_name"), "").like(
-                            f"%{session_name}%"
-                        )
-                    )
+                    stmt = stmt.where(table.c.session_data.like(f"%{session_name}%"))
                 if session_type is not None:
                     stmt = stmt.where(table.c.session_type == session_type.value)
 
@@ -468,8 +464,10 @@ class SqliteDb(BaseDb):
                     return [] if deserialize else ([], 0)
 
                 sessions_raw = [deserialize_session_json_fields(dict(record._mapping)) for record in records]
-                if not sessions_raw or not deserialize:
+                if not deserialize:
                     return sessions_raw, total_count
+                if not sessions_raw:
+                    return []
 
             if session_type == SessionType.AGENT:
                 return [AgentSession.from_dict(record) for record in sessions_raw]  # type: ignore
@@ -505,43 +503,20 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during renaming.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
+            # Get the current session as a deserialized object
+            # Get the session record
+            session = self.get_session(session_id, session_type, deserialize=True)
+            if session is None:
                 return None
 
-            with self.Session() as sess, sess.begin():
-                # Update session_name inside the session_data JSON field
-                stmt = (
-                    update(table)
-                    .where(table.c.session_id == session_id)
-                    .values(session_data=func.json_set(table.c.session_data, "$.session_name", session_name))
-                )
-                result = sess.execute(stmt)
+            session = cast(Session, session)
+            # Update the session name
+            if session.session_data is None:
+                session.session_data = {}
+            session.session_data["session_name"] = session_name
 
-                # Check if any rows were affected
-                if result.rowcount == 0:
-                    return None
-
-                # Fetch the updated row
-                select_stmt = select(table).where(table.c.session_id == session_id)
-                row = sess.execute(select_stmt).fetchone()
-
-                if not row:
-                    return None
-
-            session_raw = deserialize_session_json_fields(dict(row._mapping))
-            if not session_raw or not deserialize:
-                return session_raw
-
-            # Return the appropriate session type
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session_raw)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session_raw)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session_raw)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            # Upsert the updated session back to the database
+            return self.upsert_session(session, deserialize=deserialize)
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
@@ -689,7 +664,7 @@ class SqliteDb(BaseDb):
             raise e
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk upsert multiple sessions for improved performance on large datasets.
@@ -697,6 +672,7 @@ class SqliteDb(BaseDb):
         Args:
             sessions (List[Session]): List of sessions to upsert.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the session object.
 
         Returns:
             List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
@@ -740,6 +716,12 @@ class SqliteDb(BaseDb):
                     agent_data = []
                     for session in agent_sessions:
                         serialized_session = serialize_session_json_fields(session.to_dict())
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = (
+                            serialized_session.get("updated_at")
+                            if preserve_updated_at
+                            else int(time.time())
+                        )
                         agent_data.append(
                             {
                                 "session_id": serialized_session.get("session_id"),
@@ -752,7 +734,7 @@ class SqliteDb(BaseDb):
                                 "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
                                 "created_at": serialized_session.get("created_at"),
-                                "updated_at": serialized_session.get("created_at"),
+                                "updated_at": updated_at,
                             }
                         )
 
@@ -768,7 +750,7 @@ class SqliteDb(BaseDb):
                                 metadata=stmt.excluded.metadata,
                                 runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
-                                updated_at=int(time.time()),
+                                updated_at=stmt.excluded.updated_at,
                             ),
                         )
                         sess.execute(stmt, agent_data)
@@ -793,6 +775,12 @@ class SqliteDb(BaseDb):
                     team_data = []
                     for session in team_sessions:
                         serialized_session = serialize_session_json_fields(session.to_dict())
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = (
+                            serialized_session.get("updated_at")
+                            if preserve_updated_at
+                            else int(time.time())
+                        )
                         team_data.append(
                             {
                                 "session_id": serialized_session.get("session_id"),
@@ -802,7 +790,7 @@ class SqliteDb(BaseDb):
                                 "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
                                 "created_at": serialized_session.get("created_at"),
-                                "updated_at": serialized_session.get("created_at"),
+                                "updated_at": updated_at,
                                 "team_data": serialized_session.get("team_data"),
                                 "session_data": serialized_session.get("session_data"),
                                 "metadata": serialized_session.get("metadata"),
@@ -821,7 +809,7 @@ class SqliteDb(BaseDb):
                                 metadata=stmt.excluded.metadata,
                                 runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
-                                updated_at=int(time.time()),
+                                updated_at=stmt.excluded.updated_at,
                             ),
                         )
                         sess.execute(stmt, team_data)
@@ -846,6 +834,12 @@ class SqliteDb(BaseDb):
                     workflow_data = []
                     for session in workflow_sessions:
                         serialized_session = serialize_session_json_fields(session.to_dict())
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = (
+                            serialized_session.get("updated_at")
+                            if preserve_updated_at
+                            else int(time.time())
+                        )
                         workflow_data.append(
                             {
                                 "session_id": serialized_session.get("session_id"),
@@ -855,7 +849,7 @@ class SqliteDb(BaseDb):
                                 "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
                                 "created_at": serialized_session.get("created_at"),
-                                "updated_at": serialized_session.get("created_at"),
+                                "updated_at": updated_at,
                                 "workflow_data": serialized_session.get("workflow_data"),
                                 "session_data": serialized_session.get("session_data"),
                                 "metadata": serialized_session.get("metadata"),
@@ -874,7 +868,7 @@ class SqliteDb(BaseDb):
                                 metadata=stmt.excluded.metadata,
                                 runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
-                                updated_at=int(time.time()),
+                                updated_at=stmt.excluded.updated_at,
                             ),
                         )
                         sess.execute(stmt, workflow_data)
@@ -909,8 +903,12 @@ class SqliteDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
@@ -925,6 +923,8 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
                 success = result.rowcount > 0
@@ -937,11 +937,12 @@ class SqliteDb(BaseDb):
             log_error(f"Error deleting user memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -953,6 +954,8 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
                     log_debug(f"No user memories found with ids: {memory_ids}")
@@ -973,7 +976,8 @@ class SqliteDb(BaseDb):
                 return []
 
             with self.Session() as sess, sess.begin():
-                stmt = select(func.json_array_elements_text(table.c.topics))
+                # Select topics from all results
+                stmt = select(func.json_array_elements_text(table.c.topics)).select_from(table)
                 result = sess.execute(stmt).fetchall()
 
                 return list(set([record[0] for record in result]))
@@ -983,13 +987,14 @@ class SqliteDb(BaseDb):
             raise e
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -1006,6 +1011,8 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -1236,7 +1243,7 @@ class SqliteDb(BaseDb):
             raise e
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk upsert multiple user memories for improved performance on large datasets.
@@ -1267,10 +1274,13 @@ class SqliteDb(BaseDb):
                 ]
             # Prepare bulk data
             bulk_data = []
+            current_time = int(time.time())
             for memory in memories:
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at else current_time
                 bulk_data.append(
                     {
                         "user_id": memory.user_id,
@@ -1279,7 +1289,7 @@ class SqliteDb(BaseDb):
                         "memory_id": memory.memory_id,
                         "memory": memory.memory,
                         "topics": memory.topics,
-                        "updated_at": int(time.time()),
+                        "updated_at": updated_at,
                     }
                 )
 
@@ -1296,7 +1306,7 @@ class SqliteDb(BaseDb):
                         input=stmt.excluded.input,
                         agent_id=stmt.excluded.agent_id,
                         team_id=stmt.excluded.team_id,
-                        updated_at=int(time.time()),
+                        updated_at=stmt.excluded.updated_at,
                     ),
                 )
                 sess.execute(stmt, bulk_data)

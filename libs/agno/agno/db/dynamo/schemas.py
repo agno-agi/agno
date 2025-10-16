@@ -73,6 +73,7 @@ USER_MEMORY_TABLE_SCHEMA = {
         {"AttributeName": "user_id", "AttributeType": "S"},
         {"AttributeName": "agent_id", "AttributeType": "S"},
         {"AttributeName": "team_id", "AttributeType": "S"},
+        {"AttributeName": "workflow_id", "AttributeType": "S"},
         {"AttributeName": "updated_at", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
@@ -123,7 +124,6 @@ EVAL_TABLE_SCHEMA = {
     "AttributeDefinitions": [
         {"AttributeName": "run_id", "AttributeType": "S"},
         {"AttributeName": "eval_type", "AttributeType": "S"},
-        {"AttributeName": "eval_input", "AttributeType": "S"},
         {"AttributeName": "agent_id", "AttributeType": "S"},
         {"AttributeName": "team_id", "AttributeType": "S"},
         {"AttributeName": "workflow_id", "AttributeType": "S"},
@@ -176,18 +176,9 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
     "AttributeDefinitions": [
         {"AttributeName": "id", "AttributeType": "S"},
-        {"AttributeName": "name", "AttributeType": "S"},
-        {"AttributeName": "description", "AttributeType": "S"},
-        {"AttributeName": "metadata", "AttributeType": "S"},
         {"AttributeName": "type", "AttributeType": "S"},
-        {"AttributeName": "size", "AttributeType": "N"},
-        {"AttributeName": "linked_to", "AttributeType": "S"},
-        {"AttributeName": "access_count", "AttributeType": "N"},
         {"AttributeName": "status", "AttributeType": "S"},
-        {"AttributeName": "status_message", "AttributeType": "S"},
         {"AttributeName": "created_at", "AttributeType": "N"},
-        {"AttributeName": "updated_at", "AttributeType": "N"},
-        {"AttributeName": "external_id", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
         {

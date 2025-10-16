@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.1.0"
+version = "2.1.5"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -33,6 +33,7 @@ classifiers = [
 dependencies = [
   "docstring-parser",
   "gitpython",
+  "h11>=0.16.0",
   "httpx",
   "packaging",
   "pydantic-settings",
@@ -127,6 +128,7 @@ neo4j = ["neo4j"]
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary"]
+async_postgres = ["asyncpg"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
@@ -160,6 +162,9 @@ chonkie = ["chonkie[st]", "chonkie"]
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
 
+# Dependencies for A2A integration
+a2a = ["a2a-sdk"]
+
 # Dependencies for Embedders
 huggingface = [
     "huggingface-hub",
@@ -186,7 +191,6 @@ models = [
   "agno[azure]",
   "agno[cerebras]",
   "agno[cohere]",
-  "agno[infinity]",
   "agno[google]",
   "agno[groq]",
   "agno[ibm]",
@@ -244,6 +248,7 @@ tools = [
 storage = [
   "agno[sql]",
   "agno[postgres]",
+  "agno[async_postgres]",
   "agno[sqlite]",
   "agno[gcs]",
   "agno[firestore]",
@@ -336,6 +341,7 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "a2a.*",
   "ag_ui.*",
   "agentql.*",
   "aioboto3.*",
