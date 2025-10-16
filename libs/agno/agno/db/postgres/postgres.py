@@ -740,12 +740,8 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for agent_session in agent_sessions:
                     session_dict = agent_session.to_dict()
-                    # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                    updated_at = (
-                        session_dict.get("updated_at")
-                        if preserve_updated_at and session_dict.get("updated_at")
-                        else int(time.time())
-                    )
+                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -789,12 +785,8 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for team_session in team_sessions:
                     session_dict = team_session.to_dict()
-                    # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                    updated_at = (
-                        session_dict.get("updated_at")
-                        if preserve_updated_at and session_dict.get("updated_at")
-                        else int(time.time())
-                    )
+                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -838,12 +830,8 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for workflow_session in workflow_sessions:
                     session_dict = workflow_session.to_dict()
-                    # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                    updated_at = (
-                        session_dict.get("updated_at")
-                        if preserve_updated_at and session_dict.get("updated_at")
-                        else int(time.time())
-                    )
+                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -1286,8 +1274,8 @@ class PostgresDb(BaseDb):
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
-                # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                updated_at = memory.updated_at if preserve_updated_at and memory.updated_at else current_time
+                # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at else current_time
                 memory_records.append(
                     {
                         "memory_id": memory.memory_id,
