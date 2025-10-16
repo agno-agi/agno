@@ -1,5 +1,6 @@
 """Migration utility to migrate your Agno tables from v1 to v2"""
 
+import gc
 import json
 from typing import Any, Dict, List, Optional, Union, cast
 
@@ -422,6 +423,18 @@ def migrate_table_in_batches(
                 log_info(f"Bulk upserted {len(memories)} memories in batch {batch_count}")
 
         log_info(f"Completed batch {batch_count}: migrated {batch_size_actual} records")
+
+        # Explicit cleanup to free memory before next batch
+        del batch_content
+        if v1_table_type in ["agent_sessions", "team_sessions", "workflow_sessions"]:
+            del sessions
+        elif v1_table_type == "memories":
+            del memories
+
+        # Force garbage collection to return memory to OS
+        # This is necessary because Python's memory allocator retains memory after large operations
+        # See: https://github.com/sqlalchemy/sqlalchemy/issues/4616
+        gc.collect()
 
     log_info(f"✅ Migration completed for table {v1_table_name}: {total_migrated} total records migrated")
 
