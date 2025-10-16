@@ -1359,11 +1359,18 @@ class Team:
 
                     if isinstance(event, RunContentEvent):
                         if stream_intermediate_steps:
-                            yield IntermediateRunContentEvent(
+                            intermediate_event = IntermediateRunContentEvent(
                                 content=event.content,
                                 content_type=event.content_type,
                             )
+                            intermediate_event.metadata = metadata
+                            yield intermediate_event
+                        else:
+                            event.metadata = metadata
+                            yield event
                     else:
+                        if hasattr(event, "metadata"):
+                            event.metadata = metadata
                         yield event
 
                 for event in self._generate_response_with_output_model_stream(
@@ -1616,11 +1623,14 @@ class Team:
         )
         self.model = cast(Model, self.model)
 
-        if metadata is not None:
-            if self.metadata is not None:
-                merge_dictionaries(metadata, self.metadata)
-            else:
-                metadata = self.metadata
+        # Create a single merged_metadata
+        merged_metadata: Dict[str, Any] = {}
+        if getattr(self, "metadata", None):
+            merged_metadata.update(self.metadata)
+        if metadata:
+            merged_metadata.update(metadata)
+        self.metadata = merged_metadata
+        metadata = merged_metadata
 
         # Create a new run_response for this attempt
         run_response = TeamRunOutput(
