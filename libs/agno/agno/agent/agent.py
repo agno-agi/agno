@@ -8880,7 +8880,7 @@ class Agent:
         # Step 2: Remove tool result messages (role="tool")
         run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
 
-        # Step 3: Remove assistant messages that made those tool calls
+        # Step 3: Remove the assistant messages related to the scrubbed tool calls
         filtered_messages = []
         for message in run_response.messages:
             # Check if this assistant message made any of the tool calls we're removing
