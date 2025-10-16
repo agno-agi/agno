@@ -2466,7 +2466,7 @@ class Workflow:
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
-        stream_intermediate_steps: bool = False,
+        stream: bool = False,
     ) -> None:
         """Initialize the workflow agent with async tools (but NOT context - that's passed per-run)"""
         from agno.tools.function import Function
@@ -2476,7 +2476,7 @@ class Workflow:
             session=session,
             execution_input=execution_input,
             session_state=session_state,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream=stream,
         )
         workflow_tool = Function.from_callable(workflow_tool_func)
 
