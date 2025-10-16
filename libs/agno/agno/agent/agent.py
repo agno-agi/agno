@@ -1473,7 +1473,6 @@ class Agent:
 
     async def _arun(
         self,
-        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         run_response: RunOutput,
         session_id: str,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1696,7 +1695,6 @@ class Agent:
 
     async def _arun_stream(
         self,
-        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         run_response: RunOutput,
         session_id: str,
         session_state: Optional[Dict[str, Any]] = None,
@@ -2133,7 +2131,6 @@ class Agent:
                 # Pass the new run_response to _arun
                 if stream:
                     return self._arun_stream(  # type: ignore
-                        input=validated_input,
                         run_response=run_response,
                         user_id=user_id,
                         response_format=response_format,
@@ -2152,7 +2149,6 @@ class Agent:
                     )  # type: ignore[assignment]
                 else:
                     return self._arun(  # type: ignore
-                        input=validated_input,
                         run_response=run_response,
                         user_id=user_id,
                         response_format=response_format,
