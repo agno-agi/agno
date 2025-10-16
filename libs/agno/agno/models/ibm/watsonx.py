@@ -321,13 +321,16 @@ class WatsonX(Model):
                 tool_call_entry["type"] = _tool_call_type
                 tool_call_entry["function"] = {
                     "name": _function_name or "",
-                    "arguments": _function_arguments or "",
+                    "arguments": _function_arguments or "{}",
                 }
             else:
                 if _function_name:
                     tool_call_entry["function"]["name"] += _function_name
                 if _function_arguments:
-                    tool_call_entry["function"]["arguments"] += _function_arguments
+                    if tool_call_entry["function"]["arguments"] == "{}":
+                        tool_call_entry["function"]["arguments"] = _function_arguments
+                    else:
+                        tool_call_entry["function"]["arguments"] += _function_arguments
                 if _tool_call_id:
                     tool_call_entry["id"] = _tool_call_id
                 if _tool_call_type:
