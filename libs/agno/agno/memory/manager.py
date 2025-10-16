@@ -1253,7 +1253,6 @@ class MemoryManager:
                             input=input_string,
                         )
                     )
-                )
                 log_debug("Memory updated")
                 return "Memory updated successfully"
             except Exception as e:
