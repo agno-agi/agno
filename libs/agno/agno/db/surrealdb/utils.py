@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Any, Optional, Sequence, TypeVar, Union
+from typing import Any, Optional, Sequence, TypeVar, Union, cast
 
 from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, Surreal
 
@@ -76,7 +76,7 @@ def query_one(
             if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):
                 return getattr(record_type, "from_dict").__call__(result)
             elif record_type is dict:
-                return result
+                return cast(RecordType, result)
             else:
                 return record_type(**result)
         elif len(response) == 0:
