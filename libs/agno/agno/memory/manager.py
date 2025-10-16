@@ -167,10 +167,7 @@ class MemoryManager:
             if user_id is None:
                 user_id = "default"
             # Refresh from the Db
-            if isinstance(self.db, AsyncBaseDb):
-                memories = await self.aread_from_db(user_id=user_id)
-            else:
-                memories = self.read_from_db(user_id=user_id)
+            memories = await self.aread_from_db(user_id=user_id)
             if memories is None:
                 return []
             return memories.get(user_id, [])
