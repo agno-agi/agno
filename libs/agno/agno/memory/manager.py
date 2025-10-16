@@ -116,11 +116,17 @@ class MemoryManager:
 
     async def aread_from_db(self, user_id: Optional[str] = None):
         if self.db:
-            # If no user_id is provided, read all memories
-            if user_id is None:
-                all_memories: List[UserMemory] = await self.db.get_user_memories()  # type: ignore
+            if isinstance(self.db, AsyncBaseDb):
+                # If no user_id is provided, read all memories
+                if user_id is None:
+                    all_memories: List[UserMemory] = await self.db.get_user_memories()
+                else:
+                    all_memories = await self.db.get_user_memories(user_id=user_id)
             else:
-                all_memories = await self.db.get_user_memories(user_id=user_id)  # type: ignore
+                if user_id is None:
+                    all_memories = self.db.get_user_memories()  # type: ignore
+                else:
+                    all_memories = self.db.get_user_memories(user_id=user_id)  # type: ignore
 
             memories: Dict[str, List[UserMemory]] = {}
             for memory in all_memories:
@@ -161,7 +167,10 @@ class MemoryManager:
             if user_id is None:
                 user_id = "default"
             # Refresh from the Db
-            memories = await self.aread_from_db(user_id=user_id)
+            if isinstance(self.db, AsyncBaseDb):
+                memories = await self.aread_from_db(user_id=user_id)
+            else:
+                memories = self.read_from_db(user_id=user_id)
             if memories is None:
                 return []
             return memories.get(user_id, [])
@@ -1165,7 +1174,7 @@ class MemoryManager:
     async def _aget_db_tools(
         self,
         user_id: str,
-        db: Union[BaseDb, AsyncBaseDb],
+        db: AsyncBaseDb,
         input_string: str,
         enable_add_memory: bool = True,
         enable_update_memory: bool = True,
@@ -1188,30 +1197,17 @@ class MemoryManager:
 
             try:
                 memory_id = str(uuid4())
-                if isinstance(db, AsyncBaseDb):
-                    await db.upsert_user_memory(
-                        UserMemory(
-                            memory_id=memory_id,
-                            user_id=user_id,
-                            agent_id=agent_id,
-                            team_id=team_id,
-                            memory=memory,
-                            topics=topics,
-                            input=input_string,
-                        )
+                await db.upsert_user_memory(
+                    UserMemory(
+                        memory_id=memory_id,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        team_id=team_id,
+                        memory=memory,
+                        topics=topics,
+                        input=input_string,
                     )
-                else:
-                    db.upsert_user_memory(
-                        UserMemory(
-                            memory_id=memory_id,
-                            user_id=user_id,
-                            agent_id=agent_id,
-                            team_id=team_id,
-                            memory=memory,
-                            topics=topics,
-                            input=input_string,
-                        )
-                    )
+                )
                 log_debug(f"Memory added: {memory_id}")
                 return "Memory added successfully"
             except Exception as e:
@@ -1230,24 +1226,14 @@ class MemoryManager:
             from agno.db.base import UserMemory
 
             try:
-                if isinstance(db, AsyncBaseDb):
-                    await db.upsert_user_memory(
-                        UserMemory(
-                            memory_id=memory_id,
-                            memory=memory,
-                            topics=topics,
-                            input=input_string,
-                        )
+                await db.upsert_user_memory(
+                    UserMemory(
+                        memory_id=memory_id,
+                        memory=memory,
+                        topics=topics,
+                        input=input_string,
                     )
-                else:
-                    db.upsert_user_memory(
-                        UserMemory(
-                            memory_id=memory_id,
-                            memory=memory,
-                            topics=topics,
-                            input=input_string,
-                        )
-                    )
+                )
                 log_debug("Memory updated")
                 return "Memory updated successfully"
             except Exception as e:
@@ -1262,10 +1248,7 @@ class MemoryManager:
                 str: A message indicating if the memory was deleted successfully or not.
             """
             try:
-                if isinstance(db, AsyncBaseDb):
-                    await db.delete_user_memory(memory_id=memory_id)
-                else:
-                    db.delete_user_memory(memory_id=memory_id)
+                await db.delete_user_memory(memory_id=memory_id)
                 log_debug("Memory deleted")
                 return "Memory deleted successfully"
             except Exception as e:
@@ -1278,10 +1261,7 @@ class MemoryManager:
             Returns:
                 str: A message indicating if the memory was cleared successfully or not.
             """
-            if isinstance(db, AsyncBaseDb):
-                await db.clear_memories()
-            else:
-                db.clear_memories()
+            await db.clear_memories()
             log_debug("Memory cleared")
             return "Memory cleared successfully"
 
