@@ -1235,12 +1235,23 @@ class MemoryManager:
             from agno.db.base import UserMemory
 
             try:
-                await db.upsert_user_memory(
-                    UserMemory(
-                        memory_id=memory_id,
-                        memory=memory,
-                        topics=topics,
-                        input=input_string,
+                if isinstance(db, AsyncBaseDb):
+                    await db.upsert_user_memory(
+                        UserMemory(
+                            memory_id=memory_id,
+                            memory=memory,
+                            topics=topics,
+                            input=input_string,
+                        )
+                    )
+                else:
+                    db.upsert_user_memory(
+                        UserMemory(
+                            memory_id=memory_id,
+                            memory=memory,
+                            topics=topics,
+                            input=input_string,
+                        )
                     )
                 )
                 log_debug("Memory updated")
