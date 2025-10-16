@@ -1868,7 +1868,7 @@ class Agent:
 
             # Break out of the run function if a tool call is paused
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                for item in self._handle_agent_run_paused_stream(
+                async for item in self._ahandle_agent_run_paused_stream(
                     run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
                 ):
                     yield item
@@ -3142,7 +3142,7 @@ class Agent:
 
             # Break out of the run function if a tool call is paused
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                for item in self._handle_agent_run_paused_stream(
+                async for item in self._ahandle_agent_run_paused_stream(
                     run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
                 ):
                     yield item
@@ -3468,6 +3468,43 @@ class Agent:
         session.upsert_run(run=run_response)
         # Save session to storage
         self.save_session(session=session)
+
+        yield pause_event
+
+        log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+    async def _ahandle_agent_run_paused_stream(
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+    ) -> AsyncIterator[RunOutputEvent]:
+        # Set the run response to paused
+
+        run_response.status = RunStatus.paused
+        if not run_response.content:
+            run_response.content = get_paused_content(run_response)
+
+        # We return and await confirmation/completion for the tools that require it
+        pause_event = self._handle_event(
+            create_run_paused_event(
+                from_run_response=run_response,
+                tools=run_response.tools,
+            ),
+            run_response,
+        )
+
+        # Save output to file if save_response_to_file is set
+        self.save_run_response_to_file(
+            run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
+        )
+        session.upsert_run(run=run_response)
+        # Save session to storage
+        if self._has_async_db():
+            await self.asave_session(session=session)
+        else:
+            self.save_session(session=session)
 
         yield pause_event
 
