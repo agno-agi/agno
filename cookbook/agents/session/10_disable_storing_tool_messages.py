@@ -1,5 +1,5 @@
 """
-Simple examples demonstrating store_tool_results option
+Simple examples demonstrating store_tool_messages option
 """
 
 from agno.agent import Agent
@@ -12,7 +12,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[HackerNewsTools()],
     db=SqliteDb(db_file="tmp/example_no_tools.db"),
-    store_tool_results=False,  # Don't store tool execution details
+    store_tool_messages=False,  # Don't store tool execution details
 )
 
 if __name__ == "__main__":

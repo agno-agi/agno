@@ -1,5 +1,4 @@
 from agno.agent import Agent
-from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
