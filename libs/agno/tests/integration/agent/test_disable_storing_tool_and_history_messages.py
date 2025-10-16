@@ -1,5 +1,5 @@
 """
-Comprehensive test suite for store_tool_results and store_history_messages options.
+Comprehensive test suite for store_tool_messages and store_history_messages options.
 
 Tests cover:
 - Tool result storage (enabled/disabled)
@@ -33,7 +33,7 @@ def test_store_tool_results_enabled_by_default(tmp_path):
     )
 
     # Default should be True
-    assert agent.store_tool_results is True
+    assert agent.store_tool_messages is True
 
     # Run agent
     response = agent.run("Run command: echo 'test'")
@@ -55,10 +55,10 @@ def test_store_tool_results_disabled(tmp_path):
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[ShellTools()],
         db=SqliteDb(db_file=str(tmp_path / "test.db")),
-        store_tool_results=False,
+        store_tool_messages=False,
     )
 
-    assert agent.store_tool_results is False
+    assert agent.store_tool_messages is False
 
     # Run agent
     agent.run("Run command: echo 'test'")
@@ -84,7 +84,7 @@ def test_tool_results_available_during_execution(tmp_path):
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[ShellTools()],
         db=SqliteDb(db_file=str(tmp_path / "test.db")),
-        store_tool_results=False,
+        store_tool_messages=False,
     )
 
     # Run agent
@@ -103,7 +103,7 @@ async def test_store_tool_results_disabled_async(tmp_path):
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[ShellTools()],
         db=SqliteDb(db_file=str(tmp_path / "test.db")),
-        store_tool_results=False,
+        store_tool_messages=False,
     )
 
     # Run agent async
@@ -233,7 +233,7 @@ def test_all_storage_disabled(tmp_path):
         db=SqliteDb(db_file=str(tmp_path / "test.db")),
         add_history_to_context=True,
         store_media=False,
-        store_tool_results=False,
+        store_tool_messages=False,
         store_history_messages=False,
     )
 
@@ -264,7 +264,7 @@ def test_selective_storage(tmp_path):
         db=SqliteDb(db_file=str(tmp_path / "test.db")),
         add_history_to_context=True,
         store_media=True,  # Store media
-        store_tool_results=False,  # Don't store tools
+        store_tool_messages=False,  # Don't store tools
         store_history_messages=True,  # Store history
     )
 
@@ -294,7 +294,7 @@ def test_no_tools_used(tmp_path):
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[ShellTools()],
         db=SqliteDb(db_file=str(tmp_path / "test.db")),
-        store_tool_results=False,
+        store_tool_messages=False,
     )
 
     # Run without triggering tools
@@ -327,7 +327,7 @@ def test_empty_messages_list(tmp_path):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=SqliteDb(db_file=str(tmp_path / "test.db")),
-        store_tool_results=False,
+        store_tool_messages=False,
         store_history_messages=False,
     )
 
@@ -345,7 +345,7 @@ def test_multiple_runs_same_agent(tmp_path):
         tools=[ShellTools()],
         db=SqliteDb(db_file=str(tmp_path / "test.db")),
         add_history_to_context=True,
-        store_tool_results=False,
+        store_tool_messages=False,
         store_history_messages=False,
     )
 
@@ -371,7 +371,7 @@ def test_store_tool_results_disabled_streaming(tmp_path):
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[ShellTools()],
         db=SqliteDb(db_file=str(tmp_path / "test.db")),
-        store_tool_results=False,
+        store_tool_messages=False,
         stream=True,
     )
 

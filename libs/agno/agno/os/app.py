@@ -12,7 +12,7 @@ from rich.panel import Panel
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.config import (
     AgentOSConfig,
     DatabaseConfig,
@@ -459,10 +459,10 @@ class AgentOS:
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover the databases used by all contextual agents, teams and workflows."""
-        from agno.db.base import BaseDb
+        from agno.db.base import AsyncBaseDb, BaseDb
 
-        dbs: Dict[str, BaseDb] = {}
-        knowledge_dbs: Dict[str, BaseDb] = {}  # Track databases specifically used for knowledge
+        dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}
+        knowledge_dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
             if agent.db:
@@ -489,7 +489,7 @@ class AgentOS:
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
 
-    def _register_db_with_validation(self, registered_dbs: Dict[str, Any], db: BaseDb) -> None:
+    def _register_db_with_validation(self, registered_dbs: Dict[str, Any], db: Union[BaseDb, AsyncBaseDb]) -> None:
         """Register a database in the contextual OS after validating it is not conflicting with registered databases"""
         if db.id in registered_dbs:
             existing_db = registered_dbs[db.id]
@@ -500,7 +500,7 @@ class AgentOS:
                 )
         registered_dbs[db.id] = db
 
-    def _are_db_instances_compatible(self, db1: BaseDb, db2: BaseDb) -> bool:
+    def _are_db_instances_compatible(self, db1: Union[BaseDb, AsyncBaseDb], db2: Union[BaseDb, AsyncBaseDb]) -> bool:
         """
         Return True if the two given database objects are compatible
         Two database objects are compatible if they point to the same database with identical configuration.
