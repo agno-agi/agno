@@ -114,7 +114,6 @@ class SurrealDb(VectorDb):
         """Initialize SurrealDB connection.
 
         Args:
-            url: SurrealDB server URL (e.g. ws://localhost:8000/rpc)
             client: A blocking connection, either HTTP or WS
             async_client: An async connection, either HTTP or WS (default: None)
             collection: Collection name to store documents (default: documents)
