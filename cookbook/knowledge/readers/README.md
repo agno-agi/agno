@@ -35,4 +35,7 @@ agent = Agent(
 - **[JSON](./json_reader.py)** - JSON data and API responses
 - **[Markdown Async](./markdown_reader_async.py)** - Markdown documentation
 - **[PDF Async](./pdf_reader_async.py)** - PDF documents with OCR
+- **[PPTX](./pptx_reader.py)** - PowerPoint presentation files
+- **[PPTX Async](./pptx_reader_async.py)** - Asynchronous PowerPoint processing
 - **[Web](./web_reader.py)** - Website crawling and scraping
+- 
