@@ -2826,7 +2826,8 @@ class Agent:
         12. Update Agent Memory
         13. Save session to storage
         """
-        log_debug(f"Agent Run Continue: {run_response.run_id}", center=True)  # type: ignore
+        run_id = run_response.run_id if run_response else run_id if run_id else "Unknown"
+        log_debug(f"Agent Run Continue: {run_id}", center=True)  # type: ignore
 
         # 1. Read existing session from db
         if self._has_async_db():
@@ -3025,14 +3026,18 @@ class Agent:
         13. Add the RunOutput to Agent Session
         14. Save session to storage
         """
-        log_debug(f"Agent Run Continue: {run_response.run_id}", center=True)  # type: ignore
+        run_id = run_response.run_id if run_response else run_id if run_id else "Unknown"
+        log_debug(f"Agent Run Continue: {run_id}", center=True)  # type: ignore
 
         # 1. Resolve dependencies
         if dependencies is not None:
             await self._aresolve_run_dependencies(dependencies=dependencies)
 
         # 2. Read existing session from db
-        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        if self._has_async_db():
+            agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+        else:
+            agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
 
         # 3. Update session state and metadata
         self._update_metadata(session=agent_session)
