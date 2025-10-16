@@ -3,7 +3,6 @@ import asyncio
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
-from agno.models.google import Gemini
 from agno.tools.mcp import MCPTools
 from mcp import StdioServerParameters
 
