@@ -248,7 +248,7 @@ class Agent:
     # If True, store media in run output
     store_media: bool = True
     # If True, store tool results in run output
-    store_tool_results: bool = True
+    store_tool_messages: bool = True
     # If True, store history messages in run output
     store_history_messages: bool = True
 
@@ -388,7 +388,7 @@ class Agent:
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
         store_media: bool = True,
-        store_tool_results: bool = True,
+        store_tool_messages: bool = True,
         store_history_messages: bool = True,
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
@@ -490,7 +490,7 @@ class Agent:
             )
 
         self.store_media = store_media
-        self.store_tool_results = store_tool_results
+        self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
 
         self.knowledge = knowledge
@@ -5877,9 +5877,7 @@ class Agent:
             user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
             if user_memories and len(user_memories) > 0:
-                system_message_content += (
-                    "You have access to memories from previous interactions with the user that you can use:\n\n"
-                )
+                system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
                 system_message_content += "<memories_from_previous_interactions>"
                 for _memory in user_memories:  # type: ignore
                     system_message_content += f"\n- {_memory.memory}"
@@ -6153,9 +6151,7 @@ class Agent:
                 user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
             if user_memories and len(user_memories) > 0:
-                system_message_content += (
-                    "You have access to memories from previous interactions with the user that you can use:\n\n"
-                )
+                system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
                 system_message_content += "<memories_from_previous_interactions>"
                 for _memory in user_memories:  # type: ignore
                     system_message_content += f"\n- {_memory.memory}"
@@ -8835,8 +8831,6 @@ class Agent:
             run_response.input.audios = []
             run_response.input.files = []
 
-        # 2. RunOutput artifact media are skipped since we don't store them when store_media=False
-
         # 3. Scrub media from all messages
         if run_response.messages:
             for message in run_response.messages:
@@ -8867,23 +8861,36 @@ class Agent:
 
     def _scrub_tool_results_from_run_output(self, run_response: RunOutput) -> None:
         """
-        Remove all tool-related data from RunOutput when store_tool_results=False.
-        This includes tool calls, tool results, and tool-related message fields.
+        Remove all tool-related data from RunOutput when store_tool_messages=False.
+        This removes both the tool call and its corresponding result to maintain API consistency.
         """
-        # Remove tool results (messages with role="tool")
-        if run_response.messages:
-            run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
-            # Also scrub tool-related fields from remaining messages
-            for message in run_response.messages:
-                self._scrub_tool_data_from_message(message)
+        if not run_response.messages:
+            return
 
-    def _scrub_tool_data_from_message(self, message: Message) -> None:
-        """Remove all tool-related data from a Message object."""
-        message.tool_calls = None
-        message.tool_call_id = None
-        message.tool_name = None
-        message.tool_args = None
-        message.tool_call_error = None
+        # Step 1: Collect all tool_call_ids from tool result messages
+        tool_call_ids_to_remove = set()
+        for message in run_response.messages:
+            if message.role == "tool" and message.tool_call_id:
+                tool_call_ids_to_remove.add(message.tool_call_id)
+
+        # Step 2: Remove tool result messages (role="tool")
+        run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
+
+        # Step 3: Remove the assistant messages related to the scrubbed tool calls
+        filtered_messages = []
+        for message in run_response.messages:
+            # Check if this assistant message made any of the tool calls we're removing
+            should_remove = False
+            if message.role == "assistant" and message.tool_calls:
+                for tool_call in message.tool_calls:
+                    if tool_call.get("id") in tool_call_ids_to_remove:
+                        should_remove = True
+                        break
+
+            if not should_remove:
+                filtered_messages.append(message)
+
+        run_response.messages = filtered_messages
 
     def _scrub_history_messages_from_run_output(self, run_response: RunOutput) -> None:
         """
@@ -8905,7 +8912,7 @@ class Agent:
             self._scrub_media_from_run_output(run_response)
             scrubbed = True
 
-        if not self.store_tool_results:
+        if not self.store_tool_messages:
             self._scrub_tool_results_from_run_output(run_response)
             scrubbed = True
 
