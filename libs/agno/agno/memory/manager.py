@@ -1193,15 +1193,29 @@ class MemoryManager:
 
             try:
                 memory_id = str(uuid4())
-                await db.upsert_user_memory(
-                    UserMemory(
-                        memory_id=memory_id,
-                        user_id=user_id,
-                        agent_id=agent_id,
-                        team_id=team_id,
-                        memory=memory,
-                        topics=topics,
-                        input=input_string,
+                if isinstance(db, AsyncBaseDb):
+                    await db.upsert_user_memory(
+                        UserMemory(
+                            memory_id=memory_id,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            team_id=team_id,
+                            memory=memory,
+                            topics=topics,
+                            input=input_string,
+                        )
+                    )
+                else:
+                    db.upsert_user_memory(
+                        UserMemory(
+                            memory_id=memory_id,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            team_id=team_id,
+                            memory=memory,
+                            topics=topics,
+                            input=input_string,
+                        )
                     )
                 )
                 log_debug(f"Memory added: {memory_id}")
