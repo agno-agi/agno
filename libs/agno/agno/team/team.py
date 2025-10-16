@@ -3678,7 +3678,7 @@ class Team:
         message.image_output = None
         message.video_output = None
 
-    def _scrub_tool_results_from_run_output(self, run_response: RunOutput) -> None:
+    def _scrub_tool_results_from_run_output(self, run_response: TeamRunOutput) -> None:
         """
         Remove all tool-related data from RunOutput when store_tool_results=False.
         This removes both the tool call and its corresponding result to maintain API consistency.
