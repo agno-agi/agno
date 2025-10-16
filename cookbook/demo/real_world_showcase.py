@@ -23,6 +23,7 @@ from pathlib import Path
 from textwrap import dedent
 
 from agno.os import AgentOS
+from os import getenv
 
 # Import consolidated agents
 from agents.study_buddy import study_buddy, load_education_knowledge
@@ -34,7 +35,11 @@ from teams.oss_maintainer_team import oss_maintainer_team
 # ============================================================================
 # Knowledge Base Initialization
 # ============================================================================
-
+teams_list = []
+github_token = getenv("GITHUB_ACCESS_TOKEN") or getenv("GITHUB_TOKEN")
+if github_token:
+    from teams.oss_maintainer_team import oss_maintainer_team
+    teams_list.append(oss_maintainer_team)
 
 async def initialize_knowledge_bases():
     """Initialize all knowledge bases with content"""
@@ -59,14 +64,13 @@ agent_os = AgentOS(
           tool monitoring, and multi-source knowledge retrieval
         • Creative Studio - Multimodal (image generation/analysis) with
           tool hooks and comprehensive guardrails
-
     """),
     agents=[
-        lifestyle_concierge,  # Multi-domain: Tools + Structured Outputs + Guardrails + Memory + Storage + Agent State + Metrics
-        study_buddy,  # Study Buddy: RAG + Input Validation + Tool Hooks + Memory + Metrics
-        creative_studio,  # Creative Studio: Multimodal + Tool Hooks + Guardrails + Metrics
+        lifestyle_concierge,  # Multi-domain: Tools + Structured Outputs + Guardrails + Memory + Storage + Agent State
+        study_buddy,  # Study Buddy: RAG + Input Validation + Tool Hooks + Memory
+        creative_studio,  # Creative Studio: Multimodal + Tool Hooks + Guardrails
     ],
-    teams=[oss_maintainer_team],
+    teams=teams_list,
     config=str(Path(__file__).parent / "showcase_config.yaml"),
 )
 
@@ -75,11 +79,7 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    print("\n" + "=" * 80)
-    print("🚀 Real-World Use Cases Showcase - Agno Framework")
-    print("=" * 80)
     print("\nInitializing knowledge bases...")
-
     # Initialize knowledge bases
     asyncio.run(initialize_knowledge_bases())
 

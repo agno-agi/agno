@@ -65,6 +65,7 @@ project_knowledge = Knowledge(
 # Async function to load project documentation
 async def _load_project_knowledge():
     """Load project documentation into knowledge base asynchronously."""
+    print("Loading OSS Maintainer knowledge base...")
     await project_knowledge.add_contents_async(
         documents=[
             """
@@ -142,17 +143,14 @@ asyncio.run(_load_project_knowledge())
 # *******************************
 
 
-# ************* GitHub Tools Setup (Optional) *************
-# Initialize GitHub tools if token is available
+# ************* GitHub Tools Setup *************
+# GitHub token is required for this team - checked in run.py before import
 github_token = getenv("GITHUB_ACCESS_TOKEN") or getenv("GITHUB_TOKEN")
-if github_token:
-    github_tools = GithubTools(access_token=github_token)
-    github_enabled = True
-    print("GitHub integration enabled - team can fetch real PR and issue data")
-else:
-    github_tools = None
-    github_enabled = False
-    print("GitHub integration disabled - set GITHUB_ACCESS_TOKEN to enable real GitHub data fetching")
+if not github_token:
+    raise ValueError("GITHUB_ACCESS_TOKEN is required for OSS Maintainer Intelligence team")
+
+github_tools = GithubTools(access_token=github_token)
+print("GitHub integration enabled - team can fetch real PR and issue data")
 # *******************************
 
 
@@ -227,7 +225,7 @@ pr_review_council = Agent(
     name="PR Review Council",
     role="Comprehensive pull request analysis expert providing detailed code reviews",
     model=Claude(id="claude-sonnet-4-0"),
-    tools=[github_tools] if github_tools else [],
+    tools=[github_tools],
     knowledge=project_knowledge,
     search_knowledge=True,
     instructions=dedent("""
@@ -281,7 +279,7 @@ issue_triage_agent = Agent(
     name="Issue Triage Specialist",
     role="Intelligent issue categorization, prioritization, and routing expert",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[github_tools] if github_tools else [],
+    tools=[github_tools],
     knowledge=project_knowledge,
     search_knowledge=True,
     instructions=dedent("""
@@ -333,7 +331,7 @@ security_guardian = Agent(
     name="Security Guardian",
     role="Security vulnerability detection, code safety analysis, and threat assessment expert",
     model=Claude(id="claude-sonnet-4-0"),
-    tools=[github_tools] if github_tools else [],
+    tools=[github_tools],
     knowledge=project_knowledge,
     search_knowledge=True,
     instructions=dedent("""
@@ -399,7 +397,7 @@ community_manager = Agent(
     name="Community Relations Manager",
     role="Contributor engagement, communication, and community health specialist",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[github_tools] if github_tools else [],
+    tools=[github_tools],
     db=db,
     enable_user_memories=True,
     instructions=dedent("""
@@ -457,7 +455,7 @@ release_coordinator = Agent(
     name="Release Coordinator",
     role="Release planning, changelog generation, and upgrade guide creation expert",
     model=Claude(id="claude-sonnet-4-0"),
-    tools=[github_tools] if github_tools else [],
+    tools=[github_tools],
     knowledge=project_knowledge,
     search_knowledge=True,
     instructions=dedent("""
@@ -533,10 +531,8 @@ oss_maintainer_team = Team(
         "Intelligent team helping open source maintainers with PR reviews, "
         "issue triage, security analysis, community management, and release planning"
     ),
-    instructions=dedent(f"""
+    instructions=dedent("""
         You are an expert team helping open source maintainers manage their projects efficiently.
-
-        GitHub Integration: {'ENABLED - Team can fetch real data from GitHub' if github_enabled else '⚠️  DISABLED - Team will analyze based on text descriptions'}
 
         Task Routing:
 
