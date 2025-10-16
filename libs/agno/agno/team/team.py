@@ -3678,17 +3678,38 @@ class Team:
         message.image_output = None
         message.video_output = None
 
-    def _scrub_tool_results_from_run_output(self, run_response: TeamRunOutput) -> None:
+    def _scrub_tool_results_from_run_output(self, run_response: RunOutput) -> None:
         """
-        Remove all tool-related data from TeamRunOutput when store_tool_results=False.
-        This includes tool calls, tool results, and tool-related message fields.
+        Remove all tool-related data from RunOutput when store_tool_results=False.
+        This removes both the tool call and its corresponding result to maintain API consistency.
         """
-        # Remove tool results (messages with role="tool")
-        if run_response.messages:
-            run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
-            # Also scrub tool-related fields from remaining messages
-            for message in run_response.messages:
-                self._scrub_tool_data_from_message(message)
+        if not run_response.messages:
+            return
+
+        # Step 1: Collect all tool_call_ids from tool result messages
+        tool_call_ids_to_remove = set()
+        for message in run_response.messages:
+            if message.role == "tool" and message.tool_call_id:
+                tool_call_ids_to_remove.add(message.tool_call_id)
+
+        # Step 2: Remove tool result messages (role="tool")
+        run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
+
+        # Step 3: Remove assistant messages that made those tool calls
+        filtered_messages = []
+        for message in run_response.messages:
+            # Check if this assistant message made any of the tool calls we're removing
+            should_remove = False
+            if message.role == "assistant" and message.tool_calls:
+                for tool_call in message.tool_calls:
+                    if tool_call.get("id") in tool_call_ids_to_remove:
+                        should_remove = True
+                        break
+
+            if not should_remove:
+                filtered_messages.append(message)
+
+        run_response.messages = filtered_messages
 
     def _scrub_tool_data_from_message(self, message: Message) -> None:
         """Remove tool-related data from a Message object."""
@@ -3736,26 +3757,26 @@ class Team:
                 member_id = member_response.agent_id
             elif isinstance(member_response, TeamRunOutput):
                 member_id = member_response.team_id
-            
+
             if not member_id:
                 log_info("Skipping member response with no ID")
                 continue
-            
+
             member_result = self._find_member_by_id(member_id)
             if not member_result:
                 log_debug(f"Could not find member with ID: {member_id}")
                 continue
-            
+
             _, member = member_result
-            
+
             if not member.store_media:
-                member._scrub_media_from_run_output(member_response) # type: ignore
-            
+                member._scrub_media_from_run_output(member_response)  # type: ignore
+
             if not member.store_tool_results:
-                member._scrub_tool_results_from_run_output(member_response) # type: ignore
-            
+                member._scrub_tool_results_from_run_output(member_response)  # type: ignore
+
             if not member.store_history_messages:
-                member._scrub_history_messages_from_run_output(member_response) # type: ignore
+                member._scrub_history_messages_from_run_output(member_response)  # type: ignore
 
     def _validate_media_object_id(
         self,
@@ -6598,11 +6619,11 @@ class Team:
             # Scrub the member run based on that member's storage flags before storing
             if member_agent_run_response:
                 if not member_agent.store_media:
-                    member_agent._scrub_media_from_run_output(member_agent_run_response) # type: ignore
+                    member_agent._scrub_media_from_run_output(member_agent_run_response)  # type: ignore
                 if not member_agent.store_tool_results:
-                    member_agent._scrub_tool_results_from_run_output(member_agent_run_response) # type: ignore
+                    member_agent._scrub_tool_results_from_run_output(member_agent_run_response)  # type: ignore
                 if not member_agent.store_history_messages:
-                    member_agent._scrub_history_messages_from_run_output(member_agent_run_response) # type: ignore
+                    member_agent._scrub_history_messages_from_run_output(member_agent_run_response)  # type: ignore
 
             # Add the member run to the team session
             if member_agent_run_response:

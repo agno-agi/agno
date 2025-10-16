@@ -8872,14 +8872,35 @@ class Agent:
     def _scrub_tool_results_from_run_output(self, run_response: RunOutput) -> None:
         """
         Remove all tool-related data from RunOutput when store_tool_results=False.
-        This includes tool calls, tool results, and tool-related message fields.
+        This removes both the tool call and its corresponding result to maintain API consistency.
         """
-        # Remove tool results (messages with role="tool")
-        if run_response.messages:
-            run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
-            # Also scrub tool-related fields from remaining messages
-            for message in run_response.messages:
-                self._scrub_tool_data_from_message(message)
+        if not run_response.messages:
+            return
+
+        # Step 1: Collect all tool_call_ids from tool result messages
+        tool_call_ids_to_remove = set()
+        for message in run_response.messages:
+            if message.role == "tool" and message.tool_call_id:
+                tool_call_ids_to_remove.add(message.tool_call_id)
+
+        # Step 2: Remove tool result messages (role="tool")
+        run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
+
+        # Step 3: Remove assistant messages that made those tool calls
+        filtered_messages = []
+        for message in run_response.messages:
+            # Check if this assistant message made any of the tool calls we're removing
+            should_remove = False
+            if message.role == "assistant" and message.tool_calls:
+                for tool_call in message.tool_calls:
+                    if tool_call.get("id") in tool_call_ids_to_remove:
+                        should_remove = True
+                        break
+
+            if not should_remove:
+                filtered_messages.append(message)
+
+        run_response.messages = filtered_messages
 
     def _scrub_tool_data_from_message(self, message: Message) -> None:
         """Remove all tool-related data from a Message object."""
