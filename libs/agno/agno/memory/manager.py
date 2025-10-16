@@ -36,7 +36,7 @@ class MemoryManager:
     system_message: Optional[str] = None
     # Provide the memory capture instructions for the manager as a string. If not provided, a default prompt will be used.
     memory_capture_instructions: Optional[str] = None
-    # Additional instructions for the manager
+    # Additional instructions for the manager. These instructions are appended to the default system prompt.
     additional_instructions: Optional[str] = None
 
     # Whether memories were created in the last run
@@ -719,17 +719,17 @@ class MemoryManager:
             return Message(role="system", content=self.system_message)
 
         memory_capture_instructions = self.memory_capture_instructions or dedent("""\
-            Memories should include details that could personalize ongoing interactions with the user, such as:
-              - Personal facts: name, age, occupation, location, interests, preferences, etc.
-              - Significant life events or experiences shared by the user
-              - Important context about the user's current situation, challenges or goals
-              - What the user likes or dislikes, their opinions, beliefs, values, etc.
-              - Any other details that provide valuable insights into the user's personality, perspective or needs\
+            Memories should capture personal information about the user that is relevant to the current conversation, such as:
+            - Personal facts: name, age, occupation, location, interests, and preferences
+            - Opinions and preferences: what the user likes, dislikes, enjoys, or finds frustrating
+            - Significant life events or experiences shared by the user
+            - Important context about the user's current situation, challenges, or goals
+            - Any other details that offer meaningful insight into the user's personality, perspective, or needs
         """)
 
         # -*- Return a system message for the memory manager
         system_prompt_lines = [
-            "You are a MemoryConnector that is responsible for manging key information about the user. "
+            "You are a Memory Manager that is responsible for managing information and preferences about the user. "
             "You will be provided with a criteria for memories to capture in the <memories_to_capture> section and a list of existing memories in the <existing_memories> section.",
             "",
             "## When to add or update memories",
@@ -758,16 +758,16 @@ class MemoryManager:
             "",
             "## Updating memories",
             "You will also be provided with a list of existing memories in the <existing_memories> section. You can:",
-            "  1. Decide to make no changes.",
+            "  - Decide to make no changes.",
         ]
         if enable_add_memory:
-            system_prompt_lines.append("  2. Decide to add a new memory, using the `add_memory` tool.")
+            system_prompt_lines.append("  - Decide to add a new memory, using the `add_memory` tool.")
         if enable_update_memory:
-            system_prompt_lines.append("  3. Decide to update an existing memory, using the `update_memory` tool.")
+            system_prompt_lines.append("  - Decide to update an existing memory, using the `update_memory` tool.")
         if enable_delete_memory:
-            system_prompt_lines.append("  4. Decide to delete an existing memory, using the `delete_memory` tool.")
+            system_prompt_lines.append("  - Decide to delete an existing memory, using the `delete_memory` tool.")
         if enable_clear_memory:
-            system_prompt_lines.append("  5. Decide to clear all memories, using the `clear_memory` tool.")
+            system_prompt_lines.append("  - Decide to clear all memories, using the `clear_memory` tool.")
 
         system_prompt_lines += [
             "You can call multiple tools in a single response if needed. ",
