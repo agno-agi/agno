@@ -1,76 +1,76 @@
 from typing import List
 
 from agno.agent.agent import Agent
-
-# Import the workflows
-from agno.db.base import BaseDb
-from agno.models.openai.chat import OpenAIChat
-from agno.os import AgentOS
+from agno.models.anthropic import Claude
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.hackernews import HackerNewsTools
+from agno.tools.firecrawl import FirecrawlTools
+from agno.tools.wikipedia import WikipediaTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 from pydantic import BaseModel, Field
-
-
+from db import db
+# ************* Input Schema *************
 class ResearchTopic(BaseModel):
     """Structured research topic with specific requirements"""
 
     topic: str
     focus_areas: List[str] = Field(description="Specific areas to focus on")
-    target_audience: str = Field(description="Who this research is for")
-    sources_required: int = Field(description="Number of sources needed", default=5)
+
+# *******************************
 
 
-# Define agents
-hackernews_agent = Agent(
-    name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[HackerNewsTools()],
-    role="Extract key insights and content from Hackernews posts",
+# ************* Agents *************
+wikipedia_agent = Agent(
+    name="Wikipedia Agent",
+    model=Claude(id="claude-sonnet-4-0"),
+    role="Extract key insights and content from Wikipedia articles",
+    tools=[WikipediaTools()],
 )
-web_agent = Agent(
-    name="Web Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
-    role="Search the web for the latest news and trends",
+search_agent = Agent(
+    name="Search Agent",
+    model=Claude(id="claude-sonnet-4-0"),
+    role="Search the web for the latest news and trends using Firecrawl",
+    tools=[FirecrawlTools()],
 )
-
-# Define research team for complex analysis
-research_team = Team(
-    name="Research Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
-    members=[hackernews_agent, web_agent],
-    instructions="Research tech topics from Hackernews and the web",
-)
-
-content_planner = Agent(
-    name="Content Planner",
-    model=OpenAIChat(id="gpt-4o"),
+writer_agent = Agent(
+    name="Writer Agent",
+    model=Claude(id="claude-sonnet-4-0"),
     instructions=[
-        "Plan a content schedule over 4 weeks for the provided topic and research content",
-        "Ensure that I have posts for 3 posts per week",
+        "Write a detailed report on the provided topic and research content",
     ],
 )
+# *******************************
 
-# Define steps
+
+# ************* Team *************
+research_team = Team(
+    name="Research Team",
+    model=Claude(id="claude-sonnet-4-5"),
+    members=[wikipedia_agent, search_agent],
+    instructions="Research tech topics from Wikipedia and the web",
+)
+# *******************************
+
+
+# ************* Workflow Steps *************
 research_step = Step(
     name="Research Step",
     team=research_team,
 )
 
-content_planning_step = Step(
-    name="Content Planning Step",
-    agent=content_planner,
+writer_step = Step(
+    name="Writer Step",
+    agent=writer_agent,
 )
+# *******************************
 
 
-def get_content_creation_workflow(db: BaseDb) -> Workflow:
-    return Workflow(
-        name="Content Creation Workflow",
-        description="Automated content creation from blog posts to social media",
-        db=db,
-        steps=[research_step, content_planning_step],
-        input_schema=ResearchTopic,
-    )
+# ************* Workflow *************
+research_workflow = Workflow(
+    name="Research Workflow",
+    description="Automated research on a topic",
+    db=db,
+    steps=[research_step, writer_step],
+    input_schema=ResearchTopic,
+)
+# *******************************

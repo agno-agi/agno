@@ -6,12 +6,16 @@ Steps:
 """
 
 from agents import agno_assist
+from teams import reasoning_finance_team
+from workflows import research_workflow
 from agno.os import AgentOS
 
 # ************* Create the AgentOS *************
 agent_os = AgentOS(
     description="SurrealDB AgentOS",
     agents=[agno_assist],
+    teams=[reasoning_finance_team],
+    workflows=[research_workflow],
 )
 # Get the FastAPI app for the AgentOS
 app = agent_os.get_app()
