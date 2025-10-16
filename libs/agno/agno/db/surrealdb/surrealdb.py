@@ -4,8 +4,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.utils import (
-    calculate_date_metrics,
-    fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
 )
 from agno.db.schemas import UserMemory
@@ -14,6 +12,8 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.surrealdb import utils
 from agno.db.surrealdb.metrics import (
     bulk_upsert_metrics,
+    calculate_date_metrics,
+    fetch_all_sessions_data,
     get_all_sessions_for_metrics_calculation,
     get_metrics_calculation_starting_date,
 )
@@ -26,6 +26,7 @@ from agno.db.surrealdb.models import (
     deserialize_user_memories,
     deserialize_user_memory,
     desurrealize_eval_run_record,
+    desurrealize_session,
     desurrealize_user_memory,
     get_schema,
     get_session_type,
@@ -176,7 +177,6 @@ class SurrealDb(BaseDb):
         return total_count
 
     # --- Sessions ---
-
     def clear_sessions(self) -> None:
         """Delete all session rows from the database.
 
@@ -226,11 +226,10 @@ class SurrealDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         sessions_table = self._get_table("sessions")
-        users_table = self._get_table("users", False)
         record = RecordID(sessions_table, session_id)
         where = WhereClause()
         if user_id is not None:
-            where = where.and_("user", RecordID(users_table, user_id))
+            where = where.and_("user_id", user_id)
         if session_type == SessionType.AGENT:
             where = where.and_("agent", None, "!=")
         elif session_type == SessionType.TEAM:
@@ -252,7 +251,7 @@ class SurrealDb(BaseDb):
 
     def get_sessions(
         self,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -299,7 +298,7 @@ class SurrealDb(BaseDb):
 
         # user_id
         if user_id is not None:
-            where = where.and_("user", RecordID(users_table, user_id))
+            where = where.and_("user_id", user_id)
 
         # component_id
         if component_id is not None:
@@ -336,9 +335,10 @@ class SurrealDb(BaseDb):
             {order_limit_start_clause}
         """)
         sessions_raw = self._query(query, where_vars, dict)
+        converted_sessions_raw = [desurrealize_session(session, session_type) for session in sessions_raw]
 
         if not deserialize:
-            return list(sessions_raw), total_count
+            return list(converted_sessions_raw), total_count
 
         return deserialize_sessions(session_type, list(sessions_raw))
 
@@ -793,7 +793,6 @@ class SurrealDb(BaseDb):
         return list(deserialize_user_memories(raw))
 
     # --- Metrics ---
-
     def get_metrics(
         self,
         starting_date: Optional[date] = None,
@@ -815,13 +814,15 @@ class SurrealDb(BaseDb):
 
         where = WhereClause()
 
-        # starting_date
+        # starting_date - need to convert date to datetime for comparison
         if starting_date is not None:
-            where = where.and_("starting_date", starting_date, ">=")
+            starting_datetime = datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+            where = where.and_("date", starting_datetime, ">=")
 
-        # ending_date
+        # ending_date - need to convert date to datetime for comparison
         if ending_date is not None:
-            where = where.and_("ending_date", ending_date, "<=")
+            ending_datetime = datetime.combine(ending_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+            where = where.and_("date", ending_datetime, "<=")
 
         where_clause, where_vars = where.build()
 
@@ -830,28 +831,53 @@ class SurrealDb(BaseDb):
             SELECT *
             FROM {table}
             {where_clause}
-            ORDER BY updated_at DESC
+            ORDER BY date ASC
         """)
 
         results = self._query(query, where_vars, dict)
-        if len(results):
-            latest_update = results[-1]["updated_at"]
-        else:
-            latest_update = None
 
-        return list(results), latest_update
+        # Get the latest updated_at from all results
+        latest_update = None
+        if results:
+            # Find the maximum updated_at timestamp
+            latest_update = max(int(r["updated_at"].timestamp()) for r in results)
 
-    def calculate_metrics(self) -> Optional[Any]:
+            # Transform results to match expected format
+            transformed_results = []
+            for r in results:
+                transformed = dict(r)
+
+                # Convert RecordID to string
+                if hasattr(transformed.get("id"), "id"):
+                    transformed["id"] = transformed["id"].id
+                elif isinstance(transformed.get("id"), RecordID):
+                    transformed["id"] = str(transformed["id"].id)
+
+                # Convert datetime objects to Unix timestamps
+                if isinstance(transformed.get("created_at"), datetime):
+                    transformed["created_at"] = int(transformed["created_at"].timestamp())
+                if isinstance(transformed.get("updated_at"), datetime):
+                    transformed["updated_at"] = int(transformed["updated_at"].timestamp())
+                if isinstance(transformed.get("date"), datetime):
+                    transformed["date"] = int(transformed["date"].timestamp())
+
+                transformed_results.append(transformed)
+
+            return transformed_results, latest_update
+
+        return [], latest_update
+
+    def calculate_metrics(self) -> Optional[List[Dict[str, Any]]]:  # More specific return type
         """Calculate metrics for all dates without complete metrics.
 
         Returns:
-            Optional[list[dict]]: The calculated metrics.
+            Optional[List[Dict[str, Any]]]: The calculated metrics.
 
         Raises:
             Exception: If an error occurs during metrics calculation.
         """
         try:
-            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
+            table = self._get_table("metrics")  # Removed create_table_if_not_found parameter
 
             starting_date = get_metrics_calculation_starting_date(self.client, table, self.get_sessions)
 
@@ -873,12 +899,15 @@ class SurrealDb(BaseDb):
                 self.client, self._get_table("sessions"), start_timestamp, end_timestamp
             )
 
-            all_sessions_data = fetch_all_sessions_data(sessions, dates_to_process, int(start_timestamp.timestamp()))
+            all_sessions_data = fetch_all_sessions_data(
+                sessions=sessions,  # Added parameter name for clarity
+                dates_to_process=dates_to_process,
+                start_timestamp=int(start_timestamp.timestamp()),  # This expects int
+            )
             if not all_sessions_data:
                 log_info("No new session data found. Won't calculate metrics.")
                 return None
 
-            results = []
             metrics_records = []
 
             for date_to_process in dates_to_process:
@@ -892,11 +921,11 @@ class SurrealDb(BaseDb):
                 metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
                 metrics_records.append(metrics_record)
 
+            results = []  # Initialize before the if block
             if metrics_records:
                 results = bulk_upsert_metrics(self.client, table, metrics_records)
 
             log_debug("Updated metrics calculations")
-
             return results
 
         except Exception as e:
@@ -904,7 +933,6 @@ class SurrealDb(BaseDb):
             raise e
 
     # --- Knowledge ---
-
     def clear_knowledge(self) -> None:
         """Delete all knowledge rows from the database.
 
@@ -994,7 +1022,6 @@ class SurrealDb(BaseDb):
         return deserialize_knowledge_row(result) if result else None
 
     # --- Evals ---
-
     def clear_evals(self) -> None:
         """Delete all eval rows from the database.
 

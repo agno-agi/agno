@@ -24,7 +24,6 @@ def _query_aux(
 ) -> Union[list, dict, str, int]:
     try:
         response = client.query(query, vars)
-        logger.debug(f"-- Query: {query} with {vars}\n-- Response: {response}")
     except Exception as e:
         msg = f"!! Query execution error: {query} with {vars}, Error: {e}"
         logger.error(msg)
@@ -70,5 +69,8 @@ def query_one(
             return record_type(**response)
         else:
             return record_type.__call__(response)
+    elif isinstance(response, list):
+        # These are the metrics records, so we return the list
+        return response
     else:
         raise ValueError(f"Unexpected response type: {type(response)}")

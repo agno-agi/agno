@@ -1,5 +1,5 @@
 from textwrap import dedent
-from typing import Any, Final, Literal, Optional
+from typing import Any, Dict, Final, Literal, Optional, Tuple
 
 OPERATOR = Literal["=", "!=", "<=", ">=", "~", "IN", "CONTAINSANY"]
 
@@ -48,7 +48,24 @@ def order_limit_start(
     limit: Optional[int] = None,
     page: Optional[int] = None,
 ) -> str:
+    if sort_order is not None:
+        if "desc" in sort_order.lower():
+            sort_order = "DESC"
+        else:
+            sort_order = "ASC"
+
     order_clause = f"ORDER BY {sort_by} {sort_order or ''}" if sort_by is not None else ""
-    limit_clause = f"LIMIT {limit}" if limit is not None else ""
-    start_clause = f"START {page * limit}" if page is not None and limit is not None else ""
-    return f"{order_clause} {limit_clause} {start_clause}"
+
+    if limit is not None:
+        limit_clause = f"LIMIT {limit}"
+        if page is not None:
+            offset = (page - 1) * limit
+            start_clause = f"START {offset}"
+        else:
+            start_clause = ""
+    else:
+        limit_clause = ""
+        start_clause = ""
+
+    clauses = [order_clause, limit_clause, start_clause]
+    return " ".join(clause for clause in clauses if clause)

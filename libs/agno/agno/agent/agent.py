@@ -4421,7 +4421,9 @@ class Agent:
 
             if len(parsed_messages) > 0:
                 tasks.append(
-                    self.memory_manager.acreate_user_memories(messages=parsed_messages, user_id=user_id, agent_id=self.id)
+                    self.memory_manager.acreate_user_memories(
+                        messages=parsed_messages, user_id=user_id, agent_id=self.id
+                    )
                 )
             else:
                 log_warning("Unable to add messages to memory")
