@@ -1,15 +1,12 @@
 """Migration utility to migrate your Agno tables from v1 to v2"""
 
 import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 
 from sqlalchemy import text
 
-from agno.db.mongo.mongo import MongoDb
-from agno.db.mysql.mysql import MySQLDb
-from agno.db.postgres.postgres import PostgresDb
+from agno.db.base import BaseDb
 from agno.db.schemas.memory import UserMemory
-from agno.db.sqlite.sqlite import SqliteDb
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -315,7 +312,7 @@ def convert_v1_fields_to_v2(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def migrate(
-    db: Union[PostgresDb, MySQLDb, SqliteDb, MongoDb],
+    db: BaseDb,
     v1_db_schema: str,
     agent_sessions_table_name: Optional[str] = None,
     team_sessions_table_name: Optional[str] = None,
@@ -372,7 +369,7 @@ def migrate(
 
 
 def migrate_table_in_batches(
-    db: Union[PostgresDb, MySQLDb, SqliteDb, MongoDb],
+    db: BaseDb,
     v1_db_schema: str,
     v1_table_name: str,
     v1_table_type: str,
@@ -410,7 +407,7 @@ def migrate_table_in_batches(
                 if hasattr(db, "Session"):
                     db.Session.remove()  # type: ignore
 
-                db.upsert_sessions(sessions)  # type: ignore
+                db.upsert_sessions(sessions, preserve_updated_at=True)  # type: ignore
                 total_migrated += len(sessions)
                 log_info(f"Bulk upserted {len(sessions)} sessions in batch {batch_count}")
 
@@ -420,7 +417,7 @@ def migrate_table_in_batches(
                 if hasattr(db, "Session"):
                     db.Session.remove()  # type: ignore
 
-                db.upsert_memories(memories)
+                db.upsert_memories(memories, preserve_updated_at=True)
                 total_migrated += len(memories)
                 log_info(f"Bulk upserted {len(memories)} memories in batch {batch_count}")
 
@@ -429,12 +426,14 @@ def migrate_table_in_batches(
     log_info(f"✅ Migration completed for table {v1_table_name}: {total_migrated} total records migrated")
 
 
-def get_table_content_in_batches(
-    db: Union[PostgresDb, MySQLDb, SqliteDb, MongoDb], db_schema: str, table_name: str, batch_size: int = 5000
-):
+def get_table_content_in_batches(db: BaseDb, db_schema: str, table_name: str, batch_size: int = 5000):
     """Get table content in batches to avoid memory issues with large tables"""
     try:
-        if isinstance(db, MongoDb):
+        if type(db).__name__ == "MongoDb":
+            from agno.db.mongo.mongo import MongoDb
+
+            db = cast(MongoDb, db)
+
             # MongoDB implementation with cursor and batching
             collection = db.database[table_name]
             cursor = collection.find({}).batch_size(batch_size)
@@ -455,6 +454,24 @@ def get_table_content_in_batches(
                 yield batch
         else:
             # SQL database implementations (PostgresDb, MySQLDb, SqliteDb)
+            if type(db).__name__ == "PostgresDb":
+                from agno.db.postgres.postgres import PostgresDb
+
+                db = cast(PostgresDb, db)
+
+            elif type(db).__name__ == "MySQLDb":
+                from agno.db.mysql.mysql import MySQLDb
+
+                db = cast(MySQLDb, db)
+
+            elif type(db).__name__ == "SqliteDb":
+                from agno.db.sqlite.sqlite import SqliteDb
+
+                db = cast(SqliteDb, db)
+
+            else:
+                raise ValueError(f"Invalid database type: {type(db).__name__}")
+
             offset = 0
             while True:
                 # Create a new session for each batch to avoid transaction conflicts
