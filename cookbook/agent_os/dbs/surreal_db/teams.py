@@ -7,7 +7,6 @@ from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 from db import db
 
-
 # ************* Core Agents *************
 web_agent = Agent(
     name="Web Search Agent",

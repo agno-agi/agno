@@ -7,14 +7,17 @@ from agno.tools.firecrawl import FirecrawlTools
 from agno.tools.wikipedia import WikipediaTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
-from pydantic import BaseModel, Field
 from db import db
+from pydantic import BaseModel, Field
+
+
 # ************* Input Schema *************
 class ResearchTopic(BaseModel):
     """Structured research topic with specific requirements"""
 
     topic: str
     focus_areas: List[str] = Field(description="Specific areas to focus on")
+
 
 # *******************************
 
