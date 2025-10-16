@@ -1,23 +1,5 @@
 """
 Lifestyle Concierge - Comprehensive AI assistant for finance, shopping, and travel
-
-This agent demonstrates how a single, high-quality agent can handle multiple domains
-while showcasing numerous Agno features:
-
-Features Demonstrated:
-1. TOOLS - External API integration (YFinance for financial data)
-2. WEB SEARCH - DuckDuckGo for product research and travel planning
-3. STRUCTURED OUTPUTS - Multiple Pydantic schemas for different domains
-4. DATABASE STORAGE - Persistent storage of conversations and user data
-5. MEMORY - User memories and session summaries across all domains
-6. GUARDRAILS - PII detection and prompt injection protection
-7. MULTI-DOMAIN INTELLIGENCE - Finance + Shopping + Travel in one agent
-8. AGENT STATE - Persistent session state for shopping cart and travel preferences
-
-Use Cases:
-- Personal Finance: Stock analysis, portfolio recommendations, budgeting
-- Shopping: Product recommendations, price comparisons, deal finding (with cart state)
-- Travel: Itinerary planning, booking research, budget estimation (with saved preferences)
 """
 
 import json
@@ -25,19 +7,19 @@ from textwrap import dedent
 from typing import Optional
 
 from agno.agent import Agent
-from agno.db.sqlite.sqlite import SqliteDb
+from agno.db.postgres import PostgresDb
 from agno.guardrails import PIIDetectionGuardrail, PromptInjectionGuardrail
 from agno.models.openai.chat import OpenAIChat
 from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.yfinance import YFinanceTools
 from pydantic import BaseModel, Field
 
 # ============================================================================
 # Database Configuration
 # ============================================================================
 
-db = SqliteDb(id="real-world-db", db_file="tmp/real_world.db")
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url, id="lifestyle_concierge_db")
 
 # ============================================================================
 # Structured Output Schemas (Multi-Domain)
@@ -48,7 +30,9 @@ class FinancialAdvice(BaseModel):
     """Structured financial advice output"""
 
     summary: str = Field(description="Brief summary of financial advice")
-    recommendations: list[str] = Field(description="Specific actionable recommendations")
+    recommendations: list[str] = Field(
+        description="Specific actionable recommendations"
+    )
     risk_level: str = Field(description="Risk assessment: low, medium, high")
     investment_allocation: Optional[dict[str, float]] = Field(
         default=None, description="Suggested portfolio allocation percentages"
@@ -61,16 +45,26 @@ class Product(BaseModel):
 
     name: str = Field(description="Product name")
     description: str = Field(description="Product description and key features")
-    why_recommended: str = Field(description="Why this product is recommended for the user")
-    price_range: Optional[str] = Field(default=None, description="Estimated price range")
+    why_recommended: str = Field(
+        description="Why this product is recommended for the user"
+    )
+    price_range: Optional[str] = Field(
+        default=None, description="Estimated price range"
+    )
 
 
 class ProductRecommendation(BaseModel):
     """Structured product recommendations"""
 
-    products: list[Product] = Field(description="List of recommended products with details")
-    personalization_notes: str = Field(description="How recommendations were personalized")
-    alternative_categories: list[str] = Field(description="Alternative product categories to consider")
+    products: list[Product] = Field(
+        description="List of recommended products with details"
+    )
+    personalization_notes: str = Field(
+        description="How recommendations were personalized"
+    )
+    alternative_categories: list[str] = Field(
+        description="Alternative product categories to consider"
+    )
     budget_tips: list[str] = Field(description="Tips for staying within budget")
 
 
@@ -87,7 +81,9 @@ class Activity(BaseModel):
 class CostBreakdown(BaseModel):
     """Cost breakdown by category"""
 
-    category: str = Field(description="Cost category (e.g., flights, accommodation, food, activities)")
+    category: str = Field(
+        description="Cost category (e.g., flights, accommodation, food, activities)"
+    )
     estimated_amount: str = Field(description="Estimated cost for this category")
 
 
@@ -97,14 +93,22 @@ class TravelItinerary(BaseModel):
     destination: str = Field(description="Travel destination")
     duration: str = Field(description="Trip duration")
     budget_estimate: str = Field(description="Total estimated budget")
-    best_time_to_visit: str = Field(description="Best time to visit based on weather and events")
+    best_time_to_visit: str = Field(
+        description="Best time to visit based on weather and events"
+    )
     flight_options: list[str] = Field(description="Flight recommendations and tips")
-    accommodation_options: list[str] = Field(description="Hotel/lodging recommendations")
+    accommodation_options: list[str] = Field(
+        description="Hotel/lodging recommendations"
+    )
     activities: list[Activity] = Field(description="Recommended activities by day")
     restaurants: list[str] = Field(description="Restaurant and dining recommendations")
-    local_tips: list[str] = Field(description="Local tips, cultural notes, and practical advice")
+    local_tips: list[str] = Field(
+        description="Local tips, cultural notes, and practical advice"
+    )
     packing_list: list[str] = Field(description="Essential items to pack")
-    estimated_costs: list[CostBreakdown] = Field(description="Detailed cost breakdown by category")
+    estimated_costs: list[CostBreakdown] = Field(
+        description="Detailed cost breakdown by category"
+    )
 
 
 # ============================================================================
@@ -113,14 +117,13 @@ class TravelItinerary(BaseModel):
 # These tools allow the agent to manage persistent session state
 
 
-def add_to_shopping_cart(session_state, item_name: str, price: float, quantity: int = 1) -> str:
+def add_to_shopping_cart(
+    session_state, item_name: str, price: float, quantity: int = 1
+) -> str:
     """
     Add an item to the shopping cart.
 
-    This demonstrates AGENT STATE management - state persists across sessions.
-
     Args:
-        session_state: The session state (automatically injected by Agno)
         item_name: Name of the item to add
         price: Price of the item
         quantity: Quantity to add (default: 1)
@@ -145,17 +148,12 @@ def add_to_shopping_cart(session_state, item_name: str, price: float, quantity: 
     total_items = sum(item["quantity"] for item in session_state["shopping_cart"])
     total_cost = sum(item["subtotal"] for item in session_state["shopping_cart"])
 
-    return f"✅ Added {quantity}x {item_name} (${price:.2f} each) to cart.\nCart now has {total_items} items totaling ${total_cost:.2f}"
+    return f"Added {quantity}x {item_name} (${price:.2f} each) to cart.\nCart now has {total_items} items totaling ${total_cost:.2f}"
 
 
 def view_shopping_cart(session_state) -> str:
     """
     View current shopping cart contents.
-
-    Demonstrates reading from AGENT STATE.
-
-    Args:
-        session_state: The session state (automatically injected by Agno)
 
     Returns:
         Formatted cart contents with totals
@@ -185,26 +183,20 @@ def clear_shopping_cart(session_state) -> str:
     """
     Clear all items from the shopping cart.
 
-    Demonstrates updating AGENT STATE.
-
-    Args:
-        session_state: The session state (automatically injected by Agno)
-
     Returns:
         Confirmation message
     """
     session_state["shopping_cart"] = []
-    return "✅ Shopping cart cleared successfully."
+    return "Shopping cart cleared successfully."
 
 
-def save_travel_preferences(session_state, destination: str, budget: float, interests: str) -> str:
+def save_travel_preferences(
+    session_state, destination: str, budget: float, interests: str
+) -> str:
     """
     Save travel preferences for future trip planning.
 
-    Demonstrates AGENT STATE for travel domain.
-
     Args:
-        session_state: The session state (automatically injected by Agno)
         destination: Desired travel destination
         budget: Budget for the trip
         interests: User interests (e.g., "food, culture, tech")
@@ -218,29 +210,30 @@ def save_travel_preferences(session_state, destination: str, budget: float, inte
         "interests": interests.split(","),
     }
 
-    return f"✅ Saved travel preferences:\n- Destination: {destination}\n- Budget: ${budget:.2f}\n- Interests: {interests}"
+    return f"Saved travel preferences:\n- Destination: {destination}\n- Budget: ${budget:.2f}\n- Interests: {interests}"
 
 
 def view_travel_preferences(session_state) -> str:
     """
     View saved travel preferences.
 
-    Demonstrates reading from AGENT STATE.
-
-    Args:
-        session_state: The session state (automatically injected by Agno)
-
     Returns:
         Formatted travel preferences
     """
     if "travel_preferences" not in session_state:
-        return "No travel preferences saved yet. Use save_travel_preferences to set them."
+        return (
+            "No travel preferences saved yet. Use save_travel_preferences to set them."
+        )
 
     prefs = session_state["travel_preferences"]
 
     # Check if preferences are empty or missing required fields
-    if not prefs or not all(key in prefs for key in ["destination", "budget", "interests"]):
-        return "No travel preferences saved yet. Use save_travel_preferences to set them."
+    if not prefs or not all(
+        key in prefs for key in ["destination", "budget", "interests"]
+    ):
+        return (
+            "No travel preferences saved yet. Use save_travel_preferences to set them."
+        )
 
     # Handle interests as either list or string
     if isinstance(prefs["interests"], list):
@@ -261,8 +254,7 @@ lifestyle_concierge = Agent(
     session_id="lifestyle_concierge_session",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
-        YFinanceTools(),  # Financial data and stock analysis
-        DuckDuckGoTools(),  # Web search for products, travel, general info
+        DuckDuckGoTools(),  # Web search for financial info, products, travel, general info
         # STATE MANAGEMENT: Tools to manage shopping cart and travel preferences
         add_to_shopping_cart,
         view_shopping_cart,
@@ -277,12 +269,11 @@ lifestyle_concierge = Agent(
         "travel_preferences": {},
     },
     add_session_state_to_context=True,  # Make state available in prompts
-    enable_agentic_state=True,  # Allow agent to update state with tools
     description=dedent("""\
         Your comprehensive AI personal assistant that helps with finance, shopping, and travel.
 
         I can help you:
-        • 💰 FINANCE: Analyze stocks, build portfolios, provide investment advice
+        • 💰 FINANCE: Research financial topics, provide investment education and advice
         • 🛍️  SHOPPING: Find products, compare prices, recommend purchases
         • ✈️  TRAVEL: Plan trips, create itineraries, find deals
 
@@ -293,8 +284,8 @@ lifestyle_concierge = Agent(
         "You are a versatile AI assistant helping with finance, shopping, and travel",
         "",
         "FINANCIAL ASSISTANCE:",
-        "- Use YFinance tools to get real-time market data and stock information",
-        "- Provide personalized investment advice based on user's risk tolerance and goals",
+        "- Use DuckDuckGo to search for financial information, market trends, and investment topics",
+        "- Provide educational investment advice based on user's risk tolerance and goals",
         "- Remember past financial discussions and portfolio preferences",
         "- Explain financial concepts in simple, accessible language",
         "- Include specific, actionable next steps for financial decisions",
@@ -341,7 +332,7 @@ lifestyle_concierge = Agent(
     enable_user_memories=True,
     enable_session_summaries=True,
     add_history_to_context=True,
-    num_history_runs=15,  # Remember last 15 interactions
+    num_history_runs=5,  # Remember last 5 interactions
     add_datetime_to_context=True,
     # Note: output_schema can be dynamically set based on domain
     # For demo purposes, it will intelligently structure responses

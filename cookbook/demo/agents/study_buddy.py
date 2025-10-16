@@ -1,21 +1,5 @@
 """
 Study Buddy - Comprehensive AI agent with RAG, validation hooks, and tool monitoring
-
-This agent demonstrates advanced Agno features for knowledge-based applications:
-
-Features Demonstrated:
-1. KNOWLEDGE BASE / RAG - Vector database with hybrid search (LanceDB + OpenAI embeddings)
-2. STRUCTURED OUTPUTS - Pydantic schemas for learning assessments
-3. INPUT VALIDATION HOOKS - Pre-hooks to validate queries and detect emergencies
-4. TOOL HOOKS - Monitor and log knowledge base queries and searches
-5. WEB SEARCH - DuckDuckGo for supplementary information
-6. MEMORY & SUMMARIES - Track learning progress over time
-7. DATABASE STORAGE - Persistent conversation history
-
-Use Cases:
-- Education: Personalized tutoring, adaptive learning, progress tracking
-- Research: Knowledge retrieval with context and source tracking
-- General Q&A: Multi-domain knowledge with validation and safety checks
 """
 
 import json
@@ -24,7 +8,7 @@ from textwrap import dedent
 from typing import Iterator
 
 from agno.agent import Agent
-from agno.db.sqlite.sqlite import SqliteDb
+from agno.db.postgres import PostgresDb
 from agno.exceptions import InputCheckError
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -39,17 +23,24 @@ from pydantic import BaseModel, Field
 # Database Configuration
 # ============================================================================
 
-db = SqliteDb(id="real-world-db", db_file="tmp/real_world.db")
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url, id="study_buddy_db")
 
 
 class LearningAssessment(BaseModel):
     """Structured learning assessment"""
 
-    student_level: str = Field(description="Current understanding level: beginner, intermediate, advanced")
+    student_level: str = Field(
+        description="Current understanding level: beginner, intermediate, advanced"
+    )
     strengths: list[str] = Field(description="Topics student understands well")
     areas_for_improvement: list[str] = Field(description="Topics needing more practice")
-    learning_style: str = Field(description="Identified learning style: visual, auditory, kinesthetic, reading")
-    recommended_pace: str = Field(description="Recommended learning pace: slow, moderate, fast")
+    learning_style: str = Field(
+        description="Identified learning style: visual, auditory, kinesthetic, reading"
+    )
+    recommended_pace: str = Field(
+        description="Recommended learning pace: slow, moderate, fast"
+    )
     next_topics: list[str] = Field(description="Suggested next topics to learn")
     practice_exercises: list[str] = Field(description="Recommended practice exercises")
 
@@ -89,7 +80,7 @@ def validate_education_query(run_input: RunInput, agent: Agent) -> None:
 
     if any(keyword in query for keyword in crisis_keywords):
         raise InputCheckError(
-            "⚠️  CRISIS SUPPORT NEEDED: Please contact a crisis helpline immediately:\n"
+            " CRISIS SUPPORT NEEDED: Please contact a crisis helpline immediately:\n"
             "• National Suicide Prevention Lifeline: 988 (US)\n"
             "• Crisis Text Line: Text HOME to 741741\n"
             "• International Association for Suicide Prevention: https://www.iasp.info/resources/Crisis_Centres/\n\n"
@@ -98,7 +89,12 @@ def validate_education_query(run_input: RunInput, agent: Agent) -> None:
         )
 
     # Detect inappropriate educational requests
-    inappropriate_keywords = ["homework answers", "cheat", "test answers", "exam solutions"]
+    inappropriate_keywords = [
+        "homework answers",
+        "cheat",
+        "test answers",
+        "exam solutions",
+    ]
     if any(keyword in query for keyword in inappropriate_keywords):
         raise InputCheckError(
             "I'm here to help you learn and understand concepts, not to provide direct answers to homework or tests. "
@@ -121,8 +117,6 @@ def log_knowledge_query(fc: FunctionCall):
     - Tracking what knowledge is being accessed
     - Audit trail for knowledge retrieval
     """
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n📚 [{timestamp}] Knowledge Query: {fc.function.name}")
     if fc.arguments:
         print(f"   Query Details: {json.dumps(fc.arguments, indent=2)[:200]}")
 
@@ -136,8 +130,6 @@ def validate_knowledge_result(fc: FunctionCall):
     - Adding metadata to responses
     - Tracking successful knowledge retrievals
     """
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n✅ [{timestamp}] Knowledge Retrieved: {fc.function.name}")
     if fc.result:
         result_size = len(str(fc.result))
         print(f"   Result Size: {result_size} characters")
@@ -216,10 +208,12 @@ def search_educational_resources(topic: str, num_results: int = 3) -> Iterator[s
         for resource in results[:num_results]:
             yield json.dumps(resource, indent=2)
     else:
-        yield json.dumps({
-            "message": f"No specific resources found for '{topic}'. Try web search for broader results.",
-            "suggestion": "Use DuckDuckGo search tool for more comprehensive results",
-        })
+        yield json.dumps(
+            {
+                "message": f"No specific resources found for '{topic}'. Try web search for broader results.",
+                "suggestion": "Use DuckDuckGo search tool for more comprehensive results",
+            }
+        )
 
 
 # ============================================================================
@@ -231,7 +225,7 @@ education_knowledge = Knowledge(
     contents_db=db,
     vector_db=LanceDb(
         uri="tmp/lancedb",
-        table_name="education_content",
+        table_name="study_buddy_education",
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small", dimensions=1536),
     ),
@@ -357,6 +351,6 @@ async def load_education_knowledge():
             text_content=sample_education_content,
             skip_if_exists=True,
         )
-        print("✅ Education knowledge base loaded successfully")
+        print("Education knowledge base loaded successfully")
     except Exception as e:
-        print(f"⚠️  Warning: Could not load education knowledge base: {e}")
+        print(f" Warning: Could not load education knowledge base: {e}")

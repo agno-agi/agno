@@ -1758,11 +1758,9 @@ class Team:
 
     async def _arun(
         self,
-        input: Union[str, List, Dict, Message, BaseModel],
         run_response: TeamRunOutput,
         session_id: str,
         session_state: Optional[Dict[str, Any]] = None,
-        store_member_responses: Optional[bool] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1810,9 +1808,6 @@ class Team:
         # 2. Update metadata and session state
         self._update_metadata(session=team_session)
         session_state = self._load_session_state(session=team_session, session_state=session_state)  # type: ignore
-
-        if store_member_responses is None:
-            store_member_responses = False if self.store_member_responses is None else self.store_member_responses
 
         run_input = cast(TeamRunInput, run_response.input)
 
@@ -1863,7 +1858,7 @@ class Team:
             session=team_session,  # type: ignore
             session_state=session_state,
             user_id=user_id,
-            input_message=input,
+            input_message=run_input.input_content,
             audio=audio,
             images=images,
             videos=videos,
@@ -1968,7 +1963,6 @@ class Team:
 
     async def _arun_stream(
         self,
-        input: Union[str, List, Dict, Message, BaseModel],
         run_response: TeamRunOutput,
         session_id: str,
         session_state: Optional[Dict[str, Any]] = None,
@@ -2051,7 +2045,7 @@ class Team:
             user_id=user_id,
             async_mode=True,
             knowledge_filters=knowledge_filters,
-            input_message=input,
+            input_message=run_input.input_content,
             images=images,
             videos=videos,
             audio=audio,
@@ -2068,7 +2062,7 @@ class Team:
             session=team_session,  # type: ignore
             session_state=session_state,
             user_id=user_id,
-            input_message=input,
+            input_message=run_input.input_content,
             audio=audio,
             images=images,
             videos=videos,
@@ -6956,7 +6950,7 @@ class Team:
                 done_marker = object()
                 queue: "asyncio.Queue[Union[RunOutputEvent, TeamRunOutputEvent, str, object]]" = asyncio.Queue()
 
-                async def stream_member(agent: Union[Agent, "Team"], idx: int) -> None:
+                async def stream_member(agent: Union[Agent, "Team"]) -> None:
                     member_agent_task, history = _setup_delegate_task_to_member(
                         agent, task_description, expected_output
                     )
@@ -7004,11 +6998,10 @@ class Team:
 
                 # Initialize and launch all members
                 tasks: List[asyncio.Task[None]] = []
-                for member_agent_index, member_agent in enumerate(self.members):
+                for member_agent in self.members:
                     current_agent = member_agent
-                    current_index = member_agent_index
                     self._initialize_member(current_agent)
-                    tasks.append(asyncio.create_task(stream_member(current_agent, current_index)))
+                    tasks.append(asyncio.create_task(stream_member(current_agent)))
 
                 # Drain queue until all members reported done
                 completed = 0
@@ -7033,7 +7026,6 @@ class Team:
                 tasks = []
                 for member_agent_index, member_agent in enumerate(self.members):
                     current_agent = member_agent
-                    current_index = member_agent_index
                     member_agent_task, history = _setup_delegate_task_to_member(
                         current_agent, task_description, expected_output
                     )
