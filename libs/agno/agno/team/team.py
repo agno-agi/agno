@@ -1960,7 +1960,7 @@ class Team:
         else:
             self._scrub_media_from_run_output(run_response)
 
-        # 15. Execute post-hooks after output is generated but before response is returned
+        # Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
             await self._aexecute_post_hooks(
                 hooks=self.post_hooks,  # type: ignore

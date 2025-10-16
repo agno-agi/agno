@@ -914,7 +914,7 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
-        # 6. Execute post-hooks after output is generated but before response is returned
+        # Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
             self._execute_post_hooks(
                 hooks=self.post_hooks,  # type: ignore
@@ -1130,7 +1130,7 @@ class Agent:
             if run_response.metrics:
                 run_response.metrics.stop_timer()
 
-            # 5. Execute post-hooks after output is generated but before response is returned
+            # Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
                 self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
@@ -1653,7 +1653,7 @@ class Agent:
             if run_response.metrics:
                 run_response.metrics.stop_timer()
 
-            # 10. Execute post-hooks (after output is generated but before response is returned)
+            # Execute post-hooks (after output is generated but before response is returned)
             if self.post_hooks is not None:
                 await self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
@@ -1903,7 +1903,7 @@ class Agent:
             # Set the run status to completed
             run_response.status = RunStatus.completed
 
-            # 10. Execute post-hooks (after output is generated but before response is returned)
+            # Execute post-hooks (after output is generated but before response is returned)
             if self.post_hooks is not None:
                 await self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
