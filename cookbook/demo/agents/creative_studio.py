@@ -53,7 +53,7 @@ creative_studio = Agent(
     # Memory and context management
     enable_user_memories=True,  # Remember user preferences
     add_history_to_context=True,  # Maintain conversation history
-    num_history_runs=5,  # Keep last 5 interactions
+    num_history_runs=5,  # Keep last 5 interactions in the messages sent to the model
     add_datetime_to_context=True,  # Include timestamps
     db=db,  # Persistent storage
     markdown=True,  # Format responses with markdown
