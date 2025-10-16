@@ -6595,6 +6595,15 @@ class Team:
             if run_response and member_agent_run_response:
                 run_response.add_member_run(member_agent_run_response)
 
+            # Scrub the member run based on that member's storage flags before storing
+            if member_agent_run_response:
+                if not member_agent.store_media:
+                    member_agent._scrub_media_from_run_output(member_agent_run_response)
+                if not member_agent.store_tool_results:
+                    member_agent._scrub_tool_results_from_run_output(member_agent_run_response)
+                if not member_agent.store_history_messages:
+                    member_agent._scrub_history_messages_from_run_output(member_agent_run_response)
+
             # Add the member run to the team session
             if member_agent_run_response:
                 session.upsert_run(member_agent_run_response)
