@@ -403,6 +403,7 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -469,7 +470,9 @@ class Step:
                                     enriched_event = self._enrich_event_with_context(
                                         event, workflow_run_response, step_index
                                     )
-                                    yield enriched_event  # type: ignore[misc]
+                                    # Only yield executor events if stream_executor_events is True
+                                    if stream_executor_events:
+                                        yield enriched_event  # type: ignore[misc]
 
                             # Merge session_state changes back
                             if session_state is not None:
@@ -554,7 +557,9 @@ class Step:
                                 active_executor_run_response = event
                                 break
                             enriched_event = self._enrich_event_with_context(event, workflow_run_response, step_index)
-                            yield enriched_event  # type: ignore[misc]
+                            # Only yield executor events if stream_executor_events is True
+                            if stream_executor_events:
+                                yield enriched_event  # type: ignore[misc]
 
                         if session_state is not None:
                             # Update workflow session state
@@ -799,6 +804,7 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -865,7 +871,9 @@ class Step:
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
-                                yield enriched_event  # type: ignore[misc]
+                                # Only yield executor events if stream_executor_events is True
+                                if stream_executor_events:
+                                    yield enriched_event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
                     elif _is_async_callable(self.active_executor):
@@ -896,7 +904,9 @@ class Step:
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
-                                yield enriched_event  # type: ignore[misc]
+                                # Only yield executor events if stream_executor_events is True
+                                if stream_executor_events:
+                                    yield enriched_event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
                     else:
@@ -971,7 +981,9 @@ class Step:
                                 active_executor_run_response = event
                                 break
                             enriched_event = self._enrich_event_with_context(event, workflow_run_response, step_index)
-                            yield enriched_event  # type: ignore[misc]
+                            # Only yield executor events if stream_executor_events is True
+                            if stream_executor_events:
+                                yield enriched_event  # type: ignore[misc]
 
                         if session_state is not None:
                             # Update workflow session state
@@ -1036,6 +1048,14 @@ class Step:
             # propogate the workflow run id as parent run id to the executor response
             executor_run_response.parent_run_id = workflow_run_response.run_id
             executor_run_response.workflow_step_id = self.step_id
+
+            # Scrub the executor response based on the executor's storage flags before storing
+            if (
+                not self.active_executor.store_media
+                or not self.active_executor.store_tool_messages
+                or not self.active_executor.store_history_messages
+            ):  # type: ignore
+                self.active_executor._scrub_run_output_for_storage(executor_run_response)  # type: ignore
 
             # Get the raw response from the step's active executor
             raw_response = executor_run_response
