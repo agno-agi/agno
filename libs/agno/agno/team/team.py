@@ -6619,8 +6619,7 @@ class Team:
                 if not member_agent.store_history_messages:
                     member_agent._scrub_history_messages_from_run_output(member_agent_run_response)  # type: ignore
 
-            # Add the member run to the team session
-            if member_agent_run_response:
+                # Add the member run to the team session
                 session.upsert_run(member_agent_run_response)
 
             # Update team session state
