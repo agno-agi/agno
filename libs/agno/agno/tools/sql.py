@@ -32,6 +32,7 @@ class SQLTools(Toolkit):
         query_timeout: Optional[float] = 30,
         max_result_rows: int = 1000,
         dangerous_keywords: Optional[Set[str]] = None,
+        export_directory: Optional[str] = None,
         enable_list_tables: bool = True,
         enable_describe_table: bool = True,
         enable_run_sql_query: bool = True,
@@ -92,6 +93,11 @@ class SQLTools(Toolkit):
             "INSERT",
             "UPDATE",
         }
+
+        # Safe directory for file exports (security: prevent arbitrary file system writes)
+        self.export_directory: Path = Path(export_directory) if export_directory else Path("./sql_exports")
+        # Create export directory if it doesn't exist
+        self.export_directory.mkdir(parents=True, exist_ok=True)
 
         # Set query timeout if specified (only for databases that support it)
         if self.query_timeout is not None and dialect and dialect.lower() in ["postgresql", "postgres"]:
@@ -371,10 +377,15 @@ class SQLTools(Toolkit):
         Args:
             query (str): SQL query to execute.
             format (str, optional): Output format - 'json' or 'csv'. Defaults to 'json'.
-            filename (str, optional): Output filename. Auto-generated if not provided.
+            filename (str, optional): Output filename (basename only, no paths). Auto-generated if not provided.
 
         Returns:
             str: JSON with export status and filename.
+
+        Note:
+            For security, files are written to the configured export_directory only.
+            Path traversal attempts (../, absolute paths) are blocked.
+            Filenames are sanitized to prevent filesystem attacks.
         """
         try:
             log_info(f"Exporting query results to {format}")
@@ -397,16 +408,24 @@ class SQLTools(Toolkit):
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"query_results_{timestamp}.{format}"
 
-            # Ensure filename is a Path
-            filename_path = Path(filename)
+            # Security: Sanitize filename and ensure it stays within export_directory
+            safe_filename = self._sanitize_filename(filename)
+            filename_path = self.export_directory / safe_filename
 
-            # If parent directory doesn't exist, try to create it (safe no-op for same-dir)
-            if filename_path.parent and not filename_path.parent.exists():
-                try:
-                    filename_path.parent.mkdir(parents=True, exist_ok=True)
-                except Exception:
-                    # ignore parent creation errors; we'll hit open() error below if necessary
-                    pass
+            # Security check: Ensure resolved path is still within export_directory
+            try:
+                filename_path = filename_path.resolve()
+                if not filename_path.is_relative_to(self.export_directory.resolve()):
+                    return json.dumps(
+                        {
+                            "error": "Invalid filename: path traversal detected",
+                            "tip": f"Files must be written to {self.export_directory}",
+                        }
+                    )
+            except (ValueError, OSError) as e:
+                return json.dumps(
+                    {"error": f"Invalid filename: {e}", "tip": "Use a simple filename without path separators"}
+                )
 
             # Export based on format
             try:
@@ -549,3 +568,32 @@ class SQLTools(Toolkit):
             "unknown_error": "An unexpected error occurred. Check the error message for details.",
         }
         return tips.get(error_type, "Check query and try again.")
+
+    def _sanitize_filename(self, filename: str) -> str:
+        """Sanitize filename to prevent directory traversal and other security issues.
+
+        Args:
+            filename (str): The filename to sanitize.
+
+        Returns:
+            str: Sanitized filename (basename only, no path components).
+        """
+        # Remove any path components (directory separators)
+        filename = Path(filename).name
+
+        # Remove any potentially dangerous characters
+        # Allow: alphanumeric, underscore, hyphen, dot
+        safe_filename = re.sub(r"[^\w\-.]", "_", filename)
+
+        # Prevent hidden files (starting with .)
+        if safe_filename.startswith("."):
+            safe_filename = "_" + safe_filename
+
+        # Ensure filename isn't empty after sanitization
+        if not safe_filename or safe_filename == "_":
+            import datetime
+
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_filename = f"export_{timestamp}.json"
+
+        return safe_filename
