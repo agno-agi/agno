@@ -46,6 +46,7 @@ from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models.utils import get_model_from_string
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
@@ -128,7 +129,7 @@ class Team:
     members: List[Union[Agent, "Team"]]
 
     # Model for this Team
-    model: Optional[Model] = None
+    model: Optional[Union[Model, str]] = None
 
     # --- Team settings ---
     # Name of the team
@@ -334,7 +335,7 @@ class Team:
 
     # --- Team Reasoning ---
     reasoning: bool = False
-    reasoning_model: Optional[Model] = None
+    reasoning_model: Optional[Union[Model, str]] = None
     reasoning_agent: Optional[Agent] = None
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
@@ -379,7 +380,7 @@ class Team:
         self,
         members: List[Union[Agent, "Team"]],
         id: Optional[str] = None,
-        model: Optional[Model] = None,
+        model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
         role: Optional[str] = None,
         respond_directly: bool = False,
@@ -451,7 +452,7 @@ class Team:
         num_history_runs: int = 3,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
-        reasoning_model: Optional[Model] = None,
+        reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
@@ -470,7 +471,6 @@ class Team:
         telemetry: bool = True,
     ):
         self.members = members
-
         self.model = model
 
         self.name = name
@@ -711,6 +711,18 @@ class Team:
             for sub_member in member.members:
                 self._initialize_member(sub_member, debug_mode=debug_mode)
 
+    def _resolve_model_strings(self) -> None:
+        """Convert string models to Model instances (lazy resolution)"""
+        if self.model is not None and isinstance(self.model, str):
+            self.model = get_model_from_string(self.model)
+
+        if self.reasoning_model is not None and isinstance(self.reasoning_model, str):
+            self.reasoning_model = get_model_from_string(self.reasoning_model)
+
+        # After initialization, cast for type safety
+        self.model = cast(Optional[Model], self.model)
+        self.reasoning_model = cast(Optional[Model], self.reasoning_model)
+
     def _set_default_model(self) -> None:
         # Set the default model
         if self.model is None:
@@ -732,10 +744,10 @@ class Team:
             log_warning("Database not provided. Memories will not be stored.")
 
         if self.memory_manager is None:
-            self.memory_manager = MemoryManager(model=self.model, db=self.db)
+            self.memory_manager = MemoryManager(model=self.model, db=self.db)  # type: ignore
         else:
             if self.memory_manager.model is None:
-                self.memory_manager.model = self.model
+                self.memory_manager.model = self.model  # type: ignore
             if self.memory_manager.db is None:
                 self.memory_manager.db = self.db
 
@@ -746,11 +758,11 @@ class Team:
 
     def _set_session_summary_manager(self) -> None:
         if self.enable_session_summaries and self.session_summary_manager is None:
-            self.session_summary_manager = SessionSummaryManager(model=self.model)
+            self.session_summary_manager = SessionSummaryManager(model=self.model)  # type: ignore
 
         if self.session_summary_manager is not None:
             if self.session_summary_manager.model is None:
-                self.session_summary_manager.model = self.model
+                self.session_summary_manager.model = self.model  # type: ignore
 
         if self.add_session_summary_to_context is None:
             self.add_session_summary_to_context = (
@@ -814,6 +826,7 @@ class Team:
             )
             self.respond_directly = False
 
+        self._resolve_model_strings()
         self._set_default_model()
 
         # Set debug mode
@@ -3878,7 +3891,7 @@ class Team:
     def _calculate_session_metrics(self, messages: List[Message]) -> Metrics:
         """Sum the metrics of the given messages into a Metrics object"""
         session_metrics = Metrics()
-        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
+        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"  # type: ignore
 
         # Get metrics of the team leader's messages
         for m in messages:
@@ -3889,7 +3902,7 @@ class Team:
 
     def _calculate_metrics(self, messages: List[Message]) -> Metrics:
         metrics = Metrics()
-        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
+        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"  # type: ignore
 
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
@@ -3956,12 +3969,12 @@ class Team:
         use_default_reasoning = False
 
         # Get the reasoning model
-        reasoning_model: Optional[Model] = self.reasoning_model
+        reasoning_model: Optional[Model] = self.reasoning_model  # type: ignore
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             from copy import deepcopy
 
-            reasoning_model = deepcopy(self.model)
+            reasoning_model = deepcopy(self.model)  # type: ignore
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
@@ -4226,12 +4239,12 @@ class Team:
         use_default_reasoning = False
 
         # Get the reasoning model
-        reasoning_model: Optional[Model] = self.reasoning_model
+        reasoning_model: Optional[Model] = self.reasoning_model  # type: ignore
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             from copy import deepcopy
 
-            reasoning_model = deepcopy(self.model)
+            reasoning_model = deepcopy(self.model)  # type: ignore
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
@@ -7427,7 +7440,7 @@ class Team:
         generate_name_messages = [system_message, user_message]
 
         # Generate name
-        generated_name = self.model.response(messages=generate_name_messages)
+        generated_name = self.model.response(messages=generate_name_messages)  # type: ignore
         content = generated_name.content
         if content is None:
             log_error("Generated name is None. Trying again.")
@@ -8103,7 +8116,7 @@ class Team:
         if self.id is not None:
             team_data["team_id"] = self.id
         if self.model is not None:
-            team_data["model"] = self.model.to_dict()
+            team_data["model"] = self.model.to_dict()  # type: ignore
         return team_data
 
     ###########################################################################
@@ -8115,9 +8128,8 @@ class Team:
         return {
             "team_id": self.id,
             "db_type": self.db.__class__.__name__ if self.db else None,
-            "model_provider": self.model.provider if self.model else None,
-            "model_name": self.model.name if self.model else None,
-            "model_id": self.model.id if self.model else None,
+            "model_provider": self.model.provider if self.model else None,  # type: ignore
+            "model_id": self.model.id if self.model else None,  # type: ignore
             "parser_model": self.parser_model.to_dict() if self.parser_model else None,
             "output_model": self.output_model.to_dict() if self.output_model else None,
             "member_count": len(self.members) if self.members else 0,
