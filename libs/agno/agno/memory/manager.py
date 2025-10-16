@@ -1217,7 +1217,6 @@ class MemoryManager:
                             input=input_string,
                         )
                     )
-                )
                 log_debug(f"Memory added: {memory_id}")
                 return "Memory added successfully"
             except Exception as e:
