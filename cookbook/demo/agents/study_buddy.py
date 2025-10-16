@@ -117,8 +117,6 @@ def log_knowledge_query(fc: FunctionCall):
     - Tracking what knowledge is being accessed
     - Audit trail for knowledge retrieval
     """
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n📚 [{timestamp}] Knowledge Query: {fc.function.name}")
     if fc.arguments:
         print(f"   Query Details: {json.dumps(fc.arguments, indent=2)[:200]}")
 
@@ -355,6 +353,6 @@ async def load_education_knowledge():
             text_content=sample_education_content,
             skip_if_exists=True,
         )
-        print("✅ Education knowledge base loaded successfully")
+        print("Education knowledge base loaded successfully")
     except Exception as e:
-        print(f"⚠️  Warning: Could not load education knowledge base: {e}")
+        print(f" Warning: Could not load education knowledge base: {e}")

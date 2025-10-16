@@ -77,27 +77,8 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    print("\n" + "=" * 80)
-    print("🚀 Real-World Use Cases Showcase - Agno Framework")
-    print("=" * 80)
-    print("\nInitializing knowledge bases...")
-
     # Initialize knowledge bases
     asyncio.run(initialize_knowledge_bases())
-
-    print("\n   AGENTS (3) - Each demonstrates multiple features:")
-    print("   • Lifestyle Concierge - Multi-domain (finance/shopping/travel)")
-    print(
-        "     Features: Tools, Structured Outputs, Guardrails, Memory, Storage, Agent State, Metrics"
-    )
-    print("   • Study Buddy - RAG with advanced capabilities")
-    print("     Features: Vector Search, Input Validation, Tool Hooks, Memory, Metrics")
-    print("   • Creative Studio - Multimodal AI assistant")
-    print("     Features: Image Generation/Analysis, Tool Hooks, Guardrails, Metrics")
-
-    print("\n🌐 Starting AgentOS on http://localhost:7780")
-    print("=" * 80 + "\n")
-
     # Launch AgentOS
     agent_os.serve(
         app="real_world_showcase:app", host="localhost", port=7780, reload=True

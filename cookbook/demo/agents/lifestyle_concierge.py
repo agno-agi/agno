@@ -12,7 +12,6 @@ from agno.guardrails import PIIDetectionGuardrail, PromptInjectionGuardrail
 from agno.models.openai.chat import OpenAIChat
 from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.yfinance import YFinanceTools
 from pydantic import BaseModel, Field
 
 # ============================================================================
@@ -124,10 +123,7 @@ def add_to_shopping_cart(
     """
     Add an item to the shopping cart.
 
-    This demonstrates AGENT STATE management - state persists across sessions.
-
     Args:
-        session_state: The session state (automatically injected by Agno)
         item_name: Name of the item to add
         price: Price of the item
         quantity: Quantity to add (default: 1)
@@ -159,11 +155,6 @@ def view_shopping_cart(session_state) -> str:
     """
     View current shopping cart contents.
 
-    Demonstrates reading from AGENT STATE.
-
-    Args:
-        session_state: The session state (automatically injected by Agno)
-
     Returns:
         Formatted cart contents with totals
     """
@@ -192,11 +183,6 @@ def clear_shopping_cart(session_state) -> str:
     """
     Clear all items from the shopping cart.
 
-    Demonstrates updating AGENT STATE.
-
-    Args:
-        session_state: The session state (automatically injected by Agno)
-
     Returns:
         Confirmation message
     """
@@ -210,10 +196,7 @@ def save_travel_preferences(
     """
     Save travel preferences for future trip planning.
 
-    Demonstrates AGENT STATE for travel domain.
-
     Args:
-        session_state: The session state (automatically injected by Agno)
         destination: Desired travel destination
         budget: Budget for the trip
         interests: User interests (e.g., "food, culture, tech")
@@ -233,11 +216,6 @@ def save_travel_preferences(
 def view_travel_preferences(session_state) -> str:
     """
     View saved travel preferences.
-
-    Demonstrates reading from AGENT STATE.
-
-    Args:
-        session_state: The session state (automatically injected by Agno)
 
     Returns:
         Formatted travel preferences
@@ -276,8 +254,7 @@ lifestyle_concierge = Agent(
     session_id="lifestyle_concierge_session",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
-        YFinanceTools(),  # Financial data and stock analysis
-        DuckDuckGoTools(),  # Web search for products, travel, general info
+        DuckDuckGoTools(),  # Web search for financial info, products, travel, general info
         # STATE MANAGEMENT: Tools to manage shopping cart and travel preferences
         add_to_shopping_cart,
         view_shopping_cart,
@@ -296,7 +273,7 @@ lifestyle_concierge = Agent(
         Your comprehensive AI personal assistant that helps with finance, shopping, and travel.
 
         I can help you:
-        • 💰 FINANCE: Analyze stocks, build portfolios, provide investment advice
+        • 💰 FINANCE: Research financial topics, provide investment education and advice
         • 🛍️  SHOPPING: Find products, compare prices, recommend purchases
         • ✈️  TRAVEL: Plan trips, create itineraries, find deals
 
@@ -307,8 +284,8 @@ lifestyle_concierge = Agent(
         "You are a versatile AI assistant helping with finance, shopping, and travel",
         "",
         "FINANCIAL ASSISTANCE:",
-        "- Use YFinance tools to get real-time market data and stock information",
-        "- Provide personalized investment advice based on user's risk tolerance and goals",
+        "- Use DuckDuckGo to search for financial information, market trends, and investment topics",
+        "- Provide educational investment advice based on user's risk tolerance and goals",
         "- Remember past financial discussions and portfolio preferences",
         "- Explain financial concepts in simple, accessible language",
         "- Include specific, actionable next steps for financial decisions",
