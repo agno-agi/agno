@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import tempfile
 
 import pytest
@@ -350,14 +351,14 @@ def test_search_tables_no_matches(test_db):
 def test_export_query_results_json(test_db):
     """Test exporting query results to JSON."""
     db_url, _, engines_list = test_db
-    tools = SQLTools(db_url=db_url)
+
+    # Create a temporary export directory
+    temp_dir = tempfile.mkdtemp()
+    tools = SQLTools(db_url=db_url, export_directory=temp_dir)
     engines_list.append(tools.db_engine)
 
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
-    temp_file.close()
-
     try:
-        result = tools.export_query_results("SELECT * FROM users", format="json", filename=temp_file.name)
+        result = tools.export_query_results("SELECT * FROM users", format="json", filename="test_export.json")
         response = json.loads(result)
 
         # Check if it's an error response
@@ -367,48 +368,56 @@ def test_export_query_results_json(test_db):
         assert response["status"] == "success"
         assert response["rows_exported"] == 3
         assert response["format"] == "json"
-        assert os.path.exists(temp_file.name)
+
+        # File should be in the export directory
+        exported_file = os.path.join(temp_dir, "test_export.json")
+        assert os.path.exists(exported_file)
 
         # Verify file contents
-        with open(temp_file.name, "r") as f:
+        with open(exported_file, "r") as f:
             exported_data = json.load(f)
             assert len(exported_data) == 3
 
     finally:
-        if os.path.exists(temp_file.name):
-            os.unlink(temp_file.name)
+        # Clean up temp directory
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
 
 
 def test_export_query_results_csv(test_db):
     """Test exporting query results to CSV."""
     db_url, _, engines_list = test_db
-    tools = SQLTools(db_url=db_url)
+
+    # Create a temporary export directory
+    temp_dir = tempfile.mkdtemp()
+    tools = SQLTools(db_url=db_url, export_directory=temp_dir)
     engines_list.append(tools.db_engine)
 
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
-    temp_file.close()
-
     try:
-        result = tools.export_query_results("SELECT * FROM users", format="csv", filename=temp_file.name)
+        result = tools.export_query_results("SELECT * FROM users", format="csv", filename="test_export.csv")
         response = json.loads(result)
 
         # Check if it's an error response
-        if "error" in response and response.get("error") != "Unsupported format: xml. Use 'json' or 'csv'":
+        if "error" in response:
             pytest.fail(f"export_query_results returned error: {response}")
 
         assert response["status"] == "success"
         assert response["format"] == "csv"
-        assert os.path.exists(temp_file.name)
+
+        # File should be in the export directory
+        exported_file = os.path.join(temp_dir, "test_export.csv")
+        assert os.path.exists(exported_file)
 
         # Verify CSV has content
-        with open(temp_file.name, "r") as f:
+        with open(exported_file, "r") as f:
             content = f.read()
             assert "Alice" in content
             assert "Bob" in content
 
     finally:
-        if os.path.exists(temp_file.name):
-            os.unlink(temp_file.name)
+        # Clean up temp directory
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
 
 
 def test_export_query_results_invalid_format(test_db):
