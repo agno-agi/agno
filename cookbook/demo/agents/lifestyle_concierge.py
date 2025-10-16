@@ -1,23 +1,5 @@
 """
 Lifestyle Concierge - Comprehensive AI assistant for finance, shopping, and travel
-
-This agent demonstrates how a single, high-quality agent can handle multiple domains
-while showcasing numerous Agno features:
-
-Features Demonstrated:
-1. TOOLS - External API integration (YFinance for financial data)
-2. WEB SEARCH - DuckDuckGo for product research and travel planning
-3. STRUCTURED OUTPUTS - Multiple Pydantic schemas for different domains
-4. DATABASE STORAGE - Persistent storage of conversations and user data
-5. MEMORY - User memories and session summaries across all domains
-6. GUARDRAILS - PII detection and prompt injection protection
-7. MULTI-DOMAIN INTELLIGENCE - Finance + Shopping + Travel in one agent
-8. AGENT STATE - Persistent session state for shopping cart and travel preferences
-
-Use Cases:
-- Personal Finance: Stock analysis, portfolio recommendations, budgeting
-- Shopping: Product recommendations, price comparisons, deal finding (with cart state)
-- Travel: Itinerary planning, booking research, budget estimation (with saved preferences)
 """
 
 import json
@@ -25,7 +7,7 @@ from textwrap import dedent
 from typing import Optional
 
 from agno.agent import Agent
-from agno.db.sqlite.sqlite import SqliteDb
+from agno.db.postgres import PostgresDb
 from agno.guardrails import PIIDetectionGuardrail, PromptInjectionGuardrail
 from agno.models.openai.chat import OpenAIChat
 from agno.tools import tool
@@ -37,7 +19,8 @@ from pydantic import BaseModel, Field
 # Database Configuration
 # ============================================================================
 
-db = SqliteDb(id="real-world-db", db_file="tmp/real_world.db")
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url, id="lifestyle_concierge_db")
 
 # ============================================================================
 # Structured Output Schemas (Multi-Domain)
@@ -277,7 +260,6 @@ lifestyle_concierge = Agent(
         "travel_preferences": {},
     },
     add_session_state_to_context=True,  # Make state available in prompts
-    enable_agentic_state=True,  # Allow agent to update state with tools
     description=dedent("""\
         Your comprehensive AI personal assistant that helps with finance, shopping, and travel.
 
@@ -341,7 +323,7 @@ lifestyle_concierge = Agent(
     enable_user_memories=True,
     enable_session_summaries=True,
     add_history_to_context=True,
-    num_history_runs=15,  # Remember last 15 interactions
+    num_history_runs=5,  # Remember last 5 interactions
     add_datetime_to_context=True,
     # Note: output_schema can be dynamically set based on domain
     # For demo purposes, it will intelligently structure responses

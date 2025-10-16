@@ -1,21 +1,5 @@
 """
 Study Buddy - Comprehensive AI agent with RAG, validation hooks, and tool monitoring
-
-This agent demonstrates advanced Agno features for knowledge-based applications:
-
-Features Demonstrated:
-1. KNOWLEDGE BASE / RAG - Vector database with hybrid search (LanceDB + OpenAI embeddings)
-2. STRUCTURED OUTPUTS - Pydantic schemas for learning assessments
-3. INPUT VALIDATION HOOKS - Pre-hooks to validate queries and detect emergencies
-4. TOOL HOOKS - Monitor and log knowledge base queries and searches
-5. WEB SEARCH - DuckDuckGo for supplementary information
-6. MEMORY & SUMMARIES - Track learning progress over time
-7. DATABASE STORAGE - Persistent conversation history
-
-Use Cases:
-- Education: Personalized tutoring, adaptive learning, progress tracking
-- Research: Knowledge retrieval with context and source tracking
-- General Q&A: Multi-domain knowledge with validation and safety checks
 """
 
 import json
@@ -24,7 +8,7 @@ from textwrap import dedent
 from typing import Iterator
 
 from agno.agent import Agent
-from agno.db.sqlite.sqlite import SqliteDb
+from agno.db.postgres import PostgresDb
 from agno.exceptions import InputCheckError
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -39,7 +23,8 @@ from pydantic import BaseModel, Field
 # Database Configuration
 # ============================================================================
 
-db = SqliteDb(id="real-world-db", db_file="tmp/real_world.db")
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url, id="study_buddy_db")
 
 
 class LearningAssessment(BaseModel):
@@ -231,7 +216,7 @@ education_knowledge = Knowledge(
     contents_db=db,
     vector_db=LanceDb(
         uri="tmp/lancedb",
-        table_name="education_content",
+        table_name="study_buddy_education",
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small", dimensions=1536),
     ),
