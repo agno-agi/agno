@@ -11,17 +11,16 @@ Prerequisites:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.db.surrealdb import SurrealDb
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
 from rich.pretty import pprint
 
-from agno.db.surrealdb import SurrealDb
 # Database configuration for metrics storage
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url, session_table="team_metrics_sessions")
-
 
 
 # Setup the SurrealDB database

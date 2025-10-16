@@ -65,11 +65,12 @@ content_planning_step = Step(
     agent=content_planner,
 )
 
+
 def get_content_creation_workflow(db: BaseDb) -> Workflow:
     return Workflow(
-    name="Content Creation Workflow",
-    description="Automated content creation from blog posts to social media",
-    db=db,
-    steps=[research_step, content_planning_step],
-    input_schema=ResearchTopic,
-)
+        name="Content Creation Workflow",
+        description="Automated content creation from blog posts to social media",
+        db=db,
+        steps=[research_step, content_planning_step],
+        input_schema=ResearchTopic,
+    )

@@ -1,13 +1,14 @@
-from agno.agent import Agent
-from agno.db.base import BaseDb
-from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.models.anthropic import Claude
-from agno.tools.firecrawl import FirecrawlTools
 from textwrap import dedent
 
-def get_memory_agent(db: BaseDb) -> Agent:
+from agno.agent import Agent
+from agno.db.base import BaseDb
+from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.firecrawl import FirecrawlTools
 
+
+def get_memory_agent(db: BaseDb) -> Agent:
     return Agent(
         name="Memory Agent",
         id="memory-agent",
