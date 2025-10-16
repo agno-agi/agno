@@ -1267,7 +1267,10 @@ class MemoryManager:
                 str: A message indicating if the memory was deleted successfully or not.
             """
             try:
-                await db.delete_user_memory(memory_id=memory_id)
+                if isinstance(db, AsyncBaseDb):
+                    await db.delete_user_memory(memory_id=memory_id)
+                else:
+                    db.delete_user_memory(memory_id=memory_id)
                 log_debug("Memory deleted")
                 return "Memory deleted successfully"
             except Exception as e:
