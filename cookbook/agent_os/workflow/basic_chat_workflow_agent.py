@@ -1,8 +1,7 @@
-import asyncio
-
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
+from agno.os import AgentOS
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
@@ -95,42 +94,12 @@ workflow = Workflow(
 )
 
 
-async def main():
-    """Async main function"""
-    print("\n" + "=" * 80)
-    print("WORKFLOW WITH CONDITION - ASYNC STREAMING")
-    print("=" * 80)
-
-    # First call - will run the workflow with condition
-    print("\n" + "=" * 80)
-    print("FIRST CALL: Tell me a story about a brave knight")
-    print("=" * 80)
-    await workflow.aprint_response(
-        "Tell me a story about a brave knight",
-        stream=True,
-        stream_intermediate_steps=True,
-    )
-
-    # Second call - should answer from history without re-running workflow
-    print("\n" + "=" * 80)
-    print("SECOND CALL: What was the knight's name?")
-    print("=" * 80)
-    await workflow.aprint_response(
-        "What was the knight's name?",
-        stream=True,
-        stream_intermediate_steps=True,
-    )
-
-    # Third call - new topic, should run workflow again
-    print("\n" + "=" * 80)
-    print("THIRD CALL: Now tell me about a cat")
-    print("=" * 80)
-    await workflow.aprint_response(
-        "Now tell me about a cat",
-        stream=True,
-        stream_intermediate_steps=True,
-    )
-
+# Initialize the AgentOS with the workflows
+agent_os = AgentOS(
+    description="Example OS setup",
+    workflows=[workflow],
+)
+app = agent_os.get_app()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    agent_os.serve(app="basic_chat_workflow_agent:app", reload=True)

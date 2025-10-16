@@ -3667,7 +3667,7 @@ class Team:
         Returns True if any scrubbing was done, False otherwise.
         """
         scrubbed = False
-        
+
         if not self.store_media:
             self._scrub_media_from_run_output(run_response)
             scrubbed = True
@@ -3679,7 +3679,7 @@ class Team:
         if not self.store_history_messages:
             self._scrub_history_messages_from_run_output(run_response)
             scrubbed = True
-        
+
         return scrubbed
 
     def _validate_media_object_id(

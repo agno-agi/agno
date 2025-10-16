@@ -728,7 +728,7 @@ def print_response_stream(
                                 and response.content_type != ""
                             )
                             response_str = response.content  # type: ignore
-                            
+
                             if isinstance(response, RunContentEvent) and not workflow_started:
                                 is_workflow_agent_response = True
                                 continue
@@ -1159,7 +1159,7 @@ async def aprint_response_stream(
                     # Skip step events if workflow hasn't started (agent direct response)
                     if not workflow_started:
                         continue
-                    
+
                     step_name = response.step_name or "Unknown"
                     step_index = response.step_index or 0  # type: ignore
 
@@ -1546,7 +1546,7 @@ async def aprint_response_stream(
                             else:
                                 # Extract the content from the streaming event
                                 response_str = response.content  # type: ignore
-                                
+
                                 # If we get RunContentEvent BEFORE workflow starts, it's an agent direct response
                                 if isinstance(response, RunContentEvent) and not workflow_started:
                                     is_workflow_agent_response = True

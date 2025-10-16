@@ -197,14 +197,14 @@ class WorkflowAgent(Agent):
         """
         Create the async workflow execution tool that this agent can call.
         This is the async counterpart of create_workflow_tool.
-        
+
         Args:
             workflow: The workflow instance
             session: The workflow session
             execution_input: The execution input
             session_state: The session state
             stream_intermediate_steps: Whether to stream intermediate steps
-            
+
         Returns:
             Async callable tool function
         """
@@ -221,10 +221,10 @@ class WorkflowAgent(Agent):
             """
             Execute the complete workflow with the given query asynchronously.
             Use this tool when you need to run the workflow to answer the user's question.
-            
+
             Args:
                 query: The input query/question to process through the workflow
-                
+
             Returns:
                 The workflow execution result (str in non-streaming, async generator in streaming)
             """
