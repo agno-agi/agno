@@ -2128,17 +2128,9 @@ class Workflow:
         Returns:
             WorkflowRunOutput if stream=False, Iterator[WorkflowRunOutputEvent] if stream=True
         """
-        # Convert input to string for the agent
-        if isinstance(user_input, str):
-            agent_input = user_input
-        elif isinstance(user_input, BaseModel):
-            agent_input = user_input.model_dump_json(exclude_none=True)
-        else:
-            agent_input = str(user_input)
-
         if stream:
             return self._execute_workflow_agent_streaming(
-                agent_input=agent_input,
+                agent_input=user_input,
                 session=session,
                 execution_input=execution_input,
                 session_state=session_state,
@@ -2147,7 +2139,7 @@ class Workflow:
             )
         else:
             return self._execute_workflow_agent_non_streaming(
-                agent_input=agent_input,
+                agent_input=user_input,
                 session=session,
                 execution_input=execution_input,
                 session_state=session_state,
@@ -2156,7 +2148,7 @@ class Workflow:
 
     def _execute_workflow_agent_streaming(
         self,
-        agent_input: str,
+        agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
@@ -2508,17 +2500,9 @@ class Workflow:
         Returns:
             WorkflowRunOutput if stream=False, AsyncIterator[WorkflowRunOutputEvent] if stream=True
         """
-        # Convert input to string for the agent
-        if isinstance(user_input, str):
-            agent_input = user_input
-        elif isinstance(user_input, BaseModel):
-            agent_input = user_input.model_dump_json(exclude_none=True)
-        else:
-            agent_input = str(user_input)
-
         if stream:
             return self._aexecute_workflow_agent_streaming(
-                agent_input=agent_input,
+                agent_input=user_input,
                 session=session,
                 execution_input=execution_input,
                 session_state=session_state,
@@ -2527,7 +2511,7 @@ class Workflow:
             )
         else:
             return await self._aexecute_workflow_agent_non_streaming(
-                agent_input=agent_input,
+                agent_input=user_input,
                 session=session,
                 execution_input=execution_input,
                 session_state=session_state,
@@ -2536,7 +2520,7 @@ class Workflow:
 
     async def _aexecute_workflow_agent_streaming(
         self,
-        agent_input: str,
+        agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
