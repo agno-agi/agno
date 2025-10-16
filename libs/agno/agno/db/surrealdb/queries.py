@@ -1,5 +1,5 @@
 from textwrap import dedent
-from typing import Any, Dict, Final, Literal, Optional, Tuple
+from typing import Any, Final, Literal, Optional
 
 OPERATOR = Literal["=", "!=", "<=", ">=", "~", "IN", "CONTAINSANY"]
 

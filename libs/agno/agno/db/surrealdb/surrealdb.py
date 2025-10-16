@@ -288,7 +288,7 @@ class SurrealDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         table = self._get_table("sessions")
-        users_table = self._get_table("users", False)
+        # users_table = self._get_table("users", False) # Not used, commenting out for now.
         agents_table = self._get_table("agents", False)
         teams_table = self._get_table("teams", False)
         workflows_table = self._get_table("workflows", False)
