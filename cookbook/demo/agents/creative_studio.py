@@ -21,7 +21,6 @@ db = PostgresDb(db_url, id="creative_studio_db")
 # ============================================================================
 
 creative_studio = Agent(
-    id="creative-studio",
     name="Creative Studio",
     role="Multimodal creative assistant with security and monitoring",
     model=OpenAIChat(id="gpt-4o"),  # Vision-capable model for image analysis
