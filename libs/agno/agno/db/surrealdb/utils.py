@@ -61,6 +61,7 @@ def query_one(
     record_type: type[RecordType],
 ) -> Optional[RecordType]:
     response = _query_aux(client, query, vars)
+    logger.debug(f"query_one response: {response}, type: {type(response)}, record_type: {record_type}")
     if response is None:
         return None
     elif not isinstance(response, list):
@@ -69,6 +70,17 @@ def query_one(
         elif isinstance(response, dict):
             return record_type(**response)
         else:
+            logger.debug(f"Attempting to call record_type({record_type}) with non-dict response: {response}")
             return record_type.__call__(response)
     else:
-        raise ValueError(f"Unexpected response type: {type(response)}")
+        # Handle list responses - SurrealDB might return a list with a single element
+        if len(response) == 1 and isinstance(response[0], dict):
+            result = response[0]
+            if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):
+                return getattr(record_type, "from_dict").__call__(result)
+            elif record_type == dict:
+                return result
+            else:
+                return record_type(**result)
+        else:
+            raise ValueError(f"Unexpected response type: {type(response)}, content: {response}")

@@ -95,15 +95,21 @@ def desurrealize_session(session_raw: dict) -> dict:
 
 
 def deserialize_session(session_type: SessionType, session_raw: dict) -> Optional[Session]:
+    print("HERE5", session_type)
+    print("HERE6", session_raw)
     session_raw = desurrealize_session(session_raw)
 
     if session_type == SessionType.AGENT:
+        print("HERE7")
         return AgentSession.from_dict(session_raw)
     elif session_type == SessionType.TEAM:
+        print("HERE8")
         return TeamSession.from_dict(session_raw)
     elif session_type == SessionType.WORKFLOW:
+        print("HERE9")
         return WorkflowSession.from_dict(session_raw)
     else:
+        print("HERE10")
         raise ValueError(f"Invalid session type: {session_type}")
 
 

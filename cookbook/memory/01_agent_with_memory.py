@@ -10,12 +10,23 @@ from uuid import uuid4
 
 from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.db.surrealdb import SurrealDb
+
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+# db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-db = PostgresDb(db_url=db_url)
+# db = PostgresDb(db_url=db_url)
+
+SURREALDB_URL = "ws://localhost:8000"
+SURREALDB_USER = "root"
+SURREALDB_PASSWORD = "root"
+SURREALDB_NAMESPACE = "agno"
+SURREALDB_DATABASE = "surrealdb_for_agent"
+
+creds = {"username": SURREALDB_USER, "password": SURREALDB_PASSWORD}
+db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABASE, session_table="agno_sessions_agent")
 
 db.clear_memories()
 

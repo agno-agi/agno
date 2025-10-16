@@ -394,8 +394,12 @@ class SurrealDb(BaseDb):
         Raises:
             Exception: If an error occurs during upsert.
         """
+        print("HERE")
         session_type = get_session_type(session)
+        print("HERE1", session_type)
+
         table = self._get_table("sessions")
+        print("HERE2", table)
         session_raw = self._query_one(
             "UPSERT ONLY $record CONTENT $content",
             {
@@ -404,7 +408,9 @@ class SurrealDb(BaseDb):
             },
             dict,
         )
+        print("HERE3", session_raw)
         if session_raw is None or not deserialize:
+            print("HERE4", session_raw)
             return session_raw
 
         return deserialize_session(session_type, session_raw)

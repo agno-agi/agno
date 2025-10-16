@@ -31,7 +31,7 @@ SURREALDB_NAMESPACE = "agno"
 SURREALDB_DATABASE = "surrealdb_for_agent"
 
 creds = {"username": SURREALDB_USER, "password": SURREALDB_PASSWORD}
-db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABASE)
+db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABASE, session_table="agno_sessions_agent")
 
 agent = Agent(
     db=db,
