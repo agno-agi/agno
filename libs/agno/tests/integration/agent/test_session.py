@@ -315,24 +315,64 @@ def test_add_session_state_to_context(shared_db):
 
 
 def test_session_state_in_run_output(shared_db):
-    """Test that RunOutput contains session_state in non-streaming mode."""
+    """Test that RunOutput contains the updated session_state in non-streaming mode."""
+    from unittest.mock import MagicMock, patch
 
-    # Reuse the existing shopping list pattern
+    # Tool to update the session_state
     def add_item(session_state: Dict[str, Any], item: str) -> str:
         """Add an item to the shopping list."""
         session_state["shopping_list"].append(item)
         return f"The shopping list is now {session_state['shopping_list']}"
 
+    session_id = str(uuid.uuid4())
+    model = OpenAIChat(id="gpt-4o-mini")
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=model,
         db=shared_db,
-        session_id=str(uuid.uuid4()),
+        session_id=session_id,
         session_state={"shopping_list": []},
         tools=[add_item],
         markdown=True,
     )
 
-    response = agent.run("Add apples to my shopping list")
+    # Mock the OpenAI API response to simulate LLM calling the add_item tool
+    mock_choice = MagicMock()
+    mock_choice.message.content = None
+    mock_choice.message.tool_calls = [
+        MagicMock(
+            id="call_123",
+            type="function",
+            function=MagicMock(name="add_item", arguments='{"item": "apples"}'),
+        )
+    ]
+    mock_choice.message.role = "assistant"
+    mock_choice.finish_reason = "tool_calls"
+
+    mock_completion = MagicMock()
+    mock_completion.choices = [mock_choice]
+    mock_completion.usage = MagicMock(prompt_tokens=50, completion_tokens=20, total_tokens=70)
+    mock_completion.model = "gpt-4o-mini"
+    mock_completion.id = "chatcmpl-123"
+
+    # Mock the second response after tool execution (final response)
+    mock_choice_final = MagicMock()
+    mock_choice_final.message.content = "I've added apples to your shopping list."
+    mock_choice_final.message.tool_calls = None
+    mock_choice_final.message.role = "assistant"
+    mock_choice_final.finish_reason = "stop"
+
+    mock_completion_final = MagicMock()
+    mock_completion_final.choices = [mock_choice_final]
+    mock_completion_final.usage = MagicMock(prompt_tokens=60, completion_tokens=10, total_tokens=70)
+    mock_completion_final.model = "gpt-4o-mini"
+    mock_completion_final.id = "123"
+
+    # Patch the OpenAI client's create method to return our mocks
+    client = model.get_client()
+    with patch.object(client.chat.completions, "create", side_effect=[mock_completion, mock_completion_final]):
+        # Execute the run - this will use the real agent.run logic
+        # but with mocked LLM API responses
+        response = agent.run("Add apples to my shopping list")
 
     # Verify RunOutput has session_state field (structure test)
     assert response.session_state is not None, "RunOutput should have session_state"
@@ -340,13 +380,9 @@ def test_session_state_in_run_output(shared_db):
     assert "shopping_list" in response.session_state, "shopping_list key should be present"
     assert isinstance(response.session_state["shopping_list"], list), "shopping_list should be a list"
 
-    # If tools were executed, verify state was updated
-    if response.tools and len(response.tools) > 0:
-        tool_was_called = any(tool.tool_name == "add_item" for tool in response.tools)
-        if tool_was_called:
-            assert len(response.session_state.get("shopping_list", [])) > 0, (
-                "Shopping list should have items if tool was called"
-            )
+    # Verify state was updated by the tool
+    assert len(response.session_state.get("shopping_list", [])) == 1, "Shopping list should have 1 item"
+    assert "apples" in response.session_state["shopping_list"], "Shopping list should contain apples"
 
 
 def test_session_state_in_run_completed_event_stream(shared_db):
