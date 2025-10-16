@@ -6,6 +6,7 @@ This cookbook contains comprehensive demonstrations of Agno's capabilities inclu
 
 - **`real_world_showcase.py`** - 3 comprehensive consumer/lifestyle agents (Lifestyle Concierge + Study Buddy + Creative Studio)
 - **`run.py`** - AgentOS production setup with agents, teams, and workflows
+- **`teams/oss_maintainer_team.py`** - Enterprise OSS project management team with GitHub integration
 
 > Note: Fork and clone the repository if needed
 
@@ -96,14 +97,17 @@ python cookbook/demo/real_world_showcase.py
 
 Then open [os.agno.com](https://os.agno.com/) and connect to http://localhost:7780 to interact with real-world use cases.
 
-**Option B: Alternative to Real World Examples**
+**Option B: Full AgentOS with Teams**
 
 ```shell
-# Run full AgentOS with more agents, teams, and workflows
+# Export GitHub token for OSS Maintainer team (optional)
+export GITHUB_ACCESS_TOKEN='your-github-token'
+
+# Run full AgentOS with agents, teams (including OSS Maintainer), and workflows
 python cookbook/demo/run.py
 ```
 
-Then open [os.agno.com](https://os.agno.com/) to connect and interact with the demo agents.
+Then open [os.agno.com](https://os.agno.com/) and connect to http://localhost:7777 to interact with all agents and teams.
 
 ---
 
@@ -188,12 +192,65 @@ Multimodal AI assistant with image generation and analysis capabilities.
 "Generate an image for John Smith, email john.smith@example.com"
 ```
 
+#### 4. OSS Maintainer Intelligence Team
+Enterprise-grade team for managing open source projects with GitHub integration.
+
+**Features Demonstrated:**
+- Teams (5 specialized agents with intelligent delegation)
+- Sessions (multi-turn PR reviews and issue management)
+- Memory (contributor history, project patterns, past decisions)
+- Knowledge Base (project documentation and coding standards with LanceDB)
+- State Management (project metrics, priority queues, release schedules)
+- GitHub Integration (real-time data fetching with GithubTools)
+- Database (PostgreSQL for persistent sessions and memory)
+- Team Coordination (intelligent routing based on task type)
+
+**Team Composition:**
+- **PR Review Council** - Comprehensive code review expert using Claude
+- **Issue Triage Specialist** - Intelligent categorization and prioritization
+- **Security Guardian** - Vulnerability detection and security analysis
+- **Community Relations Manager** - Contributor engagement and communication
+- **Release Coordinator** - Changelog generation and release planning
+
+**GitHub Integration Setup:**
+```bash
+# Enable real GitHub data fetching (optional)
+export GITHUB_ACCESS_TOKEN="your_github_token"
+
+# Without token: team analyzes based on text descriptions
+# With token: team fetches real PR/issue data from repositories
+```
+
+**Sample Prompts:**
+```
+# Test PR Review with GitHub Integration
+"Review PR #4983 from agno-agi/agno repository"
+"Can you review this PR: https://github.com/agno-agi/agno/pull/4983"
+
+# Test Issue Triage
+"Triage issue #156: Memory leak occurring after 24 hours of continuous operation"
+"Categorize and prioritize this bug: Users report gradual slowdown and crashes"
+
+# Test Security Analysis
+"Perform security audit on PR #342: OAuth2 authentication with JWT tokens"
+"Check for vulnerabilities in this code change: [paste code]"
+
+# Test Community Management
+"Help me respond to a first-time contributor who submitted code with style issues"
+"Draft a welcoming comment for contributor @username on their first PR"
+
+# Test Release Planning
+"Plan release v2.2.0 with 15 merged PRs, 2 breaking changes, and 1 security fix"
+"Generate changelog for version 2.2.0 including all recent commits"
+```
+
 ---
 
 ## Running the Demo
 
 ```bash
-# Start the Real-World Showcase server
+# Enable GitHub integration
+export GITHUB_ACCESS_TOKEN='your-github-token'
 python cookbook/demo/real_world_showcase.py
 
 # Then connect to https://os.agno.com to interact with all agents
