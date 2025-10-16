@@ -1170,7 +1170,7 @@ class MemoryManager:
     async def _aget_db_tools(
         self,
         user_id: str,
-        db: AsyncBaseDb,
+        db: Union[BaseDb, AsyncBaseDb],
         input_string: str,
         enable_add_memory: bool = True,
         enable_update_memory: bool = True,
