@@ -1141,12 +1141,6 @@ class Agent:
             # Check for cancellation after model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # Yield RunContentCompletedEvent
-            if stream_intermediate_steps:
-                yield self._handle_event(
-                    create_run_content_completed_event(from_run_response=run_response), run_response
-                )
-
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 yield from self._handle_agent_run_paused_stream(
@@ -1158,6 +1152,12 @@ class Agent:
             yield from self._parse_response_with_parser_model_stream(
                 session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             )
+
+            # Yield RunContentCompletedEvent
+            if stream_intermediate_steps:
+                yield self._handle_event(
+                    create_run_content_completed_event(from_run_response=run_response), run_response
+                )
 
             # TODO: For now we don't run post-hooks during streaming
 
@@ -1914,11 +1914,6 @@ class Agent:
             # Check for cancellation after model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            if stream_intermediate_steps:
-                yield self._handle_event(
-                    create_run_content_completed_event(from_run_response=run_response), run_response
-                )
-
             # Break out of the run function if a tool call is paused
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 async for item in self._ahandle_agent_run_paused_stream(
@@ -1932,6 +1927,11 @@ class Agent:
                 session=agent_session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             ):
                 yield event
+
+            if stream_intermediate_steps:
+                yield self._handle_event(
+                    create_run_content_completed_event(from_run_response=run_response), run_response
+                )
 
             # 11. Wait for background memory creation
             if memory_task is not None:
@@ -2655,18 +2655,23 @@ class Agent:
             ):
                 yield event
 
-            # Yield RunContentCompletedEvent
-            if stream_intermediate_steps:
-                yield self._handle_event(
-                    create_run_content_completed_event(from_run_response=run_response), run_response
-                )
-
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 yield from self._handle_agent_run_paused_stream(
                     run_response=run_response, session=session, user_id=user_id
                 )
                 return
+
+            # Parse response with parser model if provided
+            yield from self._parse_response_with_parser_model_stream(
+                session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+            )
+
+            # Yield RunContentCompletedEvent
+            if stream_intermediate_steps:
+                yield self._handle_event(
+                    create_run_content_completed_event(from_run_response=run_response), run_response
+                )
 
             # 4. Create session summary
             if self.session_summary_manager is not None:
@@ -3229,11 +3234,6 @@ class Agent:
             # Check for cancellation after model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            if stream_intermediate_steps:
-                yield self._handle_event(
-                    create_run_content_completed_event(from_run_response=run_response), run_response
-                )
-
             # Break out of the run function if a tool call is paused
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 async for item in self._ahandle_agent_run_paused_stream(
@@ -3241,6 +3241,18 @@ class Agent:
                 ):
                     yield item
                 return
+
+            # Parse response with parser model if provided
+            async for event in self._aparse_response_with_parser_model_stream(
+                session=agent_session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+            ):
+                yield event
+
+            # Yield RunContentCompletedEvent
+            if stream_intermediate_steps:
+                yield self._handle_event(
+                    create_run_content_completed_event(from_run_response=run_response), run_response
+                )
 
             # 9. Create session summary
             if self.session_summary_manager is not None:
@@ -8889,7 +8901,7 @@ class Agent:
         # Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response,
-            input=run_response.input.input_content if run_response.input else "",
+            input=run_response.input.input_content_string() if run_response.input else "",
             session_id=session.session_id,
             user_id=user_id,
         )
@@ -8916,7 +8928,7 @@ class Agent:
         # Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response,
-            input=run_response.input.input_content if run_response.input else "",
+            input=run_response.input.input_content_string() if run_response.input else "",
             session_id=session.session_id,
             user_id=user_id,
         )

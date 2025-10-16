@@ -294,7 +294,7 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
     # Check stored events
     stored_session = shared_db.get_sessions(session_type=SessionType.AGENT)[0]
     assert stored_session.runs[0].events is not None
-    assert len(stored_session.runs[0].events) == 6
+    assert len(stored_session.runs[0].events) == 7
     assert stored_session.runs[0].events[0].event == RunEvent.run_started
     assert stored_session.runs[0].events[1].event == RunEvent.run_paused
     assert stored_session.runs[0].events[2].event == RunEvent.run_continued
