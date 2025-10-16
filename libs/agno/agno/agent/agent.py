@@ -8835,8 +8835,6 @@ class Agent:
             run_response.input.audios = []
             run_response.input.files = []
 
-        # 2. RunOutput artifact media are skipped since we don't store them when store_media=False
-
         # 3. Scrub media from all messages
         if run_response.messages:
             for message in run_response.messages:
@@ -8897,14 +8895,6 @@ class Agent:
                 filtered_messages.append(message)
 
         run_response.messages = filtered_messages
-
-    def _scrub_tool_data_from_message(self, message: Message) -> None:
-        """Remove all tool-related data from a Message object."""
-        message.tool_calls = None
-        message.tool_call_id = None
-        message.tool_name = None
-        message.tool_args = None
-        message.tool_call_error = None
 
     def _scrub_history_messages_from_run_output(self, run_response: RunOutput) -> None:
         """

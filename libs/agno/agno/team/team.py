@@ -3642,8 +3642,6 @@ class Team:
             run_response.input.audios = []
             run_response.input.files = []
 
-        # 2. RunOutput artifact media are skipped since we don't store them when store_media=False
-
         # 3. Scrub media from all messages
         if run_response.messages:
             for message in run_response.messages:
@@ -3705,11 +3703,6 @@ class Team:
 
         run_response.messages = filtered_messages
 
-    def _scrub_tool_data_from_message(self, message: Message) -> None:
-        """Remove tool-related data from a Message object."""
-        message.tool_calls = None
-        message.tool_call_id = None
-
     def _scrub_history_messages_from_run_output(self, run_response: TeamRunOutput) -> None:
         """
         Remove all history messages from TeamRunOutput when store_history_messages=False.
@@ -3763,14 +3756,8 @@ class Team:
 
             _, member = member_result
 
-            if not member.store_media:
-                member._scrub_media_from_run_output(member_response)  # type: ignore
-
-            if not member.store_tool_results:
-                member._scrub_tool_results_from_run_output(member_response)  # type: ignore
-
-            if not member.store_history_messages:
-                member._scrub_history_messages_from_run_output(member_response)  # type: ignore
+            if not member.store_media or not member.store_tool_results or not member.store_history_messages:
+                member._scrub_run_output_for_storage(member_response)  # type: ignore
 
     def _validate_media_object_id(
         self,
@@ -6612,12 +6599,12 @@ class Team:
 
             # Scrub the member run based on that member's storage flags before storing
             if member_agent_run_response:
-                if not member_agent.store_media:
-                    member_agent._scrub_media_from_run_output(member_agent_run_response)  # type: ignore
-                if not member_agent.store_tool_results:
-                    member_agent._scrub_tool_results_from_run_output(member_agent_run_response)  # type: ignore
-                if not member_agent.store_history_messages:
-                    member_agent._scrub_history_messages_from_run_output(member_agent_run_response)  # type: ignore
+                if (
+                    not member_agent.store_media
+                    or not member_agent.store_tool_results
+                    or not member_agent.store_history_messages
+                ):
+                    member_agent._scrub_run_output_for_storage(member_agent_run_response)  # type: ignore
 
                 # Add the member run to the team session
                 session.upsert_run(member_agent_run_response)
