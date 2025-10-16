@@ -2185,7 +2185,7 @@ class Workflow:
         from agno.run.agent import RunContentEvent
         from agno.run.team import RunContentEvent as TeamRunContentEvent
 
-        log_debug(f"Executing workflow agent with streaming - input: {agent_input[:100]}...")
+        log_debug(f"Executing workflow agent with streaming - input: {agent_input}...")
 
         # Run the agent in streaming mode and yield all events
         for event in self.agent.run(  # type: ignore[union-attr]
@@ -2290,7 +2290,7 @@ class Workflow:
 
     def _execute_workflow_agent_non_streaming(
         self,
-        agent_input: str,
+        agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
@@ -2554,7 +2554,7 @@ class Workflow:
         from agno.run.agent import RunContentEvent
         from agno.run.team import RunContentEvent as TeamRunContentEvent
 
-        log_debug(f"Executing async workflow agent with streaming - input: {agent_input[:100]}...")
+        log_debug(f"Executing async workflow agent with streaming - input: {agent_input}...")
 
         # Run the agent in streaming mode and yield all events
         async for event in self.agent.arun(  # type: ignore[union-attr]
@@ -2658,7 +2658,7 @@ class Workflow:
 
     async def _aexecute_workflow_agent_non_streaming(
         self,
-        agent_input: str,
+        agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
