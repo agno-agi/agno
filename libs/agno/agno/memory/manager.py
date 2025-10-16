@@ -119,9 +119,9 @@ class MemoryManager:
             if isinstance(self.db, AsyncBaseDb):
                 # If no user_id is provided, read all memories
                 if user_id is None:
-                    all_memories: List[UserMemory] = await self.db.get_user_memories()
+                    all_memories: List[UserMemory] = await self.db.get_user_memories()  # type: ignore
                 else:
-                    all_memories = await self.db.get_user_memories(user_id=user_id)
+                    all_memories = await self.db.get_user_memories(user_id=user_id)  # type: ignore
             else:
                 if user_id is None:
                     all_memories = self.db.get_user_memories()  # type: ignore
@@ -447,7 +447,6 @@ class MemoryManager:
             memories = await self.aread_from_db(user_id=user_id)
         else:
             memories = self.read_from_db(user_id=user_id)
-
 
         if memories is None:
             memories = {}
