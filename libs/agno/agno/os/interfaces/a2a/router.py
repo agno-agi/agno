@@ -11,7 +11,7 @@ from typing_extensions import List
 try:
     from a2a.types import SendMessageSuccessResponse, Task, TaskState, TaskStatus
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a`") from e
+    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
 
 from agno.agent import Agent
 from agno.os.interfaces.a2a.utils import (
@@ -36,9 +36,8 @@ def attach_routes(
 
     @router.post(
         "/message/send",
-        tags=["A2A"],
         operation_id="send_message",
-        summary="Send message to Agent, Team, or Workflow (A2A Protocol)",
+        name="send_message",
         description="Send a message to an Agno Agent, Team, or Workflow. "
         "The Agent, Team or Workflow is identified via the 'agentId' field in params.message or X-Agent-ID header. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata.",
@@ -159,9 +158,8 @@ def attach_routes(
 
     @router.post(
         "/message/stream",
-        tags=["A2A"],
         operation_id="stream_message",
-        summary="Stream message to Agent, Team, or Workflow (A2A Protocol)",
+        name="stream_message",
         description="Stream a message to an Agno Agent, Team, or Workflow."
         "The Agent, Team or Workflow is identified via the 'agentId' field in params.message or X-Agent-ID header. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata. "
