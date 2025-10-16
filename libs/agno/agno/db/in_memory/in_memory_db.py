@@ -897,6 +897,32 @@ class InMemoryDb(BaseDb):
             log_error(f"Error upserting knowledge row: {e}")
             raise e
 
+    def increment_knowledge_access_count(self, id: str) -> Optional[KnowledgeRow]:
+        """Increment the access count for a knowledge row.
+
+        Args:
+            id (str): The ID of the knowledge row to update.
+
+        Returns:
+            Optional[KnowledgeRow]: The updated knowledge row, or None if it doesn't exist.
+        """
+        try:
+            import time
+
+            for item in self._knowledge:
+                if item.get("id") == id:
+                    current_count = item.get("access_count", 0)
+                    item["access_count"] = (current_count if current_count is not None else 0) + 1
+                    item["updated_at"] = int(time.time())
+                    return KnowledgeRow.model_validate(item)
+
+            log_debug(f"No knowledge row found with id: {id}")
+            return None
+
+        except Exception as e:
+            log_error(f"Error incrementing access count for knowledge row {id}: {e}")
+            return None
+
     # -- Eval methods --
 
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
