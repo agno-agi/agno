@@ -29,7 +29,7 @@ class SQLTools(Toolkit):
         dialect: Optional[str] = None,
         tables: Optional[Dict[str, Any]] = None,
         read_only: bool = False,
-        query_timeout: Optional[int] = 30,
+        query_timeout: Optional[float] = 30,
         max_result_rows: int = 1000,
         dangerous_keywords: Optional[Set[str]] = None,
         enable_list_tables: bool = True,
@@ -79,7 +79,7 @@ class SQLTools(Toolkit):
 
         # Security and performance settings
         self.read_only: bool = read_only
-        self.query_timeout: Optional[int] = query_timeout
+        self.query_timeout: Optional[float] = query_timeout
         self.max_result_rows: int = max_result_rows
         self.dangerous_keywords: Set[str] = dangerous_keywords or {
             "DROP",
@@ -95,7 +95,7 @@ class SQLTools(Toolkit):
 
         # Set query timeout if specified (only for databases that support it)
         if self.query_timeout is not None and dialect and dialect.lower() in ["postgresql", "postgres"]:
-            timeout_ms = self.query_timeout * 1000
+            timeout_ms = int(self.query_timeout * 1000)
 
             @event.listens_for(_engine, "before_cursor_execute")
             def receive_before_cursor_execute(conn, cursor, statement, params, context, executemany):
