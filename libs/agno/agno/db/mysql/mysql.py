@@ -762,7 +762,7 @@ class MySQLDb(BaseDb):
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
                         updated_at = (
                             session_dict.get("updated_at")
-                            if preserve_updated_at and session_dict.get("updated_at")
+                            if preserve_updated_at
                             else int(time.time())
                         )
                         agent_data.append(
@@ -818,7 +818,7 @@ class MySQLDb(BaseDb):
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
                         updated_at = (
                             session_dict.get("updated_at")
-                            if preserve_updated_at and session_dict.get("updated_at")
+                            if preserve_updated_at
                             else int(time.time())
                         )
                         team_data.append(
@@ -874,7 +874,7 @@ class MySQLDb(BaseDb):
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
                         updated_at = (
                             session_dict.get("updated_at")
-                            if preserve_updated_at and session_dict.get("updated_at")
+                            if preserve_updated_at
                             else int(time.time())
                         )
                         workflow_data.append(
@@ -1338,7 +1338,7 @@ class MySQLDb(BaseDb):
                     memory.memory_id = str(uuid4())
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                updated_at = memory.updated_at if preserve_updated_at and memory.updated_at else current_time
+                updated_at = memory.updated_at if preserve_updated_at else current_time
                 bulk_data.append(
                     {
                         "memory_id": memory.memory_id,
