@@ -3,7 +3,6 @@ Study Buddy - Comprehensive AI agent with RAG, validation hooks, and tool monito
 """
 
 import json
-from datetime import datetime
 from textwrap import dedent
 from typing import Iterator
 
@@ -134,7 +133,7 @@ def validate_knowledge_result(fc: FunctionCall):
         result_size = len(str(fc.result))
         print(f"   Result Size: {result_size} characters")
         if result_size < 50:
-            print(f"   ⚠️  Warning: Result may be incomplete or empty")
+            print("   ⚠️  Warning: Result may be incomplete or empty")
 
 
 # ============================================================================

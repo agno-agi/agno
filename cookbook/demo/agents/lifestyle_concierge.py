@@ -2,7 +2,6 @@
 Lifestyle Concierge - Comprehensive AI assistant for finance, shopping, and travel
 """
 
-import json
 from textwrap import dedent
 from typing import Optional
 
@@ -10,7 +9,6 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.guardrails import PIIDetectionGuardrail, PromptInjectionGuardrail
 from agno.models.openai.chat import OpenAIChat
-from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
 from pydantic import BaseModel, Field
 
