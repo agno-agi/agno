@@ -45,6 +45,19 @@ def surrealize_dates(record: dict) -> dict:
             copy[key] = datetime.combine(value, datetime.min.time()).replace(tzinfo=timezone.utc)
         elif key in ["created_at", "updated_at"] and isinstance(value, (int, float)):
             copy[key] = datetime.fromtimestamp(value).replace(tzinfo=timezone.utc)
+        elif key in ["created_at", "updated_at"] and isinstance(value, str):
+            # Handle ISO string format - convert back to datetime object for SurrealDB
+            try:
+                dt = datetime.fromisoformat(value)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                copy[key] = dt
+            except ValueError:
+                # If it's not a valid ISO format, leave it as is
+                pass
+        elif key in ["created_at", "updated_at"] and value is None:
+            # Set current time for None datetime fields
+            copy[key] = datetime.now(timezone.utc)
         elif isinstance(value, datetime):
             copy[key] = value.replace(tzinfo=timezone.utc)
     return copy
@@ -153,7 +166,7 @@ def deserialize_user_memory(memory_raw: dict) -> UserMemory:
 
 
 def deserialize_user_memories(memories_raw: Sequence[dict]) -> List[UserMemory]:
-    return [deserialize_user_memory(desurrealize_user_memory(x)) for x in memories_raw]
+    return [deserialize_user_memory(x) for x in memories_raw]
 
 
 def serialize_user_memory(memory: UserMemory, memory_table_name: str, user_table_name: str) -> dict:

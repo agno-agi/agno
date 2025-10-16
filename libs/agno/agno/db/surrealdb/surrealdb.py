@@ -340,6 +340,9 @@ class SurrealDb(BaseDb):
         if not deserialize:
             return list(converted_sessions_raw), total_count
 
+        if session_type is None:
+            raise ValueError("session_type is required when deserialize=True")
+
         return deserialize_sessions(session_type, list(sessions_raw))
 
     def rename_session(
