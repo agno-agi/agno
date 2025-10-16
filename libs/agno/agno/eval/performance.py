@@ -3,10 +3,10 @@ import gc
 import tracemalloc
 from dataclasses import dataclass, field
 from os import getenv
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
 
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
 from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
 from agno.utils.log import log_debug, set_log_level_to_debug, set_log_level_to_info
@@ -222,7 +222,7 @@ class PerformanceEval:
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
     # The database to store Evaluation results
-    db: Optional[BaseDb] = None
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
     # Telemetry settings
     # telemetry=True logs minimal telemetry for analytics
@@ -491,6 +491,9 @@ class PerformanceEval:
         6. Print results as requested
         7. Log results to the Agno platform if requested
         """
+        if isinstance(self.db, AsyncBaseDb):
+            raise ValueError("run() is not supported with an async DB. Please use arun() instead.")
+
         from rich.console import Console
         from rich.live import Live
         from rich.status import Status
