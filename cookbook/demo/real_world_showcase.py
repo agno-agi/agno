@@ -22,12 +22,11 @@ import asyncio
 from pathlib import Path
 from textwrap import dedent
 
-from agno.os import AgentOS
-
-# Import consolidated agents
-from agents.study_buddy import study_buddy, load_education_knowledge
 from agents.creative_studio import creative_studio
 from agents.lifestyle_concierge import lifestyle_concierge
+
+from agents.study_buddy import load_education_knowledge, study_buddy
+from agno.os import AgentOS
 
 # ============================================================================
 # Knowledge Base Initialization
@@ -88,7 +87,9 @@ if __name__ == "__main__":
 
     print("\n   AGENTS (3) - Each demonstrates multiple features:")
     print("   • Lifestyle Concierge - Multi-domain (finance/shopping/travel)")
-    print("     Features: Tools, Structured Outputs, Guardrails, Memory, Storage, Agent State, Metrics")
+    print(
+        "     Features: Tools, Structured Outputs, Guardrails, Memory, Storage, Agent State, Metrics"
+    )
     print("   • Study Buddy - RAG with advanced capabilities")
     print("     Features: Vector Search, Input Validation, Tool Hooks, Memory, Metrics")
     print("   • Creative Studio - Multimodal AI assistant")
@@ -98,4 +99,6 @@ if __name__ == "__main__":
     print("=" * 80 + "\n")
 
     # Launch AgentOS
-    agent_os.serve(app="real_world_showcase:app", host="localhost", port=7780, reload=True)
+    agent_os.serve(
+        app="real_world_showcase:app", host="localhost", port=7780, reload=True
+    )

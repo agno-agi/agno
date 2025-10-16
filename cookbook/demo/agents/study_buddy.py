@@ -30,11 +30,17 @@ db = PostgresDb(db_url, id="study_buddy_db")
 class LearningAssessment(BaseModel):
     """Structured learning assessment"""
 
-    student_level: str = Field(description="Current understanding level: beginner, intermediate, advanced")
+    student_level: str = Field(
+        description="Current understanding level: beginner, intermediate, advanced"
+    )
     strengths: list[str] = Field(description="Topics student understands well")
     areas_for_improvement: list[str] = Field(description="Topics needing more practice")
-    learning_style: str = Field(description="Identified learning style: visual, auditory, kinesthetic, reading")
-    recommended_pace: str = Field(description="Recommended learning pace: slow, moderate, fast")
+    learning_style: str = Field(
+        description="Identified learning style: visual, auditory, kinesthetic, reading"
+    )
+    recommended_pace: str = Field(
+        description="Recommended learning pace: slow, moderate, fast"
+    )
     next_topics: list[str] = Field(description="Suggested next topics to learn")
     practice_exercises: list[str] = Field(description="Recommended practice exercises")
 
@@ -83,7 +89,12 @@ def validate_education_query(run_input: RunInput, agent: Agent) -> None:
         )
 
     # Detect inappropriate educational requests
-    inappropriate_keywords = ["homework answers", "cheat", "test answers", "exam solutions"]
+    inappropriate_keywords = [
+        "homework answers",
+        "cheat",
+        "test answers",
+        "exam solutions",
+    ]
     if any(keyword in query for keyword in inappropriate_keywords):
         raise InputCheckError(
             "I'm here to help you learn and understand concepts, not to provide direct answers to homework or tests. "
@@ -201,10 +212,12 @@ def search_educational_resources(topic: str, num_results: int = 3) -> Iterator[s
         for resource in results[:num_results]:
             yield json.dumps(resource, indent=2)
     else:
-        yield json.dumps({
-            "message": f"No specific resources found for '{topic}'. Try web search for broader results.",
-            "suggestion": "Use DuckDuckGo search tool for more comprehensive results",
-        })
+        yield json.dumps(
+            {
+                "message": f"No specific resources found for '{topic}'. Try web search for broader results.",
+                "suggestion": "Use DuckDuckGo search tool for more comprehensive results",
+            }
+        )
 
 
 # ============================================================================

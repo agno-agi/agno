@@ -31,7 +31,9 @@ class FinancialAdvice(BaseModel):
     """Structured financial advice output"""
 
     summary: str = Field(description="Brief summary of financial advice")
-    recommendations: list[str] = Field(description="Specific actionable recommendations")
+    recommendations: list[str] = Field(
+        description="Specific actionable recommendations"
+    )
     risk_level: str = Field(description="Risk assessment: low, medium, high")
     investment_allocation: Optional[dict[str, float]] = Field(
         default=None, description="Suggested portfolio allocation percentages"
@@ -44,16 +46,26 @@ class Product(BaseModel):
 
     name: str = Field(description="Product name")
     description: str = Field(description="Product description and key features")
-    why_recommended: str = Field(description="Why this product is recommended for the user")
-    price_range: Optional[str] = Field(default=None, description="Estimated price range")
+    why_recommended: str = Field(
+        description="Why this product is recommended for the user"
+    )
+    price_range: Optional[str] = Field(
+        default=None, description="Estimated price range"
+    )
 
 
 class ProductRecommendation(BaseModel):
     """Structured product recommendations"""
 
-    products: list[Product] = Field(description="List of recommended products with details")
-    personalization_notes: str = Field(description="How recommendations were personalized")
-    alternative_categories: list[str] = Field(description="Alternative product categories to consider")
+    products: list[Product] = Field(
+        description="List of recommended products with details"
+    )
+    personalization_notes: str = Field(
+        description="How recommendations were personalized"
+    )
+    alternative_categories: list[str] = Field(
+        description="Alternative product categories to consider"
+    )
     budget_tips: list[str] = Field(description="Tips for staying within budget")
 
 
@@ -70,7 +82,9 @@ class Activity(BaseModel):
 class CostBreakdown(BaseModel):
     """Cost breakdown by category"""
 
-    category: str = Field(description="Cost category (e.g., flights, accommodation, food, activities)")
+    category: str = Field(
+        description="Cost category (e.g., flights, accommodation, food, activities)"
+    )
     estimated_amount: str = Field(description="Estimated cost for this category")
 
 
@@ -80,14 +94,22 @@ class TravelItinerary(BaseModel):
     destination: str = Field(description="Travel destination")
     duration: str = Field(description="Trip duration")
     budget_estimate: str = Field(description="Total estimated budget")
-    best_time_to_visit: str = Field(description="Best time to visit based on weather and events")
+    best_time_to_visit: str = Field(
+        description="Best time to visit based on weather and events"
+    )
     flight_options: list[str] = Field(description="Flight recommendations and tips")
-    accommodation_options: list[str] = Field(description="Hotel/lodging recommendations")
+    accommodation_options: list[str] = Field(
+        description="Hotel/lodging recommendations"
+    )
     activities: list[Activity] = Field(description="Recommended activities by day")
     restaurants: list[str] = Field(description="Restaurant and dining recommendations")
-    local_tips: list[str] = Field(description="Local tips, cultural notes, and practical advice")
+    local_tips: list[str] = Field(
+        description="Local tips, cultural notes, and practical advice"
+    )
     packing_list: list[str] = Field(description="Essential items to pack")
-    estimated_costs: list[CostBreakdown] = Field(description="Detailed cost breakdown by category")
+    estimated_costs: list[CostBreakdown] = Field(
+        description="Detailed cost breakdown by category"
+    )
 
 
 # ============================================================================
@@ -96,7 +118,9 @@ class TravelItinerary(BaseModel):
 # These tools allow the agent to manage persistent session state
 
 
-def add_to_shopping_cart(session_state, item_name: str, price: float, quantity: int = 1) -> str:
+def add_to_shopping_cart(
+    session_state, item_name: str, price: float, quantity: int = 1
+) -> str:
     """
     Add an item to the shopping cart.
 
@@ -180,7 +204,9 @@ def clear_shopping_cart(session_state) -> str:
     return "✅ Shopping cart cleared successfully."
 
 
-def save_travel_preferences(session_state, destination: str, budget: float, interests: str) -> str:
+def save_travel_preferences(
+    session_state, destination: str, budget: float, interests: str
+) -> str:
     """
     Save travel preferences for future trip planning.
 
@@ -217,13 +243,19 @@ def view_travel_preferences(session_state) -> str:
         Formatted travel preferences
     """
     if "travel_preferences" not in session_state:
-        return "No travel preferences saved yet. Use save_travel_preferences to set them."
+        return (
+            "No travel preferences saved yet. Use save_travel_preferences to set them."
+        )
 
     prefs = session_state["travel_preferences"]
 
     # Check if preferences are empty or missing required fields
-    if not prefs or not all(key in prefs for key in ["destination", "budget", "interests"]):
-        return "No travel preferences saved yet. Use save_travel_preferences to set them."
+    if not prefs or not all(
+        key in prefs for key in ["destination", "budget", "interests"]
+    ):
+        return (
+            "No travel preferences saved yet. Use save_travel_preferences to set them."
+        )
 
     # Handle interests as either list or string
     if isinstance(prefs["interests"], list):
