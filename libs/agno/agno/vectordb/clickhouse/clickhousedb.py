@@ -23,6 +23,8 @@ class Clickhouse(VectorDb):
         self,
         table_name: str,
         host: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         username: Optional[str] = None,
         password: str = "",
         port: int = 0,
@@ -41,9 +43,11 @@ class Clickhouse(VectorDb):
         self.password = password
         self.port = port
         self.dsn = dsn
+        # Initialize base class with name and description
+        super().__init__(name=name, description=description)
+
         self.compress = compress
         self.database_name = database_name
-
         if not client:
             client = clickhouse_connect.get_client(
                 host=self.host,
@@ -817,3 +821,7 @@ class Clickhouse(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # Clickhouse doesn't use SearchType enum

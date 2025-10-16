@@ -1,9 +1,9 @@
 import logging
-from typing import List, Optional, Union
+from typing import List, Optional, Union, cast
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
-from agno.db.base import BaseDb, SessionType
+from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentSessionDetailSchema,
@@ -29,7 +29,9 @@ from agno.os.utils import get_db
 logger = logging.getLogger(__name__)
 
 
-def get_session_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoAPISettings()) -> APIRouter:
+def get_session_router(
+    dbs: dict[str, Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings = AgnoAPISettings()
+) -> APIRouter:
     """Create session router with comprehensive OpenAPI documentation for session management endpoints."""
     session_router = APIRouter(
         dependencies=[Depends(get_authentication_dependency(settings))],
@@ -45,7 +47,7 @@ def get_session_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoA
     return attach_routes(router=session_router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]]) -> APIRouter:
     @router.get(
         "/sessions",
         response_model=PaginatedResponse[SessionSchema],
@@ -108,17 +110,31 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
-        sessions, total_count = db.get_sessions(
-            session_type=session_type,
-            component_id=component_id,
-            user_id=user_id,
-            session_name=session_name,
-            limit=limit,
-            page=page,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            deserialize=False,
-        )
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            sessions, total_count = await db.get_sessions(
+                session_type=session_type,
+                component_id=component_id,
+                user_id=user_id,
+                session_name=session_name,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
+        else:
+            sessions, total_count = db.get_sessions(  # type: ignore
+                session_type=session_type,
+                component_id=component_id,
+                user_id=user_id,
+                session_name=session_name,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
 
         return PaginatedResponse(
             data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
@@ -231,7 +247,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
-        session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            session = await db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+        else:
+            session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
         if not session:
             raise HTTPException(
                 status_code=404, detail=f"{session_type.value.title()} Session with id '{session_id}' not found"
@@ -373,7 +393,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
-        session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False)
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            session = await db.get_session(
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+            )
+        else:
+            session = db.get_session(
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+            )
+
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
@@ -381,11 +410,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 
+        run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
+
         if session_type == SessionType.AGENT:
             return [RunSchema.from_dict(run) for run in runs]
 
         elif session_type == SessionType.TEAM:
-            run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
             for run in runs:
                 if run.get("agent_id") is not None:
                     run_responses.append(RunSchema.from_dict(run))
@@ -394,7 +424,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             return run_responses
 
         elif session_type == SessionType.WORKFLOW:
-            run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []  # type: ignore
             for run in runs:
                 if run.get("workflow_id") is not None:
                     run_responses.append(WorkflowRunSchema.from_dict(run))
@@ -425,7 +454,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
     ) -> None:
         db = get_db(dbs, db_id)
-        db.delete_session(session_id=session_id)
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            await db.delete_session(session_id=session_id)
+        else:
+            db.delete_session(session_id=session_id)
 
     @router.delete(
         "/sessions",
@@ -456,7 +489,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
 
         db = get_db(dbs, db_id)
-        db.delete_sessions(session_ids=request.session_ids)
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            await db.delete_sessions(session_ids=request.session_ids)
+        else:
+            db.delete_sessions(session_ids=request.session_ids)
 
     @router.post(
         "/sessions/{session_id}/rename",
@@ -555,7 +592,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="Database ID to use for rename operation"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db = get_db(dbs, db_id)
-        session = db.rename_session(session_id=session_id, session_type=session_type, session_name=session_name)
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            session = await db.rename_session(
+                session_id=session_id, session_type=session_type, session_name=session_name
+            )
+        else:
+            session = db.rename_session(session_id=session_id, session_type=session_type, session_name=session_name)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
 
