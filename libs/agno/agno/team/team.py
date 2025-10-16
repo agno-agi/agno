@@ -6598,11 +6598,11 @@ class Team:
             # Scrub the member run based on that member's storage flags before storing
             if member_agent_run_response:
                 if not member_agent.store_media:
-                    member_agent._scrub_media_from_run_output(member_agent_run_response)
+                    member_agent._scrub_media_from_run_output(member_agent_run_response) # type: ignore
                 if not member_agent.store_tool_results:
-                    member_agent._scrub_tool_results_from_run_output(member_agent_run_response)
+                    member_agent._scrub_tool_results_from_run_output(member_agent_run_response) # type: ignore
                 if not member_agent.store_history_messages:
-                    member_agent._scrub_history_messages_from_run_output(member_agent_run_response)
+                    member_agent._scrub_history_messages_from_run_output(member_agent_run_response) # type: ignore
 
             # Add the member run to the team session
             if member_agent_run_response:
