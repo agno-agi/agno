@@ -70,7 +70,18 @@ def query_one(
         else:
             return record_type.__call__(response)
     elif isinstance(response, list):
-        # These are the metrics records, so we return the list
-        return response
+        # Handle list responses - SurrealDB might return a list with a single element
+        if len(response) == 1 and isinstance(response[0], dict):
+            result = response[0]
+            if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):
+                return getattr(record_type, "from_dict").__call__(result)
+            elif record_type == dict:
+                return result
+            else:
+                return record_type(**result)
+        elif len(response) == 0:
+            return None
+        else:
+            raise ValueError(f"Expected single record, got {len(response)} records: {response}")
     else:
         raise ValueError(f"Unexpected response type: {type(response)}")
