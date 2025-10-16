@@ -6,7 +6,7 @@ from typing import List
 import pytest
 import pytest_asyncio
 
-from agno.db.async_postgres.async_postgres import AsyncPostgresDb
+from agno.db.postgres import AsyncPostgresDb
 from agno.db.schemas.knowledge import KnowledgeRow
 
 
