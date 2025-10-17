@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest_asyncio
 
-from agno.db.async_postgres.async_postgres import AsyncPostgresDb
+from agno.db.postgres import AsyncPostgresDb
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.session.agent import AgentSession

@@ -1058,6 +1058,14 @@ class Step:
             executor_run_response.parent_run_id = workflow_run_response.run_id
             executor_run_response.workflow_step_id = self.step_id
 
+            # Scrub the executor response based on the executor's storage flags before storing
+            if (
+                not self.active_executor.store_media
+                or not self.active_executor.store_tool_messages
+                or not self.active_executor.store_history_messages
+            ):  # type: ignore
+                self.active_executor._scrub_run_output_for_storage(executor_run_response)  # type: ignore
+
             # Get the raw response from the step's active executor
             raw_response = executor_run_response
             if raw_response and isinstance(raw_response, (RunOutput, TeamRunOutput)):
