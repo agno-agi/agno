@@ -68,6 +68,9 @@ class JiraTools(Toolkit):
         try:
             issue = self.jira.issue(issue_key)
             issue = cast(Issue, issue)
+            comments_infos = [
+                {"author": c.author.displayName, "created": c.created, "body": c.body} for c in issue.comment.comments
+            ]
             issue_details = {
                 "key": issue.key,
                 "project": issue.fields.project.key,
@@ -75,6 +78,7 @@ class JiraTools(Toolkit):
                 "reporter": issue.fields.reporter.displayName if issue.fields.reporter else "N/A",
                 "summary": issue.fields.summary,
                 "description": issue.fields.description or "",
+                "comments": comments_infos,
             }
             log_debug(f"Issue details retrieved for {issue_key}: {issue_details}")
             return json.dumps(issue_details)
@@ -133,16 +137,17 @@ class JiraTools(Toolkit):
             logger.error(f"Error searching issues with JQL '{jql_str}': {e}")
             return json.dumps([{"error": str(e)}])
 
-    def add_comment(self, issue_key: str, comment: str) -> str:
+    def add_comment(self, issue_key: str, comment: str, is_internal: bool = False) -> str:
         """
         Adds a comment to an issue.
 
         :param issue_key: The key of the issue.
         :param comment: The comment text.
+        :param is_internal: True marks the comment as 'Internal'.
         :return: A JSON string indicating success or containing an error message.
         """
         try:
-            self.jira.add_comment(issue_key, comment)
+            self.jira.add_comment(issue_key, comment, is_internal)
             log_debug(f"Comment added to issue {issue_key}")
             return json.dumps({"status": "success", "issue_key": issue_key})
         except Exception as e:
