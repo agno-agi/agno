@@ -19,8 +19,7 @@ class DashScope(OpenAILike):
         provider (str): The provider name. Defaults to "Qwen".
         api_key (Optional[str]): The DashScope API key.
         region (str): The DashScope region, either "cn" or "intl". Defaults to "intl".
-        base_url (str): The base URL. Defaults to international endpoint.
-        base_url (str): The base URL. Defaults to "https://dashscope-intl.aliyuncs.com/compatible-mode/v1".
+        base_url (str): The base URL, determined dynamically based on the region ("cn" or "intl").
         enable_thinking (bool): Enable thinking process (DashScope native parameter). Defaults to False.
         include_thoughts (Optional[bool]): Include thinking process in response (alternative parameter). Defaults to None.
     """
@@ -44,12 +43,19 @@ class DashScope(OpenAILike):
     supports_json_schema_outputs: bool = True
 
     def __post_init__(self):
-        """Initialize base_url based on region."""
+        """Initialize base_url based on region and validate region."""
+        valid_regions = {"cn", "intl"}
+        if self.region not in valid_regions:
+            raise ModelProviderError(
+                message=f"Invalid region '{self.region}'. Supported regions are 'cn' and 'intl'.",
+                model_name=self.name,
+                model_id=self.id,
+            )
         if self.region == "cn":
             self.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-        else:
+        elif self.region == "intl":
             self.base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-
+            
     def _get_client_params(self) -> Dict[str, Any]:
         if not self.api_key:
             self.api_key = getenv("DASHSCOPE_API_KEY")
