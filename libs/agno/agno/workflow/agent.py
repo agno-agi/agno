@@ -270,7 +270,7 @@ class WorkflowAgent(Agent):
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
                     session_state=session_state,
-                    stream=True,
+                    stream_intermediate_steps=True,
                 ):
                     yield event
 

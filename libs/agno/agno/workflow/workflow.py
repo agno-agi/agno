@@ -2243,7 +2243,6 @@ class Workflow:
                         execution_input=inputs,
                         session_state=session_state,
                         stream=True,
-                        stream_intermediate_steps=stream_intermediate_steps,
                         **kwargs,
                     )
                     # For streaming, result is an async iterator
