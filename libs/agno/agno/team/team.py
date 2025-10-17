@@ -321,6 +321,8 @@ class Team:
     session_summary_manager: Optional[SessionSummaryManager] = None
     # If True, the team adds session summaries to the context
     add_session_summary_to_context: Optional[bool] = None
+    # Number of runs to include when generating session summary (None = all runs)
+    num_summary_runs: Optional[int] = None
 
     # --- Team History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
@@ -447,6 +449,7 @@ class Team:
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
+        num_summary_runs: Optional[int] = None,
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
         metadata: Optional[Dict[str, Any]] = None,
@@ -555,6 +558,7 @@ class Team:
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
         self.add_session_summary_to_context = add_session_summary_to_context
+        self.num_summary_runs = num_summary_runs
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
         self.metadata = metadata
@@ -746,11 +750,15 @@ class Team:
 
     def _set_session_summary_manager(self) -> None:
         if self.enable_session_summaries and self.session_summary_manager is None:
-            self.session_summary_manager = SessionSummaryManager(model=self.model)
+            self.session_summary_manager = SessionSummaryManager(
+                model=self.model, num_summary_runs=self.num_summary_runs
+            )
 
         if self.session_summary_manager is not None:
             if self.session_summary_manager.model is None:
                 self.session_summary_manager.model = self.model
+            if self.session_summary_manager.num_summary_runs is None:
+                self.session_summary_manager.num_summary_runs = self.num_summary_runs
 
         if self.add_session_summary_to_context is None:
             self.add_session_summary_to_context = (

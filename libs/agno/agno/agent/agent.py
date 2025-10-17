@@ -156,6 +156,8 @@ class Agent:
     enable_session_summaries: bool = False
     # If True, the agent adds session summaries to the context
     add_session_summary_to_context: Optional[bool] = None
+    # Number of runs to include when generating session summary (None = all runs)
+    num_summary_runs: Optional[int] = None
     # Session summary manager
     session_summary_manager: Optional[SessionSummaryManager] = None
 
@@ -384,6 +386,7 @@ class Agent:
         add_memories_to_context: Optional[bool] = None,
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
+        num_summary_runs: Optional[int] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
@@ -480,6 +483,7 @@ class Agent:
         self.session_summary_manager = session_summary_manager
         self.enable_session_summaries = enable_session_summaries
         self.add_session_summary_to_context = add_session_summary_to_context
+        self.num_summary_runs = num_summary_runs
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
@@ -688,11 +692,15 @@ class Agent:
 
     def _set_session_summary_manager(self) -> None:
         if self.enable_session_summaries and self.session_summary_manager is None:
-            self.session_summary_manager = SessionSummaryManager(model=self.model)
+            self.session_summary_manager = SessionSummaryManager(
+                model=self.model, num_summary_runs=self.num_summary_runs
+            )
 
         if self.session_summary_manager is not None:
             if self.session_summary_manager.model is None:
                 self.session_summary_manager.model = self.model
+            if self.session_summary_manager.num_summary_runs is None:
+                self.session_summary_manager.num_summary_runs = self.num_summary_runs
 
         if self.add_session_summary_to_context is None:
             self.add_session_summary_to_context = (

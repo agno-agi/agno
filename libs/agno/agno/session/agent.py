@@ -189,6 +189,7 @@ class AgentSession:
 
     def get_messages_for_session(
         self,
+        last_n: Optional[int] = None,
         user_role: str = "user",
         assistant_role: Optional[List[str]] = None,
         skip_history_messages: bool = True,
@@ -204,7 +205,10 @@ class AgentSession:
         if not session_runs:
             return []
 
-        for run_response in session_runs:
+        # Limit to last_n runs if specified
+        runs_to_process = session_runs[-last_n:] if last_n is not None else session_runs
+
+        for run_response in runs_to_process:
             if run_response and run_response.messages:
                 user_message_from_run = None
                 assistant_message_from_run = None

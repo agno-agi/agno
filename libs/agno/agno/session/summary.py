@@ -66,6 +66,9 @@ class SessionSummaryManager:
     # Prompt used for session summary generation
     session_summary_prompt: Optional[str] = None
 
+    # Number of runs to include when generating session summary (None = all runs)
+    num_summary_runs: Optional[int] = None
+
     # Whether session summaries were created in the last run
     summaries_updated: bool = False
 
@@ -126,7 +129,7 @@ class SessionSummaryManager:
         return (
             [
                 self.get_system_message(
-                    conversation=session.get_messages_for_session(),  # type: ignore
+                    conversation=session.get_messages_for_session(last_n=self.num_summary_runs),  # type: ignore
                     response_format=response_format,
                 ),
                 Message(role="user", content="Provide the summary of the conversation."),
