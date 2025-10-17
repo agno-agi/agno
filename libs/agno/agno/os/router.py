@@ -75,6 +75,14 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
     known_fields = set(sig.parameters.keys())
     kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
 
+    # Process each field, collecting all values for duplicate keys
+    for field_name in form_data.keys():
+        if field_name in known_fields:
+            continue
+
+        field_values = form_data.getlist(field_name)
+        kwargs[field_name] = field_values[0] if len(field_values) == 1 else field_values
+
     # Handle JSON parameters. They are passed as strings and need to be deserialized.
     if session_state := kwargs.get("session_state"):
         try:
