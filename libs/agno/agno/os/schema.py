@@ -846,7 +846,7 @@ class RunSchema(BaseModel):
     videos: Optional[List[dict]]
     audio: Optional[List[dict]]
     files: Optional[List[dict]]
-    response_audio: Optional[List[dict]]
+    response_audio: Optional[dict]
     input_media: Optional[Dict[str, Any]]
 
     @classmethod
@@ -902,7 +902,7 @@ class TeamRunSchema(BaseModel):
     videos: Optional[List[dict]]
     audio: Optional[List[dict]]
     files: Optional[List[dict]]
-    response_audio: Optional[List[dict]]
+    response_audio: Optional[dict]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -956,7 +956,7 @@ class WorkflowRunSchema(BaseModel):
     videos: Optional[List[dict]]
     audio: Optional[List[dict]]
     files: Optional[List[dict]]
-    response_audio: Optional[List[dict]]
+    response_audio: Optional[dict]
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
