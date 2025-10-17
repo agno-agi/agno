@@ -543,6 +543,8 @@ class Knowledge:
                 reader = self.pdf_reader
             elif file_extension == ".docx":
                 reader = self.docx_reader
+            elif file_extension == ".pptx":
+                reader = self.pptx_reader
             elif file_extension == ".json":
                 reader = self.json_reader
             elif file_extension == ".markdown":
@@ -831,6 +833,8 @@ class Knowledge:
                     reader = self.csv_reader
                 elif s3_object.uri.endswith(".docx"):
                     reader = self.docx_reader
+                elif s3_object.uri.endswith(".pptx"):
+                    reader = self.pptx_reader
                 elif s3_object.uri.endswith(".json"):
                     reader = self.json_reader
                 elif s3_object.uri.endswith(".markdown"):
@@ -913,6 +917,8 @@ class Knowledge:
                     reader = self.csv_reader
                 elif gcs_object.name.endswith(".docx"):
                     reader = self.docx_reader
+                elif gcs_object.name.endswith(".pptx"):
+                    reader = self.pptx_reader
                 elif gcs_object.name.endswith(".json"):
                     reader = self.json_reader
                 elif gcs_object.name.endswith(".markdown"):
@@ -1888,6 +1894,11 @@ class Knowledge:
     def docx_reader(self) -> Optional[Reader]:
         """Docx reader - lazy loaded via factory."""
         return self._get_reader("docx")
+
+    @property
+    def pptx_reader(self) -> Optional[Reader]:
+        """PPTX reader - lazy loaded via factory."""
+        return self._get_reader("pptx")
 
     @property
     def json_reader(self) -> Optional[Reader]:
