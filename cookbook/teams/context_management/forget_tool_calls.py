@@ -65,7 +65,6 @@ research_team = Team(
     num_history_runs=6,  # Load last 6 research queries
     max_tool_calls_in_context=3,  # Keep only last 3 research results
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
 )
 
