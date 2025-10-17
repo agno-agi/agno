@@ -2434,7 +2434,7 @@ class Workflow:
     ) -> WorkflowRunOutput: ...
 
     @overload
-    async def arun(
+    def arun(
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
@@ -2451,7 +2451,7 @@ class Workflow:
         websocket: Optional[WebSocket] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
-    async def arun(
+    def arun(
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
@@ -2481,7 +2481,7 @@ class Workflow:
         if background:
             if stream and websocket:
                 # Background + Streaming + WebSocket = Real-time events
-                return await self._arun_background_stream(
+                return self._arun_background_stream(
                     input=input,
                     additional_data=additional_data,
                     user_id=user_id,
@@ -2500,7 +2500,7 @@ class Workflow:
                 raise ValueError("Background streaming execution requires a WebSocket for real-time events")
             else:
                 # Background + Non-streaming = Polling (existing)
-                return await self._arun_background(
+                return self._arun_background(
                     input=input,
                     additional_data=additional_data,
                     user_id=user_id,
@@ -2524,7 +2524,7 @@ class Workflow:
 
         # Read existing session from database
         if self._has_async_db():
-            workflow_session = await self.aread_or_create_session(session_id=session_id, user_id=user_id)
+            workflow_session = asyncio.run(self.aread_or_create_session(session_id=session_id, user_id=user_id))
         else:
             workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=workflow_session)
@@ -2583,7 +2583,7 @@ class Workflow:
                 **kwargs,
             )
         else:
-            return await self._aexecute(
+            return self._aexecute(
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
                 session=workflow_session,
