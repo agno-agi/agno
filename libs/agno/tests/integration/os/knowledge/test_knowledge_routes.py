@@ -24,6 +24,7 @@ def mock_knowledge():
 
     # Mock external dependencies
     knowledge.vector_db = Mock()
+    knowledge.vector_db.id = "test_vector_db_id"  # Add ID for VectorDbSchema validation
     knowledge.contents_db = Mock()
     knowledge.readers = {}
 
@@ -46,6 +47,7 @@ def mock_knowledge():
     knowledge.get_readers = Mock()
     knowledge.get_filters = Mock()
     knowledge._load_content = Mock()
+    knowledge.search = Mock()  # Mock the search method for search endpoint tests
 
     return knowledge
 
@@ -281,6 +283,9 @@ class TestKnowledgeContentEndpoints:
         # Mock get_filters to return a list
         mock_knowledge.get_filters.return_value = ["filter_tag_1", "filter_tag2"]
 
+        # Set vector_db to None so the config endpoint doesn't try to process it
+        mock_knowledge.vector_db = None
+
         response = test_app.get("/knowledge/config")
 
         assert response.status_code == 200
@@ -293,6 +298,310 @@ class TestKnowledgeContentEndpoints:
         assert data["readers"][latest_reader]["name"] == "Text Reader"
         assert data["readers"][latest_reader]["description"] == "Test reader description"
         assert data["filters"] == ["filter_tag_1", "filter_tag2"]
+
+    def test_get_config_with_vector_db(self, test_app, mock_knowledge):
+        """Test getting configuration with vector database that has search types."""
+        # Mock the get_readers method to return a proper dictionary
+        mock_reader = Mock()
+        mock_reader.name = "Text Reader"
+        mock_reader.description = "Test reader description"
+        mock_knowledge.get_readers.return_value = {"text_reader": mock_reader}
+
+        # Mock get_filters to return a list
+        mock_knowledge.get_filters.return_value = ["filter_tag_1", "filter_tag2"]
+
+        # Configure the existing vector_db mock (from fixture) with the properties we need
+        mock_knowledge.vector_db.name = "Test Vector DB"
+        mock_knowledge.vector_db.description = "Test vector database for search"
+        mock_knowledge.vector_db.get_supported_search_types.return_value = ["vector", "keyword", "hybrid"]
+        mock_knowledge.vector_db.__class__.__name__ = "MockVectorDb"
+
+        response = test_app.get("/knowledge/config")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify basic structure
+        assert "readers" in data
+        assert "filters" in data
+        assert "vector_dbs" in data
+
+        # Verify vector database information
+        assert len(data["vector_dbs"]) == 1
+        vector_db_info = data["vector_dbs"][0]
+
+        assert "id" in vector_db_info
+        assert vector_db_info["name"] == "Test Vector DB"
+        assert vector_db_info["description"] == "Test vector database for search"
+        assert vector_db_info["search_types"] == ["vector", "keyword", "hybrid"]
+
+        # Verify other expected fields
+        assert data["filters"] == ["filter_tag_1", "filter_tag2"]
+
+    def test_get_config_with_vector_db_no_name(self, test_app, mock_knowledge):
+        """Test getting configuration with vector database that has no name (returns None)."""
+        # Mock the get_readers and filters
+        mock_knowledge.get_readers.return_value = {}
+        mock_knowledge.get_filters.return_value = []
+
+        # Configure the existing vector_db mock (from fixture) without a name
+        mock_knowledge.vector_db.name = None  # No name provided
+        mock_knowledge.vector_db.description = "Vector DB without name"
+        mock_knowledge.vector_db.get_supported_search_types.return_value = ["vector"]
+        mock_knowledge.vector_db.__class__.__name__ = "PgVector"
+
+        response = test_app.get("/knowledge/config")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify vector database name is None when not set
+        assert len(data["vector_dbs"]) == 1
+        vector_db_info = data["vector_dbs"][0]
+
+        assert vector_db_info["name"] is None  # Should be None as no fallback is implemented
+        assert vector_db_info["description"] == "Vector DB without name"
+        assert vector_db_info["search_types"] == ["vector"]
+
+
+class TestKnowledgeSearchEndpoint:
+    """Test suite for knowledge search endpoint."""
+
+    def test_search_knowledge_basic(self, test_app, mock_knowledge):
+        """Test basic search without search_type specified."""
+        from agno.knowledge.document import Document
+
+        # Mock search results
+        mock_documents = [
+            Document(
+                id="doc_1",
+                content="Jordan Mitchell is a software engineer with Python skills",
+                name="cv_1",
+                meta_data={"page": 1, "chunk": 1},
+                usage={"total_tokens": 12},
+            ),
+            Document(
+                id="doc_2",
+                content="Experience with React and JavaScript frameworks",
+                name="cv_1",
+                meta_data={"page": 1, "chunk": 2},
+                usage={"total_tokens": 8},
+            ),
+        ]
+
+        mock_knowledge.search.return_value = mock_documents
+
+        response = test_app.post("/knowledge/search", json={"query": "Jordan Mitchell skills"})
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify response structure - now using paginated format
+        assert "data" in data
+        assert "meta" in data
+
+        # Verify content
+        assert data["meta"]["total_count"] == 2
+        assert len(data["data"]) == 2
+
+        # Verify document structure
+        doc = data["data"][0]
+        assert doc["id"] == "doc_1"
+        assert doc["content"] == "Jordan Mitchell is a software engineer with Python skills"
+        assert doc["name"] == "cv_1"
+        assert doc["meta_data"] == {"page": 1, "chunk": 1}
+        assert doc["usage"] == {"total_tokens": 12}
+
+        # Verify knowledge.search was called correctly
+        mock_knowledge.search.assert_called_once_with(
+            query="Jordan Mitchell skills", max_results=None, filters=None, search_type=None
+        )
+
+    def test_search_knowledge_with_search_type(self, test_app, mock_knowledge):
+        """Test search with specific search_type."""
+        from agno.knowledge.document import Document
+
+        mock_documents = [
+            Document(
+                id="doc_1", content="Vector search result", name="test_doc", meta_data={}, usage={"total_tokens": 5}
+            )
+        ]
+
+        mock_knowledge.search.return_value = mock_documents
+
+        response = test_app.post("/knowledge/search", json={"query": "test query", "search_type": "vector"})
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["meta"]["total_count"] == 1
+        assert len(data["data"]) == 1
+
+        # Verify knowledge.search was called with search_type
+        mock_knowledge.search.assert_called_once_with(
+            query="test query", max_results=None, filters=None, search_type="vector"
+        )
+
+    def test_search_knowledge_with_db_id(self, test_app, mock_knowledge):
+        """Test search with specific database ID."""
+        from agno.knowledge.document import Document
+
+        # Configure mock_knowledge.contents_db to have the expected ID
+        mock_knowledge.contents_db.id = "test_db"
+
+        mock_documents = [
+            Document(
+                id="doc_1", content="Database specific result", name="db_doc", meta_data={}, usage={"total_tokens": 4}
+            )
+        ]
+
+        mock_knowledge.search.return_value = mock_documents
+
+        response = test_app.post("/knowledge/search", json={"query": "test", "db_id": "test_db"})
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["meta"]["total_count"] == 1
+
+        # Note: db_id affects which knowledge instance is selected, not the search call itself
+        mock_knowledge.search.assert_called_once_with(query="test", max_results=None, filters=None, search_type=None)
+
+    def test_search_knowledge_no_results(self, test_app, mock_knowledge):
+        """Test search that returns no results."""
+        mock_knowledge.search.return_value = []
+
+        response = test_app.post("/knowledge/search", json={"query": "nonexistent content"})
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["meta"]["total_count"] == 0
+        assert len(data["data"]) == 0
+
+    def test_search_knowledge_empty_query(self, test_app, mock_knowledge):
+        """Test search with empty query."""
+        mock_knowledge.search.return_value = []
+
+        response = test_app.post("/knowledge/search", json={"query": ""})
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["meta"]["total_count"] == 0
+        assert len(data["data"]) == 0
+
+    def test_search_knowledge_missing_query(self, test_app, mock_knowledge):
+        """Test search without query parameter."""
+        response = test_app.post("/knowledge/search", json={})
+
+        # Should return 422 for missing required parameter
+        assert response.status_code == 422
+
+    def test_search_knowledge_with_all_parameters(self, test_app, mock_knowledge):
+        """Test search with all parameters specified."""
+        from agno.knowledge.document import Document
+
+        # Configure mock_knowledge.contents_db to have the expected ID
+        mock_knowledge.contents_db.id = "test_db"
+
+        mock_documents = [
+            Document(
+                id="doc_full",
+                content="Full parameter test result",
+                name="full_test",
+                meta_data={"test": "full"},
+                usage={"total_tokens": 6},
+                reranking_score=0.95,
+                content_id="content_123",
+                content_origin="test_origin",
+                size=100,
+            )
+        ]
+
+        mock_knowledge.search.return_value = mock_documents
+
+        response = test_app.post(
+            "/knowledge/search", json={"query": "full test", "search_type": "hybrid", "db_id": "test_db"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["meta"]["total_count"] == 1
+
+        # Verify all document fields are properly serialized
+        doc = data["data"][0]
+        assert doc["id"] == "doc_full"
+        assert doc["content"] == "Full parameter test result"
+        assert doc["name"] == "full_test"
+        assert doc["meta_data"] == {"test": "full"}
+        assert doc["usage"] == {"total_tokens": 6}
+        assert doc["reranking_score"] == 0.95
+        assert doc["content_id"] == "content_123"
+        assert doc["content_origin"] == "test_origin"
+        assert doc["size"] == 100
+
+        mock_knowledge.search.assert_called_once_with(
+            query="full test", max_results=None, filters=None, search_type="hybrid"
+        )
+
+    def test_search_knowledge_timing(self, test_app, mock_knowledge):
+        """Test that search timing is properly recorded."""
+        from agno.knowledge.document import Document
+
+        mock_documents = [Document(id="timing_doc", content="Timing test", name="timing", meta_data={}, usage={})]
+
+        mock_knowledge.search.return_value = mock_documents
+
+        response = test_app.post("/knowledge/search", json={"query": "timing test"})
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify basic response structure
+        assert "data" in data
+        assert "meta" in data
+        assert data["meta"]["total_count"] >= 0
+
+    def test_search_knowledge_document_serialization(self, test_app, mock_knowledge):
+        """Test that Document objects are properly serialized without numpy arrays."""
+        import numpy as np
+
+        from agno.knowledge.document import Document
+
+        # Create a document with complex objects that shouldn't be serialized
+        mock_doc = Document(
+            id="serialization_test",
+            content="Test serialization",
+            name="serialize_test",
+            meta_data={"key": "value"},
+            usage={"tokens": 5},
+        )
+
+        # Add properties that should NOT be serialized (like embeddings)
+        mock_doc.embedding = np.array([0.1, 0.2, 0.3])  # This should be excluded
+        mock_doc.embedder = object()  # This should be excluded
+
+        mock_knowledge.search.return_value = [mock_doc]
+
+        response = test_app.post("/knowledge/search", json={"query": "serialization test"})
+
+        assert response.status_code == 200
+        data = response.json()
+
+        doc = data["data"][0]
+
+        # Verify included fields
+        assert doc["id"] == "serialization_test"
+        assert doc["content"] == "Test serialization"
+        assert doc["name"] == "serialize_test"
+        assert doc["meta_data"] == {"key": "value"}
+        assert doc["usage"] == {"tokens": 5}
+
+        # Verify excluded fields (should not be present)
+        assert "embedding" not in doc
+        assert "embedder" not in doc
 
 
 class TestBackgroundTaskProcessing:

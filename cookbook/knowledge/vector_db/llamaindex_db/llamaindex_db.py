@@ -23,7 +23,7 @@ if data_dir.is_dir():
     rmtree(path=data_dir, ignore_errors=True)
 data_dir.mkdir(parents=True, exist_ok=True)
 
-url = "https://raw.githubusercontent.com/run-llama/llama_index/main/docs/docs/examples/data/paul_graham/paul_graham_essay.txt"
+url = "https://raw.githubusercontent.com/run-llama/llama_index/main/docs/examples/data/paul_graham/paul_graham_essay.txt"
 file_path = data_dir.joinpath("paul_graham_essay.txt")
 response = httpx.get(url)
 if response.status_code == 200:
