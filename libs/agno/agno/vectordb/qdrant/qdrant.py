@@ -948,20 +948,15 @@ class Qdrant(VectorDb):
     def id_exists(self, id: str) -> bool:
         """Check if a point with the given ID exists in the collection.
 
+        This is an alias for point_exists() for backward compatibility.
+
         Args:
             id (str): The ID to check.
 
         Returns:
             bool: True if the point exists, False otherwise.
         """
-        try:
-            points = self.client.retrieve(
-                collection_name=self.collection, ids=[id], with_payload=False, with_vectors=False
-            )
-            return len(points) > 0
-        except Exception as e:
-            log_info(f"Error checking if point {id} exists: {e}")
-            return False
+        return self.point_exists(id)
 
     def content_hash_exists(self, content_hash: str) -> bool:
         """Check if any points with the given content hash exist in the collection.
