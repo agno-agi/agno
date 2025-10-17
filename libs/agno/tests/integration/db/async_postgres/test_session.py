@@ -5,8 +5,8 @@ import time
 import pytest
 import pytest_asyncio
 
-from agno.db.async_postgres.async_postgres import AsyncPostgresDb
 from agno.db.base import SessionType
+from agno.db.postgres import AsyncPostgresDb
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput

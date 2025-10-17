@@ -5,7 +5,7 @@ Run `pip install openai ddgs sqlalchemy psycopg` to install dependencies."""
 import asyncio
 
 from agno.agent import Agent
-from agno.db.async_postgres import AsyncPostgresDb
+from agno.db.postgres import AsyncPostgresDb
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 db_url = "postgresql+psycopg_async://ai:ai@localhost:5532/ai"
