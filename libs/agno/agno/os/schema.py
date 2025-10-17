@@ -846,7 +846,7 @@ class RunSchema(BaseModel):
     videos: Optional[List[dict]]
     audio: Optional[List[dict]]
     files: Optional[List[dict]]
-    response_audio: Optional[List[dict]]
+    response_audio: Optional[dict]
     input_media: Optional[Dict[str, Any]]
 
     @classmethod
@@ -873,7 +873,7 @@ class RunSchema(BaseModel):
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),
             files=run_dict.get("files", []),
-            response_audio=run_dict.get("response_audio", []),
+            response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
@@ -902,7 +902,7 @@ class TeamRunSchema(BaseModel):
     videos: Optional[List[dict]]
     audio: Optional[List[dict]]
     files: Optional[List[dict]]
-    response_audio: Optional[List[dict]]
+    response_audio: Optional[dict]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -930,7 +930,7 @@ class TeamRunSchema(BaseModel):
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),
             files=run_dict.get("files", []),
-            response_audio=run_dict.get("response_audio", []),
+            response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
         )
 
@@ -956,7 +956,7 @@ class WorkflowRunSchema(BaseModel):
     videos: Optional[List[dict]]
     audio: Optional[List[dict]]
     files: Optional[List[dict]]
-    response_audio: Optional[List[dict]]
+    response_audio: Optional[dict]
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
@@ -982,7 +982,7 @@ class WorkflowRunSchema(BaseModel):
             videos=run_response.get("videos", []),
             audio=run_response.get("audio", []),
             files=run_response.get("files", []),
-            response_audio=run_response.get("response_audio", []),
+            response_audio=run_response.get("response_audio", None),
         )
 
 
