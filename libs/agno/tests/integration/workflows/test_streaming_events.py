@@ -890,7 +890,7 @@ async def test_stream_executor_events_false_async_with_agent(shared_db, test_age
     )
 
     events = []
-    async for event in await workflow.arun(
+    async for event in workflow.arun(
         input="Say hello",
         stream=True,
         stream_intermediate_steps=True,
