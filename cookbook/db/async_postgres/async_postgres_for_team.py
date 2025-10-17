@@ -7,7 +7,7 @@ import asyncio
 from typing import List
 
 from agno.agent import Agent
-from agno.db.async_postgres import AsyncPostgresDb
+from agno.db.postgres import AsyncPostgresDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools

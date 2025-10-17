@@ -1,7 +1,7 @@
 """Example showing how to use AgentOS with a Postgres database, using our async interface"""
 
 from agno.agent import Agent
-from agno.db.async_postgres import AsyncPostgresDb
+from agno.db.postgres import AsyncPostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
