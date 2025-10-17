@@ -297,7 +297,7 @@ async def test_async_steps_streaming(shared_db):
     )
 
     events = []
-    async for event in await workflow.arun(input="async stream test", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="async stream test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check that we have events

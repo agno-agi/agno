@@ -139,7 +139,7 @@ async def test_async_streaming(shared_db):
     )
 
     events = []
-    async for event in await workflow.arun(input="test", stream=True):
+    async for event in workflow.arun(input="test", stream=True):
         events.append(event)
 
     assert len(events) > 0

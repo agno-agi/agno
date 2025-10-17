@@ -194,7 +194,7 @@ async def test_step_events_async_with_stream_intermediate_steps_true(shared_db):
     )
 
     events = []
-    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check for step events
@@ -289,7 +289,7 @@ async def test_steps_events_async_with_stream_intermediate_steps_true(shared_db)
     )
 
     events = []
-    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check for steps events
@@ -376,7 +376,7 @@ async def test_parallel_events_async_with_stream_intermediate_steps_true(shared_
     )
 
     events = []
-    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check for parallel events
@@ -471,7 +471,7 @@ async def test_loop_events_async_with_stream_intermediate_steps_true(shared_db):
     )
 
     events = []
-    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check for loop events
@@ -557,7 +557,7 @@ async def test_condition_events_async_with_stream_intermediate_steps_true(shared
     )
 
     events = []
-    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check for condition events
@@ -654,7 +654,7 @@ async def test_router_events_async_with_stream_intermediate_steps_true(shared_db
     )
 
     events = []
-    async for event in await workflow.arun(input="test_a", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="test_a", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check for router events
@@ -739,7 +739,7 @@ async def test_comprehensive_workflow_events_async_with_stream_intermediate_step
     )
 
     events = []
-    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check that we have events from all components
@@ -890,7 +890,7 @@ async def test_stream_executor_events_false_async_with_agent(shared_db, test_age
     )
 
     events = []
-    async for event in await workflow.arun(
+    async for event in workflow.arun(
         input="Say hello",
         stream=True,
         stream_intermediate_steps=True,

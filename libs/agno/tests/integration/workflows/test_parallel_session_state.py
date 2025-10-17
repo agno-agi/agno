@@ -501,7 +501,7 @@ async def test_async_streaming_parallel_modifications(shared_db):
 
     # Test async streaming execution - collect all events
     events = []
-    async for event in await workflow.arun("test", stream=True):
+    async for event in workflow.arun("test", stream=True):
         events.append(event)
 
     final_state = workflow.get_session_state()
