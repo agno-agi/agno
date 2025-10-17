@@ -5,9 +5,9 @@ from typing import AsyncIterator
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
+from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.run.workflow import WorkflowRunOutputEvent
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
@@ -81,6 +81,7 @@ research_team = Team(
     members=[hackernews_agent, web_agent],
     instructions="Research tech topics from Hackernews and the web",
 )
+
 
 async def main():
     content_creation_workflow = Workflow(

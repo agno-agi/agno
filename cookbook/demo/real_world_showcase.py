@@ -19,16 +19,16 @@ Author: Agno Team
 """
 
 import asyncio
+from os import getenv
 from pathlib import Path
 from textwrap import dedent
 
-from agno.os import AgentOS
-from os import getenv
-
-# Import consolidated agents
-from agents.study_buddy import study_buddy, load_education_knowledge
 from agents.creative_studio import creative_studio
 from agents.lifestyle_concierge import lifestyle_concierge
+
+# Import consolidated agents
+from agents.study_buddy import load_education_knowledge, study_buddy
+from agno.os import AgentOS
 
 # ============================================================================
 # Knowledge Base Initialization
@@ -37,7 +37,9 @@ teams_list = []
 github_token = getenv("GITHUB_ACCESS_TOKEN") or getenv("GITHUB_TOKEN")
 if github_token:
     from teams.oss_maintainer_team import oss_maintainer_team
+
     teams_list.append(oss_maintainer_team)
+
 
 async def initialize_knowledge_bases():
     """Initialize all knowledge bases with content"""

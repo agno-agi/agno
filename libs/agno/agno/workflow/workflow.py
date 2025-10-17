@@ -2451,7 +2451,7 @@ class Workflow:
         websocket: Optional[WebSocket] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
-    def arun(
+    def arun(  # type: ignore
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
@@ -2481,7 +2481,7 @@ class Workflow:
         if background:
             if stream and websocket:
                 # Background + Streaming + WebSocket = Real-time events
-                return self._arun_background_stream(
+                return self._arun_background_stream(  # type: ignore
                     input=input,
                     additional_data=additional_data,
                     user_id=user_id,
@@ -2500,7 +2500,7 @@ class Workflow:
                 raise ValueError("Background streaming execution requires a WebSocket for real-time events")
             else:
                 # Background + Non-streaming = Polling (existing)
-                return self._arun_background(
+                return self._arun_background(  # type: ignore
                     input=input,
                     additional_data=additional_data,
                     user_id=user_id,
@@ -2572,7 +2572,7 @@ class Workflow:
         self.update_agents_and_teams_session_info()
 
         if stream:
-            return self._aexecute_stream(
+            return self._aexecute_stream(  # type: ignore
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
                 session=workflow_session,
@@ -2583,7 +2583,7 @@ class Workflow:
                 **kwargs,
             )
         else:
-            return self._aexecute(
+            return self._aexecute(  # type: ignore
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
                 session=workflow_session,

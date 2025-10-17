@@ -1088,7 +1088,7 @@ async def aprint_response_stream(
         live_log.update(status)
 
         try:
-            async for response in await workflow.arun(
+            async for response in workflow.arun(
                 input=input,
                 additional_data=additional_data,
                 user_id=user_id,
