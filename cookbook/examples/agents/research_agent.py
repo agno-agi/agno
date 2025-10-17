@@ -25,10 +25,10 @@ Dependencies: `pip install openai ddgs newspaper4k lxml_html_clean agno`
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
-from agno.db.sqlite import SqliteDb
 
 # Initialize the research agent with advanced journalistic capabilities
 research_agent = Agent(
