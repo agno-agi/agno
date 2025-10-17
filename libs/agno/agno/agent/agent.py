@@ -6608,7 +6608,7 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
-        run_dependencies: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -6646,7 +6646,7 @@ class Agent:
             session=session,
             session_state=session_state,
             user_id=user_id,
-            dependencies=run_dependencies,
+            dependencies=dependencies,
             metadata=metadata,
         )
         if system_message is not None:
@@ -6726,7 +6726,7 @@ class Agent:
                 videos=videos,
                 files=files,
                 knowledge_filters=knowledge_filters,
-                run_dependencies=run_dependencies,
+                dependencies=dependencies,
                 add_dependencies_to_context=add_dependencies_to_context,
                 metadata=metadata,
                 **kwargs,
