@@ -7,7 +7,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutputEvent
+from agno.run.workflow import WorkflowRunOutputEvent
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
