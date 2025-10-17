@@ -187,7 +187,7 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph searchscraper request with prompt: {user_prompt}")
-            response = self.client.searchscraper(user_prompt=user_prompt, render_heavy_js=self.render_heavy_js)
+            response = self.client.searchscraper(user_prompt=user_prompt)
             return json.dumps(response["result"])
         except Exception as e:
             error_msg = f"Searchscraper failed: {str(e)}"
