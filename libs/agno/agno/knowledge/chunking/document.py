@@ -13,6 +13,7 @@ class DocumentChunking(ChunkingStrategy):
 
     def chunk(self, document: Document) -> List[Document]:
         """Split document into chunks based on document structure"""
+        print("DocumentChunking chunking document with chunk size", self.chunk_size)
         if len(document.content) <= self.chunk_size:
             return [document]
 

@@ -38,6 +38,7 @@ class DocxReader(Reader):
         return [ContentType.DOCX, ContentType.DOC]
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
+        print(self.chunk_size)
         """Read a docx file and return a list of documents"""
         try:
             if isinstance(file, Path):
@@ -62,7 +63,7 @@ class DocxReader(Reader):
                     content=doc_content,
                 )
             ]
-
+            print(self.chunk)
             if self.chunk:
                 chunked_documents = []
                 for document in documents:
