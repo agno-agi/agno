@@ -1877,7 +1877,7 @@ class Team:
             async for _ in pre_hook_iterator:
                 pass
 
-        # 5. Determine tools for model
+        # 4. Determine tools for model
         team_run_context: Dict[str, Any] = {}
         self.model = cast(Model, self.model)
         self.determine_tools_for_model(
