@@ -260,7 +260,7 @@ class Team:
     # If True, store media in run output
     store_media: bool = True
     # If True, store tool results in run output
-    store_tool_results: bool = True
+    store_tool_messages: bool = True
     # If True, store history messages in run output
     store_history_messages: bool = True
 
@@ -422,7 +422,7 @@ class Team:
         search_knowledge: bool = True,
         read_team_history: bool = False,
         store_media: bool = True,
-        store_tool_results: bool = True,
+        store_tool_messages: bool = True,
         store_history_messages: bool = True,
         send_media_to_model: bool = True,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
@@ -524,7 +524,7 @@ class Team:
         self.read_team_history = read_team_history
 
         self.store_media = store_media
-        self.store_tool_results = store_tool_results
+        self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
         self.send_media_to_model = send_media_to_model
 
@@ -1802,11 +1802,9 @@ class Team:
 
     async def _arun(
         self,
-        input: Union[str, List, Dict, Message, BaseModel],
         run_response: TeamRunOutput,
         session_id: str,
         session_state: Optional[Dict[str, Any]] = None,
-        store_member_responses: Optional[bool] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1854,9 +1852,6 @@ class Team:
         # 2. Update metadata and session state
         self._update_metadata(session=team_session)
         session_state = self._load_session_state(session=team_session, session_state=session_state)  # type: ignore
-
-        if store_member_responses is None:
-            store_member_responses = False if self.store_member_responses is None else self.store_member_responses
 
         run_input = cast(TeamRunInput, run_response.input)
 
@@ -1910,7 +1905,7 @@ class Team:
             session=team_session,  # type: ignore
             session_state=session_state,
             user_id=user_id,
-            input_message=input,
+            input_message=run_input.input_content,
             audio=audio,
             images=images,
             videos=videos,
@@ -2018,7 +2013,6 @@ class Team:
 
     async def _arun_stream(
         self,
-        input: Union[str, List, Dict, Message, BaseModel],
         run_response: TeamRunOutput,
         session_id: str,
         session_state: Optional[Dict[str, Any]] = None,
@@ -2104,7 +2098,7 @@ class Team:
             user_id=user_id,
             async_mode=True,
             knowledge_filters=knowledge_filters,
-            input_message=input,
+            input_message=run_input.input_content,
             images=images,
             videos=videos,
             audio=audio,
@@ -2121,7 +2115,7 @@ class Team:
             session=team_session,  # type: ignore
             session_state=session_state,
             user_id=user_id,
-            input_message=input,
+            input_message=run_input.input_content,
             audio=audio,
             images=images,
             videos=videos,
@@ -3719,8 +3713,6 @@ class Team:
             run_response.input.audios = []
             run_response.input.files = []
 
-        # 2. RunOutput artifact media are skipped since we don't store them when store_media=False
-
         # 3. Scrub media from all messages
         if run_response.messages:
             for message in run_response.messages:
@@ -3751,20 +3743,36 @@ class Team:
 
     def _scrub_tool_results_from_run_output(self, run_response: TeamRunOutput) -> None:
         """
-        Remove all tool-related data from TeamRunOutput when store_tool_results=False.
-        This includes tool calls, tool results, and tool-related message fields.
+        Remove all tool-related data from RunOutput when store_tool_messages=False.
+        This removes both the tool call and its corresponding result to maintain API consistency.
         """
-        # Remove tool results (messages with role="tool")
-        if run_response.messages:
-            run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
-            # Also scrub tool-related fields from remaining messages
-            for message in run_response.messages:
-                self._scrub_tool_data_from_message(message)
+        if not run_response.messages:
+            return
 
-    def _scrub_tool_data_from_message(self, message: Message) -> None:
-        """Remove tool-related data from a Message object."""
-        message.tool_calls = None
-        message.tool_call_id = None
+        # Step 1: Collect all tool_call_ids from tool result messages
+        tool_call_ids_to_remove = set()
+        for message in run_response.messages:
+            if message.role == "tool" and message.tool_call_id:
+                tool_call_ids_to_remove.add(message.tool_call_id)
+
+        # Step 2: Remove tool result messages (role="tool")
+        run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
+
+        # Step 3: Remove assistant messages that made those tool calls
+        filtered_messages = []
+        for message in run_response.messages:
+            # Check if this assistant message made any of the tool calls we're removing
+            should_remove = False
+            if message.role == "assistant" and message.tool_calls:
+                for tool_call in message.tool_calls:
+                    if tool_call.get("id") in tool_call_ids_to_remove:
+                        should_remove = True
+                        break
+
+            if not should_remove:
+                filtered_messages.append(message)
+
+        run_response.messages = filtered_messages
 
     def _scrub_history_messages_from_run_output(self, run_response: TeamRunOutput) -> None:
         """
@@ -3786,7 +3794,7 @@ class Team:
             self._scrub_media_from_run_output(run_response)
             scrubbed = True
 
-        if not self.store_tool_results:
+        if not self.store_tool_messages:
             self._scrub_tool_results_from_run_output(run_response)
             scrubbed = True
 
@@ -3795,6 +3803,37 @@ class Team:
             scrubbed = True
 
         return scrubbed
+
+    def _scrub_member_responses(self, member_responses: List[Union[TeamRunOutput, RunOutput]]) -> None:
+        """
+        Scrub member responses based on each member's storage flags.
+        This is called when saving the team session to ensure member data is scrubbed per member settings.
+        Recursively handles nested team's member responses.
+        """
+        for member_response in member_responses:
+            member_id = None
+            if isinstance(member_response, RunOutput):
+                member_id = member_response.agent_id
+            elif isinstance(member_response, TeamRunOutput):
+                member_id = member_response.team_id
+
+            if not member_id:
+                log_info("Skipping member response with no ID")
+                continue
+
+            member_result = self._find_member_by_id(member_id)
+            if not member_result:
+                log_debug(f"Could not find member with ID: {member_id}")
+                continue
+
+            _, member = member_result
+
+            if not member.store_media or not member.store_tool_messages or not member.store_history_messages:
+                member._scrub_run_output_for_storage(member_response)  # type: ignore
+
+            # If this is a nested team, recursively scrub its member responses
+            if isinstance(member_response, TeamRunOutput) and member_response.member_responses:
+                member._scrub_member_responses(member_response.member_responses)  # type: ignore
 
     def _validate_media_object_id(
         self,
@@ -5176,9 +5215,7 @@ class Team:
                 _memory_manager_not_set = True
             user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
             if user_memories and len(user_memories) > 0:
-                system_message_content += (
-                    "You have access to memories from previous interactions with the user that you can use:\n\n"
-                )
+                system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
                 system_message_content += "<memories_from_previous_interactions>"
                 for _memory in user_memories:  # type: ignore
                     system_message_content += f"\n- {_memory.memory}"
@@ -5477,9 +5514,7 @@ class Team:
                 user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
             if user_memories and len(user_memories) > 0:
-                system_message_content += (
-                    "You have access to memories from previous interactions with the user that you can use:\n\n"
-                )
+                system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
                 system_message_content += "<memories_from_previous_interactions>"
                 for _memory in user_memories:  # type: ignore
                     system_message_content += f"\n- {_memory.memory}"
@@ -6634,8 +6669,16 @@ class Team:
             if run_response and member_agent_run_response:
                 run_response.add_member_run(member_agent_run_response)
 
-            # Add the member run to the team session
+            # Scrub the member run based on that member's storage flags before storing
             if member_agent_run_response:
+                if (
+                    not member_agent.store_media
+                    or not member_agent.store_tool_messages
+                    or not member_agent.store_history_messages
+                ):
+                    member_agent._scrub_run_output_for_storage(member_agent_run_response)  # type: ignore
+
+                # Add the member run to the team session
                 session.upsert_run(member_agent_run_response)
 
             # Update team session state
@@ -7027,7 +7070,7 @@ class Team:
                 done_marker = object()
                 queue: "asyncio.Queue[Union[RunOutputEvent, TeamRunOutputEvent, str, object]]" = asyncio.Queue()
 
-                async def stream_member(agent: Union[Agent, "Team"], idx: int) -> None:
+                async def stream_member(agent: Union[Agent, "Team"]) -> None:
                     member_agent_task, history = _setup_delegate_task_to_member(
                         agent, task_description, expected_output
                     )
@@ -7075,11 +7118,10 @@ class Team:
 
                 # Initialize and launch all members
                 tasks: List[asyncio.Task[None]] = []
-                for member_agent_index, member_agent in enumerate(self.members):
+                for member_agent in self.members:
                     current_agent = member_agent
-                    current_index = member_agent_index
                     self._initialize_member(current_agent)
-                    tasks.append(asyncio.create_task(stream_member(current_agent, current_index)))
+                    tasks.append(asyncio.create_task(stream_member(current_agent)))
 
                 # Drain queue until all members reported done
                 completed = 0
@@ -7104,7 +7146,6 @@ class Team:
                 tasks = []
                 for member_agent_index, member_agent in enumerate(self.members):
                     current_agent = member_agent
-                    current_index = member_agent_index
                     member_agent_task, history = _setup_delegate_task_to_member(
                         current_agent, task_description, expected_output
                     )
@@ -7414,11 +7455,16 @@ class Team:
                 session.session_data["session_state"].pop("current_user_id", None)  # type: ignore
                 session.session_data["session_state"].pop("current_run_id", None)  # type: ignore
 
-            # scrub the member responses if not storing them
-            if not self.store_member_responses and session.runs is not None:
+            # scrub the member responses based on storage settings
+            if session.runs is not None:
                 for run in session.runs:
                     if hasattr(run, "member_responses"):
-                        run.member_responses = []
+                        if not self.store_member_responses:
+                            # Remove all member responses
+                            run.member_responses = []
+                        else:
+                            # Scrub individual member responses based on their storage flags
+                            self._scrub_member_responses(run.member_responses)
             self._upsert_session(session=session)
             log_debug(f"Created or updated TeamSession record: {session.session_id}")
 

@@ -11,6 +11,7 @@ Prerequisites:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.db.surrealdb import SurrealDb
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
@@ -20,6 +21,17 @@ from rich.pretty import pprint
 # Database configuration for metrics storage
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url, session_table="team_metrics_sessions")
+
+
+# Setup the SurrealDB database
+SURREALDB_URL = "ws://localhost:8000"
+SURREALDB_USER = "root"
+SURREALDB_PASSWORD = "root"
+SURREALDB_NAMESPACE = "agno"
+SURREALDB_DATABASE = "agent_os_demo"
+
+creds = {"username": SURREALDB_USER, "password": SURREALDB_PASSWORD}
+db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABASE)
 
 # Create stock research agent
 stock_searcher = Agent(
