@@ -1,3 +1,4 @@
+
 import inspect
 from copy import copy
 from dataclasses import dataclass
@@ -1246,25 +1247,25 @@ class Step:
 
 
 def _is_async_callable(obj: Any) -> TypeGuard[Callable[..., Any]]:
-    """Checks if obj is a coroutine function"""
+    """Checks if obj is an async callable (coroutine function or callable with async __call__)"""
     return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
 
 
-def _is_generator_function(obj: Any) -> bool:
+def _is_generator_function(obj: Any) -> TypeGuard[Callable[..., Any]]:
     """Checks if obj is a generator function, including callable class instances with generator __call__ methods"""
     if inspect.isgeneratorfunction(obj):
         return True
     # Check if it's a callable class instance with a generator __call__ method
-    if callable(obj) and hasattr(obj, "__call__"):
+    if hasattr(obj, "__call__"):
         return inspect.isgeneratorfunction(obj.__call__)
     return False
 
 
-def _is_async_generator_function(obj: Any) -> bool:
+def _is_async_generator_function(obj: Any) -> TypeGuard[Callable[..., Any]]:
     """Checks if obj is an async generator function, including callable class instances"""
     if inspect.isasyncgenfunction(obj):
         return True
     # Check if it's a callable class instance with an async generator __call__ method
-    if callable(obj) and hasattr(obj, "__call__"):
+    if hasattr(obj, "__call__"):
         return inspect.isasyncgenfunction(obj.__call__)
     return False
