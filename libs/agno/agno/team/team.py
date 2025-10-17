@@ -2509,7 +2509,7 @@ class Team:
                         metadata=metadata,
                         response_format=response_format,
                         dependencies=run_dependencies,
-                        stream_intermediate_steps=stream_intermediate_steps,
+                        stream_events=stream_events,
                         yield_run_response=yield_run_response,
                         debug_mode=debug_mode,
                         **kwargs,
