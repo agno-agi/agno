@@ -27,7 +27,14 @@ def hydrate_session(session: dict) -> dict:
         if session["session_type"] == SessionType.AGENT:
             session["runs"] = [RunOutput.from_dict(run) for run in session["runs"]]
         elif session["session_type"] == SessionType.TEAM:
-            session["runs"] = [TeamRunOutput.from_dict(run) for run in session["runs"]]
+            # Team sessions can contain both TeamRunOutput (team runs) and RunOutput (agent member runs)
+            serialized_runs = []
+            for run in session["runs"]:
+                if "agent_id" in run:
+                    serialized_runs.append(RunOutput.from_dict(run))
+                elif "team_id" in run:
+                    serialized_runs.append(TeamRunOutput.from_dict(run))
+            session["runs"] = serialized_runs
 
     return session
 
