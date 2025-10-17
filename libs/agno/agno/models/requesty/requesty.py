@@ -28,6 +28,7 @@ class Requesty(OpenAILike):
     api_key: Optional[str] = field(default_factory=lambda: getenv("REQUESTY_API_KEY"))
     base_url: str = "https://router.requesty.ai/v1"
     max_tokens: int = 1024
+    tags: Optional[List[str]] = None
 
     def get_request_params(
         self,
@@ -45,5 +46,6 @@ class Requesty(OpenAILike):
             params["extra_body"]["requesty"]["user_id"] = run_response.user_id
         if run_response and run_response.session_id:
             params["extra_body"]["requesty"]["trace_id"] = run_response.session_id
-
+        if isinstance(self.tags, list):
+            params["extra_body"]["requesty"]["tags"] = self.tags
         return params
