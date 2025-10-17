@@ -905,14 +905,8 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-        run_response.status = RunStatus.completed
-
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
-
-        # Stop the timer for the Run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
 
         # Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
@@ -927,6 +921,10 @@ class Agent:
                 debug_mode=debug_mode,
                 **kwargs,
             )
+        run_response.status = RunStatus.completed
+        # Stop the timer for the Run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
         # 7. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
@@ -1124,12 +1122,6 @@ class Agent:
                 )
                 return
 
-            run_response.status = RunStatus.completed
-
-            # Set the run duration
-            if run_response.metrics:
-                run_response.metrics.stop_timer()
-
             # Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
                 self._execute_post_hooks(
@@ -1143,6 +1135,12 @@ class Agent:
                     debug_mode=debug_mode,
                     **kwargs,
                 )
+
+            run_response.status = RunStatus.completed
+
+            # Set the run duration
+            if run_response.metrics:
+                run_response.metrics.stop_timer()
 
             # 5. Calculate session metrics
             self._update_session_metrics(session=session, run_response=run_response)
@@ -1643,15 +1641,8 @@ class Agent:
             # 10. Calculate session metrics
             self._update_session_metrics(session=agent_session, run_response=run_response)
 
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
-
             # Convert the response to the structured format if needed
             self._convert_response_to_structured_format(run_response)
-
-            # Set the run duration
-            if run_response.metrics:
-                run_response.metrics.stop_timer()
 
             # Execute post-hooks (after output is generated but before response is returned)
             if self.post_hooks is not None:
@@ -1666,6 +1657,13 @@ class Agent:
                     debug_mode=debug_mode,
                     **kwargs,
                 )
+
+            # Set the run status to completed
+            run_response.status = RunStatus.completed
+
+            # Set the run duration
+            if run_response.metrics:
+                run_response.metrics.stop_timer()
 
             # Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
@@ -1900,9 +1898,6 @@ class Agent:
                     yield item
                 return
 
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
-
             # Execute post-hooks (after output is generated but before response is returned)
             if self.post_hooks is not None:
                 await self._aexecute_post_hooks(
@@ -1916,6 +1911,9 @@ class Agent:
                     debug_mode=debug_mode,
                     **kwargs,
                 )
+
+            # Set the run status to completed
+            run_response.status = RunStatus.completed
 
             # Set the run duration
             if run_response.metrics:
@@ -2548,14 +2546,8 @@ class Agent:
         # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
-        run_response.status = RunStatus.completed
-
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
-
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
 
         if self.post_hooks is not None:
             self._execute_post_hooks(
@@ -2569,6 +2561,11 @@ class Agent:
                 debug_mode=debug_mode,
                 **kwargs,
             )
+
+        run_response.status = RunStatus.completed
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
         # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
@@ -2660,14 +2657,14 @@ class Agent:
                 **kwargs,
             )
 
-        # 3. Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
-
         run_response.status = RunStatus.completed
 
         # Set the run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
+
+        # 3. Calculate session metrics
+        self._update_session_metrics(session=session, run_response=run_response)
 
         # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
@@ -3023,7 +3020,8 @@ class Agent:
             # 10. Calculate session metrics
             self._update_session_metrics(session=agent_session, run_response=run_response)
 
-            run_response.status = RunStatus.completed
+            # Convert the response to the structured format if needed
+            self._convert_response_to_structured_format(run_response)
 
             # 11. Execute post-hooks
             if self.post_hooks is not None:
@@ -3039,8 +3037,7 @@ class Agent:
                     **kwargs,
                 )
 
-            # Convert the response to the structured format if needed
-            self._convert_response_to_structured_format(run_response)
+            run_response.status = RunStatus.completed
 
             if run_response.metrics:
                 run_response.metrics.stop_timer()
@@ -3250,8 +3247,6 @@ class Agent:
                     yield item
                 return
 
-            run_response.status = RunStatus.completed
-
             # 9. Create the run completed event
             completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
 
@@ -3268,6 +3263,8 @@ class Agent:
                     metadata=metadata,
                     **kwargs,
                 )
+
+            run_response.status = RunStatus.completed
 
             # Set the run duration
             if run_response.metrics:

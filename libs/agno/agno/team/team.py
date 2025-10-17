@@ -1209,8 +1209,6 @@ class Team:
         else:
             self._scrub_media_from_run_output(run_response)
 
-        run_response.status = RunStatus.completed
-
         # Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
 
@@ -1227,6 +1225,8 @@ class Team:
                 debug_mode=debug_mode,
                 **kwargs,
             )
+
+        run_response.status = RunStatus.completed
 
         # Set the run duration
         if run_response.metrics:
@@ -1429,8 +1429,6 @@ class Team:
                 session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             )
 
-            run_response.status = RunStatus.completed
-
             # Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
                 self._execute_post_hooks(
@@ -1445,6 +1443,7 @@ class Team:
                     **kwargs,
                 )
 
+            run_response.status = RunStatus.completed
             # Set the run duration
             if run_response.metrics:
                 run_response.metrics.stop_timer()
@@ -1960,6 +1959,9 @@ class Team:
         else:
             self._scrub_media_from_run_output(run_response)
 
+        # 11. Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
+
         # Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
             await self._aexecute_post_hooks(
@@ -1974,20 +1976,17 @@ class Team:
                 **kwargs,
             )
 
+        run_response.status = RunStatus.completed
+
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
+
         # 9. Add the run to memory
         team_session.upsert_run(run_response=run_response)
 
         # 10. Calculate session metrics
         self._update_session_metrics(session=team_session)
-
-        run_response.status = RunStatus.completed
-
-        # 11. Parse team response model
-        self._convert_response_to_structured_format(run_response=run_response)
-
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
 
         # 12. Update Team Memory
         async for _ in self._amake_memories_and_summaries(
