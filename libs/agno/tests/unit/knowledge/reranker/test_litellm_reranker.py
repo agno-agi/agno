@@ -1,7 +1,5 @@
 from unittest.mock import Mock, patch
 
-import pytest
-
 from agno.knowledge.document.base import Document
 from agno.knowledge.reranker.litellm import LiteLLMReranker
 
