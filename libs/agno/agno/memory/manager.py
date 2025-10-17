@@ -116,11 +116,17 @@ class MemoryManager:
 
     async def aread_from_db(self, user_id: Optional[str] = None):
         if self.db:
-            # If no user_id is provided, read all memories
-            if user_id is None:
-                all_memories: List[UserMemory] = await self.db.get_user_memories()  # type: ignore
+            if isinstance(self.db, AsyncBaseDb):
+                # If no user_id is provided, read all memories
+                if user_id is None:
+                    all_memories: List[UserMemory] = await self.db.get_user_memories()  # type: ignore
+                else:
+                    all_memories = await self.db.get_user_memories(user_id=user_id)  # type: ignore
             else:
-                all_memories = await self.db.get_user_memories(user_id=user_id)  # type: ignore
+                if user_id is None:
+                    all_memories = self.db.get_user_memories()  # type: ignore
+                else:
+                    all_memories = self.db.get_user_memories(user_id=user_id)  # type: ignore
 
             memories: Dict[str, List[UserMemory]] = {}
             for memory in all_memories:
@@ -434,7 +440,11 @@ class MemoryManager:
         if user_id is None:
             user_id = "default"
 
-        memories = self.read_from_db(user_id=user_id)
+        if isinstance(self.db, AsyncBaseDb):
+            memories = await self.aread_from_db(user_id=user_id)
+        else:
+            memories = self.read_from_db(user_id=user_id)
+
         if memories is None:
             memories = {}
 
@@ -453,7 +463,10 @@ class MemoryManager:
         )
 
         # We refresh from the DB
-        self.read_from_db(user_id=user_id)
+        if isinstance(self.db, AsyncBaseDb):
+            await self.aread_from_db(user_id=user_id)
+        else:
+            self.read_from_db(user_id=user_id)
 
         return response
 
