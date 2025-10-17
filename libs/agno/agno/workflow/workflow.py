@@ -147,6 +147,8 @@ class Workflow:
     # Stream the response from the Workflow
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Workflow
+    stream_events: bool = False
+    # [Deprecated] Stream the intermediate steps from the Workflow
     stream_intermediate_steps: bool = False
     # Stream events from executors (agents/teams/functions) within steps
     stream_executor_events: bool = True
@@ -190,6 +192,7 @@ class Workflow:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = False,
         stream: Optional[bool] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         store_events: bool = False,
@@ -214,6 +217,7 @@ class Workflow:
         self.store_events = store_events
         self.events_to_skip = events_to_skip or []
         self.stream = stream
+        self.stream_events = stream_events
         self.stream_intermediate_steps = stream_intermediate_steps
         self.stream_executor_events = stream_executor_events
         self.store_executor_outputs = store_executor_outputs
@@ -1283,7 +1287,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
         session_state: Optional[Dict[str, Any]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Iterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
@@ -1359,7 +1363,7 @@ class Workflow:
                         step_input,
                         session_id=session.session_id,
                         user_id=self.user_id,
-                        stream_intermediate_steps=stream_intermediate_steps,
+                        stream_events=stream_events,
                         stream_executor_events=self.stream_executor_events,
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
@@ -1763,7 +1767,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
         session_state: Optional[Dict[str, Any]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_events: bool = False,
         websocket_handler: Optional[WebSocketHandler] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
@@ -1849,7 +1853,7 @@ class Workflow:
                         step_input,
                         session_id=session.session_id,
                         user_id=self.user_id,
-                        stream_intermediate_steps=stream_intermediate_steps,
+                        stream_events=stream_events,
                         stream_executor_events=self.stream_executor_events,
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
@@ -2150,7 +2154,7 @@ class Workflow:
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_events: bool = False,
         websocket_handler: Optional[WebSocketHandler] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
@@ -2221,7 +2225,7 @@ class Workflow:
                     execution_input=inputs,
                     session=workflow_session,
                     workflow_run_response=workflow_run_response,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     session_state=session_state,
                     websocket_handler=websocket_handler,
                     **kwargs,
@@ -2296,6 +2300,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
     ) -> WorkflowRunOutput: ...
@@ -2313,6 +2318,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
@@ -2329,6 +2335,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream: bool = False,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         **kwargs: Any,
@@ -2361,11 +2368,13 @@ class Workflow:
 
         # Use simple defaults
         stream = stream or self.stream or False
-        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps or False
+        stream_events = (stream_events or stream_intermediate_steps) or (
+            self.stream_events or self.stream_intermediate_steps
+        )
 
-        # Can't have stream_intermediate_steps if stream is False
-        if not stream:
-            stream_intermediate_steps = False
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
 
         log_debug(f"Stream: {stream}")
         log_debug(f"Total steps: {self._get_step_count()}")
@@ -2402,7 +2411,7 @@ class Workflow:
                 session=workflow_session,
                 execution_input=inputs,  # type: ignore[arg-type]
                 workflow_run_response=workflow_run_response,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 session_state=session_state,
                 **kwargs,
             )
@@ -2428,6 +2437,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
@@ -2446,6 +2456,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
@@ -2463,6 +2474,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream: bool = False,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = False,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
@@ -2480,6 +2492,9 @@ class Workflow:
 
         if background:
             if stream and websocket:
+                # Consider both stream_events and stream_intermediate_steps (deprecated)
+                stream_events = stream_events or stream_intermediate_steps or False
+
                 # Background + Streaming + WebSocket = Real-time events
                 return await self._arun_background_stream(
                     input=input,
@@ -2491,7 +2506,7 @@ class Workflow:
                     images=images,
                     videos=videos,
                     files=files,
-                    stream_intermediate_steps=stream_intermediate_steps or False,
+                    stream_events=stream_events,
                     websocket_handler=websocket_handler,
                     **kwargs,
                 )
@@ -2536,11 +2551,13 @@ class Workflow:
 
         # Use simple defaults
         stream = stream or self.stream or False
-        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps or False
+        stream_events = (stream_events or stream_intermediate_steps) or (
+            self.stream_events or self.stream_intermediate_steps
+        )
 
-        # Can't have stream_intermediate_steps if stream is False
-        if not stream:
-            stream_intermediate_steps = False
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
 
         log_debug(f"Stream: {stream}")
 
@@ -2576,7 +2593,7 @@ class Workflow:
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
                 session=workflow_session,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 websocket=websocket,
                 files=files,
                 session_state=session_state,
@@ -2632,6 +2649,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
         show_time: bool = True,
@@ -2650,11 +2668,12 @@ class Workflow:
             images: Image input
             videos: Video input
             stream: Whether to stream the response content
-            stream_intermediate_steps: Whether to stream intermediate steps
+            stream_events: Whether to stream intermediate steps
             markdown: Whether to render content as markdown
             show_time: Whether to show execution time
             show_step_details: Whether to show individual step outputs
             console: Rich console instance (optional)
+            (deprecated) stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
         """
         if self._has_async_db():
             raise Exception("`print_response()` is not supported with an async DB. Please use `aprint_response()`.")
@@ -2662,8 +2681,19 @@ class Workflow:
         if stream is None:
             stream = self.stream or False
 
-        if stream_intermediate_steps is None:
-            stream_intermediate_steps = self.stream_intermediate_steps or False
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
+
+        if stream_events is None:
+            stream_events = (
+                False
+                if (self.stream_events is None and self.stream_intermediate_steps is None)
+                else (self.stream_intermediate_steps or self.stream_events)
+            )
 
         if stream:
             print_response_stream(
@@ -2676,7 +2706,7 @@ class Workflow:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -2712,6 +2742,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
         show_time: bool = True,
@@ -2729,18 +2760,30 @@ class Workflow:
             audio: Audio input
             images: Image input
             videos: Video input
-            stream_intermediate_steps: Whether to stream intermediate steps
             stream: Whether to stream the response content
+            stream_events: Whether to stream intermediate steps
             markdown: Whether to render content as markdown
             show_time: Whether to show execution time
             show_step_details: Whether to show individual step outputs
             console: Rich console instance (optional)
+            (deprecated) stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
         """
         if stream is None:
             stream = self.stream or False
 
-        if stream_intermediate_steps is None:
-            stream_intermediate_steps = self.stream_intermediate_steps or False
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
+
+        if stream_events is None:
+            stream_events = (
+                False
+                if (self.stream_events is None and self.stream_intermediate_steps is None)
+                else (self.stream_intermediate_steps or self.stream_events)
+            )
 
         if stream:
             await aprint_response_stream(
@@ -2753,7 +2796,7 @@ class Workflow:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -2986,6 +3029,7 @@ class Workflow:
         user: str = "User",
         emoji: str = ":technologist:",
         stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
         show_time: bool = True,
@@ -3006,11 +3050,12 @@ class Workflow:
             user: Display name for the user in the CLI prompt. Defaults to "User".
             emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
             stream: Whether to stream the workflow response. If None, uses workflow default.
-            stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
+            stream_events: Whether to stream intermediate step outputs. If None, uses workflow default.
             markdown: Whether to render output as markdown. Defaults to True.
             show_time: Whether to display timestamps in the output. Defaults to True.
             show_step_details: Whether to show detailed step information. Defaults to True.
             exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
+            (deprecated) stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
             **kwargs: Additional keyword arguments passed to the workflow's print_response method.
 
         Returns:
@@ -3019,11 +3064,14 @@ class Workflow:
 
         from rich.prompt import Prompt
 
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps or False
+
         if input:
             self.print_response(
                 input=input,
                 stream=stream,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -3041,7 +3089,7 @@ class Workflow:
             self.print_response(
                 input=message,
                 stream=stream,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -3058,6 +3106,7 @@ class Workflow:
         user: str = "User",
         emoji: str = ":technologist:",
         stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
         show_time: bool = True,
@@ -3078,11 +3127,12 @@ class Workflow:
             user: Display name for the user in the CLI prompt. Defaults to "User".
             emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
             stream: Whether to stream the workflow response. If None, uses workflow default.
-            stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
+            stream_events: Whether to stream events from the workflow. If None, uses workflow default.
             markdown: Whether to render output as markdown. Defaults to True.
             show_time: Whether to display timestamps in the output. Defaults to True.
             show_step_details: Whether to show detailed step information. Defaults to True.
             exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
+            (deprecated) stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
             **kwargs: Additional keyword arguments passed to the workflow's print_response method.
 
         Returns:
@@ -3091,11 +3141,14 @@ class Workflow:
 
         from rich.prompt import Prompt
 
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps or False
+
         if input:
             await self.aprint_response(
                 input=input,
                 stream=stream,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -3113,7 +3166,7 @@ class Workflow:
             await self.aprint_response(
                 input=message,
                 stream=stream,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,

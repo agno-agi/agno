@@ -331,6 +331,7 @@ def print_response_stream(
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,  # type: ignore
     knowledge_filters: Optional[Dict[str, Any]] = None,
     add_history_to_context: Optional[bool] = None,
@@ -355,7 +356,7 @@ def print_response_stream(
     if not tags_to_include_in_markdown:
         tags_to_include_in_markdown = {"think", "thinking"}
 
-    stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
+    stream_events = True  # With streaming print response, we need to stream intermediate steps
 
     _response_content: str = ""
     _response_reasoning_content: str = ""
@@ -399,7 +400,7 @@ def print_response_stream(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream_events=stream_events,
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
@@ -1160,6 +1161,7 @@ async def aprint_response_stream(
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,  # type: ignore
     knowledge_filters: Optional[Dict[str, Any]] = None,
     add_history_to_context: Optional[bool] = None,
@@ -1182,7 +1184,7 @@ async def aprint_response_stream(
     if not tags_to_include_in_markdown:
         tags_to_include_in_markdown = {"think", "thinking"}
 
-    stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
+    stream_events = True  # With streaming print response, we need to stream intermediate steps
 
     _response_content: str = ""
     _response_reasoning_content: str = ""
@@ -1238,7 +1240,7 @@ async def aprint_response_stream(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream_events=stream_events,
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,

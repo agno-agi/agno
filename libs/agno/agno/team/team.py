@@ -342,7 +342,9 @@ class Team:
     # --- Team Streaming ---
     # Stream the response from the Team
     stream: Optional[bool] = None
-    # Stream the intermediate steps from the Team
+    # Stream the intermediate steps from the Agent
+    stream_events: bool = False
+    # [Deprecated] Stream the intermediate steps from the Agent
     stream_intermediate_steps: bool = False
     # Stream the member events from the Team
     stream_member_events: bool = True
@@ -456,6 +458,7 @@ class Team:
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
         stream: Optional[bool] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
         events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
@@ -571,6 +574,7 @@ class Team:
         self.reasoning_max_steps = reasoning_max_steps
 
         self.stream = stream
+        self.stream_events = stream_events
         self.stream_intermediate_steps = stream_intermediate_steps
         self.store_events = store_events
         self.store_member_responses = store_member_responses
@@ -1277,7 +1281,7 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_events: bool = False,
         yield_run_response: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -1369,7 +1373,7 @@ class Team:
 
         try:
             # Start the Run by yielding a RunStarted event
-            if stream_intermediate_steps:
+            if stream_events:
                 yield self._handle_event(create_team_run_started_event(run_response), run_response)
 
             # 3. Reason about the task(s) if reasoning is enabled
@@ -1388,7 +1392,7 @@ class Team:
                     run_response=run_response,
                     run_messages=run_messages,
                     response_format=response_format,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -1398,13 +1402,13 @@ class Team:
                     run_response=run_response,
                     run_messages=run_messages,
                     response_format=response_format,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
                     if isinstance(event, RunContentEvent):
-                        if stream_intermediate_steps:
+                        if stream_events:
                             yield IntermediateRunContentEvent(
                                 content=event.content,
                                 content_type=event.content_type,
@@ -1416,7 +1420,7 @@ class Team:
                     session=session,
                     run_response=run_response,
                     run_messages=run_messages,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -1426,7 +1430,7 @@ class Team:
 
             # If a parser model is provided, structure the response separately
             yield from self._parse_response_with_parser_model_stream(
-                session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+                session=session, run_response=run_response, stream_events=stream_events
             )
 
             # Execute post-hooks after output is generated but before response is returned
@@ -1477,7 +1481,7 @@ class Team:
             # 10. Save session to storage
             self.save_session(session=session)
 
-            if stream_intermediate_steps:
+            if stream_events:
                 yield completed_event
 
             if yield_run_response:
@@ -1513,6 +1517,7 @@ class Team:
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
         stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1538,6 +1543,7 @@ class Team:
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
         stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1563,6 +1569,7 @@ class Team:
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
         stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1656,17 +1663,26 @@ class Team:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        if stream_intermediate_steps is None:
-            stream_intermediate_steps = (
-                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
+
+        if stream_events is None:
+            stream_events = (
+                False
+                if (self.stream_events is None and self.stream_intermediate_steps is None)
+                else (self.stream_intermediate_steps or self.stream_events)
             )
 
-        # Can't have stream_intermediate_steps if stream is False
-        if stream is False:
-            stream_intermediate_steps = False
-
         self.stream = self.stream or stream
-        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
+        self.stream_events = bool(
+            self.stream_events
+            or self.stream_intermediate_steps
+            or ((stream_events or stream_intermediate_steps) and self.stream)
+        )
 
         # Configure the model for runs
         response_format: Optional[Union[Dict, Type[BaseModel]]] = (
@@ -1722,7 +1738,7 @@ class Team:
                         metadata=metadata,
                         dependencies=run_dependencies,
                         response_format=response_format,
-                        stream_intermediate_steps=stream_intermediate_steps,
+                        stream_events=stream_events,
                         yield_run_response=yield_run_response,
                         debug_mode=debug_mode,
                         **kwargs,
@@ -2021,6 +2037,7 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         yield_run_response: bool = False,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2138,8 +2155,11 @@ class Team:
         register_run(run_response.run_id)  # type: ignore
 
         try:
+            # Considering both stream_events and stream_intermediate_steps (deprecated)
+            stream_events = stream_events or stream_intermediate_steps
+
             # 7. Yield the run started event
-            if stream_intermediate_steps:
+            if stream_events:
                 yield self._handle_event(create_team_run_started_event(from_run_response=run_response), run_response)
 
             # 8. Reason about the task(s) if reasoning is enabled
@@ -2157,7 +2177,7 @@ class Team:
                     run_response=run_response,
                     run_messages=run_messages,
                     response_format=response_format,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -2167,13 +2187,13 @@ class Team:
                     run_response=run_response,
                     run_messages=run_messages,
                     response_format=response_format,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
                     if isinstance(event, RunContentEvent):
-                        if stream_intermediate_steps:
+                        if stream_events:
                             yield IntermediateRunContentEvent(
                                 content=event.content,
                                 content_type=event.content_type,
@@ -2185,7 +2205,7 @@ class Team:
                     session=team_session,
                     run_response=run_response,
                     run_messages=run_messages,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -2195,7 +2215,7 @@ class Team:
 
             # If a parser model is provided, structure the response separately
             async for event in self._aparse_response_with_parser_model_stream(
-                session=team_session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+                session=team_session, run_response=run_response, stream_events=stream_events
             ):
                 yield event
 
@@ -2249,7 +2269,7 @@ class Team:
             else:
                 self.save_session(session=team_session)
 
-            if stream_intermediate_steps:
+            if stream_events:
                 yield completed_event
 
             if yield_run_response:
@@ -2288,6 +2308,7 @@ class Team:
         input: Union[str, List, Dict, Message, BaseModel],
         *,
         stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -2313,6 +2334,7 @@ class Team:
         input: Union[str, List, Dict, Message, BaseModel],
         *,
         stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -2338,6 +2360,7 @@ class Team:
         input: Union[str, List, Dict, Message, BaseModel],
         *,
         stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -2409,17 +2432,26 @@ class Team:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        if stream_intermediate_steps is None:
-            stream_intermediate_steps = (
-                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
+
+        if stream_events is None:
+            stream_events = (
+                False
+                if (self.stream_events is None and self.stream_intermediate_steps is None)
+                else (self.stream_intermediate_steps or self.stream_events)
             )
 
-        # Can't have stream_intermediate_steps if stream is False
-        if stream is False:
-            stream_intermediate_steps = False
-
         self.stream = self.stream or stream
-        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
+        self.stream_events = bool(
+            self.stream_events
+            or self.stream_intermediate_steps
+            or ((stream_events or stream_intermediate_steps) and self.stream)
+        )
 
         # Configure the model for runs
         response_format: Optional[Union[Dict, Type[BaseModel]]] = (
@@ -2480,7 +2512,7 @@ class Team:
                         metadata=metadata,
                         response_format=response_format,
                         dependencies=run_dependencies,
-                        stream_intermediate_steps=stream_intermediate_steps,
+                        stream_events=stream_events,
                         yield_run_response=yield_run_response,
                         debug_mode=debug_mode,
                         **kwargs,
@@ -2631,7 +2663,7 @@ class Team:
         run_response: TeamRunOutput,
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_events: bool = False,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         self.model = cast(Model, self.model)
 
@@ -2662,7 +2694,7 @@ class Team:
                 full_model_response=full_model_response,
                 model_response_event=model_response_event,
                 reasoning_state=reasoning_state,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 parse_structured_output=self.should_parse_structured_output,
             )
 
@@ -2678,7 +2710,7 @@ class Team:
         if full_model_response.provider_data is not None:
             run_response.model_provider_data = full_model_response.provider_data
 
-        if stream_intermediate_steps and reasoning_state["reasoning_started"]:
+        if stream_events and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
             if run_response.reasoning_steps:
                 all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
@@ -2711,7 +2743,7 @@ class Team:
         run_response: TeamRunOutput,
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_events: bool = False,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         self.model = cast(Model, self.model)
 
@@ -2743,7 +2775,7 @@ class Team:
                 full_model_response=full_model_response,
                 model_response_event=model_response_event,
                 reasoning_state=reasoning_state,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 parse_structured_output=self.should_parse_structured_output,
             ):
                 yield event
@@ -2772,7 +2804,7 @@ class Team:
         # Update the TeamRunOutput metrics
         run_response.metrics = self._calculate_metrics(messages_for_run_response)
 
-        if stream_intermediate_steps and reasoning_state["reasoning_started"]:
+        if stream_events and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
             if run_response.reasoning_steps:
                 all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
@@ -2795,7 +2827,7 @@ class Team:
         full_model_response: ModelResponse,
         model_response_event: Union[ModelResponse, TeamRunOutputEvent, RunOutputEvent],
         reasoning_state: Optional[Dict[str, Any]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_events: bool = False,
         parse_structured_output: bool = False,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
@@ -3025,7 +3057,7 @@ class Team:
                             run_response,
                         )
 
-                if stream_intermediate_steps:
+                if stream_events:
                     if reasoning_step is not None:
                         if reasoning_state is not None and not reasoning_state["reasoning_started"]:
                             yield self._handle_event(
@@ -3269,12 +3301,15 @@ class Team:
             log_warning("A response model is required to parse the response with a parser model")
 
     def _parse_response_with_parser_model_stream(
-        self, session: TeamSession, run_response: TeamRunOutput, stream_intermediate_steps: bool = True
+        self,
+        session: TeamSession,
+        run_response: TeamRunOutput,
+        stream_events: bool = False,
     ):
         """Parse the model response using the parser model"""
         if self.parser_model is not None:
             if self.output_schema is not None:
-                if stream_intermediate_steps:
+                if stream_events:
                     yield self._handle_event(
                         create_team_parser_model_response_started_event(run_response), run_response
                     )
@@ -3295,7 +3330,7 @@ class Team:
                         full_model_response=parser_model_response,
                         model_response_event=model_response_event,
                         parse_structured_output=True,
-                        stream_intermediate_steps=stream_intermediate_steps,
+                        stream_events=stream_events,
                     )
 
                 run_response.content = parser_model_response.content
@@ -3311,7 +3346,7 @@ class Team:
                 else:
                     log_warning("Unable to parse response with parser model")
 
-                if stream_intermediate_steps:
+                if stream_events:
                     yield self._handle_event(
                         create_team_parser_model_response_completed_event(run_response), run_response
                     )
@@ -3320,12 +3355,12 @@ class Team:
                 log_warning("A response model is required to parse the response with a parser model")
 
     async def _aparse_response_with_parser_model_stream(
-        self, session: TeamSession, run_response: TeamRunOutput, stream_intermediate_steps: bool = True
+        self, session: TeamSession, run_response: TeamRunOutput, stream_events: bool = False
     ):
         """Parse the model response using the parser model stream."""
         if self.parser_model is not None:
             if self.output_schema is not None:
-                if stream_intermediate_steps:
+                if stream_events:
                     yield self._handle_event(
                         create_team_parser_model_response_started_event(run_response), run_response
                     )
@@ -3347,7 +3382,7 @@ class Team:
                         full_model_response=parser_model_response,
                         model_response_event=model_response_event,
                         parse_structured_output=True,
-                        stream_intermediate_steps=stream_intermediate_steps,
+                        stream_events=stream_events,
                     ):
                         yield event
 
@@ -3364,7 +3399,7 @@ class Team:
                 else:
                     log_warning("Unable to parse response with parser model")
 
-                if stream_intermediate_steps:
+                if stream_events:
                     yield self._handle_event(
                         create_team_parser_model_response_completed_event(run_response), run_response
                     )
@@ -3385,7 +3420,7 @@ class Team:
         session: TeamSession,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
-        stream_intermediate_steps: bool = False,
+        stream_events: bool = False,
     ):
         """Parse the model response using the output model stream."""
         from agno.utils.events import (
@@ -3396,7 +3431,7 @@ class Team:
         if self.output_model is None:
             return
 
-        if stream_intermediate_steps:
+        if stream_events:
             yield self._handle_event(create_team_output_model_response_started_event(run_response), run_response)
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
@@ -3413,7 +3448,7 @@ class Team:
         # Update the TeamRunResponse content
         run_response.content = model_response.content
 
-        if stream_intermediate_steps:
+        if stream_events:
             yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
 
         # Build a list of messages that should be added to the RunResponse
@@ -3439,7 +3474,7 @@ class Team:
         session: TeamSession,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
-        stream_intermediate_steps: bool = False,
+        stream_events: bool = False,
     ):
         """Parse the model response using the output model stream."""
         from agno.utils.events import (
@@ -3450,7 +3485,7 @@ class Team:
         if self.output_model is None:
             return
 
-        if stream_intermediate_steps:
+        if stream_events:
             yield self._handle_event(create_team_output_model_response_started_event(run_response), run_response)
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
@@ -3468,7 +3503,7 @@ class Team:
         # Update the TeamRunResponse content
         run_response.content = model_response.content
 
-        if stream_intermediate_steps:
+        if stream_events:
             yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
 
         # Build a list of messages that should be added to the RunResponse
@@ -3500,6 +3535,7 @@ class Team:
         input: Union[List, Dict, str, Message, BaseModel, List[Message]],
         *,
         stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -3540,8 +3576,19 @@ class Team:
         if stream is None:
             stream = self.stream or False
 
-        if stream_intermediate_steps is None:
-            stream_intermediate_steps = self.stream_intermediate_steps or False
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
+
+        if stream_events is None:
+            stream_events = (
+                False
+                if (self.stream_events is None and self.stream_intermediate_steps is None)
+                else (self.stream_intermediate_steps or self.stream_events)
+            )
 
         if stream:
             print_response_stream(
@@ -3560,7 +3607,7 @@ class Team:
                 videos=videos,
                 files=files,
                 markdown=markdown,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
@@ -3602,6 +3649,7 @@ class Team:
         input: Union[List, Dict, str, Message, BaseModel, List[Message]],
         *,
         stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -3637,8 +3685,19 @@ class Team:
         if stream is None:
             stream = self.stream or False
 
-        if stream_intermediate_steps is None:
-            stream_intermediate_steps = self.stream_intermediate_steps or False
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
+
+        if stream_events is None:
+            stream_events = (
+                False
+                if (self.stream_events is None and self.stream_intermediate_steps is None)
+                else (self.stream_intermediate_steps or self.stream_events)
+            )
 
         if stream:
             await aprint_response_stream(
@@ -3657,7 +3716,7 @@ class Team:
                 videos=videos,
                 files=files,
                 markdown=markdown,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
@@ -4063,7 +4122,7 @@ class Team:
         run_response: TeamRunOutput,
         run_messages: RunMessages,
     ) -> Iterator[TeamRunOutputEvent]:
-        if self.stream_intermediate_steps:
+        if self.stream_events or self.stream_intermediate_steps:
             yield self._handle_event(create_team_reasoning_started_event(from_run_response=run_response), run_response)
 
         use_default_reasoning = False
@@ -4185,7 +4244,7 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-                if self.stream_intermediate_steps:
+                if self.stream_events or self.stream_intermediate_steps:
                     yield self._handle_event(
                         create_team_reasoning_completed_event(
                             from_run_response=run_response,
@@ -4270,7 +4329,7 @@ class Team:
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
-                    if self.stream_intermediate_steps:
+                    if self.stream_events or self.stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
                                 run_response, reasoning_step
@@ -4318,7 +4377,7 @@ class Team:
             )
 
             # Yield the final reasoning completed event
-            if self.stream_intermediate_steps:
+            if self.stream_events or self.stream_intermediate_steps:
                 yield self._handle_event(
                     create_team_reasoning_completed_event(
                         from_run_response=run_response,
@@ -4333,7 +4392,7 @@ class Team:
         run_response: TeamRunOutput,
         run_messages: RunMessages,
     ) -> AsyncIterator[TeamRunOutputEvent]:
-        if self.stream_intermediate_steps:
+        if self.stream_events or self.stream_intermediate_steps:
             yield self._handle_event(create_team_reasoning_started_event(from_run_response=run_response), run_response)
 
         use_default_reasoning = False
@@ -4454,7 +4513,7 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-                if self.stream_intermediate_steps:
+                if self.stream_events or self.stream_intermediate_steps:
                     yield self._handle_event(
                         create_team_reasoning_completed_event(
                             from_run_response=run_response,
@@ -4538,7 +4597,7 @@ class Team:
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
-                    if self.stream_intermediate_steps:
+                    if self.stream_events or self.stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
                                 run_response, reasoning_step
@@ -4586,7 +4645,7 @@ class Team:
             )
 
             # Yield the final reasoning completed event
-            if self.stream_intermediate_steps:
+            if self.stream_events or self.stream_intermediate_steps:
                 yield self._handle_event(
                     create_team_reasoning_completed_event(
                         from_run_response=run_response,
@@ -4872,7 +4931,7 @@ class Team:
                 input=user_message,
                 user_id=user_id,
                 stream=self.stream or False,
-                stream_intermediate_steps=self.stream_intermediate_steps,
+                stream_events=self.stream_events or self.stream_intermediate_steps,
                 async_mode=async_mode,
                 images=images,  # type: ignore
                 videos=videos,  # type: ignore
@@ -6562,7 +6621,7 @@ class Team:
         team_run_context: Dict[str, Any],
         user_id: Optional[str] = None,
         stream: bool = False,
-        stream_intermediate_steps: bool = False,
+        stream_events: bool = False,
         async_mode: bool = False,
         input: Optional[Message] = None,  # Used for determine_input_for_memberss=False
         images: Optional[List[Image]] = None,
@@ -6731,7 +6790,7 @@ class Team:
                     audio=audio,
                     files=files,
                     stream=True,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     debug_mode=debug_mode,
                     dependencies=dependencies,
                     add_dependencies_to_context=add_dependencies_to_context,
@@ -6857,7 +6916,7 @@ class Team:
                     audio=audio,
                     files=files,
                     stream=True,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     debug_mode=debug_mode,
                     dependencies=dependencies,
                     add_dependencies_to_context=add_dependencies_to_context,
@@ -6973,7 +7032,7 @@ class Team:
                         audio=audio,
                         files=files,
                         stream=True,
-                        stream_intermediate_steps=stream_intermediate_steps,
+                        stream_events=stream_events,
                         knowledge_filters=knowledge_filters
                         if not member_agent.knowledge_filters and member_agent.knowledge
                         else None,
@@ -7089,7 +7148,7 @@ class Team:
                         audio=audio,
                         files=files,
                         stream=True,
-                        stream_intermediate_steps=stream_intermediate_steps,
+                        stream_events=stream_events,
                         debug_mode=debug_mode,
                         knowledge_filters=knowledge_filters
                         if not member_agent.knowledge_filters and member_agent.knowledge
@@ -7166,7 +7225,7 @@ class Team:
                             audio=audio,
                             files=files,
                             stream=False,
-                            stream_intermediate_steps=stream_intermediate_steps,
+                            stream_events=stream_events,
                             debug_mode=debug_mode,
                             knowledge_filters=knowledge_filters
                             if not member_agent.knowledge_filters and member_agent.knowledge

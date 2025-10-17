@@ -316,6 +316,7 @@ class Parallel:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
@@ -342,7 +343,10 @@ class Parallel:
             else:
                 session_state_copies.append({})
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Yield parallel step started event
             yield ParallelExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -385,7 +389,7 @@ class Parallel:
                     step_input,
                     session_id=session_id,
                     user_id=user_id,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
@@ -483,7 +487,7 @@ class Parallel:
 
         log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             # Yield parallel step completed event
             yield ParallelExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -622,6 +626,7 @@ class Parallel:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
@@ -648,7 +653,10 @@ class Parallel:
             else:
                 session_state_copies.append({})
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Yield parallel step started event
             yield ParallelExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -691,7 +699,7 @@ class Parallel:
                     step_input,
                     session_id=session_id,
                     user_id=user_id,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
@@ -777,7 +785,7 @@ class Parallel:
 
         log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             # Yield parallel step completed event
             yield ParallelExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
