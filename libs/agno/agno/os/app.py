@@ -462,14 +462,14 @@ class AgentOS:
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover the databases used by all contextual agents, teams and workflows."""
-        from agno.db.base import AsyncBaseDb, BaseDb
 
-        dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}
+        from agno.db.base import AsyncBaseDb, BaseDb
+        old_dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}
+        dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]] = {}
         knowledge_dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
             if agent.db:
-                print(f"Agent {agent.id} has database {agent.db.id}")
                 self._register_db_with_validation(dbs, agent.db)
             if agent.knowledge and agent.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
@@ -499,57 +499,21 @@ class AgentOS:
 
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
         """Get the table names for a database"""
-        return {
+        table_names = {
             "session_table_name": db.session_table_name,
             "memory_table_name": db.memory_table_name,
             "metrics_table_name": db.metrics_table_name,
             "evals_table_name": db.eval_table_name,
             "knowledge_table_name": db.knowledge_table_name,
         }
+        return {k: v for k, v in table_names.items() if v is not None}
         
-    def _register_db_with_validation(self, registered_dbs: Dict[str, Any], db: BaseDb) -> None:
+    def _register_db_with_validation(self, registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]], db: BaseDb) -> None:
         """Register a database in the contextual OS after validating it is not conflicting with registered databases"""
-        print(f"Registering database {db.id} with table names {self._get_db_table_names(db)}")
         if db.id in registered_dbs:
-            existing_db = registered_dbs[db.id]
-            if not self._are_db_instances_compatible(existing_db, db):
-                raise ValueError(
-                    f"Database ID conflict detected: Two different database instances have the same ID '{db.id}'. "
-                    f"Database instances with the same ID must point to the same database with identical configuration."
-                )
-        registered_dbs[db.id] = db
-
-    def _are_db_instances_compatible(self, db1: Union[BaseDb, AsyncBaseDb], db2: Union[BaseDb, AsyncBaseDb]) -> bool:
-        """
-        Return True if the two given database objects are compatible
-        Two database objects are compatible if they point to the same database with identical configuration.
-        """
-        # If they're the same object reference, they're compatible
-        if db1 is db2:
-            return True
-
-        if type(db1) is not type(db2):
-            return False
-
-        if hasattr(db1, "db_url") and hasattr(db2, "db_url"):
-            if db1.db_url != db2.db_url:  # type: ignore
-                return False
-
-        if hasattr(db1, "db_file") and hasattr(db2, "db_file"):
-            if db1.db_file != db2.db_file:  # type: ignore
-                return False
-
-        # If table names are different, they're not compatible
-        if (
-            db1.session_table_name != db2.session_table_name
-            or db1.memory_table_name != db2.memory_table_name
-            or db1.metrics_table_name != db2.metrics_table_name
-            or db1.eval_table_name != db2.eval_table_name
-            or db1.knowledge_table_name != db2.knowledge_table_name
-        ):
-            return False
-
-        return True
+            registered_dbs[db.id].append(db)
+        else:
+            registered_dbs[db.id] = [db]
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
@@ -586,15 +550,17 @@ class AgentOS:
             session_config.dbs = []
 
         dbs_with_specific_config = [db.db_id for db in session_config.dbs]
-
-        for db_id in self.dbs.keys():
-            if db_id not in dbs_with_specific_config:
-                session_config.dbs.append(
-                    DatabaseConfig(
-                        db_id=db_id,
-                        domain_config=SessionDomainConfig(display_name=db_id),
+        for db_id, dbs in self.dbs.items():
+            tables = [db.session_table_name for db in dbs]
+            for db in dbs:
+                if db.id not in dbs_with_specific_config:
+                    session_config.dbs.append(
+                        DatabaseConfig(
+                            db_id=db.id,
+                            domain_config=SessionDomainConfig(display_name=db.id),
+                            tables=tables,
+                        )
                     )
-                )
 
         return session_config
 
