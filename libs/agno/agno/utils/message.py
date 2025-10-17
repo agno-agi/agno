@@ -55,7 +55,6 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
 
             if filtered_msg.tool_calls:
                 # Has tool_calls remaining, keep it
-                removed_count = total_tool_calls - len(filtered_msg.tool_calls)
                 filtered_messages.append(filtered_msg)
             # skip empty messages
             elif filtered_msg.content:
