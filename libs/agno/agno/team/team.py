@@ -1843,6 +1843,9 @@ class Team:
 
         register_run(run_response.run_id)  # type: ignore
 
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=dependencies)
+
         # 1. Read or create session. Reads from the database if provided.
         if self._has_async_db():
             team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
@@ -1874,7 +1877,7 @@ class Team:
             async for _ in pre_hook_iterator:
                 pass
 
-        # 4. Determine tools for model
+        # 5. Determine tools for model
         team_run_context: Dict[str, Any] = {}
         self.model = cast(Model, self.model)
         self.determine_tools_for_model(
@@ -2055,7 +2058,7 @@ class Team:
 
         # 1. Resolve dependencies
         if dependencies is not None:
-            self._resolve_run_dependencies(dependencies=dependencies)
+            await self._aresolve_run_dependencies(dependencies=dependencies)
 
         # 2. Read or create session. Reads from the database if provided.
         if self._has_async_db():
