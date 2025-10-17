@@ -2034,6 +2034,7 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         yield_run_response: bool = False,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2151,8 +2152,11 @@ class Team:
         register_run(run_response.run_id)  # type: ignore
 
         try:
+            # Considering both stream_events and stream_intermediate_steps (deprecated)
+            stream_events = stream_events or stream_intermediate_steps
+
             # 7. Yield the run started event
-            if stream_intermediate_steps:
+            if stream_events:
                 yield self._handle_event(create_team_run_started_event(from_run_response=run_response), run_response)
 
             # 8. Reason about the task(s) if reasoning is enabled
@@ -2170,7 +2174,7 @@ class Team:
                     run_response=run_response,
                     run_messages=run_messages,
                     response_format=response_format,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -2180,13 +2184,13 @@ class Team:
                     run_response=run_response,
                     run_messages=run_messages,
                     response_format=response_format,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
                     if isinstance(event, RunContentEvent):
-                        if stream_intermediate_steps:
+                        if stream_events:
                             yield IntermediateRunContentEvent(
                                 content=event.content,
                                 content_type=event.content_type,
@@ -2198,7 +2202,7 @@ class Team:
                     session=team_session,
                     run_response=run_response,
                     run_messages=run_messages,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -2208,7 +2212,7 @@ class Team:
 
             # If a parser model is provided, structure the response separately
             async for event in self._aparse_response_with_parser_model_stream(
-                session=team_session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+                session=team_session, run_response=run_response, stream_events=stream_events
             ):
                 yield event
 
@@ -2262,7 +2266,7 @@ class Team:
             else:
                 self.save_session(session=team_session)
 
-            if stream_intermediate_steps:
+            if stream_events:
                 yield completed_event
 
             if yield_run_response:
@@ -2301,6 +2305,7 @@ class Team:
         input: Union[str, List, Dict, Message, BaseModel],
         *,
         stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -2326,6 +2331,7 @@ class Team:
         input: Union[str, List, Dict, Message, BaseModel],
         *,
         stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -2351,6 +2357,7 @@ class Team:
         input: Union[str, List, Dict, Message, BaseModel],
         *,
         stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -2422,17 +2429,26 @@ class Team:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        if stream_intermediate_steps is None:
-            stream_intermediate_steps = (
-                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
+
+        if stream_events is None:
+            stream_events = (
+                False
+                if (self.stream_events is None and self.stream_intermediate_steps is None)
+                else (self.stream_intermediate_steps or self.stream_events)
             )
 
-        # Can't have stream_intermediate_steps if stream is False
-        if stream is False:
-            stream_intermediate_steps = False
-
         self.stream = self.stream or stream
-        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
+        self.stream_events = bool(
+            self.stream_events
+            or self.stream_intermediate_steps
+            or ((stream_events or stream_intermediate_steps) and self.stream)
+        )
 
         # Configure the model for runs
         response_format: Optional[Union[Dict, Type[BaseModel]]] = (
@@ -3282,12 +3298,15 @@ class Team:
             log_warning("A response model is required to parse the response with a parser model")
 
     def _parse_response_with_parser_model_stream(
-        self, session: TeamSession, run_response: TeamRunOutput, stream_intermediate_steps: bool = True
+        self,
+        session: TeamSession,
+        run_response: TeamRunOutput,
+        stream_events: bool = False,
     ):
         """Parse the model response using the parser model"""
         if self.parser_model is not None:
             if self.output_schema is not None:
-                if stream_intermediate_steps:
+                if stream_events:
                     yield self._handle_event(
                         create_team_parser_model_response_started_event(run_response), run_response
                     )
@@ -3308,7 +3327,7 @@ class Team:
                         full_model_response=parser_model_response,
                         model_response_event=model_response_event,
                         parse_structured_output=True,
-                        stream_intermediate_steps=stream_intermediate_steps,
+                        stream_events=stream_events,
                     )
 
                 run_response.content = parser_model_response.content
@@ -3324,7 +3343,7 @@ class Team:
                 else:
                     log_warning("Unable to parse response with parser model")
 
-                if stream_intermediate_steps:
+                if stream_events:
                     yield self._handle_event(
                         create_team_parser_model_response_completed_event(run_response), run_response
                     )
@@ -3333,12 +3352,12 @@ class Team:
                 log_warning("A response model is required to parse the response with a parser model")
 
     async def _aparse_response_with_parser_model_stream(
-        self, session: TeamSession, run_response: TeamRunOutput, stream_intermediate_steps: bool = True
+        self, session: TeamSession, run_response: TeamRunOutput, stream_events: bool = False
     ):
         """Parse the model response using the parser model stream."""
         if self.parser_model is not None:
             if self.output_schema is not None:
-                if stream_intermediate_steps:
+                if stream_events:
                     yield self._handle_event(
                         create_team_parser_model_response_started_event(run_response), run_response
                     )
@@ -3360,7 +3379,7 @@ class Team:
                         full_model_response=parser_model_response,
                         model_response_event=model_response_event,
                         parse_structured_output=True,
-                        stream_intermediate_steps=stream_intermediate_steps,
+                        stream_events=stream_events,
                     ):
                         yield event
 
@@ -3377,7 +3396,7 @@ class Team:
                 else:
                     log_warning("Unable to parse response with parser model")
 
-                if stream_intermediate_steps:
+                if stream_events:
                     yield self._handle_event(
                         create_team_parser_model_response_completed_event(run_response), run_response
                     )
