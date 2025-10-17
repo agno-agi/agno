@@ -68,6 +68,20 @@ async def main():
         "What was Rocky's personality?", stream=True, stream_intermediate_steps=True
     )
 
+    print("\n" + "=" * 80)
+    print("THIRD CALL (ASYNC STREAMING): Now tell me a story about a cat named Luna")
+    print("=" * 80)
+    await workflow.aprint_response(
+        "Tell me a story about a cat named Luna", stream=True, stream_intermediate_steps=True
+    )
+
+    print("\n" + "=" * 80)
+    print("FOURTH CALL (ASYNC STREAMING): Compare Rocky and Luna")
+    print("=" * 80)
+    await workflow.aprint_response(
+        "Compare Rocky and Luna", stream=True, stream_intermediate_steps=True
+    )
+
 
 if __name__ == "__main__":
     asyncio.run(main())
