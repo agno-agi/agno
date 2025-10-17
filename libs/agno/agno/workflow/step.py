@@ -1,3 +1,4 @@
+
 import inspect
 from copy import copy
 from dataclasses import dataclass
@@ -5,6 +6,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from uuid import uuid4
 
 from pydantic import BaseModel
+from typing_extensions import TypeGuard
 
 from agno.agent import Agent
 from agno.media import Audio, Image, Video
@@ -191,9 +193,8 @@ class Step:
         session_state: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Call custom async function with session_state support if the function accepts it"""
-        import inspect
 
-        if inspect.isasyncgenfunction(func):
+        if _is_async_generator_function(func):
             if session_state is not None and self._function_has_session_state_param():
                 return func(step_input, session_state)
             else:
@@ -231,16 +232,14 @@ class Step:
             try:
                 response: Union[RunOutput, TeamRunOutput, StepOutput]
                 if self._executor_type == "function":
-                    if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(
-                        self.active_executor
-                    ):
+                    if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
-                    if inspect.isgeneratorfunction(self.active_executor):
+                    if _is_generator_function(self.active_executor):
                         content = ""
                         final_response = None
                         try:
                             for chunk in self._call_custom_function(
-                                self.active_executor, step_input, session_state_copy
+                                self.active_executor, step_input, session_state_copy  # type: ignore[arg-type]
                             ):  # type: ignore
                                 if (
                                     hasattr(chunk, "content")
@@ -368,9 +367,7 @@ class Step:
             return False
 
         try:
-            from inspect import signature
-
-            sig = signature(self.active_executor)  # type: ignore
+            sig = inspect.signature(self.active_executor)  # type: ignore
             return "session_state" in sig.parameters
         except Exception:
             return False
@@ -449,12 +446,10 @@ class Step:
                 if self._executor_type == "function":
                     log_debug(f"Executing function executor for step: {self.name}")
 
-                    if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(
-                        self.active_executor
-                    ):
+                    if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
 
-                    if inspect.isgeneratorfunction(self.active_executor):
+                    if _is_generator_function(self.active_executor):
                         log_debug("Function returned iterable, streaming events")
                         content = ""
                         try:
@@ -652,17 +647,15 @@ class Step:
         for attempt in range(self.max_retries + 1):
             try:
                 if self._executor_type == "function":
-                    import inspect
-
-                    if inspect.isgeneratorfunction(self.active_executor) or inspect.isasyncgenfunction(
+                    if _is_generator_function(self.active_executor) or _is_async_generator_function(
                         self.active_executor
                     ):
                         content = ""
                         final_response = None
                         try:
-                            if inspect.isgeneratorfunction(self.active_executor):
+                            if _is_generator_function(self.active_executor):
                                 iterator = self._call_custom_function(
-                                    self.active_executor, step_input, session_state_copy
+                                    self.active_executor, step_input, session_state_copy # type: ignore[arg-type]
                                 )  # type: ignore
                                 for chunk in iterator:  # type: ignore
                                     if (
@@ -676,9 +669,9 @@ class Step:
                                     if isinstance(chunk, StepOutput):
                                         final_response = chunk
                             else:
-                                if inspect.isasyncgenfunction(self.active_executor):
+                                if _is_async_generator_function(self.active_executor):
                                     iterator = await self._acall_custom_function(
-                                        self.active_executor, step_input, session_state_copy
+                                        self.active_executor, step_input, session_state_copy  # type: ignore[arg-type]
                                     )  # type: ignore
                                     async for chunk in iterator:  # type: ignore
                                         if (
@@ -705,7 +698,7 @@ class Step:
                         else:
                             response = StepOutput(content=content)
                     else:
-                        if inspect.iscoroutinefunction(self.active_executor):
+                        if _is_async_callable(self.active_executor):
                             result = await self._acall_custom_function(
                                 self.active_executor, step_input, session_state_copy
                             )  # type: ignore
@@ -854,14 +847,13 @@ class Step:
 
                 if self._executor_type == "function":
                     log_debug(f"Executing async function executor for step: {self.name}")
-                    import inspect
 
                     # Check if the function is an async generator
-                    if inspect.isasyncgenfunction(self.active_executor):
+                    if _is_async_generator_function(self.active_executor):
                         content = ""
                         # It's an async generator - iterate over it
                         iterator = await self._acall_custom_function(
-                            self.active_executor, step_input, session_state_copy
+                            self.active_executor, step_input, session_state_copy  # type: ignore[arg-type]
                         )  # type: ignore
                         async for event in iterator:  # type: ignore
                             if (
@@ -885,14 +877,14 @@ class Step:
                                     yield enriched_event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
-                    elif inspect.iscoroutinefunction(self.active_executor):
+                    elif _is_async_callable(self.active_executor):
                         # It's a regular async function - await it
                         result = await self._acall_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
                         if isinstance(result, StepOutput):
                             final_response = result
                         else:
                             final_response = StepOutput(content=str(result))
-                    elif inspect.isgeneratorfunction(self.active_executor):
+                    elif _is_generator_function(self.active_executor):
                         content = ""
                         # It's a regular generator function - iterate over it
                         iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
@@ -1252,3 +1244,28 @@ class Step:
                 continue
 
         return videos
+
+
+def _is_async_callable(obj: Any) -> TypeGuard[Callable[..., Any]]:
+    """Checks if obj is an async callable (coroutine function or callable with async __call__)"""
+    return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
+
+
+def _is_generator_function(obj: Any) -> TypeGuard[Callable[..., Any]]:
+    """Checks if obj is a generator function, including callable class instances with generator __call__ methods"""
+    if inspect.isgeneratorfunction(obj):
+        return True
+    # Check if it's a callable class instance with a generator __call__ method
+    if hasattr(obj, "__call__"):
+        return inspect.isgeneratorfunction(obj.__call__)
+    return False
+
+
+def _is_async_generator_function(obj: Any) -> TypeGuard[Callable[..., Any]]:
+    """Checks if obj is an async generator function, including callable class instances"""
+    if inspect.isasyncgenfunction(obj):
+        return True
+    # Check if it's a callable class instance with an async generator __call__ method
+    if hasattr(obj, "__call__"):
+        return inspect.isasyncgenfunction(obj.__call__)
+    return False
