@@ -22,6 +22,7 @@ class JiraTools(Toolkit):
         enable_create_issue: bool = True,
         enable_search_issues: bool = True,
         enable_add_comment: bool = True,
+        enable_add_worklog: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -55,6 +56,8 @@ class JiraTools(Toolkit):
             tools.append(self.search_issues)
         if enable_add_comment or all:
             tools.append(self.add_comment)
+        if enable_add_worklog or all:
+            tools.append(self.add_worklog)
 
         super().__init__(name="jira_tools", tools=tools, **kwargs)
 
