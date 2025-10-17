@@ -389,7 +389,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
                 session_id = str(uuid4())
 
         # Execute workflow in background with streaming
-        workflow_result = workflow.arun(
+        workflow_result = await workflow.arun(  # type: ignore
             input=user_message,
             session_id=session_id,
             user_id=user_id,
