@@ -145,6 +145,73 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
+    def _filter_messages(self, messages: List[Message], max_tool_calls_in_context: int) -> None:
+        """
+        Filter messages (in-place) to keep only the most recent N tool calls.
+
+        Args:
+            messages: List of messages
+            max_tool_calls_in_context: Number of recent tool calls to keep
+        """
+        # Count total tool calls (not messages) - each tool result = 1 tool call
+        tool_call_count = sum(1 for m in messages if m.role == "tool")
+
+        # No filtering needed
+        if tool_call_count <= max_tool_calls_in_context:
+            return
+
+        # Collect tool_call_ids to keep (most recent N)
+        tool_call_ids_list: List[str] = []
+        for msg in reversed(messages):
+            if msg.role == "tool":
+                if len(tool_call_ids_list) < max_tool_calls_in_context:
+                    if msg.tool_call_id:
+                        tool_call_ids_list.append(msg.tool_call_id)
+
+        tool_call_ids_to_keep: set[str] = set(tool_call_ids_list)
+
+        # Filter messages in-place
+        filtered_messages = []
+        for msg in messages:
+            if msg.role == "tool":
+                # Keep only tool results in our window
+                if msg.tool_call_id in tool_call_ids_to_keep:
+                    filtered_messages.append(msg)
+            elif msg.role == "assistant" and msg.tool_calls:
+                # Filter tool_calls within the assistant message
+                # Use deepcopy to ensure complete isolation of the filtered message
+                import copy
+
+                filtered_msg = copy.deepcopy(msg)
+                total_tool_calls = 0
+                # Filter tool_calls, checking for None IDs defensively
+                if filtered_msg.tool_calls is not None:
+                    total_tool_calls = len(filtered_msg.tool_calls)
+                    filtered_msg.tool_calls = [
+                        tc
+                        for tc in filtered_msg.tool_calls
+                        if tc.get("id") is not None and tc.get("id") in tool_call_ids_to_keep
+                    ]
+
+                if filtered_msg.tool_calls:
+                    # Has tool_calls remaining, keep it
+                    removed_count = total_tool_calls - len(filtered_msg.tool_calls)
+                    if removed_count > 0:
+                        log_debug(f"Filtered {removed_count} tool call(s) from assistant message")
+                    filtered_messages.append(filtered_msg)
+                # skip empty messages
+                elif filtered_msg.content:
+                    filtered_msg.tool_calls = None
+                    filtered_messages.append(filtered_msg)
+            else:
+                filtered_messages.append(msg)
+
+        messages[:] = filtered_messages
+
+        # Log filtering information
+        num_filtered = tool_call_count - len(tool_call_ids_to_keep)
+        log_debug(f"Filtered {num_filtered} tool calls, kept {len(tool_call_ids_to_keep)}")
+
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
         pass
@@ -197,6 +264,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
+        max_tool_calls_in_context: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -211,6 +279,10 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
+            # Apply message filtering before each model call
+            if max_tool_calls_in_context is not None:
+                self._filter_messages(messages, max_tool_calls_in_context)
+
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
             self._process_model_response(
@@ -345,6 +417,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         send_media_to_model: bool = True,
+        max_tool_calls_in_context: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -358,6 +431,10 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
+            # Apply message filtering before each API call if max_tool_calls_in_context is set
+            if max_tool_calls_in_context is not None:
+                self._filter_messages(messages, max_tool_calls_in_context)
+
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
             await self._aprocess_model_response(
@@ -587,6 +664,17 @@ class Model(ABC):
                 model_response.extra = {}
             model_response.extra.update(provider_response.extra)
 
+    # Generate a unique ID for each tool call if missing. Mostly for Ollama
+    # id is required for max_tool_calls_in_context feature
+    def _ensure_tool_call_ids(self, tool_calls: List[Dict[str, Any]]) -> None:
+        """Ensure all tool calls have unique IDs. Generate UUIDs if missing."""
+        from uuid import uuid4
+
+        for tc in tool_calls:
+            if not tc.get("id"):
+                # Generate a unique ID in the same format as OpenAI
+                tc["id"] = f"call_{uuid4().hex[:24]}"
+
     def _populate_assistant_message(
         self,
         assistant_message: Message,
@@ -612,6 +700,8 @@ class Model(ABC):
 
         # Add tool calls to assistant message
         if provider_response.tool_calls is not None and len(provider_response.tool_calls) > 0:
+            # Ensure all tool calls have IDs (required for max_tool_calls_in_context and tool result matching)
+            self._ensure_tool_call_ids(provider_response.tool_calls)
             assistant_message.tool_calls = provider_response.tool_calls
 
         # Add audio to assistant message
@@ -700,6 +790,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
+        max_tool_calls_in_context: Optional[int] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -712,6 +803,10 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
+            # Apply message filtering before each API call if max_tool_calls_in_context is set
+            if max_tool_calls_in_context is not None:
+                self._filter_messages(messages, max_tool_calls_in_context)
+
             assistant_message = Message(role=self.assistant_message_role)
             # Create assistant message and stream data
             stream_data = MessageData()
@@ -743,6 +838,8 @@ class Model(ABC):
                     assistant_message.audio_output = stream_data.response_audio
                 if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+                    # Ensure all tool calls have IDs (required for max_tool_calls_in_context)
+                    self._ensure_tool_call_ids(assistant_message.tool_calls)
 
             else:
                 self._process_model_response(
@@ -868,6 +965,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
+        max_tool_calls_in_context: Optional[int] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -880,6 +978,10 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
+            # Apply message filtering before each API call if max_tool_calls_in_context is set
+            if max_tool_calls_in_context is not None:
+                self._filter_messages(messages, max_tool_calls_in_context)
+
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
             stream_data = MessageData()
@@ -910,6 +1012,8 @@ class Model(ABC):
                     assistant_message.audio_output = stream_data.response_audio
                 if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+                    # Ensure all tool calls have IDs (required for max_tool_calls_in_context)
+                    self._ensure_tool_call_ids(assistant_message.tool_calls)
 
             else:
                 await self._aprocess_model_response(

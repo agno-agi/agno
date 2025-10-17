@@ -216,6 +216,10 @@ class Agent:
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
+    # --- Context Management ---
+    # If None, all tool calls are added to the context. If set to N, only the last N tool calls are added.
+    max_tool_calls_in_context: Optional[int] = None
+
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
 
@@ -400,6 +404,7 @@ class Agent:
         tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        max_tool_calls_in_context: Optional[int] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
@@ -505,6 +510,7 @@ class Agent:
         self.tools = list(tools) if tools else []
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
+        self.max_tool_calls_in_context = max_tool_calls_in_context
         self.tool_hooks = tool_hooks
 
         # Initialize hooks with backward compatibility
@@ -873,6 +879,11 @@ class Agent:
 
         # 4. Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
+
+        # Log if max_tool_calls_in_context is set
+        if self.max_tool_calls_in_context is not None:
+            log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
+
         model_response: ModelResponse = self.model.response(
             messages=run_messages.messages,
             tools=self._tools_for_model,
@@ -882,6 +893,7 @@ class Agent:
             response_format=response_format,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            max_tool_calls_in_context=self.max_tool_calls_in_context,
         )
 
         # Check for cancellation after model call
@@ -1604,6 +1616,10 @@ class Agent:
             await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
+            # Log if max_tool_calls_in_context is set
+            if self.max_tool_calls_in_context is not None:
+                log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
+
             # 8. Generate a response from the Model (includes running function calls)
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
@@ -1613,6 +1629,7 @@ class Agent:
                 tool_call_limit=self.tool_call_limit,
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
+                max_tool_calls_in_context=self.max_tool_calls_in_context,
             )
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2529,6 +2546,7 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            max_tool_calls_in_context=self.max_tool_calls_in_context,
         )
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
@@ -2940,7 +2958,6 @@ class Agent:
             # The run is continued from a run_id. This requires the updated tools to be passed.
             if updated_tools is None:
                 raise ValueError("Updated tools are required to continue a run from a run_id.")
-
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
@@ -2974,6 +2991,10 @@ class Agent:
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
 
+        # Log if max_tool_calls_in_context is set
+        if self.max_tool_calls_in_context is not None:
+            log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
+
         try:
             # 7. Handle the updated tools
             await self._ahandle_tool_call_updates(run_response=run_response, run_messages=run_messages)
@@ -2986,6 +3007,7 @@ class Agent:
                 functions=self._functions_for_model,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
+                max_tool_calls_in_context=self.max_tool_calls_in_context,
             )
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4016,6 +4038,10 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
+        # Log if max_tool_calls_in_context is set
+        if self.max_tool_calls_in_context is not None:
+            log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
+
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -4026,6 +4052,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            max_tool_calls_in_context=self.max_tool_calls_in_context,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -4091,6 +4118,10 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
+        # Log if max_tool_calls_in_context is set
+        if self.max_tool_calls_in_context is not None:
+            log_debug(f"Keeping maximum of {self.max_tool_calls_in_context} tool calls in context")
+
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -4101,6 +4132,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            max_tool_calls_in_context=self.max_tool_calls_in_context,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
