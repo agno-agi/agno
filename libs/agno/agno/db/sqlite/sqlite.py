@@ -717,11 +717,7 @@ class SqliteDb(BaseDb):
                     for session in agent_sessions:
                         serialized_session = serialize_session_json_fields(session.to_dict())
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = (
-                            serialized_session.get("updated_at")
-                            if preserve_updated_at
-                            else int(time.time())
-                        )
+                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
                         agent_data.append(
                             {
                                 "session_id": serialized_session.get("session_id"),
@@ -776,11 +772,7 @@ class SqliteDb(BaseDb):
                     for session in team_sessions:
                         serialized_session = serialize_session_json_fields(session.to_dict())
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = (
-                            serialized_session.get("updated_at")
-                            if preserve_updated_at
-                            else int(time.time())
-                        )
+                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
                         team_data.append(
                             {
                                 "session_id": serialized_session.get("session_id"),
@@ -835,11 +827,7 @@ class SqliteDb(BaseDb):
                     for session in workflow_sessions:
                         serialized_session = serialize_session_json_fields(session.to_dict())
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = (
-                            serialized_session.get("updated_at")
-                            if preserve_updated_at
-                            else int(time.time())
-                        )
+                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
                         workflow_data.append(
                             {
                                 "session_id": serialized_session.get("session_id"),

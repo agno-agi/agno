@@ -631,11 +631,7 @@ class MongoDb(BaseDb):
                 session_dict = session.to_dict()
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                updated_at = (
-                    session_dict.get("updated_at")
-                    if preserve_updated_at
-                    else int(time.time())
-                )
+                updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
 
                 if isinstance(session, AgentSession):
                     record = {
