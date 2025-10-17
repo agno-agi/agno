@@ -2918,7 +2918,7 @@ class Agent:
         12. Update Agent Memory
         13. Save session to storage
         """
-        log_debug(f"Agent Run Continue: {run_response.run_id}", center=True)  # type: ignore
+        log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
 
         # 1. Read existing session from db
         if self._has_async_db():
@@ -3123,7 +3123,7 @@ class Agent:
         13. Add the RunOutput to Agent Session
         14. Save session to storage
         """
-        log_debug(f"Agent Run Continue: {run_response.run_id}", center=True)  # type: ignore
+        log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
 
         # 1. Resolve dependencies
         if dependencies is not None:
