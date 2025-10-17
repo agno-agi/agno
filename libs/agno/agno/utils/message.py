@@ -43,10 +43,8 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
             # Filter tool_calls within the assistant message
             # Use deepcopy to ensure complete isolation of the filtered message
             filtered_msg = deepcopy(msg)
-            total_tool_calls = 0
             # Filter tool_calls
             if filtered_msg.tool_calls is not None:
-                total_tool_calls = len(filtered_msg.tool_calls)
                 filtered_msg.tool_calls = [
                     tc
                     for tc in filtered_msg.tool_calls
