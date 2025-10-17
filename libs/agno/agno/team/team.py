@@ -862,6 +862,9 @@ class Team:
         run_response: TeamRunOutput,
         run_input: TeamRunInput,
         session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -876,6 +879,9 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
+            "metadata": metadata,
+            "session_state": session_state,
+            "dependencies": dependencies,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
@@ -918,6 +924,9 @@ class Team:
         run_response: TeamRunOutput,
         run_input: TeamRunInput,
         session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -932,6 +941,9 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
@@ -977,6 +989,9 @@ class Team:
         hooks: Optional[List[Callable[..., Any]]],
         run_output: TeamRunOutput,
         session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -991,6 +1006,9 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
@@ -1014,6 +1032,9 @@ class Team:
         run_output: TeamRunOutput,
         session: TeamSession,
         user_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
@@ -1027,6 +1048,9 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
@@ -1091,6 +1115,9 @@ class Team:
                 run_response=run_response,
                 run_input=run_input,
                 session=session,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 user_id=user_id,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -1182,14 +1209,8 @@ class Team:
         else:
             self._scrub_media_from_run_output(run_response)
 
-        run_response.status = RunStatus.completed
-
         # Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
-
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
 
         # 6. Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
@@ -1197,10 +1218,19 @@ class Team:
                 hooks=self.post_hooks,  # type: ignore
                 run_output=run_response,
                 session=session,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 user_id=user_id,
                 debug_mode=debug_mode,
                 **kwargs,
             )
+
+        run_response.status = RunStatus.completed
+
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
         # 7. Add the RunOutput to Team Session
         session.upsert_run(run_response=run_response)
@@ -1278,6 +1308,9 @@ class Team:
                 run_response=run_response,
                 run_input=run_input,
                 session=session,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 user_id=user_id,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -1396,13 +1429,24 @@ class Team:
                 session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             )
 
-            run_response.status = RunStatus.completed
+            # Execute post-hooks after output is generated but before response is returned
+            if self.post_hooks is not None:
+                self._execute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                    session=session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    **kwargs,
+                )
 
+            run_response.status = RunStatus.completed
             # Set the run duration
             if run_response.metrics:
                 run_response.metrics.stop_timer()
-
-            # TODO: For now we don't run post-hooks during streaming
 
             # 5. Add the run to Team Session
             session.upsert_run(run_response=run_response)
@@ -1820,6 +1864,9 @@ class Team:
                 session=team_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 **kwargs,
             )
 
@@ -1907,20 +1954,34 @@ class Team:
         else:
             self._scrub_media_from_run_output(run_response)
 
+        # 11. Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
+
+        # Execute post-hooks after output is generated but before response is returned
+        if self.post_hooks is not None:
+            await self._aexecute_post_hooks(
+                hooks=self.post_hooks,  # type: ignore
+                run_output=run_response,
+                session=team_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
+                **kwargs,
+            )
+
+        run_response.status = RunStatus.completed
+
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
+
         # 9. Add the run to memory
         team_session.upsert_run(run_response=run_response)
 
         # 10. Calculate session metrics
         self._update_session_metrics(session=team_session)
-
-        run_response.status = RunStatus.completed
-
-        # 11. Parse team response model
-        self._convert_response_to_structured_format(run_response=run_response)
-
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
 
         # 12. Update Team Memory
         async for _ in self._amake_memories_and_summaries(
@@ -1943,17 +2004,6 @@ class Team:
 
         #  Log Team Telemetry
         await self._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
-
-        # 15. Execute post-hooks after output is generated but before response is returned
-        if self.post_hooks is not None:
-            await self._aexecute_post_hooks(
-                hooks=self.post_hooks,  # type: ignore
-                run_output=run_response,
-                session=team_session,
-                user_id=user_id,
-                debug_mode=debug_mode,
-                **kwargs,
-            )
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2028,6 +2078,9 @@ class Team:
                 session=team_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 **kwargs,
             )
             async for pre_hook_event in pre_hook_iterator:
@@ -2142,6 +2195,24 @@ class Team:
                 session=team_session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             ):
                 yield event
+
+            # Execute post-hooks after output is generated but before response is returned
+            if self.post_hooks is not None:
+                self._execute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                    session=team_session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    **kwargs,
+                )
+
+            # Set the run duration
+            if run_response.metrics:
+                run_response.metrics.stop_timer()
 
             run_response.status = RunStatus.completed
 
