@@ -484,11 +484,6 @@ class Agent:
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
 
-        if add_history_to_context and not db:
-            log_warning(
-                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
-            )
-
         self.store_media = store_media
         self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
@@ -1284,6 +1279,10 @@ class Agent:
                 "`run` method is not supported with an async database. Please use `arun` method instead."
             )
 
+        if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
+            log_warning(
+                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+            )
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -2060,6 +2059,11 @@ class Agent:
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
+
+        if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
+            log_warning(
+                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+            )
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
