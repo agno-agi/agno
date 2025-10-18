@@ -100,7 +100,7 @@ class SQLTools(Toolkit):
         self.export_directory.mkdir(parents=True, exist_ok=True)
 
         # Set query timeout if specified (only for databases that support it)
-        if self.query_timeout is not None and dialect and dialect.lower() in ["postgresql", "postgres"]:
+        if self.query_timeout is not None and isinstance(dialect, str) and dialect.lower() in ["postgresql", "postgres"]:
             timeout_ms = int(self.query_timeout * 1000)
 
             @event.listens_for(_engine, "before_cursor_execute")
