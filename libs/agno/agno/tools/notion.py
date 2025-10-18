@@ -1,0 +1,211 @@
+import json
+from typing import Any, Dict, List, Optional
+
+from agno.tools import Toolkit
+from agno.utils.log import log_debug, logger
+
+try:
+    from notion_client import Client
+except ImportError:
+    raise ImportError("`notion-client` not installed. Please install using `pip install notion-client`")
+
+
+class NotionTools(Toolkit):
+    """
+    Notion toolkit for creating and managing Notion pages.
+    
+    Args:
+        api_key (str): Notion API key (integration token)
+        database_id (str): The ID of the database to work with
+        enable_create_page (bool): Enable creating pages. Default is True.
+        enable_update_page (bool): Enable updating pages. Default is True.
+        enable_search_pages (bool): Enable searching pages. Default is True.
+        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        database_id: str,
+        enable_create_page: bool = True,
+        enable_update_page: bool = True,
+        enable_search_pages: bool = True,
+        all: bool = False,
+        **kwargs
+    ):
+        self.api_key = api_key
+        self.database_id = database_id
+        self.client = Client(auth=api_key)
+        
+        tools: List[Any] = []
+        if all or enable_create_page:
+            tools.append(self.create_page)
+        if all or enable_update_page:
+            tools.append(self.update_page)
+        if all or enable_search_pages:
+            tools.append(self.search_pages)
+
+        super().__init__(name="notion_tools", tools=tools, **kwargs)
+
+    def create_page(self, title: str, tag: str, content: str) -> str:
+        """Create a new page in the Notion database with a title, tag, and content.
+
+        Args:
+            title (str): The title of the page
+            tag (str): The tag/category for the page (e.g., travel, tech, general-blogs, fashion, documents)
+            content (str): The content to add to the page
+
+        Returns:
+            str: JSON string with page creation details
+        """
+        try:
+            log_debug(f"Creating Notion page with title: {title}, tag: {tag}")
+            
+            # Create the page in the database
+            new_page = self.client.pages.create(
+                parent={"database_id": self.database_id},
+                properties={
+                    "Name": {
+                        "title": [
+                            {
+                                "text": {
+                                    "content": title
+                                }
+                            }
+                        ]
+                    },
+                    "Tag": {
+                        "select": {
+                            "name": tag
+                        }
+                    }
+                },
+                children=[
+                    {
+                        "object": "block",
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": [
+                                {
+                                    "type": "text",
+                                    "text": {
+                                        "content": content
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            )
+            
+            result = {
+                "success": True,
+                "page_id": new_page["id"],
+                "url": new_page["url"],
+                "title": title,
+                "tag": tag
+            }
+            return json.dumps(result, indent=2)
+            
+        except Exception as e:
+            logger.exception(e)
+            return json.dumps({
+                "success": False,
+                "error": str(e)
+            })
+
+    def update_page(self, page_id: str, content: str) -> str:
+        """Add content to an existing Notion page.
+
+        Args:
+            page_id (str): The ID of the page to update
+            content (str): The content to append to the page
+
+        Returns:
+            str: JSON string with update status
+        """
+        try:
+            log_debug(f"Updating Notion page: {page_id}")
+            
+            # Append content to the page
+            self.client.blocks.children.append(
+                block_id=page_id,
+                children=[
+                    {
+                        "object": "block",
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": [
+                                {
+                                    "type": "text",
+                                    "text": {
+                                        "content": content
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            )
+            
+            result = {
+                "success": True,
+                "page_id": page_id,
+                "message": "Content added successfully"
+            }
+            return json.dumps(result, indent=2)
+            
+        except Exception as e:
+            logger.exception(e)
+            return json.dumps({
+                "success": False,
+                "error": str(e)
+            })
+
+    def search_pages(self, tag: str) -> str:
+        """Search for pages in the database by tag.
+
+        Args:
+            tag (str): The tag to search for
+
+        Returns:
+            str: JSON string with list of matching pages
+        """
+        try:
+            log_debug(f"Searching for pages with tag: {tag}")
+            
+            # Query the database for pages with the specified tag
+            response = self.client.databases.query(
+                database_id=self.database_id,
+                filter={
+                    "property": "Tag",
+                    "select": {
+                        "equals": tag
+                    }
+                }
+            )
+            
+            pages = []
+            for page in response["results"]:
+                page_info = {
+                    "page_id": page["id"],
+                    "title": page["properties"]["Name"]["title"][0]["text"]["content"] if page["properties"]["Name"]["title"] else "Untitled",
+                    "tag": page["properties"]["Tag"]["select"]["name"] if page["properties"]["Tag"]["select"] else None,
+                    "url": page["url"]
+                }
+                pages.append(page_info)
+            
+            result = {
+                "success": True,
+                "count": len(pages),
+                "pages": pages
+            }
+            return json.dumps(result, indent=2)
+            
+        except Exception as e:
+            logger.exception(e)
+            return json.dumps({
+                "success": False,
+                "error": str(e)
+            })
+
