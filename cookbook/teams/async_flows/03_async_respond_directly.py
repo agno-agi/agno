@@ -1,5 +1,5 @@
 """
-This example demonstrates a route team of AI agents working together to answer questions in different languages.
+This example demonstrates a team of AI agents working together asynchronously to answer questions in different languages.
 
 The team consists of six specialized agents:
 1. English Agent - Can only answer in English
@@ -15,8 +15,6 @@ The team leader routes the user's question to the appropriate language agent. It
 import asyncio
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
-from agno.models.deepseek import DeepSeek
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 
@@ -28,12 +26,12 @@ english_agent = Agent(
 japanese_agent = Agent(
     name="Japanese Agent",
     role="You only answer in Japanese",
-    model=DeepSeek(id="deepseek-chat"),
+    model=OpenAIChat(id="o3-mini"),
 )
 chinese_agent = Agent(
     name="Chinese Agent",
     role="You only answer in Chinese",
-    model=DeepSeek(id="deepseek-chat"),
+    model=OpenAIChat(id="o3-mini"),
 )
 spanish_agent = Agent(
     name="Spanish Agent",
@@ -48,7 +46,7 @@ french_agent = Agent(
 german_agent = Agent(
     name="German Agent",
     role="You can only answer in German",
-    model=Claude("claude-3-5-sonnet-20241022"),
+    model=OpenAIChat(id="o3-mini"),
 )
 
 multi_language_team = Team(

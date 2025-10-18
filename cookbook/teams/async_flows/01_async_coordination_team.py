@@ -2,17 +2,11 @@
 1. Run: `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
 2. Run: `python cookbook/teams/async/modes/02_async_coordinate.py` to run the agent
 
-This example demonstrates a coordinated team of AI agents working together to research topics across different platforms.
+This example demonstrates a coordinated team of AI agents working together asynchronously to research topics across different platforms.
 
-The team consists of three specialized agents:
+The team consists of two specialized agents:
 1. HackerNews Researcher - Uses HackerNews API to find and analyze relevant HackerNews posts
-2. Web Searcher - Uses DuckDuckGo to find and analyze relevant web pages
-3. Article Reader - Reads articles from URLs
-
-The team leader coordinates the agents by:
-- Giving each agent a specific task
-- Providing clear instructions for each agent
-- Collecting and summarizing the results from each agent
+2. Article Reader - Reads articles from URLs
 
 """
 

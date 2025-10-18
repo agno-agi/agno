@@ -49,7 +49,7 @@ team = Team(
     markdown=True,
 )
 
-# This should route to the stock_searcher
+# The team leader should delegate the task to the stock_searcher
 response = team.run("What is the current stock price of NVDA?")
 assert isinstance(response.content, StockReport)
 pprint_run_response(response)

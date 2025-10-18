@@ -65,6 +65,11 @@ agent.print_response("Get details for issue PROJ-123", markdown=True)
 
 # Example usage with worklog functionality
 print("\n=== Example 4: Adding worklog entries ===")
-agent_worklog.print_response("Log 2 hours of work on issue PROJ-123 with comment 'Implemented new feature'", markdown=True)
+agent_worklog.print_response(
+    "Log 2 hours of work on issue PROJ-123 with comment 'Implemented new feature'",
+    markdown=True,
+)
 
-agent_worklog.print_response("Add a worklog of 30 minutes to PROJ-456 for code review", markdown=True)
+agent_worklog.print_response(
+    "Add a worklog of 30 minutes to PROJ-456 for code review", markdown=True
+)

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+
+from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.run.agent import RunOutput, RunStatus
@@ -243,6 +245,78 @@ class TeamSession:
                     final_messages.append(assistant_message_from_run)
         return final_messages
 
+    def get_team_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
+        """Get team history as structured data (input, response pairs) -> This is the history of the team leader, not the members.
+
+        Args:
+            num_runs: Number of recent runs to include. If None, returns all available history.
+        """
+        if not self.runs:
+            return []
+
+        from agno.run.base import RunStatus
+
+        # Get completed runs only (exclude current/pending run)
+        completed_runs = [run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None]
+
+        if num_runs is not None and len(completed_runs) > num_runs:
+            recent_runs = completed_runs[-num_runs:]
+        else:
+            recent_runs = completed_runs
+
+        if not recent_runs:
+            return []
+
+        # Return structured data as list of (input, response) tuples
+        history_data = []
+        for run in recent_runs:
+            # Get input
+            input_str = ""
+            if run.input:
+                input_str = run.input.input_content_string()
+
+            # Get response
+            response_str = ""
+            if run.content:
+                response_str = (
+                    run.content.model_dump_json(indent=2, exclude_none=True)
+                    if isinstance(run.content, BaseModel)
+                    else str(run.content)
+                )
+
+            history_data.append((input_str, response_str))
+
+        return history_data
+
+    def get_team_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
+        """Get formatted team history context for steps
+
+        Args:
+            num_runs: Number of recent runs to include. If None, returns all available history.
+        """
+        history_data = self.get_team_history(num_runs)
+
+        if not history_data:
+            return None
+
+        # Format as team history context using the structured data
+        context_parts = ["<team_history_context>"]
+
+        for i, (input_str, response_str) in enumerate(history_data, 1):
+            context_parts.append(f"[run-{i}]")
+
+            if input_str:
+                context_parts.append(f"input: {input_str}")
+            if response_str:
+                context_parts.append(f"response: {response_str}")
+
+            context_parts.append("")  # Empty line between runs
+
+        context_parts.append("</team_history_context>")
+        context_parts.append("")  # Empty line before current input
+
+        return "\n".join(context_parts)
+
     def get_session_summary(self) -> Optional[SessionSummary]:
         """Get the session summary for the session"""
 
@@ -252,17 +326,28 @@ class TeamSession:
         return self.summary  # type: ignore
 
     # Chat History functions
-    def get_chat_history(self) -> List[Message]:
-        """Get the chat history for the session"""
+    def get_chat_history(
+        self, skip_history_messages: bool = True, skip_roles: Optional[List[str]] = None
+    ) -> List[Message]:
+        """
+        Get the chat history for the session.
+        This is all messages across all runs for the team leader.
+        """
 
         messages = []
         if self.runs is None:
             return []
 
         for run in self.runs or []:
-            if run.messages is None:
+            if run.parent_run_id is not None:
                 continue
 
-            messages.extend([msg for msg in run.messages or [] if not msg.from_history])
+            if run.messages is not None:
+                for msg in run.messages or []:
+                    if skip_history_messages and msg.from_history:
+                        continue
+                    if skip_roles and msg.role in skip_roles:
+                        continue
+                    messages.append(msg)
 
         return messages
