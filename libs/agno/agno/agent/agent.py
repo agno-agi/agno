@@ -1385,6 +1385,12 @@ class Agent:
                         debug_mode=debug_mode,
                         **kwargs,
                     )
+                    if stream is True and self.stream is False:
+                        final_output = None
+                        for event in response_iterator:
+                            if isinstance(event, RunOutput):
+                                final_output = event
+                                return final_output or run_response
                     return response_iterator
                 else:
                     response = self._run(
