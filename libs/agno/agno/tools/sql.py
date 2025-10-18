@@ -303,7 +303,9 @@ class SQLTools(Toolkit):
             inspector = inspect(self.db_engine)
 
             # Get row count
-            count_query = f"SELECT COUNT(*) as row_count FROM {table_name}"
+            # Safely quote the table name to prevent SQL injection
+            quoted_table_name = self.db_engine.dialect.identifier_preparer.quote(table_name)
+            count_query = f"SELECT COUNT(*) as row_count FROM {quoted_table_name}"
             count_result = self.run_sql(sql=count_query, limit=1)
             row_count = count_result[0]["row_count"] if count_result else 0
 
