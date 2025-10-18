@@ -26,7 +26,7 @@ def check_user_has_context(step_input: StepInput, session_state: dict) -> bool:
     Returns:
         bool: True if user has context, False otherwise
     """
-    print(f"\n=== Evaluating Condition ===")
+    print("\n=== Evaluating Condition ===")
     print(f"User ID: {session_state.get('current_user_id')}")
     print(f"Session ID: {session_state.get('current_session_id')}")
     print(f"Has been greeted: {session_state.get('has_been_greeted', False)}")
@@ -37,7 +37,7 @@ def check_user_has_context(step_input: StepInput, session_state: dict) -> bool:
 
 def mark_user_as_greeted(step_input: StepInput, session_state: dict) -> StepOutput:
     """Custom function that marks user as greeted in session state."""
-    print(f"\n=== Marking User as Greeted ===")
+    print("\n=== Marking User as Greeted ===")
     session_state["has_been_greeted"] = True
     session_state["greeting_count"] = session_state.get("greeting_count", 0) + 1
 

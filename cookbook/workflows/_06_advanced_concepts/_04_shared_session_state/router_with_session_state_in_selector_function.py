@@ -8,8 +8,6 @@ This example shows:
 4. Dynamically selecting different agents based on user context
 """
 
-from typing import List, Union
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.workflow.router import Router
@@ -28,7 +26,7 @@ def route_based_on_user_preference(step_input: StepInput, session_state: dict) -
     Returns:
         Step: The step to execute based on user preference
     """
-    print(f"\n=== Routing Decision ===")
+    print("\n=== Routing Decision ===")
     print(f"User ID: {session_state.get('current_user_id')}")
     print(f"Session ID: {session_state.get('current_session_id')}")
 
@@ -61,7 +59,7 @@ def route_based_on_user_preference(step_input: StepInput, session_state: dict) -
 
 def set_user_preference(step_input: StepInput, session_state: dict) -> StepOutput:
     """Custom function that sets user preference based on onboarding."""
-    print(f"\n=== Setting User Preference ===")
+    print("\n=== Setting User Preference ===")
 
     # In a real scenario, this would analyze the user's response
     # For demo purposes, we'll set it based on interaction count
