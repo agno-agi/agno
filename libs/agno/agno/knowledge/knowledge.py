@@ -122,6 +122,7 @@ class Knowledge:
                     exclude=exclude,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
+                    reader=reader,
                 )
             for url in urls:
                 await self.add_content_async(
@@ -133,6 +134,7 @@ class Knowledge:
                     exclude=exclude,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
+                    reader=reader,
                 )
             for i, text_content in enumerate(text_contents):
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
@@ -146,6 +148,7 @@ class Knowledge:
                     exclude=exclude,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
+                    reader=reader,
                 )
             if topics:
                 await self.add_content_async(
@@ -168,6 +171,7 @@ class Knowledge:
                     remote_content=remote_content,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
+                    reader=reader,
                 )
 
         else:
