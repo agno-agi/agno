@@ -165,7 +165,7 @@ class GoogleCalendarTools(Toolkit):
 
         try:
             service = cast(Resource, self.service)
-                
+
             events_result = (
                 service.events()
                 .list(
@@ -247,9 +247,9 @@ class GoogleCalendarTools(Toolkit):
 
             # Determine sendUpdates value based on notify_attendees parameter
             send_updates = "all" if notify_attendees and attendees else "none"
-            
+
             service = cast(Resource, self.service)
-            
+
             event_result = (
                 service.events()
                 .insert(
@@ -298,7 +298,7 @@ class GoogleCalendarTools(Toolkit):
         """
         try:
             service = cast(Resource, self.service)
-                
+
             # First get the existing event to preserve its structure
             event = service.events().get(calendarId=self.calendar_id, eventId=event_id).execute()
 
@@ -333,16 +333,13 @@ class GoogleCalendarTools(Toolkit):
 
             # Determine sendUpdates value based on notify_attendees parameter
             send_updates = "all" if notify_attendees and attendees else "none"
-            
+
             # Update the event
-            
+
             updated_event = (
-                service.events().update(
-                    calendarId=self.calendar_id, 
-                    eventId=event_id, 
-                    body=event,
-                    sendUpdates=send_updates
-                ).execute()
+                service.events()
+                .update(calendarId=self.calendar_id, eventId=event_id, body=event, sendUpdates=send_updates)
+                .execute()
             )
 
             log_debug(f"Event {event_id} updated successfully.")
@@ -366,14 +363,10 @@ class GoogleCalendarTools(Toolkit):
         try:
             # Determine sendUpdates value based on notify_attendees parameter
             send_updates = "all" if notify_attendees else "none"
-            
+
             service = cast(Resource, self.service)
-            
-            service.events().delete(
-                calendarId=self.calendar_id, 
-                eventId=event_id,
-                sendUpdates=send_updates
-            ).execute()
+
+            service.events().delete(calendarId=self.calendar_id, eventId=event_id, sendUpdates=send_updates).execute()
 
             log_debug(f"Event {event_id} deleted successfully.")
             return json.dumps({"success": True, "message": f"Event {event_id} deleted successfully."})
@@ -400,7 +393,7 @@ class GoogleCalendarTools(Toolkit):
         """
         try:
             service = cast(Resource, self.service)
-                
+
             params = {
                 "calendarId": self.calendar_id,
                 "maxResults": min(max_results, 100),

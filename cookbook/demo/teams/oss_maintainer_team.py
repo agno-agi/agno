@@ -147,7 +147,9 @@ asyncio.run(_load_project_knowledge())
 # GitHub token is required for this team - checked in run.py before import
 github_token = getenv("GITHUB_ACCESS_TOKEN") or getenv("GITHUB_TOKEN")
 if not github_token:
-    raise ValueError("GITHUB_ACCESS_TOKEN is required for OSS Maintainer Intelligence team")
+    raise ValueError(
+        "GITHUB_ACCESS_TOKEN is required for OSS Maintainer Intelligence team"
+    )
 
 github_tools = GithubTools(access_token=github_token)
 print("GitHub integration enabled - team can fetch real PR and issue data")
