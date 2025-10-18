@@ -103,9 +103,10 @@ def sql_tools(test_db):
     db_url, _, engines_list = test_db
     tools = SQLTools(db_url=db_url)
     engines_list.append(tools.db_engine)
-    yield tools
-
-
+    try:
+        yield tools
+    finally:
+        tools.db_engine.dispose()
 def test_init_with_db_url(test_db):
     """Test initialization with database URL."""
     db_url, _, engines_list = test_db
