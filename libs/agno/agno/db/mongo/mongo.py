@@ -631,11 +631,7 @@ class MongoDb(BaseDb):
                 session_dict = session.to_dict()
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                updated_at = (
-                    session_dict.get("updated_at")
-                    if preserve_updated_at and session_dict.get("updated_at")
-                    else int(time.time())
-                )
+                updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
 
                 if isinstance(session, AgentSession):
                     record = {
@@ -1096,7 +1092,7 @@ class MongoDb(BaseDb):
                     memory.memory_id = str(uuid4())
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                updated_at = memory.updated_at if preserve_updated_at and memory.updated_at else current_time
+                updated_at = memory.updated_at if preserve_updated_at else current_time
 
                 record = {
                     "user_id": memory.user_id,
