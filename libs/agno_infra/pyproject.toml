@@ -11,8 +11,12 @@ authors = [
 keywords = [
   "infrastructure",
   "aws",
+  "gcp",
+  "azure",
+  "multi-cloud",
   "docker",
   "framework",
+  "libcloud",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -54,6 +58,31 @@ docker = ["docker"]
 
 # Dependencies for AWS
 aws = ["boto3"]
+
+# Dependencies for unified multi-cloud support (60+ providers)
+unified = ["apache-libcloud>=3.8.0"]
+
+# Dependencies for GCP native SDK (advanced features)
+gcp = ["google-cloud-compute>=1.14.0", "google-cloud-storage>=2.10.0"]
+
+# Dependencies for Azure native SDK (advanced features)
+azure = [
+  "azure-identity>=1.14.0",
+  "azure-mgmt-compute>=30.0.0",
+  "azure-storage-blob>=12.18.0"
+]
+
+# All multi-cloud dependencies
+all-clouds = [
+  "apache-libcloud>=3.8.0",
+  "boto3",
+  "google-cloud-compute>=1.14.0",
+  "google-cloud-storage>=2.10.0",
+  "azure-identity>=1.14.0",
+  "azure-mgmt-compute>=30.0.0",
+  "azure-storage-blob>=12.18.0",
+  "docker"
+]
 
 
 [project.scripts]
@@ -106,5 +135,8 @@ module = [
   "docker.*",
   "tomllib.*",
   "yaml.*",
+  "libcloud.*",
+  "google.*",
+  "azure.*",
 ]
 ignore_missing_imports = true
