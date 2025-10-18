@@ -118,7 +118,7 @@ class Condition:
 
         if callable(self.evaluator):
             if session_state is not None and self._evaluator_has_session_state_param():
-                result = self.evaluator(step_input, session_state)
+                result = self.evaluator(step_input, session_state)  # type: ignore[call-arg]
             else:
                 result = self.evaluator(step_input)
 
@@ -137,15 +137,15 @@ class Condition:
 
         if callable(self.evaluator):
             has_session_state = session_state is not None and self._evaluator_has_session_state_param()
-
+            
             if inspect.iscoroutinefunction(self.evaluator):
                 if has_session_state:
-                    result = await self.evaluator(step_input, session_state)
+                    result = await self.evaluator(step_input, session_state)  # type: ignore[call-arg]
                 else:
                     result = await self.evaluator(step_input)
             else:
                 if has_session_state:
-                    result = self.evaluator(step_input, session_state)
+                    result = self.evaluator(step_input, session_state)  # type: ignore[call-arg]
                 else:
                     result = self.evaluator(step_input)
 

@@ -112,7 +112,7 @@ class Router:
         """Route to the appropriate steps based on input"""
         if callable(self.selector):
             if session_state is not None and self._selector_has_session_state_param():
-                result = self.selector(step_input, session_state)
+                result = self.selector(step_input, session_state)  # type: ignore[call-arg]
             else:
                 result = self.selector(step_input)
 
@@ -131,15 +131,15 @@ class Router:
         """Async version of step routing"""
         if callable(self.selector):
             has_session_state = session_state is not None and self._selector_has_session_state_param()
-
+            
             if inspect.iscoroutinefunction(self.selector):
                 if has_session_state:
-                    result = await self.selector(step_input, session_state)
+                    result = await self.selector(step_input, session_state)  # type: ignore[call-arg]
                 else:
                     result = await self.selector(step_input)
             else:
                 if has_session_state:
-                    result = self.selector(step_input, session_state)
+                    result = self.selector(step_input, session_state)  # type: ignore[call-arg]
                 else:
                     result = self.selector(step_input)
 
