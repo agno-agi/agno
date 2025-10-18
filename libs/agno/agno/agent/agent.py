@@ -819,6 +819,9 @@ class Agent:
                 hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
@@ -902,25 +905,26 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
 
-        run_response.status = RunStatus.completed
-
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
 
-        # Stop the timer for the Run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
-
-        # 6. Execute post-hooks after output is generated but before response is returned
+        # Execute post-hooks after output is generated but before response is returned
         if self.post_hooks is not None:
             self._execute_post_hooks(
                 hooks=self.post_hooks,  # type: ignore
                 run_output=run_response,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
                 **kwargs,
             )
+        run_response.status = RunStatus.completed
+        # Stop the timer for the Run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
         # 7. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
@@ -1002,6 +1006,9 @@ class Agent:
                 hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
@@ -1115,13 +1122,25 @@ class Agent:
                 )
                 return
 
+            # Execute post-hooks after output is generated but before response is returned
+            if self.post_hooks is not None:
+                self._execute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                    session=session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    **kwargs,
+                )
+
             run_response.status = RunStatus.completed
 
             # Set the run duration
             if run_response.metrics:
                 run_response.metrics.stop_timer()
-
-            # TODO: For now we don't run post-hooks during streaming
 
             # 5. Calculate session metrics
             self._update_session_metrics(session=session, run_response=run_response)
@@ -1350,7 +1369,6 @@ class Agent:
         self.model = cast(Model, self.model)
 
         # Merge agent metadata with run metadata
-
         if self.metadata is not None:
             if metadata is None:
                 metadata = self.metadata
@@ -1534,6 +1552,9 @@ class Agent:
                 hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 session=agent_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
@@ -1619,26 +1640,29 @@ class Agent:
             # 10. Calculate session metrics
             self._update_session_metrics(session=agent_session, run_response=run_response)
 
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
-
             # Convert the response to the structured format if needed
             self._convert_response_to_structured_format(run_response)
 
-            # Set the run duration
-            if run_response.metrics:
-                run_response.metrics.stop_timer()
-
-            # 10. Execute post-hooks (after output is generated but before response is returned)
+            # Execute post-hooks (after output is generated but before response is returned)
             if self.post_hooks is not None:
                 await self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    metadata=metadata,
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
                     **kwargs,
                 )
+
+            # Set the run status to completed
+            run_response.status = RunStatus.completed
+
+            # Set the run duration
+            if run_response.metrics:
+                run_response.metrics.stop_timer()
 
             # Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
@@ -1871,6 +1895,20 @@ class Agent:
                 ):
                     yield item
                 return
+
+            # Execute post-hooks (after output is generated but before response is returned)
+            if self.post_hooks is not None:
+                await self._aexecute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                    session=agent_session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    **kwargs,
+                )
 
             # Set the run status to completed
             run_response.status = RunStatus.completed
@@ -2219,6 +2257,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
     ) -> RunOutput: ...
 
@@ -2236,6 +2275,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
     ) -> Iterator[RunOutputEvent]: ...
 
@@ -2252,6 +2292,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs,
     ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
@@ -2307,6 +2348,13 @@ class Agent:
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
             effective_filters = self._get_effective_filters(knowledge_filters)
+
+        # Merge agent metadata with run metadata
+        if self.metadata is not None:
+            if metadata is None:
+                metadata = self.metadata
+            else:
+                merge_dictionaries(metadata, self.metadata)
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
@@ -2383,8 +2431,13 @@ class Agent:
                         run_messages=run_messages,
                         user_id=user_id,
                         session=agent_session,
+                        session_state=session_state,
+                        dependencies=run_dependencies,
+                        metadata=metadata,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        debug_mode=debug_mode,
+                        **kwargs,
                     )
                     return response_iterator
                 else:
@@ -2393,6 +2446,9 @@ class Agent:
                         run_messages=run_messages,
                         user_id=user_id,
                         session=agent_session,
+                        session_state=session_state,
+                        dependencies=run_dependencies,
+                        metadata=metadata,
                         response_format=response_format,
                         debug_mode=debug_mode,
                         **kwargs,
@@ -2440,6 +2496,9 @@ class Agent:
         run_response: RunOutput,
         run_messages: RunMessages,
         session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         debug_mode: Optional[bool] = None,
@@ -2483,24 +2542,26 @@ class Agent:
         # 3. Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
-        run_response.status = RunStatus.completed
-
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
-
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
 
         if self.post_hooks is not None:
             self._execute_post_hooks(
                 hooks=self.post_hooks,  # type: ignore
                 run_output=run_response,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
                 **kwargs,
             )
+
+        run_response.status = RunStatus.completed
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
         # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
@@ -2530,10 +2591,14 @@ class Agent:
         run_response: RunOutput,
         run_messages: RunMessages,
         session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         dependencies: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs,
     ) -> Iterator[RunOutputEvent]:
         """Continue a previous run.
 
@@ -2575,14 +2640,27 @@ class Agent:
             )
             return
 
-        # 3. Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
+        if self.post_hooks is not None:
+            self._execute_post_hooks(
+                hooks=self.post_hooks,  # type: ignore
+                run_output=run_response,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                **kwargs,
+            )
 
         run_response.status = RunStatus.completed
 
         # Set the run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
+
+        # 3. Calculate session metrics
+        self._update_session_metrics(session=session, run_response=run_response)
 
         # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
@@ -2625,6 +2703,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
     ) -> RunOutput: ...
 
@@ -2642,6 +2721,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
@@ -2658,6 +2738,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs,
@@ -2718,6 +2799,13 @@ class Agent:
         if self.knowledge_filters or knowledge_filters:
             effective_filters = self._get_effective_filters(knowledge_filters)
 
+        # Merge agent metadata with run metadata
+        if self.metadata is not None:
+            if metadata is None:
+                metadata = self.metadata
+            else:
+                merge_dictionaries(metadata, self.metadata)
+
         # Prepare arguments for the model
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
@@ -2737,8 +2825,11 @@ class Agent:
                         session_id=session_id,
                         response_format=response_format,
                         dependencies=run_dependencies,
+                        metadata=metadata,
                         stream_intermediate_steps=stream_intermediate_steps,
                         yield_run_response=yield_run_response,
+                        debug_mode=debug_mode,
+                        **kwargs,
                     )
                 else:
                     return self._acontinue_run(  # type: ignore
@@ -2751,6 +2842,7 @@ class Agent:
                         user_id=user_id,
                         response_format=response_format,
                         dependencies=run_dependencies,
+                        metadata=metadata,
                         debug_mode=debug_mode,
                         **kwargs,
                     )
@@ -2802,6 +2894,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs,
     ) -> RunOutput:
@@ -2923,7 +3016,8 @@ class Agent:
             # 10. Calculate session metrics
             self._update_session_metrics(session=agent_session, run_response=run_response)
 
-            run_response.status = RunStatus.completed
+            # Convert the response to the structured format if needed
+            self._convert_response_to_structured_format(run_response)
 
             # 11. Execute post-hooks
             if self.post_hooks is not None:
@@ -2933,11 +3027,13 @@ class Agent:
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    metadata=metadata,
                     **kwargs,
                 )
 
-            # Convert the response to the structured format if needed
-            self._convert_response_to_structured_format(run_response)
+            run_response.status = RunStatus.completed
 
             if run_response.metrics:
                 run_response.metrics.stop_timer()
@@ -3002,6 +3098,9 @@ class Agent:
         stream_intermediate_steps: bool = False,
         yield_run_response: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
         """Continue a previous run.
 
@@ -3144,16 +3243,30 @@ class Agent:
                     yield item
                 return
 
-            run_response.status = RunStatus.completed
-
             # 9. Create the run completed event
             completed_event = self._handle_event(create_run_completed_event(run_response), run_response)
+
+            # 10. Execute post-hooks
+            if self.post_hooks is not None:
+                await self._aexecute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    session=agent_session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                    **kwargs,
+                )
+
+            run_response.status = RunStatus.completed
 
             # Set the run duration
             if run_response.metrics:
                 run_response.metrics.stop_timer()
 
-            # 10. Add the run to memory
+            # 11. Add the run to memory
             agent_session.upsert_run(run=run_response)
 
             # Optional: Save output to file if save_response_to_file is set
@@ -3217,6 +3330,9 @@ class Agent:
         run_response: RunOutput,
         run_input: RunInput,
         session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -3230,6 +3346,9 @@ class Agent:
             "run_input": run_input,
             "agent": self,
             "session": session,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -3273,6 +3392,9 @@ class Agent:
         run_response: RunOutput,
         run_input: RunInput,
         session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -3286,6 +3408,9 @@ class Agent:
             "run_input": run_input,
             "agent": self,
             "session": session,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -3332,6 +3457,9 @@ class Agent:
         hooks: Optional[List[Callable[..., Any]]],
         run_output: RunOutput,
         session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -3346,6 +3474,9 @@ class Agent:
             "agent": self,
             "session": session,
             "user_id": user_id,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
@@ -3370,6 +3501,9 @@ class Agent:
         hooks: Optional[List[Callable[..., Any]]],
         run_output: RunOutput,
         session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -3384,6 +3518,9 @@ class Agent:
             "agent": self,
             "session": session,
             "user_id": user_id,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)

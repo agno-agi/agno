@@ -1,4 +1,3 @@
-
 import inspect
 from copy import copy
 from dataclasses import dataclass
@@ -239,7 +238,9 @@ class Step:
                         final_response = None
                         try:
                             for chunk in self._call_custom_function(
-                                self.active_executor, step_input, session_state_copy  # type: ignore[arg-type]
+                                self.active_executor,
+                                step_input,
+                                session_state_copy,  # type: ignore[arg-type]
                             ):  # type: ignore
                                 if (
                                     hasattr(chunk, "content")
@@ -655,7 +656,9 @@ class Step:
                         try:
                             if _is_generator_function(self.active_executor):
                                 iterator = self._call_custom_function(
-                                    self.active_executor, step_input, session_state_copy # type: ignore[arg-type]
+                                    self.active_executor,
+                                    step_input,
+                                    session_state_copy,  # type: ignore[arg-type]
                                 )  # type: ignore
                                 for chunk in iterator:  # type: ignore
                                     if (
@@ -671,7 +674,9 @@ class Step:
                             else:
                                 if _is_async_generator_function(self.active_executor):
                                     iterator = await self._acall_custom_function(
-                                        self.active_executor, step_input, session_state_copy  # type: ignore[arg-type]
+                                        self.active_executor,
+                                        step_input,
+                                        session_state_copy,  # type: ignore[arg-type]
                                     )  # type: ignore
                                     async for chunk in iterator:  # type: ignore
                                         if (
@@ -853,7 +858,9 @@ class Step:
                         content = ""
                         # It's an async generator - iterate over it
                         iterator = await self._acall_custom_function(
-                            self.active_executor, step_input, session_state_copy  # type: ignore[arg-type]
+                            self.active_executor,
+                            step_input,
+                            session_state_copy,  # type: ignore[arg-type]
                         )  # type: ignore
                         async for event in iterator:  # type: ignore
                             if (
@@ -1256,7 +1263,7 @@ def _is_generator_function(obj: Any) -> TypeGuard[Callable[..., Any]]:
     if inspect.isgeneratorfunction(obj):
         return True
     # Check if it's a callable class instance with a generator __call__ method
-    if hasattr(obj, "__call__"):
+    if callable(obj) and hasattr(obj, "__call__"):
         return inspect.isgeneratorfunction(obj.__call__)
     return False
 
@@ -1266,6 +1273,6 @@ def _is_async_generator_function(obj: Any) -> TypeGuard[Callable[..., Any]]:
     if inspect.isasyncgenfunction(obj):
         return True
     # Check if it's a callable class instance with an async generator __call__ method
-    if hasattr(obj, "__call__"):
+    if callable(obj) and hasattr(obj, "__call__"):
         return inspect.isasyncgenfunction(obj.__call__)
     return False
