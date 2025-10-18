@@ -269,7 +269,8 @@ class SQLTools(Toolkit):
             ]
 
             # Get sample data
-            query = f"SELECT * FROM {table_name} LIMIT {limit}"
+            quoted_table_name = self.db_engine.dialect.identifier_preparer.quote(table_name)
+            query = f"SELECT * FROM {quoted_table_name} LIMIT {limit}"
             sample_data = self.run_sql(sql=query, limit=limit)
 
             return json.dumps(
