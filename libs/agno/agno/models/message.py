@@ -263,6 +263,7 @@ class Message(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         """Returns the message as a dictionary."""
         message_dict = {
+            "id": self.id,
             "content": self.content,
             "reasoning_content": self.reasoning_content,
             "from_history": self.from_history,
