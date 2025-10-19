@@ -168,26 +168,10 @@ class CultureManager:
         if not messages or not isinstance(messages, list):
             raise ValueError("Invalid messages list")
 
-        if user_id is None:
-            user_id = "default"
+        # artifacts = self.get_all_artifacts()
+        # if artifacts is None:
+        artifacts = []
 
-        memories = self.read_from_db(user_id=user_id)
-        if memories is None:
-            memories = {}
-
-        existing_memories = memories.get(user_id, [])  # type: ignore
-        existing_memories = [{"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories]
-        response = self.create_or_update_memories(  # type: ignore
-            messages=messages,
-            existing_memories=existing_memories,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            db=self.db,
-            update_memories=self.update_memories,
-            add_memories=self.add_memories,
-        )
-
-        # We refresh from the DB
-        self.read_from_db(user_id=user_id)
-        return response
+        existing_artifacts = [artifact.preview() for artifact in artifacts]
+        print("Existing artifacts:")
+        print(existing_artifacts)

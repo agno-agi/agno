@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 
 @dataclass
@@ -9,10 +9,11 @@ class CulturalArtifact:
 
     name: str
     id: Optional[str] = None
-    description: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    summary: Optional[str] = None
     content: Optional[str] = None
-    notes: Optional[str] = None
+    categories: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    notes: Optional[List[str]] = None
     input: Optional[str] = None
     created_at: Optional[int] = field(default=None)
     updated_at: Optional[int] = field(default=None)
@@ -30,13 +31,29 @@ class CulturalArtifact:
         """Bump updated_at to now (UTC)."""
         self.updated_at = _now_epoch_s()
 
+    def preview(self) -> Dict[str, Any]:
+        """Return a preview of the cultural artifact"""
+        _preview = {
+            "name": self.name,
+        }
+        if self.categories is not None:
+            _preview["categories"] = self.categories
+        if self.summary is not None:
+            _preview["summary"] = self.summary[:100] + "..." if len(self.summary) > 100 else self.summary
+        if self.content is not None:
+            _preview["content"] = self.content[:100] + "..." if len(self.content) > 100 else self.content
+        if self.notes is not None:
+            _preview["notes"] = [note[:100] + "..." if len(note) > 100 else note for note in self.notes]
+        return _preview
+
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             "id": self.id,
             "name": self.name,
-            "description": self.description,
-            "metadata": self.metadata,
+            "summary": self.summary,
             "content": self.content,
+            "categories": self.categories,
+            "metadata": self.metadata,
             "notes": self.notes,
             "input": self.input,
             "created_at": (_epoch_to_rfc3339_z(self.created_at) if self.created_at is not None else None),
