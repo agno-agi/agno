@@ -26,7 +26,7 @@ class CulturalArtifact:
         self.created_at = _now_epoch_s() if self.created_at is None else _to_epoch_s(self.created_at)
         self.updated_at = self.created_at if self.updated_at is None else _to_epoch_s(self.updated_at)
 
-    def touch(self) -> None:
+    def bump_updated_at(self) -> None:
         """Bump updated_at to now (UTC)."""
         self.updated_at = _now_epoch_s()
 
