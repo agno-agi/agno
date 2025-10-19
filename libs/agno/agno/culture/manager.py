@@ -33,33 +33,33 @@ class MemorySearchResponse(BaseModel):
 
 
 @dataclass
-class MemoryManager:
-    """Memory Manager"""
+class CultureManager:
+    """Culture Manager"""
 
-    # Model used for memory management
+    # Model used for culture management
     model: Optional[Model] = None
 
-    # Provide the system message for the manager as a string. If not provided, the default system message will be used.
+    # Provide the system message for the culture manager as a string. If not provided, the default system message will be used.
     system_message: Optional[str] = None
-    # Provide the memory capture instructions for the manager as a string. If not provided, the default memory capture instructions will be used.
-    memory_capture_instructions: Optional[str] = None
-    # Additional instructions for the manager. These instructions are appended to the default system message.
+    # Provide the culture capture instructions for the culture manager as a string. If not provided, the default culture capture instructions are used.
+    culture_capture_instructions: Optional[str] = None
+    # Additional instructions for the culture manager. These instructions are appended to the default system message.
     additional_instructions: Optional[str] = None
 
-    # Whether memories were created in the last run
-    memories_updated: bool = False
+    # Whether culture was updated in the last run
+    culture_updated: bool = False
 
     # ----- db tools ---------
-    # Whether to delete memories
-    delete_memories: bool = True
-    # Whether to clear memories
-    clear_memories: bool = True
-    # Whether to update memories
-    update_memories: bool = True
-    # whether to add memories
-    add_memories: bool = True
+    # Whether to delete culture
+    delete_culture: bool = True
+    # Whether to clear culture
+    clear_culture: bool = True
+    # Whether to update culture
+    update_culture: bool = True
+    # whether to add culture
+    add_culture: bool = True
 
-    # The database to store memories
+    # The database to store culture
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
     debug_mode: bool = False
@@ -68,26 +68,26 @@ class MemoryManager:
         self,
         model: Optional[Model] = None,
         system_message: Optional[str] = None,
-        memory_capture_instructions: Optional[str] = None,
+        culture_capture_instructions: Optional[str] = None,
         additional_instructions: Optional[str] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        delete_memories: bool = False,
-        update_memories: bool = True,
-        add_memories: bool = True,
-        clear_memories: bool = False,
+        delete_culture: bool = False,
+        update_culture: bool = True,
+        add_culture: bool = True,
+        clear_culture: bool = False,
         debug_mode: bool = False,
     ):
         self.model = model
         if self.model is not None and isinstance(self.model, str):
             raise ValueError("Model must be a Model object, not a string")
         self.system_message = system_message
-        self.memory_capture_instructions = memory_capture_instructions
+        self.culture_capture_instructions = culture_capture_instructions
         self.additional_instructions = additional_instructions
         self.db = db
-        self.delete_memories = delete_memories
-        self.update_memories = update_memories
-        self.add_memories = add_memories
-        self.clear_memories = clear_memories
+        self.delete_culture = delete_culture
+        self.update_culture = update_culture
+        self.add_culture = add_culture
+        self.clear_culture = clear_culture
         self.debug_mode = debug_mode
         self._tools_for_model: Optional[List[Dict[str, Any]]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None

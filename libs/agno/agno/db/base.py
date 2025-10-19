@@ -73,7 +73,11 @@ class BaseDb(ABC):
 
     @abstractmethod
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -85,13 +89,15 @@ class BaseDb(ABC):
 
     @abstractmethod
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+        self,
+        sessions: List[Session],
+        deserialize: Optional[bool] = True,
+        preserve_updated_at: bool = False,
     ) -> List[Union[Session, Dict[str, Any]]]:
         """Bulk upsert multiple sessions for improved performance on large datasets."""
         raise NotImplementedError
 
     # --- Memory ---
-
     @abstractmethod
     def clear_memories(self) -> None:
         raise NotImplementedError
@@ -101,7 +107,9 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+    def delete_user_memories(
+        self, memory_ids: List[str], user_id: Optional[str] = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -150,7 +158,10 @@ class BaseDb(ABC):
 
     @abstractmethod
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+        self,
+        memories: List[UserMemory],
+        deserialize: Optional[bool] = True,
+        preserve_updated_at: bool = False,
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """Bulk upsert multiple memories for improved performance on large datasets."""
         raise NotImplementedError
@@ -322,7 +333,11 @@ class AsyncBaseDb(ABC):
 
     @abstractmethod
     async def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -333,17 +348,20 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Memory ---
-
     @abstractmethod
     async def clear_memories(self) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
+    async def delete_user_memory(
+        self, memory_id: str, user_id: Optional[str] = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+    async def delete_user_memories(
+        self, memory_ids: List[str], user_id: Optional[str] = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
