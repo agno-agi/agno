@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 from agno.agent import Agent
 from agno.models.base import Model
-from agno.utils.log import log_info, logger
 from agno.workflow.types import WebSocketHandler
 
 if TYPE_CHECKING:
@@ -153,10 +152,6 @@ class WorkflowAgent(Agent):
 
                     if isinstance(event, WorkflowCompletedEvent):
                         final_content = str(event.content) if event.content else ""
-
-                    logger.info("=" * 80)
-                    logger.info("TOOL EXECUTION COMPLETE: run_workflow")
-                    logger.info("=" * 80)
 
                 return final_content
             else:
