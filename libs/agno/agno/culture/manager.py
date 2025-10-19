@@ -96,19 +96,19 @@ class CultureManager:
     def get_all_artifacts(self) -> Optional[List[CulturalArtifact]]:
         """Get all cultural artifacts in the database"""
         if self.db:
-            return self.db.get_all_cultural_artifacts()
+            return self.db.get_cultural_artifacts()
         return None
 
     def get_artifact_by_id(self, id: str) -> Optional[CulturalArtifact]:
         """Get the cultural artifact by id"""
         if self.db:
-            return self.db.get_cultural_artifact_by_id(id=id)
+            return self.db.get_cultural_artifact(id=id)
         return None
 
     def get_artifacts_by_name(self, name: str) -> Optional[List[CulturalArtifact]]:
         """Get the cultural artifacts by name"""
         if self.db:
-            return self.db.get_cultural_artifacts_by_name(name=name)
+            return self.db.get_cultural_artifacts(name=name)
         return None
 
     # -*- Artifact Management -*-
@@ -168,9 +168,9 @@ class CultureManager:
         if not messages or not isinstance(messages, list):
             raise ValueError("Invalid messages list")
 
-        # artifacts = self.get_all_artifacts()
-        # if artifacts is None:
-        artifacts = []
+        artifacts = self.get_all_artifacts()
+        if artifacts is None:
+            artifacts = []
 
         existing_artifacts = [artifact.preview() for artifact in artifacts]
         print("Existing artifacts:")
