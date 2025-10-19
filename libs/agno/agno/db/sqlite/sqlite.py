@@ -230,6 +230,14 @@ class SqliteDb(BaseDb):
             )
             return self.knowledge_table
 
+        elif table_type == "cultural_artifacts":
+            self.cultural_artifacts_table = self._get_or_create_table(
+                table_name=self.cultural_artifacts_table_name,
+                table_type="cultural_artifacts",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.cultural_artifacts_table
+
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
 

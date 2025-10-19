@@ -173,5 +173,76 @@ class CultureManager:
             artifacts = []
 
         existing_artifacts = [artifact.preview() for artifact in artifacts]
-        print("Existing artifacts:")
-        print(existing_artifacts)
+        response = self.create_or_update_artifacts(
+            messages=messages,
+            existing_artifacts=existing_artifacts,
+            agent_id=agent_id,
+            team_id=team_id,
+            db=self.db,
+            update_artifacts=self.update_artifacts,
+            add_artifacts=self.add_artifacts,
+        )
+
+        return response
+
+    def create_or_update_artifacts(
+        self,
+        messages: List[Message],
+        existing_artifacts: List[Dict[str, Any]],
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        db: Optional[BaseDb] = None,
+        update_artifacts: bool = True,
+        add_artifacts: bool = True,
+    ) -> str:
+        if self.model is None:
+            log_error("No model provided for CultureManager")
+            return "No model provided for CultureManager"
+
+        log_debug("CultureManager Start", center=True)
+
+        # if len(messages) == 1:
+        #     input_string = messages[0].get_content_string()
+        # else:
+        #     input_string = f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
+
+        # model_copy = deepcopy(self.model)
+        # # Update the Model (set defaults, add logit etc.)
+        # self.determine_tools_for_model(
+        #     self._get_db_tools(
+        #         user_id,
+        #         db,
+        #         input_string,
+        #         agent_id=agent_id,
+        #         team_id=team_id,
+        #         enable_add_memory=add_memories,
+        #         enable_update_memory=update_memories,
+        #         enable_delete_memory=False,
+        #         enable_clear_memory=False,
+        #     ),
+        # )
+
+        # # Prepare the List of messages to send to the Model
+        # messages_for_model: List[Message] = [
+        #     self.get_system_message(
+        #         existing_memories=existing_memories,
+        #         enable_update_memory=update_memories,
+        #         enable_add_memory=add_memories,
+        #         enable_delete_memory=False,
+        #         enable_clear_memory=False,
+        #     ),
+        #     *messages,
+        # ]
+
+        # # Generate a response from the Model (includes running function calls)
+        # response = model_copy.response(
+        #     messages=messages_for_model,
+        #     tools=self._tools_for_model,
+        #     functions=self._functions_for_model,
+        # )
+
+        # if response.tool_calls is not None and len(response.tool_calls) > 0:
+        #     self.memories_updated = True
+        # log_debug("MemoryManager End", center=True)
+
+        # return response.content or "No response from model"
