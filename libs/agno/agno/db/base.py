@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.schemas import UserMemory
+from agno.db.schemas.culture import CulturalArtifact
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.session import Session
@@ -26,6 +27,7 @@ class BaseDb(ABC):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        cultural_artifacts_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -34,6 +36,7 @@ class BaseDb(ABC):
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
+        self.cultural_artifacts_table_name = cultural_artifacts_table or "agno_cultural_artifacts"
 
     # --- Sessions ---
     @abstractmethod
@@ -271,6 +274,36 @@ class BaseDb(ABC):
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    # --- Cultural Artifacts ---
+    @abstractmethod
+    def clear_cultural_artifacts(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_cultural_artifact(self, id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_cultural_artifact(self, id: str) -> Optional[CulturalArtifact]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_cultural_artifacts(
+        self,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> Optional[List[CulturalArtifact]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_cultural_artifact(self, cultural_artifact: CulturalArtifact) -> Optional[CulturalArtifact]:
         raise NotImplementedError
 
 

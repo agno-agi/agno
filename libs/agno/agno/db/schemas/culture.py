@@ -8,6 +8,7 @@ class CulturalArtifact:
     """Model for Cultural Artifacts"""
 
     name: str
+    # The id of the cultural artifact, auto-generated if not provided
     id: Optional[str] = None
     summary: Optional[str] = None
     content: Optional[str] = None

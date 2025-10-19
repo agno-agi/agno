@@ -96,13 +96,13 @@ class CultureManager:
     def get_all_artifacts(self) -> Optional[List[CulturalArtifact]]:
         """Get all cultural artifacts in the database"""
         if self.db:
-            return self.db.get_cultural_artifacts()
+            return self.db.get_all_cultural_artifacts()
         return None
 
     def get_artifact_by_id(self, id: str) -> Optional[CulturalArtifact]:
         """Get the cultural artifact by id"""
         if self.db:
-            return self.db.get_cultural_artifact(id=id)
+            return self.db.get_cultural_artifact_by_id(id=id)
         return None
 
     def get_artifacts_by_name(self, name: str) -> Optional[List[CulturalArtifact]]:
