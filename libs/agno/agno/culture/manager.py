@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 from pydantic import BaseModel, Field
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.schemas import UserMemory
+from agno.db.schemas.culture import CulturalArtifact
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.tools.function import Function
@@ -105,20 +105,9 @@ class CultureManager:
             self.model = OpenAIChat(id="gpt-4o")
         return self.model
 
-    def read_from_db(self, user_id: Optional[str] = None):
+    def read_from_db(self):
         if self.db:
-            # If no user_id is provided, read all memories
-            if user_id is None:
-                all_memories: List[UserMemory] = self.db.get_user_memories()  # type: ignore
-            else:
-                all_memories = self.db.get_user_memories(user_id=user_id)  # type: ignore
-
-            memories: Dict[str, List[UserMemory]] = {}
-            for memory in all_memories:
-                if memory.user_id is not None and memory.memory_id is not None:
-                    memories.setdefault(memory.user_id, []).append(memory)
-
-            return memories
+            return self.db.get_cultural_artifacts()
         return None
 
     async def aread_from_db(self, user_id: Optional[str] = None):
@@ -126,7 +115,7 @@ class CultureManager:
             if isinstance(self.db, AsyncBaseDb):
                 # If no user_id is provided, read all memories
                 if user_id is None:
-                    all_memories: List[UserMemory] = await self.db.get_user_memories()  # type: ignore
+                    all_memories: List[CulturalArtifact] = await self.db.get_user_memories()  # type: ignore
                 else:
                     all_memories = await self.db.get_user_memories(user_id=user_id)  # type: ignore
             else:
@@ -135,7 +124,7 @@ class CultureManager:
                 else:
                     all_memories = self.db.get_user_memories(user_id=user_id)  # type: ignore
 
-            memories: Dict[str, List[UserMemory]] = {}
+            memories: Dict[str, List[CulturalArtifact]] = {}
             for memory in all_memories:
                 if memory.user_id is not None and memory.memory_id is not None:
                     memories.setdefault(memory.user_id, []).append(memory)
@@ -154,9 +143,7 @@ class CultureManager:
         self.set_log_level()
 
     # -*- Public Functions
-    def get_user_memories(
-        self, user_id: Optional[str] = None
-    ) -> Optional[List[UserMemory]]:
+    def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[CulturalArtifact]]:
         """Get the user memories for a given user id"""
         if self.db:
             if user_id is None:
@@ -170,9 +157,7 @@ class CultureManager:
             log_warning("Memory Db not provided.")
             return []
 
-    async def aget_user_memories(
-        self, user_id: Optional[str] = None
-    ) -> Optional[List[UserMemory]]:
+    async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[CulturalArtifact]]:
         """Get the user memories for a given user id"""
         if self.db:
             if user_id is None:
@@ -186,9 +171,7 @@ class CultureManager:
             log_warning("Memory Db not provided.")
             return []
 
-    def get_user_memory(
-        self, memory_id: str, user_id: Optional[str] = None
-    ) -> Optional[UserMemory]:
+    def get_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> Optional[CulturalArtifact]:
         """Get the user memory for a given user id"""
         if self.db:
             if user_id is None:
@@ -208,12 +191,12 @@ class CultureManager:
 
     def add_user_memory(
         self,
-        memory: UserMemory,
+        memory: CulturalArtifact,
         user_id: Optional[str] = None,
     ) -> Optional[str]:
         """Add a user memory for a given user id
         Args:
-            memory (UserMemory): The memory to add
+            memory (CulturalArtifact): The memory to add
             user_id (Optional[str]): The user id to add the memory to. If not provided, the memory is added to the "default" user.
         Returns:
             str: The id of the memory
@@ -242,13 +225,13 @@ class CultureManager:
     def replace_user_memory(
         self,
         memory_id: str,
-        memory: UserMemory,
+        memory: CulturalArtifact,
         user_id: Optional[str] = None,
     ) -> Optional[str]:
         """Replace a user memory for a given user id
         Args:
             memory_id (str): The id of the memory to replace
-            memory (UserMemory): The memory to add
+            memory (CulturalArtifact): The memory to add
             user_id (Optional[str]): The user id to add the memory to. If not provided, the memory is added to the "default" user.
         Returns:
             str: The id of the memory
@@ -332,10 +315,7 @@ class CultureManager:
             memories = {}
 
         existing_memories = memories.get(user_id, [])  # type: ignore
-        existing_memories = [
-            {"memory_id": memory.memory_id, "memory": memory.memory}
-            for memory in existing_memories
-        ]
+        existing_memories = [{"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories]
         response = self.create_or_update_memories(  # type: ignore
             messages=messages,
             existing_memories=existing_memories,
@@ -386,10 +366,7 @@ class CultureManager:
             memories = {}
 
         existing_memories = memories.get(user_id, [])  # type: ignore
-        existing_memories = [
-            {"memory_id": memory.memory_id, "memory": memory.memory}
-            for memory in existing_memories
-        ]
+        existing_memories = [{"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories]
 
         response = await self.acreate_or_update_memories(  # type: ignore
             messages=messages,
@@ -430,10 +407,7 @@ class CultureManager:
             memories = {}
 
         existing_memories = memories.get(user_id, [])  # type: ignore
-        existing_memories = [
-            {"memory_id": memory.memory_id, "memory": memory.memory}
-            for memory in existing_memories
-        ]
+        existing_memories = [{"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories]
         # The memory manager updates the DB directly
         response = self.run_memory_task(  # type: ignore
             task=task,
@@ -451,9 +425,7 @@ class CultureManager:
 
         return response
 
-    async def aupdate_memory_task(
-        self, task: str, user_id: Optional[str] = None
-    ) -> str:
+    async def aupdate_memory_task(self, task: str, user_id: Optional[str] = None) -> str:
         """Updates the memory with a task"""
         self.set_log_level()
 
@@ -473,10 +445,7 @@ class CultureManager:
             memories = {}
 
         existing_memories = memories.get(user_id, [])  # type: ignore
-        existing_memories = [
-            {"memory_id": memory.memory_id, "memory": memory.memory}
-            for memory in existing_memories
-        ]
+        existing_memories = [{"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories]
         # The memory manager updates the DB directly
         response = await self.arun_memory_task(  # type: ignore
             task=task,
@@ -498,7 +467,7 @@ class CultureManager:
         return response
 
     # -*- Memory Db Functions
-    def _upsert_db_memory(self, memory: UserMemory) -> str:
+    def _upsert_db_memory(self, memory: CulturalArtifact) -> str:
         """Use this function to add a memory to the database."""
         try:
             if not self.db:
@@ -531,7 +500,7 @@ class CultureManager:
         limit: Optional[int] = None,
         retrieval_method: Optional[Literal["last_n", "first_n", "agentic"]] = None,
         user_id: Optional[str] = None,
-    ) -> List[UserMemory]:
+    ) -> List[CulturalArtifact]:
         """Search through user memories using the specified retrieval method.
 
         Args:
@@ -544,7 +513,7 @@ class CultureManager:
             user_id: The user to search for. Optional.
 
         Returns:
-            A list of UserMemory objects matching the search criteria.
+            A list of CulturalArtifact objects matching the search criteria.
         """
 
         if user_id is None:
@@ -569,9 +538,7 @@ class CultureManager:
             if not query:
                 raise ValueError("Query is required for agentic search")
 
-            return self._search_user_memories_agentic(
-                user_id=user_id, query=query, limit=limit
-            )
+            return self._search_user_memories_agentic(user_id=user_id, query=query, limit=limit)
 
         elif retrieval_method == "first_n":
             return self._get_first_n_memories(user_id=user_id, limit=limit)
@@ -597,7 +564,7 @@ class CultureManager:
 
     def _search_user_memories_agentic(
         self, user_id: str, query: str, limit: Optional[int] = None
-    ) -> List[UserMemory]:
+    ) -> List[CulturalArtifact]:
         """Search through user memories using agentic search."""
         memories = self.read_from_db(user_id=user_id)
         if memories is None:
@@ -613,7 +580,7 @@ class CultureManager:
         log_debug("Searching for memories", center=True)
 
         # Get all memories as a list
-        user_memories: List[UserMemory] = memories[user_id]
+        user_memories: List[CulturalArtifact] = memories[user_id]
         system_message_str = "Your task is to search through user memories and return the IDs of the memories that are related to the query.\n"
         system_message_str += "\n<user_memories>\n"
         for memory in user_memories:
@@ -638,9 +605,7 @@ class CultureManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = model.response(
-            messages=messages_for_model, response_format=response_format
-        )
+        response = model.response(messages=messages_for_model, response_format=response_format)
         log_debug("Search for memories complete", center=True)
 
         memory_search: Optional[MemorySearchResponse] = None
@@ -659,14 +624,10 @@ class CultureManager:
 
                 # Update RunOutput
                 if memory_search is None:
-                    log_warning(
-                        "Failed to convert memory_search response to MemorySearchResponse"
-                    )
+                    log_warning("Failed to convert memory_search response to MemorySearchResponse")
                     return []
             except Exception as e:
-                log_warning(
-                    f"Failed to convert memory_search response to MemorySearchResponse: {e}"
-                )
+                log_warning(f"Failed to convert memory_search response to MemorySearchResponse: {e}")
                 return []
 
         memories_to_return = []
@@ -677,16 +638,14 @@ class CultureManager:
                         memories_to_return.append(memory)
         return memories_to_return[:limit]
 
-    def _get_last_n_memories(
-        self, user_id: str, limit: Optional[int] = None
-    ) -> List[UserMemory]:
+    def _get_last_n_memories(self, user_id: str, limit: Optional[int] = None) -> List[CulturalArtifact]:
         """Get the most recent user memories.
 
         Args:
             limit: Maximum number of memories to return.
 
         Returns:
-            A list of the most recent UserMemory objects.
+            A list of the most recent CulturalArtifact objects.
         """
         memories = self.read_from_db(user_id=user_id)
         if memories is None:
@@ -710,16 +669,14 @@ class CultureManager:
 
         return sorted_memories_list
 
-    def _get_first_n_memories(
-        self, user_id: str, limit: Optional[int] = None
-    ) -> List[UserMemory]:
+    def _get_first_n_memories(self, user_id: str, limit: Optional[int] = None) -> List[CulturalArtifact]:
         """Get the oldest user memories.
 
         Args:
             limit: Maximum number of memories to return.
 
         Returns:
-            A list of the oldest UserMemory objects.
+            A list of the oldest CulturalArtifact objects.
         """
         memories = self.read_from_db(user_id=user_id)
         if memories is None:
@@ -756,9 +713,7 @@ class CultureManager:
                     func = Function.from_callable(tool, strict=True)  # type: ignore
                     func.strict = True
                     self._functions_for_model[func.name] = func
-                    self._tools_for_model.append(
-                        {"type": "function", "function": func.to_dict()}
-                    )
+                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                     log_debug(f"Added function {func.name}")
             except Exception as e:
                 log_warning(f"Could not add function {tool}: {e}")
@@ -819,21 +774,13 @@ class CultureManager:
             "  - Decide to make no changes.",
         ]
         if enable_add_memory:
-            system_prompt_lines.append(
-                "  - Decide to add a new memory, using the `add_memory` tool."
-            )
+            system_prompt_lines.append("  - Decide to add a new memory, using the `add_memory` tool.")
         if enable_update_memory:
-            system_prompt_lines.append(
-                "  - Decide to update an existing memory, using the `update_memory` tool."
-            )
+            system_prompt_lines.append("  - Decide to update an existing memory, using the `update_memory` tool.")
         if enable_delete_memory:
-            system_prompt_lines.append(
-                "  - Decide to delete an existing memory, using the `delete_memory` tool."
-            )
+            system_prompt_lines.append("  - Decide to delete an existing memory, using the `delete_memory` tool.")
         if enable_clear_memory:
-            system_prompt_lines.append(
-                "  - Decide to clear all memories, using the `clear_memory` tool."
-            )
+            system_prompt_lines.append("  - Decide to clear all memories, using the `clear_memory` tool.")
 
         system_prompt_lines += [
             "You can call multiple tools in a single response if needed. ",
@@ -1144,12 +1091,12 @@ class CultureManager:
             """
             from uuid import uuid4
 
-            from agno.db.base import UserMemory
+            from agno.db.base import CulturalArtifact
 
             try:
                 memory_id = str(uuid4())
                 db.upsert_user_memory(
-                    UserMemory(
+                    CulturalArtifact(
                         memory_id=memory_id,
                         user_id=user_id,
                         agent_id=agent_id,
@@ -1165,9 +1112,7 @@ class CultureManager:
                 log_warning(f"Error storing memory in db: {e}")
                 return f"Error adding memory: {e}"
 
-        def update_memory(
-            memory_id: str, memory: str, topics: Optional[List[str]] = None
-        ) -> str:
+        def update_memory(memory_id: str, memory: str, topics: Optional[List[str]] = None) -> str:
             """Use this function to update an existing memory in the database.
             Args:
                 memory_id (str): The id of the memory to be updated.
@@ -1176,11 +1121,11 @@ class CultureManager:
             Returns:
                 str: A message indicating if the memory was updated successfully or not.
             """
-            from agno.db.base import UserMemory
+            from agno.db.base import CulturalArtifact
 
             try:
                 db.upsert_user_memory(
-                    UserMemory(
+                    CulturalArtifact(
                         memory_id=memory_id,
                         memory=memory,
                         topics=topics,
@@ -1252,13 +1197,13 @@ class CultureManager:
             """
             from uuid import uuid4
 
-            from agno.db.base import UserMemory
+            from agno.db.base import CulturalArtifact
 
             try:
                 memory_id = str(uuid4())
                 if isinstance(db, AsyncBaseDb):
                     await db.upsert_user_memory(
-                        UserMemory(
+                        CulturalArtifact(
                             memory_id=memory_id,
                             user_id=user_id,
                             agent_id=agent_id,
@@ -1270,7 +1215,7 @@ class CultureManager:
                     )
                 else:
                     db.upsert_user_memory(
-                        UserMemory(
+                        CulturalArtifact(
                             memory_id=memory_id,
                             user_id=user_id,
                             agent_id=agent_id,
@@ -1286,9 +1231,7 @@ class CultureManager:
                 log_warning(f"Error storing memory in db: {e}")
                 return f"Error adding memory: {e}"
 
-        async def update_memory(
-            memory_id: str, memory: str, topics: Optional[List[str]] = None
-        ) -> str:
+        async def update_memory(memory_id: str, memory: str, topics: Optional[List[str]] = None) -> str:
             """Use this function to update an existing memory in the database.
             Args:
                 memory_id (str): The id of the memory to be updated.
@@ -1297,12 +1240,12 @@ class CultureManager:
             Returns:
                 str: A message indicating if the memory was updated successfully or not.
             """
-            from agno.db.base import UserMemory
+            from agno.db.base import CulturalArtifact
 
             try:
                 if isinstance(db, AsyncBaseDb):
                     await db.upsert_user_memory(
-                        UserMemory(
+                        CulturalArtifact(
                             memory_id=memory_id,
                             memory=memory,
                             topics=topics,
@@ -1311,7 +1254,7 @@ class CultureManager:
                     )
                 else:
                     db.upsert_user_memory(
-                        UserMemory(
+                        CulturalArtifact(
                             memory_id=memory_id,
                             memory=memory,
                             topics=topics,

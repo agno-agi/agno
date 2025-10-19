@@ -154,9 +154,7 @@ class MemoryManager:
         self.set_log_level()
 
     # -*- Public Functions
-    def get_user_memories(
-        self, user_id: Optional[str] = None
-    ) -> Optional[List[UserMemory]]:
+    def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for a given user id"""
         if self.db:
             if user_id is None:
@@ -170,9 +168,7 @@ class MemoryManager:
             log_warning("Memory Db not provided.")
             return []
 
-    async def aget_user_memories(
-        self, user_id: Optional[str] = None
-    ) -> Optional[List[UserMemory]]:
+    async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for a given user id"""
         if self.db:
             if user_id is None:
@@ -186,9 +182,7 @@ class MemoryManager:
             log_warning("Memory Db not provided.")
             return []
 
-    def get_user_memory(
-        self, memory_id: str, user_id: Optional[str] = None
-    ) -> Optional[UserMemory]:
+    def get_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> Optional[UserMemory]:
         """Get the user memory for a given user id"""
         if self.db:
             if user_id is None:
@@ -332,10 +326,7 @@ class MemoryManager:
             memories = {}
 
         existing_memories = memories.get(user_id, [])  # type: ignore
-        existing_memories = [
-            {"memory_id": memory.memory_id, "memory": memory.memory}
-            for memory in existing_memories
-        ]
+        existing_memories = [{"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories]
         response = self.create_or_update_memories(  # type: ignore
             messages=messages,
             existing_memories=existing_memories,
@@ -386,10 +377,7 @@ class MemoryManager:
             memories = {}
 
         existing_memories = memories.get(user_id, [])  # type: ignore
-        existing_memories = [
-            {"memory_id": memory.memory_id, "memory": memory.memory}
-            for memory in existing_memories
-        ]
+        existing_memories = [{"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories]
 
         response = await self.acreate_or_update_memories(  # type: ignore
             messages=messages,
@@ -430,10 +418,7 @@ class MemoryManager:
             memories = {}
 
         existing_memories = memories.get(user_id, [])  # type: ignore
-        existing_memories = [
-            {"memory_id": memory.memory_id, "memory": memory.memory}
-            for memory in existing_memories
-        ]
+        existing_memories = [{"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories]
         # The memory manager updates the DB directly
         response = self.run_memory_task(  # type: ignore
             task=task,
@@ -451,9 +436,7 @@ class MemoryManager:
 
         return response
 
-    async def aupdate_memory_task(
-        self, task: str, user_id: Optional[str] = None
-    ) -> str:
+    async def aupdate_memory_task(self, task: str, user_id: Optional[str] = None) -> str:
         """Updates the memory with a task"""
         self.set_log_level()
 
@@ -473,10 +456,7 @@ class MemoryManager:
             memories = {}
 
         existing_memories = memories.get(user_id, [])  # type: ignore
-        existing_memories = [
-            {"memory_id": memory.memory_id, "memory": memory.memory}
-            for memory in existing_memories
-        ]
+        existing_memories = [{"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories]
         # The memory manager updates the DB directly
         response = await self.arun_memory_task(  # type: ignore
             task=task,
@@ -569,9 +549,7 @@ class MemoryManager:
             if not query:
                 raise ValueError("Query is required for agentic search")
 
-            return self._search_user_memories_agentic(
-                user_id=user_id, query=query, limit=limit
-            )
+            return self._search_user_memories_agentic(user_id=user_id, query=query, limit=limit)
 
         elif retrieval_method == "first_n":
             return self._get_first_n_memories(user_id=user_id, limit=limit)
@@ -595,9 +573,7 @@ class MemoryManager:
         else:
             return {"type": "json_object"}
 
-    def _search_user_memories_agentic(
-        self, user_id: str, query: str, limit: Optional[int] = None
-    ) -> List[UserMemory]:
+    def _search_user_memories_agentic(self, user_id: str, query: str, limit: Optional[int] = None) -> List[UserMemory]:
         """Search through user memories using agentic search."""
         memories = self.read_from_db(user_id=user_id)
         if memories is None:
@@ -638,9 +614,7 @@ class MemoryManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = model.response(
-            messages=messages_for_model, response_format=response_format
-        )
+        response = model.response(messages=messages_for_model, response_format=response_format)
         log_debug("Search for memories complete", center=True)
 
         memory_search: Optional[MemorySearchResponse] = None
@@ -659,14 +633,10 @@ class MemoryManager:
 
                 # Update RunOutput
                 if memory_search is None:
-                    log_warning(
-                        "Failed to convert memory_search response to MemorySearchResponse"
-                    )
+                    log_warning("Failed to convert memory_search response to MemorySearchResponse")
                     return []
             except Exception as e:
-                log_warning(
-                    f"Failed to convert memory_search response to MemorySearchResponse: {e}"
-                )
+                log_warning(f"Failed to convert memory_search response to MemorySearchResponse: {e}")
                 return []
 
         memories_to_return = []
@@ -677,9 +647,7 @@ class MemoryManager:
                         memories_to_return.append(memory)
         return memories_to_return[:limit]
 
-    def _get_last_n_memories(
-        self, user_id: str, limit: Optional[int] = None
-    ) -> List[UserMemory]:
+    def _get_last_n_memories(self, user_id: str, limit: Optional[int] = None) -> List[UserMemory]:
         """Get the most recent user memories.
 
         Args:
@@ -710,9 +678,7 @@ class MemoryManager:
 
         return sorted_memories_list
 
-    def _get_first_n_memories(
-        self, user_id: str, limit: Optional[int] = None
-    ) -> List[UserMemory]:
+    def _get_first_n_memories(self, user_id: str, limit: Optional[int] = None) -> List[UserMemory]:
         """Get the oldest user memories.
 
         Args:
@@ -756,9 +722,7 @@ class MemoryManager:
                     func = Function.from_callable(tool, strict=True)  # type: ignore
                     func.strict = True
                     self._functions_for_model[func.name] = func
-                    self._tools_for_model.append(
-                        {"type": "function", "function": func.to_dict()}
-                    )
+                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                     log_debug(f"Added function {func.name}")
             except Exception as e:
                 log_warning(f"Could not add function {tool}: {e}")
@@ -819,21 +783,13 @@ class MemoryManager:
             "  - Decide to make no changes.",
         ]
         if enable_add_memory:
-            system_prompt_lines.append(
-                "  - Decide to add a new memory, using the `add_memory` tool."
-            )
+            system_prompt_lines.append("  - Decide to add a new memory, using the `add_memory` tool.")
         if enable_update_memory:
-            system_prompt_lines.append(
-                "  - Decide to update an existing memory, using the `update_memory` tool."
-            )
+            system_prompt_lines.append("  - Decide to update an existing memory, using the `update_memory` tool.")
         if enable_delete_memory:
-            system_prompt_lines.append(
-                "  - Decide to delete an existing memory, using the `delete_memory` tool."
-            )
+            system_prompt_lines.append("  - Decide to delete an existing memory, using the `delete_memory` tool.")
         if enable_clear_memory:
-            system_prompt_lines.append(
-                "  - Decide to clear all memories, using the `clear_memory` tool."
-            )
+            system_prompt_lines.append("  - Decide to clear all memories, using the `clear_memory` tool.")
 
         system_prompt_lines += [
             "You can call multiple tools in a single response if needed. ",
@@ -1165,9 +1121,7 @@ class MemoryManager:
                 log_warning(f"Error storing memory in db: {e}")
                 return f"Error adding memory: {e}"
 
-        def update_memory(
-            memory_id: str, memory: str, topics: Optional[List[str]] = None
-        ) -> str:
+        def update_memory(memory_id: str, memory: str, topics: Optional[List[str]] = None) -> str:
             """Use this function to update an existing memory in the database.
             Args:
                 memory_id (str): The id of the memory to be updated.
@@ -1286,9 +1240,7 @@ class MemoryManager:
                 log_warning(f"Error storing memory in db: {e}")
                 return f"Error adding memory: {e}"
 
-        async def update_memory(
-            memory_id: str, memory: str, topics: Optional[List[str]] = None
-        ) -> str:
+        async def update_memory(memory_id: str, memory: str, topics: Optional[List[str]] = None) -> str:
             """Use this function to update an existing memory in the database.
             Args:
                 memory_id (str): The id of the memory to be updated.

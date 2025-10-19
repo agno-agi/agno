@@ -107,9 +107,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete_user_memories(
-        self, memory_ids: List[str], user_id: Optional[str] = None
-    ) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -353,15 +351,11 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_user_memory(
-        self, memory_id: str, user_id: Optional[str] = None
-    ) -> None:
+    async def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_user_memories(
-        self, memory_ids: List[str], user_id: Optional[str] = None
-    ) -> None:
+    async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
