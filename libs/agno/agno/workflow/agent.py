@@ -107,13 +107,12 @@ class WorkflowAgent(Agent):
             fresh_session = workflow.get_session(session_id=session.session_id)
             if fresh_session is None:
                 fresh_session = session  # Fallback to closure session if reload fails
-                log_info(f"Fallback to closure session: {len(fresh_session.runs or [])} runs")
+                log_debug(f"Fallback to closure session: {len(fresh_session.runs or [])} runs")
             else:
-                log_info(f"Reloaded session before tool execution: {len(fresh_session.runs or [])} runs")
+                log_debug(f"Reloaded session before tool execution: {len(fresh_session.runs or [])} runs")
 
             # Create a new run ID for this execution
             run_id = str(uuid4())
-            log_debug(f"Created new run ID: {run_id}")
 
             # Create workflow run response
             workflow_run_response = WorkflowRunOutput(
@@ -137,8 +136,7 @@ class WorkflowAgent(Agent):
 
             # ===== EXECUTION LOGIC (Based on streaming mode) =====
             if stream:
-                # STREAMING MODE: Yield workflow events
-                log_debug("Executing workflow with streaming...")
+                log_debug("TOOL EXECUTION STARTED: run_workflow with streaming...")
 
                 final_content = ""
                 for event in workflow._execute_stream(
@@ -156,14 +154,14 @@ class WorkflowAgent(Agent):
                     if isinstance(event, WorkflowCompletedEvent):
                         final_content = str(event.content) if event.content else ""
 
-                logger.info("=" * 80)
-                logger.info("TOOL EXECUTION COMPLETE: run_workflow")
-                logger.info("=" * 80)
+                    logger.info("=" * 80)
+                    logger.info("TOOL EXECUTION COMPLETE: run_workflow")
+                    logger.info("=" * 80)
 
                 return final_content
             else:
                 # NON-STREAMING MODE: Execute synchronously
-                log_debug("Executing workflow steps...")
+                log_debug("TOOL EXECUTION STARTED: run_workflow with non-streaming...")
 
                 result = workflow._execute(
                     session=fresh_session,
@@ -172,13 +170,8 @@ class WorkflowAgent(Agent):
                     session_state=session_state,
                 )
 
-                logger.info("=" * 80)
-                logger.info("TOOL EXECUTION COMPLETE: run_workflow")
-                logger.info(f"  ➜ Run ID: {result.run_id}")
-                logger.info(f"  ➜ Result length: {len(str(result.content)) if result.content else 0} chars")
-                logger.info("=" * 80)
+                log_debug("TOOL EXECUTION COMPLETE: run_workflow")
 
-                # Return the content as string
                 if isinstance(result.content, str):
                     return result.content
                 elif isinstance(result.content, BaseModel):
@@ -236,13 +229,12 @@ class WorkflowAgent(Agent):
             fresh_session = workflow.get_session(session_id=session.session_id)
             if fresh_session is None:
                 fresh_session = session  # Fallback to closure session if reload fails
-                log_info(f"Fallback to closure session: {len(fresh_session.runs or [])} runs")
+                log_debug(f"Fallback to closure session: {len(fresh_session.runs or [])} runs")
             else:
-                log_info(f"Reloaded session before async tool execution: {len(fresh_session.runs or [])} runs")
+                log_debug(f"Reloaded session before async tool execution: {len(fresh_session.runs or [])} runs")
 
             # Create a new run ID for this execution
             run_id = str(uuid4())
-            log_debug(f"Created new run ID: {run_id}")
 
             # Create workflow run response
             workflow_run_response = WorkflowRunOutput(
@@ -264,7 +256,7 @@ class WorkflowAgent(Agent):
             )
 
             if stream:
-                log_debug("Executing workflow with async streaming...")
+                log_debug("TOOL EXECUTION STARTED: run_workflow with async streaming...")
 
                 final_content = ""
                 async for event in workflow._aexecute_stream(
@@ -282,13 +274,11 @@ class WorkflowAgent(Agent):
                     if isinstance(event, WorkflowCompletedEvent):
                         final_content = str(event.content) if event.content else ""
 
-                logger.info("=" * 80)
-                logger.info("ASYNC TOOL EXECUTION COMPLETE: run_workflow")
-                logger.info("=" * 80)
+                log_debug("TOOL EXECUTION COMPLETE: run_workflow with async streaming")
 
                 yield final_content
             else:
-                log_debug("Executing workflow steps asynchronously...")
+                log_debug("TOOL EXECUTION STARTED: run_workflow with async non-streaming...")
 
                 result = await workflow._aexecute(
                     session=fresh_session,
@@ -297,11 +287,7 @@ class WorkflowAgent(Agent):
                     session_state=session_state,
                 )
 
-                logger.info("=" * 80)
-                logger.info("ASYNC TOOL EXECUTION COMPLETE: run_workflow")
-                logger.info(f"  ➜ Run ID: {result.run_id}")
-                logger.info(f"  ➜ Result length: {len(str(result.content)) if result.content else 0} chars")
-                logger.info("=" * 80)
+                log_debug("TOOL EXECUTION COMPLETE: run_workflow with async non-streaming")
 
                 if isinstance(result.content, str):
                     yield result.content
