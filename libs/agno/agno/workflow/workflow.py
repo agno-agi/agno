@@ -2450,7 +2450,7 @@ class Workflow:
                 if event.step_name is None:
                     # This is from the workflow agent itself
                     # Enrich with metadata to mark it as a workflow agent event
-                    event.is_workflow_agent = True
+                    event.is_workflow_agent = True # type: ignore
                 yield event  # type: ignore[misc]
 
             # Capture the final RunOutput (but don't yield it)
@@ -2758,7 +2758,7 @@ class Workflow:
                 if event.step_name is None:
                     # This is from the workflow agent itself
                     # Enrich with metadata to mark it as a workflow agent event
-                    event.is_workflow_agent = True
+                    event.is_workflow_agent = True # type: ignore
                 yield event  # type: ignore[misc]
 
             # Capture the final RunOutput (but don't yield it)
@@ -2770,13 +2770,6 @@ class Workflow:
 
         # Handle direct answer case (no workflow execution)
         if not workflow_executed:
-            logger.info("=" * 80)
-            logger.info("WORKFLOW AGENT: Answered directly from session history (async)")
-            logger.info(
-                f"  ➜ Response: {str(agent_response.content)[:100] if agent_response and agent_response.content else 'None'}..."
-            )
-            logger.info("=" * 80)
-
             # Create a new workflow run output for the direct answer
             run_id = str(uuid4())
             workflow_run_response = WorkflowRunOutput(
