@@ -2243,6 +2243,7 @@ class Workflow:
                         execution_input=inputs,
                         session_state=session_state,
                         stream=True,
+                        websocket_handler=websocket_handler,
                         **kwargs,
                     )
                     # For streaming, result is an async iterator
@@ -2705,6 +2706,7 @@ class Workflow:
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
+        websocket_handler: Optional[WebSocketHandler] = None,
         stream: bool = False,
     ) -> None:
         """Initialize the workflow agent with async tools (but NOT context - that's passed per-run)"""
@@ -2716,6 +2718,7 @@ class Workflow:
             execution_input=execution_input,
             session_state=session_state,
             stream=stream,
+            websocket_handler=websocket_handler,
         )
         workflow_tool = Function.from_callable(workflow_tool_func)
 
@@ -2730,6 +2733,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
         stream: bool = False,
+        websocket_handler: Optional[WebSocketHandler] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """
@@ -2754,6 +2758,7 @@ class Workflow:
                 execution_input=execution_input,
                 session_state=session_state,
                 stream=stream,
+                websocket_handler=websocket_handler,
                 **kwargs,
             )
         else:
@@ -2772,6 +2777,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         session_state: Optional[Dict[str, Any]],
         stream: bool = False,
+        websocket_handler: Optional[WebSocketHandler] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """
@@ -2791,7 +2797,7 @@ class Workflow:
         logger.info("Workflow agent enabled - async streaming mode")
         log_debug(f"User input: {agent_input}")
 
-        self._async_initialize_workflow_agent(session, execution_input, session_state, stream=stream)
+        self._async_initialize_workflow_agent(session, execution_input, session_state, stream=stream, websocket_handler=websocket_handler)
 
         dependencies = self._get_workflow_agent_dependencies(session)
 
@@ -2818,6 +2824,10 @@ class Workflow:
                     workflow_executed = True
                     log_debug("Workflow execution detected via WorkflowCompletedEvent")
             elif isinstance(event, (RunContentEvent, TeamRunContentEvent)):
+                if event.step_name is None:
+                    # This is from the workflow agent itself
+                    # Enrich with metadata to mark it as a workflow agent event
+                    event.is_workflow_agent = True
                 yield event  # type: ignore[misc]
 
             # Capture the final RunOutput (but don't yield it)

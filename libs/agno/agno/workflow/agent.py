@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 from agno.agent import Agent
 from agno.models.base import Model
 from agno.utils.log import log_info, logger
+from agno.workflow.types import WebSocketHandler
 
 if TYPE_CHECKING:
     from agno.session.workflow import WorkflowSession
@@ -194,6 +195,7 @@ class WorkflowAgent(Agent):
         execution_input: "WorkflowExecutionInput",
         session_state: Optional[Dict[str, Any]],
         stream: bool = False,
+        websocket_handler: Optional[WebSocketHandler] = None,
     ) -> Callable:
         """
         Create the async workflow execution tool that this agent can call.
@@ -271,6 +273,7 @@ class WorkflowAgent(Agent):
                     workflow_run_response=workflow_run_response,
                     session_state=session_state,
                     stream_intermediate_steps=True,
+                    websocket_handler=websocket_handler,
                 ):
                     yield event
 

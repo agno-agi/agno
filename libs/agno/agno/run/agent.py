@@ -188,6 +188,7 @@ class RunContentEvent(BaseAgentRunEvent):
 
     event: str = RunEvent.run_content.value
     content: Optional[Any] = None
+    is_workflow_agent: bool = False
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     model_provider_data: Optional[Dict[str, Any]] = None
