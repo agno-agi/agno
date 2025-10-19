@@ -1,5 +1,5 @@
 """
-Example demonstrating sending a notification to the user after an agent generates a response.
+Example demonstrating sending a notification to the user after a team generates a response.
 
 It uses a post-hook which executes right after the response is processed.
 """
@@ -9,11 +9,11 @@ from typing import Any, Dict
 
 from agno.team import Team
 from agno.models.openai import OpenAIChat
-from agno.run.agent import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.tools.yfinance import YFinanceTools
 
 
-def send_notification(run_output: RunOutput, metadata: Dict[str, Any]) -> None:
+def send_notification(run_output: TeamRunOutput, metadata: Dict[str, Any]) -> None:
     """
     Post-hook: Send a notification to the user.
     """
