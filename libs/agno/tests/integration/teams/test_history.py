@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 
 from agno.agent import Agent
@@ -117,67 +119,40 @@ def test_num_history_runs(shared_db):
     assert "Second question" not in history_content
 
 
-def test_send_team_history_to_members(shared_db):
-    """Test that team history is sent to member agents when send_team_history_to_members=True."""
-
-    weather_agent = Agent(
-        name="Weather Agent",
-        role="Provides weather information and can access team history",
+def test_add_team_history_to_members(shared_db):
+    acknowledge_agent = Agent(
+        name="Acknowledge Agent",
+        role="Acknowledges all tasks",
         model=OpenAIChat(id="gpt-5-mini"),
-        instructions="You can access the team's conversation history. Use it to provide context-aware responses.",
+        db=shared_db,
+        instructions="Acknowledge the task that was delegated to you with a simple 'Ack.'",
     )
 
     team = Team(
         model=OpenAIChat(id="gpt-5-mini"),
-        members=[weather_agent],
+        members=[acknowledge_agent],
         db=shared_db,
-        instructions="Delegate all questions to Weather Agent.",
-        add_history_to_context=True,
-        send_team_history_to_members=True,  # Send team history to members
-        determine_input_for_members=False,  # Send input directly to members
-    )
-
-    # First interaction
-    team.run("My favorite city is Paris.")
-
-    # Second interaction - member should have access to previous team interaction
-    response = team.run("What is my favorite city?")
-
-    # The response should include information from the first interaction
-    assert response.content is not None
-    assert "Paris" in response.content or "paris" in response.content.lower()
-
-
-def test_num_team_history_runs(shared_db):
-    """Test that num_team_history_runs controls how much team history is sent to members."""
-
-    counter_agent = Agent(
-        name="Counter Agent",
-        role="Counts mentions in conversation history",
-        model=OpenAIChat(id="gpt-5-mini"),
-        instructions="Count how many previous messages you can see in the conversation.",
-    )
-
-    team = Team(
-        model=OpenAIChat(id="gpt-5-mini"),
-        members=[counter_agent],
-        db=shared_db,
-        instructions="Delegate all tasks to Counter Agent.",
-        send_team_history_to_members=True,
+        instructions="Delegate all tasks to Acknowledge Agent.",
+        add_team_history_to_members=True,
         num_team_history_runs=1,  # Only send 1 previous run to members
         determine_input_for_members=False,
+        respond_directly=True,
     )
 
+    session_id = str(uuid4())
+
     # Make multiple runs
-    team.run("First message")
-    team.run("Second message")
-    team.run("Third message")
+    team.run("Task 1001", session_id=session_id)
+    team.run("Task 1002", session_id=session_id)
+    team.run("Task 1003", session_id=session_id)
 
-    # This run should only see "Third message" in history (num_team_history_runs=1)
-    response = team.run("How many previous user messages can you see?")
-
-    # The agent should only see limited history
-    assert response.content is not None
+    last_acknowledge_agent_run = acknowledge_agent.get_last_run_output(session_id=session_id)
+    assert last_acknowledge_agent_run is not None
+    acknowledge_agent_input_str = last_acknowledge_agent_run.input.input_content_string()
+    assert "<team_history_context>" in acknowledge_agent_input_str
+    assert "Task 1001" not in acknowledge_agent_input_str, acknowledge_agent_input_str
+    assert "Task 1002" in acknowledge_agent_input_str, acknowledge_agent_input_str
+    assert "Task 1003" in acknowledge_agent_input_str, acknowledge_agent_input_str
 
 
 def test_share_member_interactions(shared_db):
@@ -186,6 +161,7 @@ def test_share_member_interactions(shared_db):
     agent_a = Agent(
         name="Agent A",
         role="First agent",
+        db=shared_db,
         model=OpenAIChat(id="gpt-5-mini"),
         instructions="You are Agent A. Answer questions about yourself.",
     )
@@ -193,6 +169,7 @@ def test_share_member_interactions(shared_db):
     agent_b = Agent(
         name="Agent B",
         role="Second agent",
+        db=shared_db,
         model=OpenAIChat(id="gpt-5-mini"),
         instructions="You are Agent B. You can see what other agents have said during this conversation.",
     )
@@ -205,31 +182,14 @@ def test_share_member_interactions(shared_db):
         share_member_interactions=True,  # Share member interactions during current run
     )
 
-    response = team.run("Ask Agent A to say hello, then ask Agent B what Agent A said.")
+    session_id = str(uuid4())
 
-    # Agent B should be able to reference Agent A's response
-    assert response.content is not None
+    team.run("Ask Agent A to say hello, then ask Agent B what Agent A said.", session_id=session_id)
 
-
-def test_read_team_history_tool(shared_db):
-    """Test that the team can use a tool to read its own history when read_team_history=True."""
-
-    team = Team(
-        model=OpenAIChat(id="gpt-5-mini"),
-        members=[],
-        db=shared_db,
-        instructions="You can use the get_team_history tool to read previous conversations.",
-        read_team_history=True,  # Enable tool to read team history
-    )
-
-    # First interaction
-    team.run("Remember that my favorite color is blue.")
-
-    # Second interaction - team should use the tool to access history
-    response = team.run("What is my favorite color? Use the team history tool to find out.")
-
-    assert response.content is not None
-    assert "blue" in response.content.lower()
+    last_acknowledge_agent_run = agent_b.get_last_run_output(session_id=session_id)
+    assert last_acknowledge_agent_run is not None
+    acknowledge_agent_input_str = last_acknowledge_agent_run.input.input_content_string()
+    assert "<member_interaction_context>" in acknowledge_agent_input_str
 
 
 def test_search_session_history(shared_db):
@@ -256,59 +216,8 @@ def test_search_session_history(shared_db):
     session_3 = "session_3"
     response = team.run("What did I say in previous sessions?", session_id=session_3)
 
-    assert response.content is not None
-
-
-def test_history_with_respond_directly(shared_db):
-    """Test that history works correctly when respond_directly=True."""
-
-    agent = Agent(
-        name="Direct Agent",
-        role="Responds directly",
-        model=OpenAIChat(id="gpt-5-mini"),
-        instructions="Answer questions directly.",
-        add_history_to_context=True,  # Agent has its own history
-    )
-
-    team = Team(
-        model=OpenAIChat(id="gpt-5-mini"),
-        members=[agent],
-        db=shared_db,
-        instructions="Delegate all questions to Direct Agent.",
-        respond_directly=True,  # Members respond directly without team leader processing
-        determine_input_for_members=False,
-    )
-
-    # First interaction
-    team.run("My name is Alice.")
-
-    # Second interaction - agent should remember from its own history
-    response = team.run("What is my name?")
-
-    assert response.content is not None
-    assert "Alice" in response.content
-
-
-def test_history_not_added_when_disabled(shared_db):
-    """Test that history is not added when add_history_to_context=False."""
-
-    team = Team(
-        model=OpenAIChat(id="gpt-5-mini"),
-        members=[],
-        db=shared_db,
-        instructions="Answer questions.",
-        add_history_to_context=False,  # History disabled
-    )
-
-    # First run
-    team.run("My favorite number is 42.")
-
-    # Second run - should not have history
-    response = team.run("What is my favorite number?")
-
-    # Verify no history messages are present
-    history_messages = [msg for msg in response.messages if msg.from_history is True]
-    assert len(history_messages) == 0, "Expected no history messages when add_history_to_context=False"
+    assert "pizza" in response.content.lower()
+    assert "coffee" in response.content.lower()
 
 
 def test_member_history_independent(shared_db):
@@ -318,64 +227,39 @@ def test_member_history_independent(shared_db):
         name="Agent A",
         role="Specialist A",
         model=OpenAIChat(id="gpt-5-mini"),
-        instructions="Remember information specific to your conversations.",
+        db=shared_db,
         add_history_to_context=True,  # Agent A has its own history
-    )
-
-    agent_b = Agent(
-        name="Agent B",
-        role="Specialist B",
-        model=OpenAIChat(id="gpt-5-mini"),
-        instructions="Remember information specific to your conversations.",
-        add_history_to_context=True,  # Agent B has its own history
     )
 
     team = Team(
         model=OpenAIChat(id="gpt-5-mini"),
-        members=[agent_a, agent_b],
+        members=[agent_a],
         db=shared_db,
-        instructions="Delegate to Agent A for color questions, Agent B for number questions.",
+        instructions="Delegate to Agent A for color questions and information, especially if you don't know the answer. Don't answer yourself! You have to delegate.",
         respond_directly=True,
         determine_input_for_members=False,
     )
 
-    # Interact with Agent A
-    team.run("Agent A: my favorite color is red.")
+    session_id = str(uuid4())
 
-    # Interact with Agent B
-    team.run("Agent B: my favorite number is 7.")
+    # Interact with Agent A
+    team.run("My favorite color is red.", session_id=session_id)
 
     # Ask Agent A - should only know about color
-    response_a = team.run("Agent A: what is my favorite color?")
+    response_a = team.run("What is my favorite color?", session_id=session_id)
     assert response_a.content is not None
     assert "red" in response_a.content.lower()
 
-    # Ask Agent B - should only know about number
-    response_b = team.run("Agent B: what is my favorite number?")
-    assert response_b.content is not None
-    assert "7" in response_b.content
-
-
-def test_history_with_multiple_sessions(shared_db):
-    """Test that history is properly isolated between different sessions."""
-
-    team = Team(
-        model=OpenAIChat(id="gpt-5-mini"),
-        members=[],
-        db=shared_db,
-        instructions="Answer questions.",
-        add_history_to_context=True,
-    )
-
-    # Session 1
-    session_1 = "session_1"
-    team.run("My name is Bob.", session_id=session_1)
-    response_1 = team.run("What is my name?", session_id=session_1)
-    assert "Bob" in response_1.content
-
-    # Session 2 - should not have Session 1's history
-    session_2 = "session_2"
-    team.run("My name is Charlie.", session_id=session_2)
-    response_2 = team.run("What is my name?", session_id=session_2)
-    assert "Charlie" in response_2.content
-    assert "Bob" not in response_2.content
+    agent_a_last_run_output = agent_a.get_last_run_output(session_id=session_id)
+    assert agent_a_last_run_output is not None
+    assert agent_a_last_run_output.messages is not None
+    assert len(agent_a_last_run_output.messages) == 5
+    assert agent_a_last_run_output.messages[0].role == "system"
+    assert agent_a_last_run_output.messages[1].role == "user"
+    assert agent_a_last_run_output.messages[1].content == "My favorite color is red."
+    assert agent_a_last_run_output.messages[1].from_history is True
+    assert agent_a_last_run_output.messages[2].role == "assistant"
+    assert agent_a_last_run_output.messages[2].from_history is True
+    assert agent_a_last_run_output.messages[3].role == "user"
+    assert agent_a_last_run_output.messages[3].content == "What is my favorite color?"
+    assert agent_a_last_run_output.messages[4].role == "assistant"

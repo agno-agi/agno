@@ -15,12 +15,12 @@ def format_member_agent_task(
     member_task_str = ""
 
     if team_member_interactions_str:
-        member_task_str += f"\n\n{team_member_interactions_str}"
+        member_task_str += f"{team_member_interactions_str}\n\n"
 
     if team_history_str:
-        member_task_str += f"\n\n{team_history_str}"
+        member_task_str += f"{team_history_str}\n\n"
 
-    member_task_str += f"\n\n{task_description}"
+    member_task_str += f"{task_description}"
 
     return member_task_str
 

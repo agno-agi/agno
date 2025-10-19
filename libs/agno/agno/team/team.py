@@ -59,7 +59,7 @@ from agno.run.cancel import (
 )
 from agno.run.messages import RunMessages
 from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
-from agno.session import SessionSummaryManager, TeamSession
+from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.common import is_typed_dict, validate_typed_dict
@@ -180,7 +180,7 @@ class Team:
     num_history_runs: int = 3
 
     # Add this flag to control if the workflow should send the team history to the members. This means sending the team-level history to the members, not the agent-level history.
-    send_team_history_to_members: bool = False
+    add_team_history_to_members: bool = False
     # Number of historical runs to include in the messages sent to the members
     num_team_history_runs: int = 3
     # If True, send all member interactions (request/response) DURING THE CURRENT RUN to members that are delegated to
@@ -403,7 +403,7 @@ class Team:
         cache_session: bool = False,
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
-        send_team_history_to_members: bool = False,
+        add_team_history_to_members: bool = False,
         num_team_history_runs: int = 3,
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
@@ -502,7 +502,7 @@ class Team:
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
-        self.send_team_history_to_members = send_team_history_to_members
+        self.add_team_history_to_members = add_team_history_to_members
         self.num_team_history_runs = num_team_history_runs
         self.search_session_history = search_session_history
         self.num_history_sessions = num_history_sessions
@@ -4865,7 +4865,7 @@ class Team:
 
         if self.members:
             # Get the user message if we are using the input directly
-            user_message = None
+            user_message_content = None
             if self.determine_input_for_members is False:
                 user_message = self._get_user_message(
                     run_response=run_response,
@@ -4880,13 +4880,14 @@ class Team:
                     add_dependencies_to_context=add_dependencies_to_context,
                     metadata=metadata,
                 )
+                user_message_content = user_message.content if user_message is not None else None
 
             delegate_task_func = self._get_delegate_task_function(
                 run_response=run_response,
                 session=session,
                 session_state=session_state,
                 team_run_context=team_run_context,
-                input=user_message.content,
+                input=user_message_content,
                 user_id=user_id,
                 stream=self.stream or False,
                 stream_intermediate_steps=self.stream_intermediate_steps,
@@ -6633,10 +6634,8 @@ class Team:
 
             # 5. Get the team history
             team_history_str = None
-            if self.send_team_history_to_members and session:
+            if self.add_team_history_to_members and session:
                 team_history_str = session.get_team_history_context(num_runs=self.num_team_history_runs)
-
-            member_agent_task: Union[str, Message]
 
             # 6. Create the member agent task or use the input directly
             if self.determine_input_for_members is False:
@@ -6646,7 +6645,7 @@ class Team:
 
             if team_history_str or team_member_interactions_str:
                 member_agent_task = format_member_agent_task(  # type: ignore
-                    task_description=member_agent_task,
+                    task_description=member_agent_task or "",
                     team_member_interactions_str=team_member_interactions_str,
                     team_history_str=team_history_str,
                 )
@@ -7260,24 +7259,28 @@ class Team:
     ###########################################################################
     # Session Management
     ###########################################################################
-    def _read_session(self, session_id: str) -> Optional[TeamSession]:
+    def _read_session(
+        self, session_id: str, session_type: SessionType = SessionType.TEAM
+    ) -> Optional[Union[TeamSession, WorkflowSession]]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            session = self.db.get_session(session_id=session_id, session_type=SessionType.TEAM)
+            session = self.db.get_session(session_id=session_id, session_type=session_type)
             return session  # type: ignore
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
             return None
 
-    async def _aread_session(self, session_id: str) -> Optional[TeamSession]:
+    async def _aread_session(
+        self, session_id: str, session_type: SessionType = SessionType.TEAM
+    ) -> Optional[Union[TeamSession, WorkflowSession]]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
             self.db = cast(AsyncBaseDb, self.db)
-            session = await self.db.get_session(session_id=session_id, session_type=SessionType.TEAM)
+            session = await self.db.get_session(session_id=session_id, session_type=session_type)
             return session  # type: ignore
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
@@ -7459,13 +7462,22 @@ class Team:
 
         # Load and return the session from the database
         if self.db is not None:
-            team_session = cast(TeamSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+            loaded_session = cast(TeamSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+
+            if loaded_session is None and self.workflow_id is not None:
+                loaded_session = cast(
+                    WorkflowSession,
+                    self._read_session(session_id=session_id_to_load, session_type=SessionType.WORKFLOW),
+                )
+
+            if loaded_session is not None:
+                return loaded_session
 
             # Cache the session if relevant
-            if team_session is not None and self.cache_session:
-                self._team_session = team_session
+            if loaded_session is not None and self.cache_session:
+                self._team_session = loaded_session
 
-            return team_session
+            return loaded_session
 
         log_debug(f"TeamSession {session_id_to_load} not found in db")
         return None
