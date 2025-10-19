@@ -191,8 +191,10 @@ class Team:
     # Number of past sessions to include in the search
     num_history_sessions: Optional[int] = None
 
-    # If True, adds a tool to allow the team to read the team history
+    # If True, adds a tool to allow the team to read the team history (this is deprecated and will be removed in a future version)
     read_team_history: bool = False
+    # If True, adds a tool to allow the team to read the chat history
+    read_chat_history: bool = False
 
     # --- System message settings ---
     # A description of the Team that is added to the start of the system message.
@@ -433,6 +435,7 @@ class Team:
         get_member_information_tool: bool = False,
         search_knowledge: bool = True,
         read_team_history: bool = False,
+        read_chat_history: bool = False,
         store_media: bool = True,
         store_tool_messages: bool = True,
         store_history_messages: bool = True,
@@ -535,7 +538,7 @@ class Team:
         self.share_member_interactions = share_member_interactions
         self.get_member_information_tool = get_member_information_tool
         self.search_knowledge = search_knowledge
-        self.read_team_history = read_team_history
+        self.read_chat_history = read_chat_history or read_team_history
 
         self.store_media = store_media
         self.store_tool_messages = store_tool_messages
@@ -4819,8 +4822,8 @@ class Team:
             for tool in self.tools:
                 _tools.append(tool)
 
-        if self.read_team_history:
-            _tools.append(self._get_team_history_function(session=session))
+        if self.read_chat_history:
+            _tools.append(self._get_chat_history_function(session=session, async_mode=async_mode))
 
         if self.memory_manager is not None and self.enable_agentic_memory:
             _tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
@@ -6321,10 +6324,15 @@ class Team:
         """Get information about the members of the team, including their IDs, names, and roles."""
         return self.get_members_system_message_content(indent=0)
 
-    def _get_team_history_function(self, session: TeamSession) -> Callable:
-        def get_team_history(num_chats: Optional[int] = None) -> str:
+    def _get_chat_history_function(self, session: TeamSession, async_mode: bool = False) -> Callable:
+        def get_chat_history(num_chats: Optional[int] = None) -> str:
             """
-            Use this function to get the team chat history.
+            Use this function to get the team chat history in reverse chronological order.
+            Leave the num_chats parameter blank to get the entire chat history.
+            Example:
+                - To get the last chat, use num_chats=1
+                - To get the last 5 chats, use num_chats=5
+                - To get all chats, leave num_chats blank
 
             Args:
                 num_chats: The number of chats to return.
@@ -6333,12 +6341,6 @@ class Team:
 
             Returns:
                 str: A JSON string containing a list of dictionaries representing the team chat history.
-
-            Example:
-                - To get the last chat, use num_chats=1
-                - To get the last 5 chats, use num_chats=5
-                - To get all chats, use num_chats=None
-                - To get the first chat, use num_chats=None and take the first message
             """
             import json
 
@@ -6359,7 +6361,47 @@ class Team:
 
             return json.dumps(history)
 
-        return get_team_history
+        async def aget_chat_history(num_chats: Optional[int] = None) -> str:
+            """
+            Use this function to get the team chat history in reverse chronological order.
+            Leave the num_chats parameter blank to get the entire chat history.
+            Example:
+                - To get the last chat, use num_chats=1
+                - To get the last 5 chats, use num_chats=5
+                - To get all chats, leave num_chats blank
+
+            Args:
+                num_chats: The number of chats to return.
+                    Each chat contains 2 messages. One from the team and one from the user.
+                    Default: None
+
+            Returns:
+                str: A JSON string containing a list of dictionaries representing the team chat history.
+            """
+            import json
+
+            history: List[Dict[str, Any]] = []
+
+            all_chats = session.get_messages_from_last_n_runs(
+                team_id=self.id,
+            )
+
+            if len(all_chats) == 0:
+                return ""
+
+            for chat in all_chats[::-1]:  # type: ignore
+                history.insert(0, chat.to_dict())  # type: ignore
+
+            if num_chats is not None:
+                history = history[:num_chats]
+
+            return json.dumps(history)
+
+        if async_mode:
+            get_chat_history_func = aget_chat_history
+        else:
+            get_chat_history_func = get_chat_history
+        return Function.from_callable(get_chat_history_func, name="get_chat_history")
 
     def update_session_state(self, session_state, session_state_updates: dict) -> str:
         """
