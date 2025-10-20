@@ -1,0 +1,62 @@
+@echo off
+REM ###########################################################################
+REM # Format all libraries
+REM # Usage: scripts\format.bat
+REM ###########################################################################
+
+SETLOCAL ENABLEDELAYEDEXPANSION
+
+REM === Get current directory ===
+SET "CURR_DIR=%~dp0"
+REM Remove trailing backslash for cleaner path handling
+IF "%CURR_DIR:~-1%"=="\" SET "CURR_DIR=%CURR_DIR:~0,-1%"
+SET "REPO_ROOT=%CURR_DIR%\.."
+SET "AGNO_DIR=%REPO_ROOT%\libs\agno"
+SET "AGNO_INFRA_DIR=%REPO_ROOT%\libs\agno_infra"
+SET "COOKBOOK_DIR=%REPO_ROOT%\cookbook"
+
+REM === Print heading ===
+CALL :print_heading "Formatting all libraries"
+
+REM === Validate directories exist ===
+CALL :check_dir "%AGNO_DIR%" "AGNO_DIR"
+CALL :check_dir "%AGNO_INFRA_DIR%" "AGNO_INFRA_DIR"
+CALL :check_dir "%COOKBOOK_DIR%" "COOKBOOK_DIR"
+
+REM === Run individual format scripts if available ===
+CALL :run_formatter "%AGNO_DIR%\scripts\format.bat" "AGNO"
+CALL :run_formatter "%AGNO_INFRA_DIR%\scripts\format.bat" "AGNO_INFRA"
+CALL :run_formatter "%COOKBOOK_DIR%\scripts\format.bat" "COOKBOOK"
+
+ECHO [INFO] ✅ All formatting complete.
+EXIT /B 0
+
+REM ###########################################################################
+REM # Helper Functions
+REM ###########################################################################
+
+:print_heading
+ECHO.
+ECHO ##################################################
+ECHO # %~1
+ECHO ##################################################
+ECHO.
+EXIT /B 0
+
+:check_dir
+REM %1 = path, %2 = name
+IF NOT EXIST "%~1" (
+    ECHO [ERROR] %~2: "%~1" does not exist
+    EXIT /B 1
+)
+EXIT /B 0
+
+:run_formatter
+REM %1 = script path, %2 = module name
+IF EXIST "%~1" (
+    ECHO [INFO] Running formatter for %~2: "%~1"
+    CALL "%~1"
+) ELSE (
+    ECHO [WARNING] No formatter found for %~2, skipping
+)
+EXIT /B 0
