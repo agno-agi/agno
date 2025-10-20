@@ -35,6 +35,17 @@ agent = Agent(
     markdown=True,
 )
 
+agent_comment = Agent(
+    tools=[
+        JiraTools(
+            enable_search_issues=False,
+            enable_get_issue=True,
+            enable_create_issue=False,
+            enable_add_comment=True,
+        )
+    ]
+)
+
 # Example usage with all functions enabled
 print("=== Example 1: Using all Jira functions ===")
 agent_all.print_response(
@@ -50,3 +61,11 @@ print("\n=== Example 3: Default Jira agent usage ===")
 agent.print_response("Find all issues in project PROJ", markdown=True)
 
 agent.print_response("Get details for issue PROJ-123", markdown=True)
+
+# Example usage with specific function
+print("\n=== Example 4: Specific function to get comments from a jira issue ===")
+agent_comment.print_response("Summarize the comments for issue PROJ-123", markdown=True)
+
+# Example usage with specific function
+print("\n=== Example 5: Specific function to wirte internal comments from a jira issue ===")
+agent_comment.print_response("Summarize the issue PROJ-123 and write it as an internal comment", markdown=True)
