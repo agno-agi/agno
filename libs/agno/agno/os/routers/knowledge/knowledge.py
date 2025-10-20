@@ -518,9 +518,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
     @router.post(
         "/knowledge/search",
         status_code=200,
-        operation_id="search_vectors",
-        summary="Search Vectors",
-        description="Search the knowledge base for relevant vectors using query, filters and search type.",
+        operation_id="search_knowledge",
+        summary="Search Knowledge",
+        description="Search the knowledge base for relevant documents using query, filters and search type.",
         response_model=PaginatedResponse[VectorSearchResult],
         responses={
             200: {
@@ -548,7 +548,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             404: {"description": "No documents found"},
         },
     )
-    def search_vectors(request: VectorSearchRequestSchema) -> PaginatedResponse[VectorSearchResult]:
+    def search_knowledge(request: VectorSearchRequestSchema) -> PaginatedResponse[VectorSearchResult]:
         import time
 
         start_time = time.time()
