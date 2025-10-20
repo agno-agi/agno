@@ -1674,11 +1674,11 @@ class Team:
         )
         self.model = cast(Model, self.model)
 
-        if metadata is not None:
-            if self.metadata is not None:
-                merge_dictionaries(metadata, self.metadata)
-            else:
+        if self.metadata is not None:
+            if metadata is None:
                 metadata = self.metadata
+            else:
+                merge_dictionaries(metadata, self.metadata)
 
         # Create a new run_response for this attempt
         run_response = TeamRunOutput(
@@ -2201,7 +2201,7 @@ class Team:
 
             # Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
-                self._execute_post_hooks(
+                await self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session_state=session_state,
@@ -2427,12 +2427,12 @@ class Team:
         )
 
         self.model = cast(Model, self.model)
-
-        if metadata is not None:
-            if self.metadata is not None:
-                merge_dictionaries(metadata, self.metadata)
-            else:
+        
+        if self.metadata is not None:
+            if metadata is None:
                 metadata = self.metadata
+            else:
+                merge_dictionaries(metadata, self.metadata)
 
         #  Get knowledge filters
         effective_filters = knowledge_filters
