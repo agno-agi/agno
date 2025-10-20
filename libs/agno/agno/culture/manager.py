@@ -598,7 +598,6 @@ class CultureManager:
             self.determine_tools_for_model(
                 await self._aget_db_tools(
                     db,
-                    task,
                     enable_delete_knowledge=delete_knowledge,
                     enable_clear_knowledge=clear_knowledge,
                     enable_update_knowledge=update_knowledge,
