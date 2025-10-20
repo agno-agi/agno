@@ -3,19 +3,15 @@ Create/Update cultural knowledge after every interaction with your Agent.
 """
 
 from agno.agent import Agent
-from agno.culture import CultureManager
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 
 # Setup the SQLite database
 db = SqliteDb(db_file="tmp/demo_2.db")
 
-# Define the Culture Manager
-culture_manager = CultureManager(model=Claude(id="claude-sonnet-4-5"), db=db)
-
 # Define the Agent
 agent = Agent(
-    model=Claude(id="claude-sonnet-4-5"), db=db, culture_manager=culture_manager
+    model=Claude(id="claude-sonnet-4-5"), db=db, update_cultural_knowledge=True
 )
 
 # Run the agent

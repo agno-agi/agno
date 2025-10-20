@@ -2,18 +2,9 @@
 Create cultural knowledge with a custom CultureManager.
 """
 
-import inspect
-import sys
-
 from agno.culture import CultureManager
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
-
-print("Class repr:", CultureManager)
-print("Module path:", CultureManager.__module__)
-print("File path:", inspect.getsourcefile(CultureManager))
-print("Init signature:", inspect.signature(CultureManager.__init__))
-
 
 # Setup the SQLite database
 db = SqliteDb(db_file="tmp/demo.db")

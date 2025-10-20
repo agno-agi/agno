@@ -9,6 +9,7 @@ from agno.models.anthropic import Claude
 # Setup the SQLite database
 db = SqliteDb(db_file="tmp/demo_2.db")
 
+# Define the Agent
 agent = Agent(model=Claude(id="claude-sonnet-4-5"), db=db, enable_agent_culture=True)
 
 # Run the agent
