@@ -99,7 +99,7 @@ class AgentOS:
         agents: Optional[List[Agent]] = None,
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
-        knowledge_bases: Optional[List[Knowledge]] = None,
+        knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
         config: Optional[Union[str, AgentOSConfig]] = None,
@@ -124,7 +124,7 @@ class AgentOS:
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
-            knowledge_bases: List of knowledge bases to include in the OS
+            knowledge: List of knowledge bases to include in the OS
             interfaces: List of interfaces to include in the OS
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
@@ -136,7 +136,7 @@ class AgentOS:
             telemetry: Whether to enable telemetry
 
         """
-        if not agents and not workflows and not teams and not knowledge_bases:
+        if not agents and not workflows and not teams and not knowledge:
             raise ValueError("Either agents, teams, workflows or knowledge bases must be provided.")
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
@@ -146,7 +146,7 @@ class AgentOS:
         self.teams: Optional[List[Team]] = teams
         self.interfaces = interfaces or []
         self.a2a_interface = a2a_interface
-        self.knowledge_bases = knowledge_bases
+        self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
 
         self._app_set = False
@@ -483,7 +483,7 @@ class AgentOS:
             if workflow.db:
                 self._register_db_with_validation(dbs, workflow.db)
 
-        for knowledge_base in self.knowledge_bases or []:
+        for knowledge_base in self.knowledge or []:
             if knowledge_base.contents_db:
                 self._register_db_with_validation(knowledge_dbs, knowledge_base.contents_db)
 
@@ -563,7 +563,7 @@ class AgentOS:
             if team.knowledge:
                 _add_knowledge_if_not_duplicate(team.knowledge)
 
-        for knowledge_base in self.knowledge_bases or []:
+        for knowledge_base in self.knowledge or []:
             _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances

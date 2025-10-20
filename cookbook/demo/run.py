@@ -21,7 +21,7 @@ agent_os = AgentOS(
     agents=[agno_assist, web_search_agent],
     teams=[reasoning_finance_team, multilingual_team],
     workflows=[research_workflow, investment_workflow],
-    knowledge_bases=[knowledge_base],
+    knowledge=[knowledge_base],
     config=config_path,
 )
 # Get the FastAPI app for the AgentOS
