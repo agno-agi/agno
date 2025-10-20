@@ -46,6 +46,7 @@ from agno.os.utils import (
 )
 from agno.team.team import Team
 from agno.utils.log import logger
+from agno.knowledge.knowledge import Knowledge
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow.workflow import Workflow
 
@@ -98,6 +99,7 @@ class AgentOS:
         agents: Optional[List[Agent]] = None,
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
+        knowledge_bases: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
         config: Optional[Union[str, AgentOSConfig]] = None,
@@ -122,6 +124,7 @@ class AgentOS:
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
+            knowledge_bases: List of knowledge bases to include in the OS
             interfaces: List of interfaces to include in the OS
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
@@ -133,8 +136,8 @@ class AgentOS:
             telemetry: Whether to enable telemetry
 
         """
-        if not agents and not workflows and not teams:
-            raise ValueError("Either agents, teams or workflows must be provided.")
+        if not agents and not workflows and not teams and not knowledge_bases:
+            raise ValueError("Either agents, teams, workflows or knowledge bases must be provided.")
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
@@ -143,7 +146,7 @@ class AgentOS:
         self.teams: Optional[List[Team]] = teams
         self.interfaces = interfaces or []
         self.a2a_interface = a2a_interface
-
+        self.knowledge_bases = knowledge_bases
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
 
         self._app_set = False
@@ -480,6 +483,10 @@ class AgentOS:
             if workflow.db:
                 self._register_db_with_validation(dbs, workflow.db)
 
+        for knowledge_base in self.knowledge_bases or []:
+            if knowledge_base.contents_db:
+                self._register_db_with_validation(knowledge_dbs, knowledge_base.contents_db)
+
         for interface in self.interfaces or []:
             if interface.agent and interface.agent.db:
                 self._register_db_with_validation(dbs, interface.agent.db)
@@ -535,13 +542,30 @@ class AgentOS:
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
         knowledge_instances = []
+        
+        def _add_knowledge_if_not_duplicate(knowledge: "Knowledge") -> None:
+            """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
+            # Check if the exact same object is already in the list
+            for existing in knowledge_instances:
+                if existing is knowledge:
+                    return
+                # Check if there's already a knowledge instance with the same database ID
+                if (knowledge.contents_db and existing.contents_db and 
+                    knowledge.contents_db.id == existing.contents_db.id):
+                    return
+            knowledge_instances.append(knowledge)
+        
         for agent in self.agents or []:
             if agent.knowledge:
-                knowledge_instances.append(agent.knowledge)
+                _add_knowledge_if_not_duplicate(agent.knowledge)
 
         for team in self.teams or []:
             if team.knowledge:
-                knowledge_instances.append(team.knowledge)
+                _add_knowledge_if_not_duplicate(team.knowledge)
+        
+        for knowledge_base in self.knowledge_bases or []:
+            print(f"Adding knowledge base: {knowledge_base.name}")
+            _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances
 
