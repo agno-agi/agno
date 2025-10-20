@@ -548,10 +548,10 @@ class AgentOS:
             """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
             # Use database ID if available, otherwise use object ID as fallback
             key = knowledge.contents_db.id if knowledge.contents_db else id(knowledge)
-            
+
             if key in seen_ids:
                 return
-                
+
             seen_ids.add(key)
             knowledge_instances.append(knowledge)
 
