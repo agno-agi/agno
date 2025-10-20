@@ -115,7 +115,6 @@ agno_assist = Agent(
     description=description,
     instructions=instructions,
     db=db,
-    enable_user_memories=True,
     enable_agentic_memory=True,
     knowledge=knowledge,
     search_knowledge=True,

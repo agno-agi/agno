@@ -107,7 +107,6 @@ agno_assist = Agent(
     instructions=instructions,
     db=db,
     enable_user_memories=True,
-    enable_agentic_memory=True,
     knowledge=knowledge,
     search_knowledge=True,
     add_history_to_context=True,
@@ -124,6 +123,8 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
+
+    knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
     """Run your AgentOS.
 
     You can see test your AgentOS at:
