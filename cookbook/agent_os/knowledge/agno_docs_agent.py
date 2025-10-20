@@ -1,4 +1,3 @@
-from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -6,20 +5,12 @@ from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
-from agno.tools.dalle import DalleTools
-from agno.tools.eleven_labs import ElevenLabsTools
 from agno.vectordb.pgvector import PgVector, SearchType
+from agno.os import AgentOS
 
 # ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url, id="agno_assist_db")
-# *******************************
-
-
-# ************* Output Paths *************
-cwd = Path(__file__).parent
-output_dir = cwd.joinpath("output")
-output_dir.mkdir(parents=True, exist_ok=True)
 # *******************************
 
 
@@ -115,22 +106,30 @@ agno_assist = Agent(
     description=description,
     instructions=instructions,
     db=db,
-    enable_agentic_memory=True,
+    enable_user_memories=True,
     knowledge=knowledge,
     search_knowledge=True,
     add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
-    tools=[
-        ElevenLabsTools(
-            voice_id="cgSgspJ2msm6clMCkdW9",
-            model_id="eleven_multilingual_v2",
-            target_directory=str(output_dir.joinpath("audio").resolve()),
-        ),
-        DalleTools(model="dall-e-3", size="1792x1024", quality="hd", style="vivid"),
-    ],
 )
 
+agent_os = AgentOS(
+    description="Example app with Agno Docs Agent",
+    agents=[agno_assist],
+)
+
+
+app = agent_os.get_app()
+
 if __name__ == "__main__":
+
     knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
-    # agno_assist.print_response("What is Agno?")
+    """Run your AgentOS.
+
+    You can see test your AgentOS at:
+    http://localhost:7777/docs
+
+    """
+    # Don't use reload=True here, this can cause issues with the lifespan
+    agent_os.serve(app="agno_docs_agent:app")
