@@ -6639,6 +6639,7 @@ class Agent:
 
             history: List[Message] = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
+                last_n_messages=self.num_history_messages,
                 skip_role=skip_role,
                 agent_id=self.id if self.team_id is not None else None,
             )
@@ -6839,6 +6840,7 @@ class Agent:
             
             history: List[Message] = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
+                last_n_messages=self.num_history_messages,
                 skip_role=skip_role,
                 agent_id=self.id if self.team_id is not None else None,
             )
