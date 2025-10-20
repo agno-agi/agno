@@ -564,7 +564,6 @@ class AgentOS:
                 _add_knowledge_if_not_duplicate(team.knowledge)
         
         for knowledge_base in self.knowledge_bases or []:
-            print(f"Adding knowledge base: {knowledge_base.name}")
             _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances
