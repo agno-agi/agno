@@ -72,7 +72,9 @@ async def main():
     print("THIRD CALL (ASYNC STREAMING): Now tell me a story about a cat named Luna")
     print("=" * 80)
     await workflow.aprint_response(
-        "Tell me a story about a cat named Luna", stream=True, stream_intermediate_steps=True
+        "Tell me a story about a cat named Luna",
+        stream=True,
+        stream_intermediate_steps=True,
     )
 
     print("\n" + "=" * 80)

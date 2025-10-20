@@ -2130,8 +2130,8 @@ class Workflow:
                         **kwargs,
                     )
                     # Update workflow_run_response with the result
-                    workflow_run_response.content = result.content # type: ignore
-                    workflow_run_response.status = result.status # type: ignore
+                    workflow_run_response.content = result.content  # type: ignore
+                    workflow_run_response.status = result.status  # type: ignore
                 else:
                     await self._aexecute(
                         session=workflow_session,
@@ -2450,7 +2450,7 @@ class Workflow:
                 if event.step_name is None:
                     # This is from the workflow agent itself
                     # Enrich with metadata to mark it as a workflow agent event
-                    event.is_workflow_agent = True # type: ignore
+                    event.is_workflow_agent = True  # type: ignore
                 yield event  # type: ignore[misc]
 
             # Capture the final RunOutput (but don't yield it)
@@ -2728,7 +2728,9 @@ class Workflow:
         logger.info("Workflow agent enabled - async streaming mode")
         log_debug(f"User input: {agent_input}")
 
-        self._async_initialize_workflow_agent(session, execution_input, session_state, stream=stream, websocket_handler=websocket_handler)
+        self._async_initialize_workflow_agent(
+            session, execution_input, session_state, stream=stream, websocket_handler=websocket_handler
+        )
 
         dependencies = self._get_workflow_agent_dependencies(session)
 
@@ -2758,7 +2760,7 @@ class Workflow:
                 if event.step_name is None:
                     # This is from the workflow agent itself
                     # Enrich with metadata to mark it as a workflow agent event
-                    event.is_workflow_agent = True # type: ignore
+                    event.is_workflow_agent = True  # type: ignore
                 yield event  # type: ignore[misc]
 
             # Capture the final RunOutput (but don't yield it)
