@@ -30,21 +30,21 @@ def send_email(email: str, content: str) -> None:
 
 
 async def main():
-    # Agent with comprehensive output validation
+    # Team equipped with a post-hook to send email notifications
     team = Team(
-        name="Financial Report Agent",
+        name="Financial Report Team",
         model=OpenAIChat(id="gpt-5-mini"),
         members=[],
         post_hooks=[send_notification],
         tools=[YFinanceTools()],
         instructions=[
-            "You are a helpful financial report agent.",
+            "You are a helpful financial report team of agents.",
             "Generate a financial report for the given company.",
             "Keep it short and concise.",
         ],
     )
 
-    # Run the agent
+    # Run the team
     await team.aprint_response(
         "Generate a financial report for Apple (AAPL).",
         user_id="user_123",
