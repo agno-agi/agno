@@ -345,7 +345,7 @@ class CultureManager:
 
         # Default capture instructions
         culture_capture_instructions = self.culture_capture_instructions or dedent(
-            """\
+            """
             Cultural knowledge should capture shared knowledge, insights, and practices that can improve performance across agents:
             - Best practices and successful approaches discovered in previous interactions
             - Common patterns in user behavior, team workflows, or recurring issues
@@ -359,9 +359,9 @@ class CultureManager:
 
         system_prompt_lines: List[str] = [
             "You are the **Cultural Knowledge Manager**, responsible for maintaining, evolving, and safeguarding "
-            "the shared cultural knowledge of the organization.\n"
+            "the shared cultural knowledge of the organization. "
             "You will be provided with criteria for cultural knowledge to capture in the <knowledge_to_capture> section, "
-            "and the existing cultural knowledge in the <existing_knowledge> section.\n",
+            "and the existing cultural knowledge in the <existing_knowledge> section.",
             "",
             "Your role is to distill, organize, and preserve collective intelligence — including insights, lessons, "
             "rules, principles, and narratives that guide future behavior across agents and teams.",
@@ -380,33 +380,27 @@ class CultureManager:
             "- Use short Markdown lists, examples, or code blocks to increase clarity.",
             "",
             "## Criteria for creating cultural knowledge",
-            "<knowledge_to_capture>",
-            culture_capture_instructions,
-            "</knowledge_to_capture>",
+            "<knowledge_to_capture>" + culture_capture_instructions + "</knowledge_to_capture>",
             "",
             "## Metadata & structure (use these fields when creating/updating)",
             "- `name`: short, specific title (required).",
             "- `summary`: one-line purpose or takeaway.",
             "- `content`: reusable insight, rule, or guideline (required).",
-            "- `intent`: one of {rule | principle | practice | pattern | doctrine | story | religion}.",
-            "- `status`: one of {draft | active | deprecated}.",
+            "- `intent`: one of {rule | principle | practice | pattern | doctrine | story | knowledge}.",
             "- `confidence`: one of {low | medium | high} — degree of confidence or adoption.",
-            "- `scope`: one of {team | org | global | user | agent} — where this applies.",
             "- `categories`: list of tags (e.g., ['agents', 'guardrails']).",
-            "- `references`: list of related knowledge IDs or URLs.",
             "- `notes`: list of contextual notes, rationale, or examples.",
             "- `metadata`: optional structured info (e.g., source, author, version).",
             "",
             "## De-duplication, lineage, and precedence",
             "- Search <existing_knowledge> by name/category before adding new entries.",
             "- If a similar entry exists, **update** it instead of creating a duplicate.",
-            "- Preserve lineage via `references` or `notes` when revising entries.",
-            "- When entries conflict, prefer the most recent `status=active` entry with higher `confidence`, "
-            "but document ambiguity when unclear.",
+            "- Preserve lineage via `notes` when revising entries.",
+            "- When entries conflict, prefer the entry with higher `confidence`.",
             "",
             "## Safety & privacy",
             "- Never include secrets, credentials, personal data, or proprietary information.",
-            "- Mark uncertain insights as `status=draft` with `confidence=low`.",
+            "- Mark uncertain insights as `confidence=low`.",
             "",
             "## Tool usage",
             "You can call multiple tools in a single response. Use them only when valuable organizational knowledge emerges.",
