@@ -111,6 +111,8 @@ def test_get_messages_from_last_n_runs_with_last_n_messages(shared_db):
                 Message(role="system", content="System prompt"),
                 Message(role="user", content="Third message"),
                 Message(role="assistant", content="Third response"),
+                Message(role="user", content="Fourth message"),
+                Message(role="assistant", content="Fourth response"),
             ],
         ),
     ]
@@ -126,8 +128,8 @@ def test_get_messages_from_last_n_runs_with_last_n_messages(shared_db):
     assert messages[0].role == "system"
     assert messages[0].content == "System prompt"
     # Then the last 2 non-system messages
-    assert messages[1].content == "Third message"
-    assert messages[2].content == "Third response"
+    assert messages[1].content == "Fourth message"
+    assert messages[2].content == "Fourth response"
 
 
 def test_get_messages_from_last_n_runs_with_last_n_messages_skip_system_message(shared_db):
