@@ -131,7 +131,7 @@ class Router:
         """Async version of step routing"""
         if callable(self.selector):
             has_session_state = session_state is not None and self._selector_has_session_state_param()
-            
+
             if inspect.iscoroutinefunction(self.selector):
                 if has_session_state:
                     result = await self.selector(step_input, session_state)  # type: ignore[call-arg]

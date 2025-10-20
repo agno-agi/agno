@@ -1,0 +1,30 @@
+"""
+Create cultural knowledge with an Agent by providing a either text or a list of messages.
+"""
+
+from agno.culture.manager import CulturalKnowledge, CultureManager
+from agno.db.sqlite import SqliteDb
+from agno.models.anthropic import Claude
+
+# Setup the SQLite database
+db = SqliteDb(db_file="tmp/demo.db")
+
+culture_manager = CultureManager(model=Claude(id="claude-sonnet-4-5"), db=db)
+
+# Add a custom cultural knowledge
+culture_manager.add_cultural_knowledge(
+    knowledge=CulturalKnowledge(
+        name="Interaction culture",
+        content="Be polite and friendly to the user",
+    )
+)
+
+# Generate a cultural knowledge from a message
+culture_manager.create_cultural_knowledge(
+    message="Technical users prefer direct answers with code snippets first"
+)
+
+# Get all cultural knowledge
+cultural_knowledge = culture_manager.get_all_knowledge()
+print("Cultural knowledge:")
+print(cultural_knowledge)

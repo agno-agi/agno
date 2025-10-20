@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
-from agno.db.schemas.culture import CulturalNotion
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -2034,7 +2034,7 @@ class SqliteDb(BaseDb):
 
     # -- Culture methods --
 
-    def clear_cultural_notions(self) -> None:
+    def clear_cultural_knowledge(self) -> None:
         """Delete all cultural artifacts from the database.
 
         Raises:
@@ -2054,7 +2054,7 @@ class SqliteDb(BaseDb):
             log_warning(f"Exception deleting all cultural artifacts: {e}")
             raise e
 
-    def delete_cultural_notion(self, id: str) -> None:
+    def delete_cultural_knowledge(self, id: str) -> None:
         """Delete a cultural artifact from the database.
 
         Args:
@@ -2082,9 +2082,9 @@ class SqliteDb(BaseDb):
             log_error(f"Error deleting cultural artifact: {e}")
             raise e
 
-    def get_cultural_notion(
+    def get_cultural_knowledge(
         self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalNotion, Dict[str, Any]]]:
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
         """Get a cultural artifact from the database.
 
         Args:
@@ -2092,7 +2092,7 @@ class SqliteDb(BaseDb):
             deserialize (Optional[bool]): Whether to serialize the cultural artifact. Defaults to True.
 
         Returns:
-            Optional[CulturalNotion]: The cultural artifact, or None if it doesn't exist.
+            Optional[CulturalKnowledge]: The cultural artifact, or None if it doesn't exist.
 
         Raises:
             Exception: If an error occurs during retrieval.
@@ -2108,17 +2108,17 @@ class SqliteDb(BaseDb):
                 if result is None:
                     return None
 
-                cultural_notion_raw = dict(result._mapping)
-                if not cultural_notion_raw or not deserialize:
-                    return cultural_notion_raw
+                cultural_knowledge_raw = dict(result._mapping)
+                if not cultural_knowledge_raw or not deserialize:
+                    return cultural_knowledge_raw
 
-            return CulturalNotion.from_dict(cultural_notion_raw)
+            return CulturalKnowledge.from_dict(cultural_knowledge_raw)
 
         except Exception as e:
             log_error(f"Exception reading from cultural artifacts table: {e}")
             raise e
 
-    def get_cultural_notions(
+    def get_all_cultural_knowledge(
         self,
         name: Optional[str] = None,
         agent_id: Optional[str] = None,
@@ -2128,7 +2128,7 @@ class SqliteDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalNotion], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
         """Get all cultural artifacts from the database as CulturalNotion objects.
 
         Args:
@@ -2142,7 +2142,7 @@ class SqliteDb(BaseDb):
             deserialize (Optional[bool]): Whether to serialize the cultural artifacts. Defaults to True.
 
         Returns:
-            Union[List[CulturalNotion], Tuple[List[Dict[str, Any]], int]]:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
                 - When deserialize=True: List of CulturalNotion objects
                 - When deserialize=False: List of CulturalNotion dictionaries and total count
 
@@ -2181,24 +2181,24 @@ class SqliteDb(BaseDb):
                 if not result:
                     return [] if deserialize else ([], 0)
 
-                cultural_notions_raw = [record._mapping for record in result]
+                all_cultural_knowledge_raw = [record._mapping for record in result]
 
                 if not deserialize:
-                    return cultural_notions_raw, total_count
+                    return all_cultural_knowledge_raw, total_count
 
-            return [CulturalNotion.from_dict(record) for record in cultural_notions_raw]
+            return [CulturalKnowledge.from_dict(record) for record in all_cultural_knowledge_raw]
 
         except Exception as e:
             log_error(f"Error reading from cultural artifacts table: {e}")
             raise e
 
-    def upsert_cultural_notion(
-        self, cultural_notion: CulturalNotion, deserialize: Optional[bool] = True
-    ) -> Optional[CulturalNotion]:
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[CulturalKnowledge]:
         """Upsert a cultural artifact into the database.
 
         Args:
-            cultural_notion (CulturalNotion): The cultural artifact to upsert.
+            cultural_knowledge (CulturalKnowledge): The cultural artifact to upsert.
             deserialize (Optional[bool]): Whether to serialize the cultural artifact. Defaults to True.
 
         Returns:
@@ -2214,38 +2214,38 @@ class SqliteDb(BaseDb):
             if table is None:
                 return None
 
-            if cultural_notion.id is None:
-                cultural_notion.id = str(uuid4())
+            if cultural_knowledge.id is None:
+                cultural_knowledge.id = str(uuid4())
 
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
-                    id=cultural_notion.id,
-                    name=cultural_notion.name,
-                    summary=cultural_notion.summary,
-                    content=cultural_notion.content,
-                    categories=cultural_notion.categories,
-                    metadata=cultural_notion.metadata,
-                    notes=cultural_notion.notes,
-                    input=cultural_notion.input,
-                    created_at=cultural_notion.created_at,
-                    updated_at=cultural_notion.updated_at,
-                    agent_id=cultural_notion.agent_id,
-                    team_id=cultural_notion.team_id,
+                    id=cultural_knowledge.id,
+                    name=cultural_knowledge.name,
+                    summary=cultural_knowledge.summary,
+                    content=cultural_knowledge.content,
+                    categories=cultural_knowledge.categories,
+                    metadata=cultural_knowledge.metadata,
+                    notes=cultural_knowledge.notes,
+                    input=cultural_knowledge.input,
+                    created_at=cultural_knowledge.created_at,
+                    updated_at=cultural_knowledge.updated_at,
+                    agent_id=cultural_knowledge.agent_id,
+                    team_id=cultural_knowledge.team_id,
                 )
                 stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["id"],
                     set_=dict(
-                        name=cultural_notion.name,
-                        summary=cultural_notion.summary,
-                        content=cultural_notion.content,
-                        categories=cultural_notion.categories,
-                        metadata=cultural_notion.metadata,
-                        notes=cultural_notion.notes,
-                        input=cultural_notion.input,
-                        created_at=cultural_notion.created_at,
-                        updated_at=cultural_notion.updated_at,
-                        agent_id=cultural_notion.agent_id,
-                        team_id=cultural_notion.team_id,
+                        name=cultural_knowledge.name,
+                        summary=cultural_knowledge.summary,
+                        content=cultural_knowledge.content,
+                        categories=cultural_knowledge.categories,
+                        metadata=cultural_knowledge.metadata,
+                        notes=cultural_knowledge.notes,
+                        input=cultural_knowledge.input,
+                        created_at=cultural_knowledge.created_at,
+                        updated_at=cultural_knowledge.updated_at,
+                        agent_id=cultural_knowledge.agent_id,
+                        team_id=cultural_knowledge.team_id,
                     ),
                 ).returning(table)
 
@@ -2255,12 +2255,12 @@ class SqliteDb(BaseDb):
                 if row is None:
                     return None
 
-            cultural_notion_raw = row._mapping
-            if not cultural_notion_raw or not deserialize:
-                return cultural_notion_raw
+            cultural_knowledge_raw = row._mapping
+            if not cultural_knowledge_raw or not deserialize:
+                return cultural_knowledge_raw
 
-            return CulturalNotion.from_dict(cultural_notion_raw)
+            return CulturalKnowledge.from_dict(cultural_knowledge_raw)
 
         except Exception as e:
-            log_error(f"Error upserting cultural artifact: {e}")
+            log_error(f"Error upserting cultural knowledge: {e}")
             raise e

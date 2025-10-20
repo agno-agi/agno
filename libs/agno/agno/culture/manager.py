@@ -5,7 +5,7 @@ from textwrap import dedent
 from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.schemas.culture import CulturalNotion
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.tools.function import Function
@@ -27,47 +27,47 @@ class CultureManager:
 
     # Provide the system message for the manager as a string. If not provided, the default system message will be used.
     system_message: Optional[str] = None
-    # Provide the cultural notion capture instructions for the manager as a string. If not provided, the default cultural notion capture instructions will be used.
+    # Provide the cultural knowledge capture instructions for the manager as a string. If not provided, the default cultural knowledge capture instructions will be used.
     culture_capture_instructions: Optional[str] = None
     # Additional instructions for the manager. These instructions are appended to the default system message.
     additional_instructions: Optional[str] = None
 
-    # The database to store cultural notions
+    # The database to store cultural knowledge
     db: Optional[Union[AsyncBaseDb, BaseDb]] = None
 
-    # ----- db tools ---------
-    # If the CultureManager can add cultural notions
-    add_notions: bool = True
-    # If the CultureManager can update cultural notions
-    update_notions: bool = True
-    # If the CultureManager can delete cultural notions
-    delete_notions: bool = True
-    # If the CultureManager can clear cultural notions
-    clear_notions: bool = True
+    # ----- Db tools ---------
+    # If the Culture Manager can add cultural knowledge
+    add_knowledge: bool = True
+    # If the Culture Manager can update cultural knowledge
+    update_knowledge: bool = True
+    # If the Culture Manager can delete cultural knowledge
+    delete_knowledge: bool = True
+    # If the Culture Manager can clear cultural knowledge
+    clear_knowledge: bool = True
 
-    # ----- internal settings ---------
-    # Whether cultural notions were updated in the last run of the CultureManager
-    notions_updated: bool = False
+    # ----- Internal settings ---------
+    # Whether cultural knowledge were updated in the last run of the CultureManager
+    knowledge_updated: bool = False
     debug_mode: bool = False
 
     def __init__(
         self,
         model: Optional[Model] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        add_notions: bool = True,
-        update_notions: bool = True,
-        delete_notions: bool = False,
-        clear_notions: bool = True,
+        add_knowledge: bool = True,
+        update_knowledge: bool = True,
+        delete_knowledge: bool = False,
+        clear_knowledge: bool = True,
         debug_mode: bool = False,
     ):
         self.model = model
         if self.model is not None and isinstance(self.model, str):
             raise ValueError("Model must be a Model object, not a string")
         self.db = db
-        self.add_notions = add_notions
-        self.update_notions = update_notions
-        self.delete_notions = delete_notions
-        self.clear_notions = clear_notions
+        self.add_knowledge = add_knowledge
+        self.update_knowledge = update_knowledge
+        self.delete_knowledge = delete_knowledge
+        self.clear_knowledge = clear_knowledge
         self.debug_mode = debug_mode
         self._tools_for_model: Optional[List[Dict[str, Any]]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None
@@ -96,81 +96,81 @@ class CultureManager:
         self.set_log_level()
 
     # -*- Public functions
-    def get_notion(self, id: str) -> Optional[CulturalNotion]:
-        """Get the cultural notion by id"""
+    def get_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
+        """Get the cultural knowledge by id"""
         if not self.db:
             return None
 
         self.db = cast(BaseDb, self.db)
 
-        return self.db.get_cultural_notion(id=id)
+        return self.db.get_cultural_knowledge(id=id)
 
-    async def aget_notion(self, id: str) -> Optional[CulturalNotion]:
-        """Get the cultural notion by id"""
+    async def aget_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
+        """Get the cultural knowledge by id"""
         if not self.db:
             return None
 
         self.db = cast(AsyncBaseDb, self.db)
 
-        return await self.db.get_cultural_notion(id=id)
+        return await self.db.get_cultural_knowledge(id=id)
 
-    def get_all_notions(self, name: Optional[str] = None) -> Optional[List[CulturalNotion]]:
-        """Get all cultural notions in the database"""
+    def get_all_knowledge(self, name: Optional[str] = None) -> Optional[List[CulturalKnowledge]]:
+        """Get all cultural knowledge in the database"""
         if not self.db:
             return None
 
         self.db = cast(BaseDb, self.db)
 
-        return self.db.get_cultural_notions(name=name)
+        return self.db.get_all_cultural_knowledge(name=name)
 
-    async def aget_all_notions(self, name: Optional[str] = None) -> Optional[List[CulturalNotion]]:
-        """Get all cultural notions in the database"""
+    async def aget_all_knowledge(self, name: Optional[str] = None) -> Optional[List[CulturalKnowledge]]:
+        """Get all cultural knowledge in the database"""
         if not self.db:
             return None
 
         self.db = cast(AsyncBaseDb, self.db)
 
-        return await self.db.get_cultural_notions(name=name)
+        return await self.db.get_all_cultural_knowledge(name=name)
 
-    def add_notion(
+    def add_cultural_knowledge(
         self,
-        notion: CulturalNotion,
+        knowledge: CulturalKnowledge,
     ) -> Optional[str]:
-        """Add a cultural notion
+        """Add a cultural knowledge
         Args:
-            notion (CulturalNotion): The notion to add
+            knowledge (CulturalKnowledge): The knowledge to add
         Returns:
-            str: The id of the notion
+            str: The id of the knowledge
         """
         if self.db:
-            if notion.id is None:
+            if knowledge.id is None:
                 from uuid import uuid4
 
-                notion_id = notion.id or str(uuid4())
-                notion.id = notion_id
+                knowledge_id = knowledge.id or str(uuid4())
+                knowledge.id = knowledge_id
 
-            if not notion.updated_at:
-                notion.bump_updated_at()
+            if not knowledge.updated_at:
+                knowledge.bump_updated_at()
 
-            self._upsert_db_notion(notion=notion)
-            return notion.id
+            self._upsert_db_knowledge(knowledge=knowledge)
+            return knowledge.id
 
         else:
-            log_warning("CultureDb not provided.")
+            log_warning("Cultural knowledge database not provided.")
             return None
 
-    def clear_all_notions(self) -> None:
+    def clear_all_knowledge(self) -> None:
         """Clears all cultural knowledge."""
         if self.db:
-            self.db.clear_cultural_notions()
+            self.db.clear_cultural_knowledge()
 
     # -*- Agent Functions -*-
-    def create_cultural_notions(
+    def create_cultural_knowledge(
         self,
         message: Optional[str] = None,
         messages: Optional[List[Message]] = None,
     ) -> str:
-        """Creates a cultural notion from a message or a list of messages"""
+        """Creates a cultural knowledge from a message or a list of messages"""
         self.set_log_level()
 
         if self.db is None:
@@ -186,29 +186,29 @@ class CultureManager:
         if not messages or not isinstance(messages, list):
             raise ValueError("Invalid messages list")
 
-        notions = self.get_all_notions()
-        if notions is None:
-            notions = []
+        cultural_knowledge = self.get_all_knowledge()
+        if cultural_knowledge is None:
+            cultural_knowledge = []
 
-        existing_notions = [notion.preview() for notion in notions]
+        existing_knowledge = [cultural_knowledge.preview() for cultural_knowledge in cultural_knowledge]
 
         self.db = cast(BaseDb, self.db)
-        response = self.create_or_update_cultural_notions(
+        response = self.create_or_update_cultural_knowledge(
             messages=messages,
-            existing_notions=existing_notions,
+            existing_knowledge=existing_knowledge,
             db=self.db,
-            update_notions=self.update_notions,
-            add_notions=self.add_notions,
+            update_knowledge=self.update_knowledge,
+            add_knowledge=self.add_knowledge,
         )
 
         return response
 
-    async def acreate_cultural_notions(
+    async def acreate_cultural_knowledge(
         self,
         message: Optional[str] = None,
         messages: Optional[List[Message]] = None,
     ) -> str:
-        """Creates a cultural notion from a message or a list of messages"""
+        """Creates a cultural knowledge from a message or a list of messages"""
         self.set_log_level()
 
         if self.db is None:
@@ -224,19 +224,19 @@ class CultureManager:
         if not messages or not isinstance(messages, list):
             raise ValueError("Invalid messages list")
 
-        knowledge = self.get_all_notions()
+        knowledge = self.get_all_knowledge()
         if knowledge is None:
             knowledge = []
 
-        existing_notions = [notion.preview() for notion in knowledge]
+        existing_knowledge = [knowledge.preview() for knowledge in knowledge]
 
         self.db = cast(AsyncBaseDb, self.db)
-        response = await self.acreate_or_update_cultural_notions(
+        response = await self.acreate_or_update_cultural_knowledge(
             messages=messages,
-            existing_notions=existing_notions,
+            existing_knowledge=existing_knowledge,
             db=self.db,
-            update_notions=self.update_notions,
-            add_notions=self.add_notions,
+            update_knowledge=self.update_knowledge,
+            add_knowledge=self.add_knowledge,
         )
 
         return response
@@ -253,21 +253,21 @@ class CultureManager:
                 "update_culture_task() is not supported with an async DB. Please use aupdate_culture_task() instead."
             )
 
-        notions = self.get_all_notions()
-        if notions is None:
-            notions = []
+        knowledge = self.get_all_knowledge()
+        if knowledge is None:
+            knowledge = []
 
-        existing_notions = [notion.preview() for notion in notions]
+        existing_knowledge = [knowledge.preview() for knowledge in knowledge]
 
         self.db = cast(BaseDb, self.db)
-        response = self.run_cultural_notion_task(
+        response = self.run_cultural_knowledge_task(
             task=task,
-            existing_notions=existing_notions,
+            existing_knowledge=existing_knowledge,
             db=self.db,
-            delete_notions=self.delete_notions,
-            update_notions=self.update_notions,
-            add_notions=self.add_notions,
-            clear_notions=self.clear_notions,
+            delete_knowledge=self.delete_knowledge,
+            update_knowledge=self.update_knowledge,
+            add_knowledge=self.add_knowledge,
+            clear_knowledge=self.clear_knowledge,
         )
 
         return response
@@ -287,21 +287,21 @@ class CultureManager:
                 "aupdate_culture_task() is not supported with a sync DB. Please use update_culture_task() instead."
             )
 
-        notions = await self.aget_all_notions()
-        if notions is None:
-            notions = []
+        knowledge = await self.aget_all_knowledge()
+        if knowledge is None:
+            knowledge = []
 
-        existing_notions = [notion.preview() for notion in notions]
+        existing_knowledge = [_knowledge.preview() for _knowledge in knowledge]
 
         self.db = cast(AsyncBaseDb, self.db)
-        response = await self.arun_cultural_notion_task(
+        response = await self.arun_cultural_knowledge_task(
             task=task,
-            existing_notions=existing_notions,
+            existing_knowledge=existing_knowledge,
             db=self.db,
-            delete_notions=self.delete_notions,
-            update_notions=self.update_notions,
-            add_notions=self.add_notions,
-            clear_notions=self.clear_notions,
+            delete_knowledge=self.delete_knowledge,
+            update_knowledge=self.update_knowledge,
+            add_knowledge=self.add_knowledge,
+            clear_knowledge=self.clear_knowledge,
         )
 
         return response
@@ -326,18 +326,18 @@ class CultureManager:
 
     def get_system_message(
         self,
-        existing_notions: Optional[List[Dict[str, Any]]] = None,
-        enable_delete_notion: bool = True,
-        enable_clear_notions: bool = True,
-        enable_update_notion: bool = True,
-        enable_add_notion: bool = True,
+        existing_knowledge: Optional[List[Dict[str, Any]]] = None,
+        enable_delete_knowledge: bool = True,
+        enable_clear_knowledge: bool = True,
+        enable_update_knowledge: bool = True,
+        enable_add_knowledge: bool = True,
     ) -> Message:
         if self.system_message is not None:
             return Message(role="system", content=self.system_message)
 
         culture_capture_instructions = self.culture_capture_instructions or dedent(
             """\
-            Cultural notions should capture shared knowledge, insights, and practices that can improve your performance across conversations:
+            Cultural knowledge should capture shared knowledge, insights, and practices that can improve your performance across conversations:
             - Best practices and successful approaches discovered during previous conversations
             - Common patterns in user behavior, preferences, or needs that remain true across conversations
             - Organizational knowledge, processes, or contextual information
@@ -348,76 +348,78 @@ class CultureManager:
         )
 
         system_prompt_lines = [
-            "You are a Culture Manager responsible for managing shared organizational knowledge and insights. "
-            "You will be provided with criteria for cultural notions to capture in the <notions_to_capture> section and a list of existing notions in the <existing_notions> section.",
+            "You are a Culture Manager responsible for managing organizational cultural knowledge and insights. "
+            "You will be provided with criteria for cultural knowledge to capture in the <knowledge_to_capture> section and the existing cultural knowledge in the <existing_knowledge> section.",
             "",
-            "## When to add or update cultural notions",
-            "- Your first task is to decide if a cultural notion needs to be added, updated, or deleted based on discovered insights OR if no changes are needed.",
-            "- If you discover knowledge that meets the criteria in the <notions_to_capture> section and is not already captured in the <existing_notions> section, you should capture it as a cultural notion.",
-            "- If no valuable organizational knowledge emerges from the interaction, no notion updates are needed.",
-            "- If the existing notions in the <existing_notions> section capture all relevant insights, no notion updates are needed.",
+            "## When to add or update cultural knowledge",
+            "- Your first task is to decide if cultural knowledge needs to be added, updated, or deleted based on discovered insights OR if no changes are needed.",
+            "- If you discover knowledge that meets the criteria in the <knowledge_to_capture> section and is not already captured in the <existing_knowledge> section, you should capture it as a cultural knowledge.",
+            "- If no valuable organizational knowledge emerges from the interaction, no knowledge updates are needed.",
+            "- If the existing knowledge in the <existing_knowledge> section capture all relevant insights, no knowledge updates are needed.",
             "",
-            "## How to add or update cultural notions",
-            "- If you decide to add a new notion, create notions that capture key insights for future reference across the organization.",
-            "- Notions should be clear, actionable statements that encapsulate valuable knowledge without being overly specific to individual cases.",
-            "  - Example: If multiple users struggle with a concept, a notion could be `Users often need step-by-step guidance when learning API integration`.",
-            "  - Example: If a particular approach works well, a notion could be `Visual examples significantly improve user understanding of complex workflows`.",
-            "- Don't make a single notion too broad or complex, create multiple notions if needed to capture distinct insights.",
-            "- Don't duplicate information across notions. Rather update existing notions if they cover similar ground.",
-            "- If organizational practices change, update relevant notions to reflect current approaches while preserving historical context when valuable.",
-            "- When updating a notion, enhance it with new insights rather than completely overwriting existing knowledge.",
+            "## How to add or update cultural knowledge",
+            "- If you decide to add a new knowledge, create knowledge that capture key insights for future reference across the organization.",
+            "- Knowledge should be clear, actionable statements that encapsulate valuable knowledge without being overly specific to individual cases.",
+            "  - Example: If multiple users struggle with a concept, a knowledge could be `Users often need step-by-step guidance when learning API integration`.",
+            "  - Example: If a particular approach works well, a knowledge could be `Visual examples significantly improve user understanding of complex workflows`.",
+            "- Don't make a single knowledge too broad or complex, create multiple knowledge if needed to capture distinct insights.",
+            "- Don't duplicate information across knowledge. Rather update existing knowledge if they cover similar ground.",
+            "- If organizational practices change, update relevant knowledge to reflect current approaches while preserving historical context when valuable.",
+            "- When updating a knowledge, enhance it with new insights rather than completely overwriting existing knowledge.",
             "- Focus on knowledge that transcends individual conversations and provides value to future interactions.",
             "",
-            "## Criteria for creating cultural notions",
-            "Use the following criteria to determine if discovered knowledge should be captured as a cultural notion.",
+            "## Criteria for creating cultural knowledge",
+            "Use the following criteria to determine if discovered knowledge should be captured as a cultural knowledge.",
             "",
-            "<notions_to_capture>",
+            "<knowledge_to_capture>",
             culture_capture_instructions,
-            "</notions_to_capture>",
+            "</knowledge_to_capture>",
             "",
-            "## Updating cultural notions",
-            "You will also be provided with a list of existing cultural notions in the <existing_notions> section. You can:",
+            "## Updating cultural knowledge",
+            "You will also be provided with a list of existing cultural knowledge in the <existing_knowledge> section. You can:",
             "  - Decide to make no changes.",
+            "",
+            "## When no changes are needed",
+            "If no valuable organizational knowledge emerges from the interaction, just respond with 'No changes needed'. Do not answer the user's message.",
         ]
 
-        if enable_add_notion:
-            system_prompt_lines.append("  - Decide to add a new cultural notion, using the `add_notion` tool.")
-        if enable_update_notion:
+        if enable_add_knowledge:
+            system_prompt_lines.append("  - Decide to add a new cultural knowledge, using the `add_knowledge` tool.")
+        if enable_update_knowledge:
             system_prompt_lines.append(
-                "  - Decide to update an existing cultural notion, using the `update_notion` tool."
+                "  - Decide to update an existing cultural knowledge, using the `update_knowledge` tool."
             )
-        if enable_delete_notion:
+        if enable_delete_knowledge:
             system_prompt_lines.append(
-                "  - Decide to delete an existing cultural notion, using the `delete_notion` tool."
+                "  - Decide to delete an existing cultural knowledge, using the `delete_knowledge` tool."
             )
-        if enable_clear_notions:
-            system_prompt_lines.append("  - Decide to clear all cultural notions, using the `clear_notions` tool.")
+        if enable_clear_knowledge:
+            system_prompt_lines.append("  - Decide to clear all cultural knowledge, using the `clear_knowledge` tool.")
 
         system_prompt_lines += [
             "You can call multiple tools in a single response if needed. ",
-            "Only add or update cultural notions if valuable organizational knowledge emerges that should be preserved and shared.",
+            "Only add or update cultural knowledge if valuable organizational knowledge emerges that should be preserved and shared.",
         ]
 
-        if existing_notions and len(existing_notions) > 0:
-            system_prompt_lines.append("\n<existing_notions>")
-            for existing_notion in existing_notions:
-                system_prompt_lines.append(f"ID: {existing_notion['notion_id']}")
-                system_prompt_lines.append(f"Notion: {existing_notion['content']}")
+        if existing_knowledge and len(existing_knowledge) > 0:
+            system_prompt_lines.append("\n<existing_knowledge>")
+            for existing_knowledge in existing_knowledge:
+                system_prompt_lines.append(f"Knowledge: {existing_knowledge.get('content')}")
                 system_prompt_lines.append("")
-            system_prompt_lines.append("</existing_notions>")
+            system_prompt_lines.append("</existing_knowledge>")
 
         if self.additional_instructions:
             system_prompt_lines.append(self.additional_instructions)
 
         return Message(role="system", content="\n".join(system_prompt_lines))
 
-    def create_or_update_cultural_notions(
+    def create_or_update_cultural_knowledge(
         self,
         messages: List[Message],
-        existing_notions: List[Dict[str, Any]],
+        existing_knowledge: List[Dict[str, Any]],
         db: BaseDb,
-        update_notions: bool = True,
-        add_notions: bool = True,
+        update_knowledge: bool = True,
+        add_knowledge: bool = True,
     ) -> str:
         if self.model is None:
             log_error("No model provided for culture manager")
@@ -430,21 +432,21 @@ class CultureManager:
         self.determine_tools_for_model(
             self._get_db_tools(
                 db,
-                enable_add_notions=add_notions,
-                enable_update_notions=update_notions,
-                enable_delete_notions=False,
-                enable_clear_notions=False,
+                enable_add_knowledge=add_knowledge,
+                enable_update_knowledge=update_knowledge,
+                enable_delete_knowledge=False,
+                enable_clear_knowledge=False,
             ),
         )
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
             self.get_system_message(
-                existing_notions=existing_notions,
-                enable_update_notion=update_notions,
-                enable_add_notion=add_notions,
-                enable_delete_notion=False,
-                enable_clear_notions=False,
+                existing_knowledge=existing_knowledge,
+                enable_update_knowledge=update_knowledge,
+                enable_add_knowledge=add_knowledge,
+                enable_delete_knowledge=False,
+                enable_clear_knowledge=False,
             ),
             *messages,
         ]
@@ -457,25 +459,25 @@ class CultureManager:
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
-            self.memories_updated = True
+            self.knowledge_updated = True
 
-        log_debug("MemoryManager End", center=True)
+        log_debug("Culture Manager End", center=True)
 
         return response.content or "No response from model"
 
-    async def acreate_or_update_cultural_notions(
+    async def acreate_or_update_cultural_knowledge(
         self,
         messages: List[Message],
-        existing_notions: List[Dict[str, Any]],
+        existing_knowledge: List[Dict[str, Any]],
         db: AsyncBaseDb,
-        update_notions: bool = True,
-        add_notions: bool = True,
+        update_knowledge: bool = True,
+        add_knowledge: bool = True,
     ) -> str:
         if self.model is None:
-            log_error("No model provided for cultural notion manager")
-            return "No model provided for cultural notion manager"
+            log_error("No model provided for cultural manager")
+            return "No model provided for cultural manager"
 
-        log_debug("Cultural Notion Manager Start", center=True)
+        log_debug("Cultural Manager Start", center=True)
 
         model_copy = deepcopy(self.model)
         db = cast(AsyncBaseDb, db)
@@ -483,17 +485,17 @@ class CultureManager:
         self.determine_tools_for_model(
             await self._aget_db_tools(
                 db,
-                enable_update_notions=update_notions,
-                enable_add_notions=add_notions,
+                enable_update_knowledge=update_knowledge,
+                enable_add_knowledge=add_knowledge,
             ),
         )
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
             self.get_system_message(
-                existing_notions=existing_notions,
-                enable_update_notion=update_notions,
-                enable_add_notion=add_notions,
+                existing_knowledge=existing_knowledge,
+                enable_update_knowledge=update_knowledge,
+                enable_add_knowledge=add_knowledge,
             ),
             # For models that require a non-system message
             *messages,
@@ -507,27 +509,27 @@ class CultureManager:
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
-            self.notions_updated = True
+            self.knowledge_updated = True
 
-        log_debug("Cultural Notion Manager End", center=True)
+        log_debug("Cultural Knowledge Manager End", center=True)
 
         return response.content or "No response from model"
 
-    def run_cultural_notion_task(
+    def run_cultural_knowledge_task(
         self,
         task: str,
-        existing_notions: List[Dict[str, Any]],
+        existing_knowledge: List[Dict[str, Any]],
         db: BaseDb,
-        delete_notions: bool = True,
-        update_notions: bool = True,
-        add_notions: bool = True,
-        clear_notions: bool = True,
+        delete_knowledge: bool = True,
+        update_knowledge: bool = True,
+        add_knowledge: bool = True,
+        clear_knowledge: bool = True,
     ) -> str:
         if self.model is None:
-            log_error("No model provided for cultural notion manager")
-            return "No model provided for cultural notion manager"
+            log_error("No model provided for cultural manager")
+            return "No model provided for cultural manager"
 
-        log_debug("Cultural Notion Manager Start", center=True)
+        log_debug("Cultural Knowledge Manager Start", center=True)
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -535,21 +537,21 @@ class CultureManager:
             self._get_db_tools(
                 db,
                 task,
-                enable_delete_notions=delete_notions,
-                enable_clear_notions=clear_notions,
-                enable_update_notions=update_notions,
-                enable_add_notions=add_notions,
+                enable_delete_knowledge=delete_knowledge,
+                enable_clear_knowledge=clear_knowledge,
+                enable_update_knowledge=update_knowledge,
+                enable_add_knowledge=add_knowledge,
             ),
         )
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
             self.get_system_message(
-                existing_notions,
-                enable_delete_notions=delete_notions,
-                enable_clear_notions=clear_notions,
-                enable_update_notions=update_notions,
-                enable_add_notions=add_notions,
+                existing_knowledge,
+                enable_delete_knowledge=delete_knowledge,
+                enable_clear_knowledge=clear_knowledge,
+                enable_update_knowledge=update_knowledge,
+                enable_add_knowledge=add_knowledge,
             ),
             # For models that require a non-system message
             Message(role="user", content=task),
@@ -563,27 +565,27 @@ class CultureManager:
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
-            self.notions_updated = True
+            self.knowledge_updated = True
 
-        log_debug("Cultural Notion Manager End", center=True)
+        log_debug("Cultural Knowledge Manager End", center=True)
 
         return response.content or "No response from model"
 
-    async def arun_cultural_notion_task(
+    async def arun_cultural_knowledge_task(
         self,
         task: str,
-        existing_notions: List[Dict[str, Any]],
+        existing_knowledge: List[Dict[str, Any]],
         db: Union[BaseDb, AsyncBaseDb],
-        delete_notions: bool = True,
-        clear_notions: bool = True,
-        update_notions: bool = True,
-        add_notions: bool = True,
+        delete_knowledge: bool = True,
+        clear_knowledge: bool = True,
+        update_knowledge: bool = True,
+        add_knowledge: bool = True,
     ) -> str:
         if self.model is None:
-            log_error("No model provided for cultural notion manager")
-            return "No model provided for cultural notion manager"
+            log_error("No model provided for cultural manager")
+            return "No model provided for cultural manager"
 
-        log_debug("Cultural Notion Manager Start", center=True)
+        log_debug("Cultural Manager Start", center=True)
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -592,10 +594,10 @@ class CultureManager:
                 await self._aget_db_tools(
                     db,
                     task,
-                    enable_delete_notions=delete_notions,
-                    enable_clear_notions=clear_notions,
-                    enable_update_notions=update_notions,
-                    enable_add_notions=add_notions,
+                    enable_delete_knowledge=delete_knowledge,
+                    enable_clear_knowledge=clear_knowledge,
+                    enable_update_knowledge=update_knowledge,
+                    enable_add_knowledge=add_knowledge,
                 ),
             )
         else:
@@ -603,21 +605,21 @@ class CultureManager:
                 self._get_db_tools(
                     db,
                     task,
-                    enable_delete_notions=delete_notions,
-                    enable_clear_notions=clear_notions,
-                    enable_update_notions=update_notions,
-                    enable_add_notions=add_notions,
+                    enable_delete_knowledge=delete_knowledge,
+                    enable_clear_knowledge=clear_knowledge,
+                    enable_update_knowledge=update_knowledge,
+                    enable_add_knowledge=add_knowledge,
                 ),
             )
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
             self.get_system_message(
-                existing_notions,
-                enable_delete_notions=delete_notions,
-                enable_clear_notions=clear_notions,
-                enable_update_notions=update_notions,
-                enable_add_notions=add_notions,
+                existing_knowledge,
+                enable_delete_knowledge=delete_knowledge,
+                enable_clear_knowledge=clear_knowledge,
+                enable_update_knowledge=update_knowledge,
+                enable_add_knowledge=add_knowledge,
             ),
             # For models that require a non-system message
             Message(role="user", content=task),
@@ -631,306 +633,306 @@ class CultureManager:
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
-            self.notions_updated = True
+            self.knowledge_updated = True
 
-        log_debug("Cultural Notion Manager End", center=True)
+        log_debug("Cultural Manager End", center=True)
 
         return response.content or "No response from model"
 
     # -*- DB Functions -*-
-    def _clear_db_notions(self) -> str:
-        """Use this function to clear all cultural notions from the database."""
+    def _clear_db_knowledge(self) -> str:
+        """Use this function to clear all cultural knowledge from the database."""
         try:
             if not self.db:
                 raise ValueError("Culture db not initialized")
             self.db = cast(BaseDb, self.db)
-            self.db.clear_cultural_notions()
-            return "Cultural notions cleared successfully"
+            self.db.clear_cultural_knowledge()
+            return "Cultural knowledge cleared successfully"
         except Exception as e:
-            log_warning(f"Error clearing cultural notions in db: {e}")
-            return f"Error clearing cultural notions: {e}"
+            log_warning(f"Error clearing cultural knowledge in db: {e}")
+            return f"Error clearing cultural knowledge: {e}"
 
-    async def _aclear_db_notions(self) -> str:
-        """Use this function to clear all cultural notions from the database."""
+    async def _aclear_db_knowledge(self) -> str:
+        """Use this function to clear all cultural knowledge from the database."""
         try:
             if not self.db:
                 raise ValueError("Culture db not initialized")
             self.db = cast(AsyncBaseDb, self.db)
-            await self.db.clear_cultural_notions()
-            return "Cultural notions cleared successfully"
+            await self.db.clear_cultural_knowledge()
+            return "Cultural knowledge cleared successfully"
         except Exception as e:
-            log_warning(f"Error clearing cultural notions in db: {e}")
-            return f"Error clearing cultural notions: {e}"
+            log_warning(f"Error clearing cultural knowledge in db: {e}")
+            return f"Error clearing cultural knowledge: {e}"
 
-    def _delete_db_notion(self, notion_id: str) -> str:
-        """Use this function to delete a cultural notion from the database."""
+    def _delete_db_knowledge(self, knowledge_id: str) -> str:
+        """Use this function to delete a cultural knowledge from the database."""
         try:
             if not self.db:
                 raise ValueError("Culture db not initialized")
             self.db = cast(BaseDb, self.db)
-            self.db.delete_cultural_notion(id=notion_id)
-            return "Cultural notion deleted successfully"
+            self.db.delete_cultural_knowledge(id=knowledge_id)
+            return "Cultural knowledge deleted successfully"
         except Exception as e:
-            log_warning(f"Error deleting cultural notion in db: {e}")
-            return f"Error deleting cultural notion: {e}"
+            log_warning(f"Error deleting cultural knowledge in db: {e}")
+            return f"Error deleting cultural knowledge: {e}"
 
-    async def _adelete_db_notion(self, notion_id: str) -> str:
-        """Use this function to delete a cultural notion from the database."""
+    async def _adelete_db_knowledge(self, knowledge_id: str) -> str:
+        """Use this function to delete a cultural knowledge from the database."""
         try:
             if not self.db:
                 raise ValueError("Culture db not initialized")
             self.db = cast(AsyncBaseDb, self.db)
-            await self.db.delete_cultural_notion(id=notion_id)
-            return "Cultural notion deleted successfully"
+            await self.db.delete_cultural_knowledge(id=knowledge_id)
+            return "Cultural knowledge deleted successfully"
         except Exception as e:
-            log_warning(f"Error deleting cultural notion in db: {e}")
-            return f"Error deleting cultural notion: {e}"
+            log_warning(f"Error deleting cultural knowledge in db: {e}")
+            return f"Error deleting cultural knowledge: {e}"
 
-    def _upsert_db_notion(self, notion: CulturalNotion) -> str:
-        """Use this function to add a cultural notion to the database."""
+    def _upsert_db_knowledge(self, knowledge: CulturalKnowledge) -> str:
+        """Use this function to add a cultural knowledge to the database."""
         try:
             if not self.db:
                 raise ValueError("Culture db not initialized")
             self.db = cast(BaseDb, self.db)
-            self.db.upsert_cultural_notion(cultural_notion=notion)
-            return "Cultural notion added successfully"
+            self.db.upsert_cultural_knowledge(cultural_knowledge=knowledge)
+            return "Cultural knowledge added successfully"
         except Exception as e:
-            log_warning(f"Error storing cultural notion in db: {e}")
-            return f"Error adding cultural notion: {e}"
+            log_warning(f"Error storing cultural knowledge in db: {e}")
+            return f"Error adding cultural knowledge: {e}"
 
-    async def _aupsert_db_notion(self, notion: CulturalNotion) -> str:
-        """Use this function to add a cultural notion to the database."""
+    async def _aupsert_db_knowledge(self, knowledge: CulturalKnowledge) -> str:
+        """Use this function to add a cultural knowledge to the database."""
         try:
             if not self.db:
                 raise ValueError("Culture db not initialized")
             self.db = cast(AsyncBaseDb, self.db)
-            await self.db.upsert_cultural_notion(cultural_notion=notion)
-            return "Cultural notion added successfully"
+            await self.db.upsert_cultural_knowledge(cultural_knowledge=knowledge)
+            return "Cultural knowledge added successfully"
         except Exception as e:
-            log_warning(f"Error storing cultural notion in db: {e}")
-            return f"Error adding cultural notion: {e}"
+            log_warning(f"Error storing cultural knowledge in db: {e}")
+            return f"Error adding cultural knowledge: {e}"
 
     # -* Get DB Tools -*-
     def _get_db_tools(
         self,
         db: Union[BaseDb, AsyncBaseDb],
-        enable_add_notions: bool = True,
-        enable_update_notions: bool = True,
-        enable_delete_notions: bool = True,
-        enable_clear_notions: bool = True,
+        enable_add_knowledge: bool = True,
+        enable_update_knowledge: bool = True,
+        enable_delete_knowledge: bool = True,
+        enable_clear_knowledge: bool = True,
     ) -> List[Callable]:
-        def add_cultural_notion(
+        def add_cultural_knowledge(
             name: str,
             summary: Optional[str] = None,
             content: Optional[str] = None,
             categories: Optional[List[str]] = None,
         ) -> str:
-            """Use this function to add a cultural notion to the database.
+            """Use this function to add a cultural knowledge to the database.
             Args:
-                name (str): The name of the cultural notion.
-                summary (Optional[str]): The summary of the cultural notion.
-                content (Optional[str]): The content of the cultural notion.
-                categories (Optional[List[str]]): The categories of the cultural notion (e.g. ["name", "hobbies", "location"]).
+                name (str): The name of the cultural knowledge.
+                summary (Optional[str]): The summary of the cultural knowledge.
+                content (Optional[str]): The content of the cultural knowledge.
+                categories (Optional[List[str]]): The categories of the cultural knowledge (e.g. ["name", "hobbies", "location"]).
             Returns:
-                str: A message indicating if the cultural notion was added successfully or not.
+                str: A message indicating if the cultural knowledge was added successfully or not.
             """
             from uuid import uuid4
 
             try:
-                notion_id = str(uuid4())
-                db.upsert_cultural_notion(
-                    CulturalNotion(
-                        id=notion_id,
+                knowledge_id = str(uuid4())
+                db.upsert_cultural_knowledge(
+                    CulturalKnowledge(
+                        id=knowledge_id,
                         name=name,
                         summary=summary,
                         content=content,
                         categories=categories,
                     )
                 )
-                log_debug(f"Cultural notion added: {notion_id}")
-                return "Cultural notion added successfully"
+                log_debug(f"Cultural knowledge added: {knowledge_id}")
+                return "Cultural knowledge added successfully"
             except Exception as e:
-                log_warning(f"Error storing cultural notion in db: {e}")
-                return f"Error adding cultural notion: {e}"
+                log_warning(f"Error storing cultural knowledge in db: {e}")
+                return f"Error adding cultural knowledge: {e}"
 
-        def update_cultural_notion(
-            notion_id: str,
+        def update_cultural_knowledge(
+            knowledge_id: str,
             name: str,
             summary: Optional[str] = None,
             content: Optional[str] = None,
             categories: Optional[List[str]] = None,
         ) -> str:
-            """Use this function to update an existing cultural notion in the database.
+            """Use this function to update an existing cultural knowledge in the database.
             Args:
-                notion_id (str): The id of the cultural notion to be updated.
-                name (str): The name of the cultural notion.
-                summary (Optional[str]): The summary of the cultural notion.
-                content (Optional[str]): The content of the cultural notion.
-                categories (Optional[List[str]]): The categories of the cultural notion (e.g. ["name", "hobbies", "location"]).
+                knowledge_id (str): The id of the cultural knowledge to be updated.
+                name (str): The name of the cultural knowledge.
+                summary (Optional[str]): The summary of the cultural knowledge.
+                content (Optional[str]): The content of the cultural knowledge.
+                categories (Optional[List[str]]): The categories of the cultural knowledge (e.g. ["name", "hobbies", "location"]).
             Returns:
-                str: A message indicating if the cultural notion was updated successfully or not.
+                str: A message indicating if the cultural knowledge was updated successfully or not.
             """
-            from agno.db.base import CulturalNotion
+            from agno.db.base import CulturalKnowledge
 
             try:
-                db.upsert_cultural_notion(
-                    CulturalNotion(
-                        id=notion_id,
+                db.upsert_cultural_knowledge(
+                    CulturalKnowledge(
+                        id=knowledge_id,
                         name=name,
                         summary=summary,
                         content=content,
                         categories=categories,
                     )
                 )
-                log_debug("Memory updated")
-                return "Memory updated successfully"
+                log_debug("Cultural knowledge updated")
+                return "Cultural knowledge updated successfully"
             except Exception as e:
-                log_warning(f"Error storing memory in db: {e}")
-                return f"Error adding memory: {e}"
+                log_warning(f"Error storing cultural knowledge in db: {e}")
+                return f"Error adding cultural knowledge: {e}"
 
-        def delete_cultural_notion(notion_id: str) -> str:
-            """Use this function to delete a single cultural notion from the database.
+        def delete_cultural_knowledge(knowledge_id: str) -> str:
+            """Use this function to delete a single cultural knowledge from the database.
             Args:
-                notion_id (str): The id of the cultural notion to be deleted.
+                knowledge_id (str): The id of the cultural knowledge to be deleted.
             Returns:
-                str: A message indicating if the cultural notion was deleted successfully or not.
+                str: A message indicating if the cultural knowledge was deleted successfully or not.
             """
             try:
-                db.delete_cultural_notion(id=notion_id)
-                log_debug("Cultural notion deleted")
-                return "Cultural notion deleted successfully"
+                db.delete_cultural_knowledge(id=knowledge_id)
+                log_debug("Cultural knowledge deleted")
+                return "Cultural knowledge deleted successfully"
             except Exception as e:
-                log_warning(f"Error deleting cultural notion in db: {e}")
-                return f"Error deleting cultural notion: {e}"
+                log_warning(f"Error deleting cultural knowledge in db: {e}")
+                return f"Error deleting cultural knowledge: {e}"
 
-        def clear_cultural_notions() -> str:
+        def clear_cultural_knowledge() -> str:
             """Use this function to remove all (or clear all) cultural knowledge from the database.
             Returns:
-                str: A message indicating if the cultural notion was cleared successfully or not.
+                str: A message indicating if the cultural knowledge was cleared successfully or not.
             """
-            db.clear_cultural_notions()
-            log_debug("Cultural notion cleared")
-            return "Cultural notion cleared successfully"
+            db.clear_cultural_knowledge()
+            log_debug("Cultural knowledge cleared")
+            return "Cultural knowledge cleared successfully"
 
         functions: List[Callable] = []
-        if enable_add_notions:
-            functions.append(add_cultural_notion)
-        if enable_update_notions:
-            functions.append(update_cultural_notion)
-        if enable_delete_notions:
-            functions.append(delete_cultural_notion)
-        if enable_clear_notions:
-            functions.append(clear_cultural_notions)
+        if enable_add_knowledge:
+            functions.append(add_cultural_knowledge)
+        if enable_update_knowledge:
+            functions.append(update_cultural_knowledge)
+        if enable_delete_knowledge:
+            functions.append(delete_cultural_knowledge)
+        if enable_clear_knowledge:
+            functions.append(clear_cultural_knowledge)
         return functions
 
     async def _aget_db_tools(
         self,
         db: AsyncBaseDb,
-        enable_add_notions: bool = True,
-        enable_update_notions: bool = True,
-        enable_delete_notions: bool = True,
-        enable_clear_notions: bool = True,
+        enable_add_knowledge: bool = True,
+        enable_update_knowledge: bool = True,
+        enable_delete_knowledge: bool = True,
+        enable_clear_knowledge: bool = True,
     ) -> List[Callable]:
-        async def add_cultural_notion(
+        async def add_cultural_knowledge(
             name: str,
             summary: Optional[str] = None,
             content: Optional[str] = None,
             categories: Optional[List[str]] = None,
         ) -> str:
-            """Use this function to add a cultural notion to the database.
+            """Use this function to add a cultural knowledge to the database.
             Args:
-                name (str): The name of the cultural notion.
-                summary (Optional[str]): The summary of the cultural notion.
-                content (Optional[str]): The content of the cultural notion.
-                categories (Optional[List[str]]): The categories of the cultural notion (e.g. ["name", "hobbies", "location"]).
+                name (str): The name of the cultural knowledge.
+                summary (Optional[str]): The summary of the cultural knowledge.
+                content (Optional[str]): The content of the cultural knowledge.
+                categories (Optional[List[str]]): The categories of the cultural knowledge (e.g. ["name", "hobbies", "location"]).
             Returns:
-                str: A message indicating if the cultural notion was added successfully or not.
+                str: A message indicating if the cultural knowledge was added successfully or not.
             """
             from uuid import uuid4
 
             try:
-                notion_id = str(uuid4())
-                await db.upsert_cultural_notion(
-                    CulturalNotion(
-                        id=notion_id,
+                knowledge_id = str(uuid4())
+                await db.upsert_cultural_knowledge(
+                    CulturalKnowledge(
+                        id=knowledge_id,
                         name=name,
                         summary=summary,
                         content=content,
                         categories=categories,
                     )
                 )
-                log_debug(f"Cultural notion added: {notion_id}")
-                return "Cultural notion added successfully"
+                log_debug(f"Cultural knowledge added: {knowledge_id}")
+                return "Cultural knowledge added successfully"
             except Exception as e:
-                log_warning(f"Error storing cultural notion in db: {e}")
-                return f"Error adding cultural notion: {e}"
+                log_warning(f"Error storing cultural knowledge in db: {e}")
+                return f"Error adding cultural knowledge: {e}"
 
-        async def update_cultural_notion(
-            notion_id: str,
+        async def update_cultural_knowledge(
+            knowledge_id: str,
             name: str,
             summary: Optional[str] = None,
             content: Optional[str] = None,
             categories: Optional[List[str]] = None,
         ) -> str:
-            """Use this function to update an existing cultural notion in the database.
+            """Use this function to update an existing cultural knowledge in the database.
             Args:
-                notion_id (str): The id of the cultural notion to be updated.
-                name (str): The name of the cultural notion.
-                summary (Optional[str]): The summary of the cultural notion.
-                content (Optional[str]): The content of the cultural notion.
-                categories (Optional[List[str]]): The categories of the cultural notion (e.g. ["name", "hobbies", "location"]).
+                knowledge_id (str): The id of the cultural knowledge to be updated.
+                name (str): The name of the cultural knowledge.
+                summary (Optional[str]): The summary of the cultural knowledge.
+                content (Optional[str]): The content of the cultural knowledge.
+                categories (Optional[List[str]]): The categories of the cultural knowledge (e.g. ["name", "hobbies", "location"]).
             Returns:
-                str: A message indicating if the cultural notion was updated successfully or not.
+                str: A message indicating if the cultural knowledge was updated successfully or not.
             """
-            from agno.db.base import CulturalNotion
+            from agno.db.base import CulturalKnowledge
 
             try:
-                await db.upsert_cultural_notion(
-                    CulturalNotion(
-                        id=notion_id,
+                await db.upsert_cultural_knowledge(
+                    CulturalKnowledge(
+                        id=knowledge_id,
                         name=name,
                         summary=summary,
                         content=content,
                         categories=categories,
                     )
                 )
-                log_debug("Memory updated")
-                return "Memory updated successfully"
+                log_debug("Cultural knowledge updated")
+                return "Cultural knowledge updated successfully"
             except Exception as e:
-                log_warning(f"Error storing memory in db: {e}")
-                return f"Error adding memory: {e}"
+                log_warning(f"Error storing cultural knowledge in db: {e}")
+                return f"Error updating cultural knowledge: {e}"
 
-        async def delete_cultural_notion(notion_id: str) -> str:
-            """Use this function to delete a single cultural notion from the database.
+        async def delete_cultural_knowledge(knowledge_id: str) -> str:
+            """Use this function to delete a single cultural knowledge from the database.
             Args:
-                notion_id (str): The id of the cultural notion to be deleted.
+                knowledge_id (str): The id of the cultural knowledge to be deleted.
             Returns:
-                str: A message indicating if the cultural notion was deleted successfully or not.
+                str: A message indicating if the cultural knowledge was deleted successfully or not.
             """
             try:
-                await db.delete_cultural_notion(id=notion_id)
-                log_debug("Cultural notion deleted")
-                return "Cultural notion deleted successfully"
+                await db.delete_cultural_knowledge(id=knowledge_id)
+                log_debug("Cultural knowledge deleted")
+                return "Cultural knowledge deleted successfully"
             except Exception as e:
-                log_warning(f"Error deleting cultural notion in db: {e}")
-                return f"Error deleting cultural notion: {e}"
+                log_warning(f"Error deleting cultural knowledge in db: {e}")
+                return f"Error deleting cultural knowledge: {e}"
 
-        async def clear_cultural_notions() -> str:
+        async def clear_cultural_knowledge() -> str:
             """Use this function to remove all (or clear all) cultural knowledge from the database.
             Returns:
-                str: A message indicating if the cultural notion was cleared successfully or not.
+                str: A message indicating if the cultural knowledge was cleared successfully or not.
             """
-            await db.clear_cultural_notions()
-            log_debug("Cultural notion cleared")
-            return "Cultural notion cleared successfully"
+            await db.clear_cultural_knowledge()
+            log_debug("Cultural knowledge cleared")
+            return "Cultural knowledge cleared successfully"
 
         functions: List[Callable] = []
-        if enable_add_notions:
-            functions.append(add_cultural_notion)
-        if enable_update_notions:
-            functions.append(update_cultural_notion)
-        if enable_delete_notions:
-            functions.append(delete_cultural_notion)
-        if enable_clear_notions:
-            functions.append(clear_cultural_notions)
+        if enable_add_knowledge:
+            functions.append(add_cultural_knowledge)
+        if enable_update_knowledge:
+            functions.append(update_cultural_knowledge)
+        if enable_delete_knowledge:
+            functions.append(delete_cultural_knowledge)
+        if enable_clear_knowledge:
+            functions.append(clear_cultural_knowledge)
         return functions

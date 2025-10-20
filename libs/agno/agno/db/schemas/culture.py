@@ -4,10 +4,10 @@ from typing import Any, Dict, List, Optional, Union
 
 
 @dataclass
-class CulturalNotion:
-    """Model for Cultural Notion"""
+class CulturalKnowledge:
+    """Model for Cultural Knowledge"""
 
-    # The id of the cultural notion, auto-generated if not provided
+    # The id of the cultural knowledge, auto-generated if not provided
     id: Optional[str] = None
 
     name: Optional[str] = None
@@ -25,11 +25,12 @@ class CulturalNotion:
     team_id: Optional[str] = None
 
     def __post_init__(self):
-        if not isinstance(self.name, str) or not self.name.strip():
+        if self.name is not None and not self.name.strip():
             raise ValueError("name must be a non-empty string")
         self.created_at = _now_epoch_s() if self.created_at is None else _to_epoch_s(self.created_at)
         self.updated_at = self.created_at if self.updated_at is None else _to_epoch_s(self.updated_at)
 
+    # TODO: Remove this method
     def bump_updated_at(self) -> None:
         """Bump updated_at to now (UTC)."""
         self.updated_at = _now_epoch_s()
@@ -67,7 +68,7 @@ class CulturalNotion:
         return {k: v for k, v in _dict.items() if v is not None}
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CulturalNotion":
+    def from_dict(cls, data: Dict[str, Any]) -> "CulturalKnowledge":
         d = dict(data)
 
         # Preserve 0 and None explicitly; only process if key exists

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.schemas import UserMemory
-from agno.db.schemas.culture import CulturalNotion
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.session import Session
@@ -278,19 +278,19 @@ class BaseDb(ABC):
 
     # --- Cultural Notions ---
     @abstractmethod
-    def clear_cultural_notions(self) -> None:
+    def clear_cultural_knowledge(self) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def delete_cultural_notion(self, id: str) -> None:
+    def delete_cultural_knowledge(self, id: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def get_cultural_notion(self, id: str) -> Optional[CulturalNotion]:
+    def get_cultural_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
     @abstractmethod
-    def get_cultural_notions(
+    def get_all_cultural_knowledge(
         self,
         name: Optional[str] = None,
         limit: Optional[int] = None,
@@ -299,11 +299,11 @@ class BaseDb(ABC):
         sort_order: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-    ) -> Optional[List[CulturalNotion]]:
+    ) -> Optional[List[CulturalKnowledge]]:
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_cultural_notion(self, cultural_notion: CulturalNotion) -> Optional[CulturalNotion]:
+    def upsert_cultural_knowledge(self, cultural_notion: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
 
@@ -544,19 +544,19 @@ class AsyncBaseDb(ABC):
 
     # --- Cultural Notions ---
     @abstractmethod
-    async def clear_cultural_notions(self) -> None:
+    async def clear_cultural_knowledge(self) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_cultural_notion(self, id: str) -> None:
+    async def delete_cultural_knowledge(self, id: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def get_cultural_notion(self, id: str) -> Optional[CulturalNotion]:
+    async def get_cultural_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
     @abstractmethod
-    async def get_cultural_notions(
+    async def get_all_cultural_knowledge(
         self,
         name: Optional[str] = None,
         limit: Optional[int] = None,
@@ -565,9 +565,9 @@ class AsyncBaseDb(ABC):
         sort_order: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-    ) -> Optional[List[CulturalNotion]]:
+    ) -> Optional[List[CulturalKnowledge]]:
         raise NotImplementedError
 
     @abstractmethod
-    async def upsert_cultural_notion(self, cultural_notion: CulturalNotion) -> Optional[CulturalNotion]:
+    async def upsert_cultural_knowledge(self, cultural_notion: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
