@@ -338,74 +338,92 @@ class CultureManager:
         enable_update_knowledge: bool = True,
         enable_add_knowledge: bool = True,
     ) -> Message:
+        """Build the system prompt that instructs the model how to maintain cultural knowledge."""
+
         if self.system_message is not None:
             return Message(role="system", content=self.system_message)
 
+        # Default capture instructions
         culture_capture_instructions = self.culture_capture_instructions or dedent(
             """\
-            Cultural knowledge should capture shared knowledge, insights, and practices that can improve your performance across conversations:
-            - Best practices and successful approaches discovered during previous conversations
-            - Common patterns in user behavior, preferences, or needs that remain true across conversations
-            - Organizational knowledge, processes, or contextual information
-            - Insights about effective communication styles or problem-solving methods
-            - Domain-specific knowledge or expertise that emerges from conversations
-            - Any other valuable understanding that should be preserved and shared across agents
-        """
+            Cultural knowledge should capture shared knowledge, insights, and practices that can improve performance across agents:
+            - Best practices and successful approaches discovered in previous interactions
+            - Common patterns in user behavior, team workflows, or recurring issues
+            - Organizational processes, design principles, or rules of operation
+            - Guardrails, decision rationales, or ethical guidelines
+            - Domain-specific lessons that generalize beyond one case
+            - Communication styles or collaboration methods that lead to better outcomes
+            - Any other valuable insight that should persist across agents and time
+            """
         )
 
-        system_prompt_lines = [
-            "You are a Culture Manager responsible for managing organizational cultural knowledge and insights. "
-            "You will be provided with criteria for cultural knowledge to capture in the <knowledge_to_capture> section and the existing cultural knowledge in the <existing_knowledge> section.",
+        system_prompt_lines: List[str] = [
+            "You are the **Cultural Knowledge Manager**, responsible for maintaining, evolving, and safeguarding "
+            "the shared cultural knowledge of the organization.\n"
+            "You will be provided with criteria for cultural knowledge to capture in the <knowledge_to_capture> section, "
+            "and the existing cultural knowledge in the <existing_knowledge> section.\n",
+            "",
+            "Your role is to distill, organize, and preserve collective intelligence — including insights, lessons, "
+            "rules, principles, and narratives that guide future behavior across agents and teams.",
             "",
             "## When to add or update cultural knowledge",
-            "- Your first task is to decide if cultural knowledge needs to be added, updated, or deleted based on discovered insights OR if no changes are needed.",
-            "- If you discover knowledge that meets the criteria in the <knowledge_to_capture> section and is not already captured in the <existing_knowledge> section, you should capture it as a cultural knowledge.",
-            "- If no valuable organizational knowledge emerges from the interaction, no knowledge updates are needed.",
-            "- If the existing knowledge in the <existing_knowledge> section capture all relevant insights, no knowledge updates are needed.",
+            "- Decide if knowledge should be **added, updated, deleted**, or if **no changes are needed**.",
+            "- If new insights meet the criteria in <knowledge_to_capture> and are not already captured, add them.",
+            "- If existing practices evolve, update relevant entries (while preserving historical context if useful).",
+            "- If nothing new or valuable emerged, respond with exactly: `No changes needed`.",
             "",
             "## How to add or update cultural knowledge",
-            "- If you decide to add a new knowledge, create knowledge that capture key insights for future reference across the organization.",
-            "- Knowledge should be clear, actionable statements that encapsulate valuable knowledge without being overly specific to individual cases.",
-            "  - Example: If multiple users struggle with a concept, a knowledge could be `Users often need step-by-step guidance when learning API integration`.",
-            "  - Example: If a particular approach works well, a knowledge could be `Visual examples significantly improve user understanding of complex workflows`.",
-            "- Don't make a single knowledge too broad or complex, create multiple knowledge if needed to capture distinct insights.",
-            "- Don't duplicate information across knowledge. Rather update existing knowledge if they cover similar ground.",
-            "- If organizational practices change, update relevant knowledge to reflect current approaches while preserving historical context when valuable.",
-            "- When updating a knowledge, enhance it with new insights rather than completely overwriting existing knowledge.",
-            "- Focus on knowledge that transcends individual conversations and provides value to future interactions.",
+            "- Write entries that are **clear, specific, and actionable** (avoid vague abstractions).",
+            "- Each entry should capture one coherent idea or rule — use multiple entries if necessary.",
+            "- Do **not** duplicate information; update similar entries instead.",
+            "- When updating, append new insights rather than overwriting useful context.",
+            "- Use short Markdown lists, examples, or code blocks to increase clarity.",
             "",
             "## Criteria for creating cultural knowledge",
-            "Use the following criteria to determine if discovered knowledge should be captured as a cultural knowledge.",
-            "",
             "<knowledge_to_capture>",
             culture_capture_instructions,
             "</knowledge_to_capture>",
             "",
-            "## Updating cultural knowledge",
-            "You will also be provided with a list of existing cultural knowledge in the <existing_knowledge> section. You can:",
-            "  - Decide to make no changes.",
+            "## Metadata & structure (use these fields when creating/updating)",
+            "- `name`: short, specific title (required).",
+            "- `summary`: one-line purpose or takeaway.",
+            "- `content`: reusable insight, rule, or guideline (required).",
+            "- `intent`: one of {rule | principle | practice | pattern | doctrine | story | religion}.",
+            "- `status`: one of {draft | active | deprecated}.",
+            "- `confidence`: one of {low | medium | high} — degree of confidence or adoption.",
+            "- `scope`: one of {team | org | global | user | agent} — where this applies.",
+            "- `categories`: list of tags (e.g., ['agents', 'guardrails']).",
+            "- `references`: list of related knowledge IDs or URLs.",
+            "- `notes`: list of contextual notes, rationale, or examples.",
+            "- `metadata`: optional structured info (e.g., source, author, version).",
             "",
-            "## When no changes are needed",
-            "If no valuable organizational knowledge emerges from the interaction, just respond with 'No changes needed'. Do not answer the user's message.",
+            "## De-duplication, lineage, and precedence",
+            "- Search <existing_knowledge> by name/category before adding new entries.",
+            "- If a similar entry exists, **update** it instead of creating a duplicate.",
+            "- Preserve lineage via `references` or `notes` when revising entries.",
+            "- When entries conflict, prefer the most recent `status=active` entry with higher `confidence`, "
+            "but document ambiguity when unclear.",
+            "",
+            "## Safety & privacy",
+            "- Never include secrets, credentials, personal data, or proprietary information.",
+            "- Mark uncertain insights as `status=draft` with `confidence=low`.",
+            "",
+            "## Tool usage",
+            "You can call multiple tools in a single response. Use them only when valuable organizational knowledge emerges.",
         ]
 
+        # Tool permissions (based on flags)
+        tool_lines: List[str] = []
         if enable_add_knowledge:
-            system_prompt_lines.append("  - Decide to add a new cultural knowledge, using the `add_knowledge` tool.")
+            tool_lines.append("- Add new entries using the `add_knowledge` tool.")
         if enable_update_knowledge:
-            system_prompt_lines.append(
-                "  - Decide to update an existing cultural knowledge, using the `update_knowledge` tool."
-            )
+            tool_lines.append("- Update existing entries using the `update_knowledge` tool.")
         if enable_delete_knowledge:
-            system_prompt_lines.append(
-                "  - Decide to delete an existing cultural knowledge, using the `delete_knowledge` tool."
-            )
+            tool_lines.append("- Delete entries using the `delete_knowledge` tool (use sparingly; prefer deprecate).")
         if enable_clear_knowledge:
-            system_prompt_lines.append("  - Decide to clear all cultural knowledge, using the `clear_knowledge` tool.")
-
-        system_prompt_lines += [
-            "You can call multiple tools in a single response if needed. ",
-            "Only add or update cultural knowledge if valuable organizational knowledge emerges that should be preserved and shared.",
-        ]
+            tool_lines.append("- Clear all entries using the `clear_knowledge` tool (only when explicitly instructed).")
+        if tool_lines:
+            system_prompt_lines += [""] + tool_lines
 
         if existing_knowledge and len(existing_knowledge) > 0:
             system_prompt_lines.append("\n<existing_knowledge>")
@@ -413,6 +431,14 @@ class CultureManager:
                 system_prompt_lines.append(f"Knowledge: {_existing_knowledge.get('content')}")
                 system_prompt_lines.append("")
             system_prompt_lines.append("</existing_knowledge>")
+
+        # Final guardrail for no-op
+        system_prompt_lines += [
+            "",
+            "## When no changes are needed",
+            "If no valuable organizational knowledge emerges, or everything is already captured, respond with exactly:",
+            "`No changes needed`",
+        ]
 
         if self.additional_instructions:
             system_prompt_lines.append(self.additional_instructions)

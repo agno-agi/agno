@@ -13,9 +13,14 @@ class CulturalKnowledge:
     name: Optional[str] = None
     summary: Optional[str] = None
     content: Optional[str] = None
+    intent: Optional[str] = None
+    status: Optional[str] = None
+    confidence: Optional[str] = None
+    scope: Optional[str] = None
     categories: Optional[List[str]] = None
-    metadata: Optional[Dict[str, Any]] = None
+    references: Optional[List[str]] = None
     notes: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
     input: Optional[str] = None
 
     created_at: Optional[int] = field(default=None)

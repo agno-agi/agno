@@ -355,11 +355,11 @@ class Agent:
     # --- Agent Culture ---
     # Culture manager to use for this agent
     culture_manager: Optional[CultureManager] = None
-    # Enable the agent to manage cultural notions of the user
-    enable_agent_culture: bool = False
+    # Enable the agent to manage cultural knowledge
+    enable_agentic_culture: bool = False
     # Update cultural knowledge after every run
     update_cultural_knowledge: bool = False
-    # If True, the agent adds a reference to the user cultural notions in the response
+    # If True, the agent adds cultural knowledge in the response
     add_culture_to_context: Optional[bool] = None
 
     # --- Debug ---
@@ -461,7 +461,7 @@ class Agent:
         events_to_skip: Optional[List[RunEvent]] = None,
         role: Optional[str] = None,
         culture_manager: Optional[CultureManager] = None,
-        enable_agent_culture: bool = False,
+        enable_agentic_culture: bool = False,
         update_cultural_knowledge: bool = False,
         add_culture_to_context: Optional[bool] = None,
         debug_mode: bool = False,
@@ -584,7 +584,7 @@ class Agent:
             self.events_to_skip = [RunEvent.run_content]
 
         self.culture_manager = culture_manager
-        self.enable_agent_culture = enable_agent_culture
+        self.enable_agentic_culture = enable_agentic_culture
         self.update_cultural_knowledge = update_cultural_knowledge
         self.add_culture_to_context = add_culture_to_context
 
@@ -693,7 +693,7 @@ class Agent:
 
     def _set_culture_manager(self) -> None:
         if self.db is None:
-            log_warning("Database not provided. Cultural notions will not be stored.")
+            log_warning("Database not provided. Cultural knowledge will not be stored.")
 
         if self.culture_manager is None:
             self.culture_manager = CultureManager(model=self.model, db=self.db)
@@ -704,7 +704,7 @@ class Agent:
                 self.culture_manager.db = self.db
 
         if self.add_culture_to_context is None:
-            self.add_culture_to_context = self.enable_agent_culture or self.culture_manager is not None
+            self.add_culture_to_context = self.enable_agentic_culture or self.culture_manager is not None
 
     def _set_memory_manager(self) -> None:
         if self.db is None:
@@ -746,7 +746,7 @@ class Agent:
         self.set_id()
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
-        if self.update_cultural_knowledge or self.enable_agent_culture or self.culture_manager is not None:
+        if self.update_cultural_knowledge or self.enable_agentic_culture or self.culture_manager is not None:
             self._set_culture_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
@@ -830,8 +830,8 @@ class Agent:
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput:
-        """
-        Run the Agent and return the RunOutput.
+        """Run the Agent and return the RunOutput.
+
         Steps:
         1. Execute pre-hooks
         2. Prepare run messages
@@ -842,7 +842,7 @@ class Agent:
         7. Calculate session metrics
         8. Optional: Save output to file if save_response_to_file is set
         9. Add RunOutput to Agent Session
-        10. Update Agent Memory
+        10. Update Agent Memory, Cultural Knowledge and Summaries
         11. Save session to storage
         """
 
@@ -904,7 +904,7 @@ class Agent:
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
-        # 3. Reason about the task
+        # 3. Reason about the task if reasoning is enabled
         self._handle_reasoning(run_response=run_response, run_messages=run_messages)
 
         # Check for cancellation before model call
@@ -986,7 +986,7 @@ class Agent:
         # 9. Add the RunOutput to Agent Session
         session.upsert_run(run=run_response)
 
-        # 10. Update Agent Memory
+        # 10. Update Agent Memory, Cultural Knowledge and Summaries
         response_iterator = self._make_memories_cultural_knowledge_and_summaries(
             run_response=run_response,
             run_messages=run_messages,
@@ -1041,7 +1041,7 @@ class Agent:
         5. Calculate session metrics
         6. Optional: Save output to file if save_response_to_file is set
         7. Add the RunOutput to the Agent Session
-        8. Update Agent Memory
+        8. Update Agent Memory, Cultural Knowledge and Summaries
         9. Create the run completed event
         10. Save session to storage
         """
@@ -1115,7 +1115,7 @@ class Agent:
             # Check for cancellation before model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 4. Process model response
+            # 4. Generate a response from the Model (includes running function calls)
             if self.output_model is None:
                 for event in self._handle_model_response_stream(
                     session=session,
@@ -1213,7 +1213,7 @@ class Agent:
             # 7. Add RunOutput to Agent Session
             session.upsert_run(run=run_response)
 
-            # 8. Update Agent Memory
+            # 8. Update Agent Memory, Cultural Knowledge and Summaries
             yield from self._make_memories_cultural_knowledge_and_summaries(
                 run_response=run_response,
                 run_messages=run_messages,
@@ -1746,7 +1746,7 @@ class Agent:
             # 11. Add RunOutput to Agent Session
             agent_session.upsert_run(run=run_response)
 
-            # 12. Update Agent Memory
+            # 12. Update Agent Memory, Cultural Knowledge and Summaries
             async for _ in self._amake_memories_cultural_knowledge_and_summaries(
                 run_response=run_response,
                 run_messages=run_messages,
@@ -2669,7 +2669,7 @@ class Agent:
         # 5. Add the run to memory
         session.upsert_run(run=run_response)
 
-        # 6. Update Agent Memory
+        # 6. Update Agent Memory, Cultural Knowledge and Summaries
         response_iterator = self._make_memories_cultural_knowledge_and_summaries(
             run_response=run_response,
             run_messages=run_messages,
@@ -4646,7 +4646,7 @@ class Agent:
                     log_warning("Unable to add messages to memory")
 
             # Create cultural knowledge
-            if user_message_str is not None and self.culture_manager is not None and not self.enable_agent_culture:
+            if user_message_str is not None and self.culture_manager is not None and not self.enable_agentic_culture:
                 log_debug("Creating cultural knowledge.")
                 futures.append(
                     executor.submit(
@@ -4734,9 +4734,13 @@ class Agent:
             else:
                 log_warning("Unable to add messages to memory")
 
-        # Create cultural notions
-        if run_messages.user_message is not None and self.culture_manager is not None and not self.enable_agent_culture:
-            log_debug("Creating cultural notions.")
+        # Create cultural knowledge
+        if (
+            run_messages.user_message is not None
+            and self.culture_manager is not None
+            and not self.enable_agentic_culture
+        ):
+            log_debug("Creating cultural knowledge.")
 
             tasks.append(
                 self.culture_manager.acreate_cultural_knowledge(message=run_messages.user_message.get_content_string())
@@ -4862,7 +4866,7 @@ class Agent:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
             self._rebuild_tools = True
 
-        if self.enable_agent_culture:
+        if self.enable_agentic_culture:
             agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=async_mode))
             self._rebuild_tools = True
 
@@ -5982,14 +5986,14 @@ class Agent:
         return await self.memory_manager.aget_user_memories(user_id=user_id)
 
     def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        """Get the cultural notions the agent has access to"""
+        """Get the cultural knowledge the agent has access to"""
         if self.culture_manager is None:
             return None
 
         return self.culture_manager.get_all_knowledge()
 
     async def aget_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        """Get the cultural notions the agent has access to"""
+        """Get the cultural knowledge the agent has access to"""
         if self.culture_manager is None:
             return None
 
@@ -6272,8 +6276,8 @@ class Agent:
                     "</updating_user_memories>\n\n"
                 )
 
-        # 3.3.10 Then add cultural notions to the system prompt
-        if self.enable_agent_culture or self.culture_manager:
+        # 3.3.10 Then add cultural knowledge to the system prompt
+        if self.enable_agentic_culture or self.culture_manager:
             _culture_manager_not_set = None
             if not self.culture_manager:
                 self._set_culture_manager()
@@ -6283,33 +6287,50 @@ class Agent:
 
             if cultural_knowledge and len(cultural_knowledge) > 0:
                 system_message_content += (
-                    "You have access to cultural knowledge that provide context and guidance for your interactions:\n\n"
+                    "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
+                    "for your reasoning, communication, and decision-making.\n\n"
+                    "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
+                    "emerged across agents and teams. It encodes collective experience — including preferred "
+                    "approaches, common patterns, lessons learned, and ethical guardrails.\n\n"
+                    "When performing any task:\n"
+                    "- **Reference Cultural Knowledge** to align with shared norms and best practices.\n"
+                    "- **Apply it contextually**, not mechanically — adapt principles to the current situation.\n"
+                    "- **Preserve consistency** with cultural values (tone, reasoning, and style) unless explicitly told otherwise.\n"
+                    "- **Extend it** when you discover new insights — your outputs may become future Cultural Knowledge.\n"
+                    "- **Clarify conflicts** if Cultural Knowledge appears to contradict explicit user instructions.\n\n"
+                    "Your goal is to act not only intelligently but also *culturally coherently* — reflecting the "
+                    "collective intelligence of the system.\n\n"
+                    "Below is the currently available Cultural Knowledge for this context:\n\n"
                 )
                 system_message_content += "<cultural_knowledge>\n"
                 for _knowledge in cultural_knowledge:  # type: ignore
                     system_message_content += f"\n- {_knowledge.content}"  # Use content over summary for full context
                 system_message_content += "\n</cultural_knowledge>\n\n"
-                system_message_content += (
-                    "Note: The cultural knowledge represents shared understanding and practices. "
-                    "Use it to inform your responses while adapting to the current conversation context.\n"
-                )
             else:
                 system_message_content += (
-                    "You have the capability to access shared cultural knowledge, "
-                    "but no cultural knowledge are currently available.\n"
+                    "You have the capability to access shared **Cultural Knowledge**, which normally provides "
+                    "context, norms, and guidance for your behavior and reasoning. However, no cultural knowledge "
+                    "is currently available in this session.\n"
+                    "Proceed thoughtfully and document any useful insights you create — they may become future "
+                    "Cultural Knowledge for others.\n\n"
                 )
 
             if _culture_manager_not_set:
                 self.culture_manager = None
 
-            if self.enable_agent_culture:
+            if self.enable_agentic_culture:
                 system_message_content += (
                     "\n<contributing_to_culture>\n"
-                    "- You have access to the `create_or_update_cultural_knowledge` tool that you can use to add new cultural knowledge or update existing ones.\n"
-                    "- If you discover insights, patterns, or knowledge that could benefit other agents or future interactions, use this tool to contribute to the shared culture.\n"
-                    "- Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
-                    "- Use this tool when you identify valuable knowledge that should be preserved and shared across the organization.\n"
-                    "- If you use the `create_or_update_cultural_knowledge` tool, you may mention the contribution to the user if relevant.\n"
+                    "You can use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared culture.\n"
+                    "\n"
+                    "When to contribute:\n"
+                    "- You discover a reusable insight, pattern, rule, or best practice that will help future agents.\n"
+                    "- You correct or clarify an existing cultural entry.\n"
+                    "- You capture a guardrail, decision rationale, postmortem lesson, or example template.\n"
+                    "- You identify missing context that should persist across sessions or teams.\n"
+                    "\n"
+                    "Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
+                    "Mention your contribution to the user only if it is relevant to their request or they asked to be notified.\n"
                     "</contributing_to_culture>\n\n"
                 )
 
@@ -6596,8 +6617,8 @@ class Agent:
                     "</updating_user_memories>\n\n"
                 )
 
-        # 3.3.10 Then add cultural notions to the system prompt
-        if self.enable_agent_culture or self.culture_manager:
+        # 3.3.10 Then add cultural knowledge to the system prompt
+        if self.enable_agentic_culture or self.culture_manager:
             _culture_manager_not_set = None
             if not self.culture_manager:
                 self._set_culture_manager()
@@ -6606,32 +6627,51 @@ class Agent:
             cultural_knowledge = await self.culture_manager.aget_all_knowledge()  # type: ignore
 
             if cultural_knowledge and len(cultural_knowledge) > 0:
-                system_message_content += "You have access to shared cultural knowledge that provide context and guidance for your interactions:\n\n"
+                system_message_content += (
+                    "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
+                    "for your reasoning, communication, and decision-making.\n\n"
+                    "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
+                    "emerged across agents and teams. It encodes collective experience — including preferred "
+                    "approaches, common patterns, lessons learned, and ethical guardrails.\n\n"
+                    "When performing any task:\n"
+                    "- **Reference Cultural Knowledge** to align with shared norms and best practices.\n"
+                    "- **Apply it contextually**, not mechanically — adapt principles to the current situation.\n"
+                    "- **Preserve consistency** with cultural values (tone, reasoning, and style) unless explicitly told otherwise.\n"
+                    "- **Extend it** when you discover new insights — your outputs may become future Cultural Knowledge.\n"
+                    "- **Clarify conflicts** if Cultural Knowledge appears to contradict explicit user instructions.\n\n"
+                    "Your goal is to act not only intelligently but also *culturally coherently* — reflecting the "
+                    "collective intelligence of the system.\n\n"
+                    "Below is the currently available Cultural Knowledge for this context:\n\n"
+                )
                 system_message_content += "<cultural_knowledge>\n"
                 for _knowledge in cultural_knowledge:  # type: ignore
-                    system_message_content += f"\n- {_knowledge.content}"
+                    system_message_content += f"\n- {_knowledge.content}"  # Use content over summary for full context
                 system_message_content += "\n</cultural_knowledge>\n\n"
-                system_message_content += (
-                    "Note: these cultural knowledge represent shared understanding and practices. "
-                    "Use them to inform your responses while adapting to the current conversation context.\n"
-                )
             else:
                 system_message_content += (
-                    "You have the capability to access shared cultural knowledge, "
-                    "but no cultural knowledge is currently available.\n"
+                    "You have the capability to access shared **Cultural Knowledge**, which normally provides "
+                    "context, norms, and guidance for your behavior and reasoning. However, no cultural knowledge "
+                    "is currently available in this session.\n"
+                    "Proceed thoughtfully and document any useful insights you create — they may become future "
+                    "Cultural Knowledge for others.\n\n"
                 )
 
             if _culture_manager_not_set:
                 self.culture_manager = None
 
-            if self.enable_agent_culture:
+            if self.enable_agentic_culture:
                 system_message_content += (
                     "\n<contributing_to_culture>\n"
-                    "- You have access to the `create_or_update_cultural_knowledge` tool that you can use to add new cultural knowledge or update existing ones.\n"
-                    "- If you discover insights, patterns, or knowledge that could benefit other agents or future interactions, use this tool to contribute to the shared culture.\n"
-                    "- Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
-                    "- Use this tool when you identify valuable knowledge that should be preserved and shared across the organization.\n"
-                    "- If you use the `create_or_update_cultural_knowledge` tool, you may mention the contribution to the user if relevant.\n"
+                    "You can use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared culture.\n"
+                    "\n"
+                    "When to contribute:\n"
+                    "- You discover a reusable insight, pattern, rule, or best practice that will help future agents.\n"
+                    "- You correct or clarify an existing cultural entry.\n"
+                    "- You capture a guardrail, decision rationale, postmortem lesson, or example template.\n"
+                    "- You identify missing context that should persist across sessions or teams.\n"
+                    "\n"
+                    "Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
+                    "Mention your contribution to the user only if it is relevant to their request or they asked to be notified.\n"
                     "</contributing_to_culture>\n\n"
                 )
 
