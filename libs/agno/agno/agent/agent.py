@@ -6646,7 +6646,7 @@ class Agent:
                 for _msg in history_copy:
                     _msg.from_history = True
 
-                # Filter tool calls from history if max_tool_calls_in_context is set
+                # Filter tool calls from history if limit is set (before adding to run_messages)
                 if self.max_tool_calls_in_context is not None:
                     filter_tool_calls(history_copy, self.max_tool_calls_in_context)
 
