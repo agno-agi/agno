@@ -111,8 +111,65 @@ class ChunkerSchema(BaseModel):
     description: Optional[str] = None
 
 
+class VectorDbSchema(BaseModel):
+    id: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+    search_types: Optional[List[str]] = None
+
+
+class VectorSearchResult(BaseModel):
+    """Schema for search result documents."""
+
+    id: str
+    content: str
+    name: Optional[str] = None
+    meta_data: Optional[Dict[str, Any]] = None
+    usage: Optional[Dict[str, Any]] = None
+    reranking_score: Optional[float] = None
+    content_id: Optional[str] = None
+    content_origin: Optional[str] = None
+    size: Optional[int] = None
+
+    @classmethod
+    def from_document(cls, document) -> "VectorSearchResult":
+        """Convert a Document object to a serializable VectorSearchResult."""
+        return cls(
+            id=document.id,
+            content=document.content,
+            name=getattr(document, "name", None),
+            meta_data=getattr(document, "meta_data", None),
+            usage=getattr(document, "usage", None),
+            reranking_score=getattr(document, "reranking_score", None),
+            content_id=getattr(document, "content_id", None),
+            content_origin=getattr(document, "content_origin", None),
+            size=getattr(document, "size", None),
+        )
+
+
+class VectorSearchRequestSchema(BaseModel):
+    """Schema for vector search request."""
+
+    class Meta(BaseModel):
+        """Inline metadata schema for pagination."""
+
+        limit: Optional[int] = Field(20, description="Number of results per page", ge=1, le=100)
+        page: Optional[int] = Field(1, description="Page number", ge=1)
+
+    query: str = Field(..., description="The search query")
+    db_id: Optional[str] = Field(None, description="The content database id")
+    vector_db_ids: Optional[List[str]] = Field(None, description="List of vector database ids to search in")
+    search_type: Optional[str] = Field(None, description="The type of search to perform")
+    max_results: Optional[int] = Field(None, description="The maximum number of results to return")
+    filters: Optional[Dict[str, Any]] = Field(None, description="The filters to apply to the search")
+    meta: Optional[Meta] = Field(
+        None, description="Pagination metadata. Limit and page number to return a subset of results."
+    )
+
+
 class ConfigResponseSchema(BaseModel):
     readers: Optional[Dict[str, ReaderSchema]] = None
     readersForType: Optional[Dict[str, List[str]]] = None
     chunkers: Optional[Dict[str, ChunkerSchema]] = None
     filters: Optional[List[str]] = None
+    vector_dbs: Optional[List[VectorDbSchema]] = None

@@ -706,7 +706,7 @@ class MySQLDb(BaseDb):
             return None
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk upsert multiple sessions for improved performance on large datasets.
@@ -714,6 +714,7 @@ class MySQLDb(BaseDb):
         Args:
             sessions (List[Session]): List of sessions to upsert.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the session object.
 
         Returns:
             List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
@@ -758,6 +759,8 @@ class MySQLDb(BaseDb):
                     agent_data = []
                     for session in agent_sessions:
                         session_dict = session.to_dict()
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         agent_data.append(
                             {
                                 "session_id": session_dict.get("session_id"),
@@ -770,7 +773,7 @@ class MySQLDb(BaseDb):
                                 "summary": session_dict.get("summary"),
                                 "metadata": session_dict.get("metadata"),
                                 "created_at": session_dict.get("created_at"),
-                                "updated_at": session_dict.get("created_at"),
+                                "updated_at": updated_at,
                             }
                         )
 
@@ -784,7 +787,7 @@ class MySQLDb(BaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             runs=stmt.inserted.runs,
-                            updated_at=int(time.time()),
+                            updated_at=stmt.inserted.updated_at,
                         )
                         sess.execute(stmt, agent_data)
 
@@ -808,6 +811,8 @@ class MySQLDb(BaseDb):
                     team_data = []
                     for session in team_sessions:
                         session_dict = session.to_dict()
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         team_data.append(
                             {
                                 "session_id": session_dict.get("session_id"),
@@ -820,7 +825,7 @@ class MySQLDb(BaseDb):
                                 "summary": session_dict.get("summary"),
                                 "metadata": session_dict.get("metadata"),
                                 "created_at": session_dict.get("created_at"),
-                                "updated_at": session_dict.get("created_at"),
+                                "updated_at": updated_at,
                             }
                         )
 
@@ -834,7 +839,7 @@ class MySQLDb(BaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             runs=stmt.inserted.runs,
-                            updated_at=int(time.time()),
+                            updated_at=stmt.inserted.updated_at,
                         )
                         sess.execute(stmt, team_data)
 
@@ -858,6 +863,8 @@ class MySQLDb(BaseDb):
                     workflow_data = []
                     for session in workflow_sessions:
                         session_dict = session.to_dict()
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         workflow_data.append(
                             {
                                 "session_id": session_dict.get("session_id"),
@@ -870,7 +877,7 @@ class MySQLDb(BaseDb):
                                 "summary": session_dict.get("summary"),
                                 "metadata": session_dict.get("metadata"),
                                 "created_at": session_dict.get("created_at"),
-                                "updated_at": session_dict.get("created_at"),
+                                "updated_at": updated_at,
                             }
                         )
 
@@ -884,7 +891,7 @@ class MySQLDb(BaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             runs=stmt.inserted.runs,
-                            updated_at=int(time.time()),
+                            updated_at=stmt.inserted.updated_at,
                         )
                         sess.execute(stmt, workflow_data)
 
@@ -917,8 +924,12 @@ class MySQLDb(BaseDb):
             ]
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
@@ -933,6 +944,8 @@ class MySQLDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
                 success = result.rowcount > 0
@@ -944,11 +957,12 @@ class MySQLDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -960,6 +974,8 @@ class MySQLDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
                     log_debug(f"No user memories found with ids: {memory_ids}")
@@ -1002,12 +1018,15 @@ class MySQLDb(BaseDb):
             log_error(f"Exception reading from memory table: {e}")
             raise e
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[UserMemory]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -1024,6 +1043,8 @@ class MySQLDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
 
                 result = sess.execute(stmt).fetchone()
                 if not result:
@@ -1267,7 +1288,7 @@ class MySQLDb(BaseDb):
             return None
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk upsert multiple user memories for improved performance on large datasets.
@@ -1299,10 +1320,13 @@ class MySQLDb(BaseDb):
 
             # Prepare bulk data
             bulk_data = []
+            current_time = int(time.time())
             for memory in memories:
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at else current_time
                 bulk_data.append(
                     {
                         "memory_id": memory.memory_id,
@@ -1312,7 +1336,7 @@ class MySQLDb(BaseDb):
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
-                        "updated_at": int(time.time()),
+                        "updated_at": updated_at,
                     }
                 )
 
@@ -1327,7 +1351,7 @@ class MySQLDb(BaseDb):
                     input=stmt.inserted.input,
                     agent_id=stmt.inserted.agent_id,
                     team_id=stmt.inserted.team_id,
-                    updated_at=int(time.time()),
+                    updated_at=stmt.inserted.updated_at,
                 )
                 sess.execute(stmt, bulk_data)
 
@@ -1640,9 +1664,9 @@ class MySQLDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                    result = sess.execute(stmt).fetchall()
-                    if not result:
-                        return [], 0
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], 0
 
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 

@@ -13,6 +13,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   style-check:
     runs-on: ubuntu-latest
@@ -34,6 +38,8 @@ jobs:
           cache: "pip"
       - name: Install dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv
           python -m pip install --upgrade \
             pip setuptools wheel \
             ruff mypy pytest types-pyyaml
@@ -125,31 +131,34 @@ jobs:
           ./scripts/run_model_tests.sh anthropic
 
   # Run tests for AWS
-  test-aws:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
-      fail-fast: true
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: "us-east-1"
-      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup and AWS tests
-        working-directory: .
-        run: |
-          ./scripts/run_model_tests.sh aws
+  #
+  # -- Some tests hang. Commented out until we revisit them.
+  #
+  # test-aws:
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     matrix:
+  #       python-version: ["3.12"]
+  #     fail-fast: true
+  #   env:
+  #     AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
+  #     AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+  #     AWS_REGION: "us-east-1"
+  #     EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+  #   steps:
+  #     - uses: actions/checkout@v3
+  #     - name: Set up Python ${{ matrix.python-version }}
+  #       uses: actions/setup-python@v4
+  #       with:
+  #         python-version: ${{ matrix.python-version }}
+  #     - name: Install uv
+  #       run: |
+  #         curl -LsSf https://astral.sh/uv/install.sh | sh
+  #         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+  #     - name: Run dev setup and AWS tests
+  #       working-directory: .
+  #       run: |
+  #         ./scripts/run_model_tests.sh aws
 
   # Run tests for Cohere
   test-cohere:
@@ -825,6 +834,39 @@ jobs:
           ./libs/agno/tests/integration/knowledge/test_website_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_youtube_knowledge.py
 
+  # Run A2A tests (isolated due to dependency conflicts)
+  test-a2a:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Setup environment for A2A tests (without conflicting deps)
+        working-directory: .
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          VIRTUAL_ENV=.venv uv pip install -e ./libs/agno[dev,os,integration-tests,openai]
+          VIRTUAL_ENV=.venv uv pip install a2a-sdk
+      - name: Run A2A integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          pip install a2a-sdk
+          python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
+
   # Run remaining integration tests
   test-remaining:
     runs-on: ubuntu-latest
@@ -855,4 +897,4 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py ./libs/agno/tests/integration

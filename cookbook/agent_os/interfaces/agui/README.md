@@ -51,7 +51,7 @@ You can use [Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-
 
 ### Configure Dojo for Agno Connection
 
-Agno agents expose a single `/agui` endpoint that handles all features.
+Agno agents expose a single `/agui` endpoint that handles all features (except for multiple instances, which have their own `/agui` endpoint with a custom prefix).
 
 Edit `ag-ui/typescript-sdk/apps/dojo/src/agents.ts` and update the Agno agent URLs:
 
@@ -61,10 +61,10 @@ Edit `ag-ui/typescript-sdk/apps/dojo/src/agents.ts` and update the Agno agent UR
   agents: async () => {
     return {
       agentic_chat: new AgnoAgent({
-        url: `${envVars.agnoUrl}/agui`, //Point to /agui endpoint
+        url: `${envVars.agnoUrl}/agui`, //Point to /agui endpoint (or with a custom prefix)
       }),
       tool_based_generative_ui: new AgnoAgent({
-        url: `${envVars.agnoUrl}/agui`, //Point to /agui endpoint  
+        url: `${envVars.agnoUrl}/agui`, //Point to /agui endpoint (or with a custom prefix)
       }),
       //more agents
     };

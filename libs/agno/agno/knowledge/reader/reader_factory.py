@@ -16,8 +16,7 @@ class ReaderFactory:
         from agno.knowledge.reader.pdf_reader import PDFReader
 
         config: Dict[str, Any] = {
-            "chunk": True,
-            "chunk_size": 100,
+            "name": "PDF Reader",
             "description": "Processes PDF documents with OCR support for images and text extraction",
         }
         config.update(kwargs)
@@ -34,6 +33,18 @@ class ReaderFactory:
         }
         config.update(kwargs)
         return CSVReader(**config)
+
+    @classmethod
+    def _get_field_labeled_csv_reader(cls, **kwargs) -> Reader:
+        """Get Field Labeled CSV reader instance."""
+        from agno.knowledge.reader.field_labeled_csv_reader import FieldLabeledCSVReader
+
+        config: Dict[str, Any] = {
+            "name": "Field Labeled CSV Reader",
+            "description": "Converts CSV rows to field-labeled text format for enhanced readability and context",
+        }
+        config.update(kwargs)
+        return FieldLabeledCSVReader(**config)
 
     @classmethod
     def _get_docx_reader(cls, **kwargs) -> Reader:
@@ -189,7 +200,7 @@ class ReaderFactory:
             return cls.create_reader("pdf")
         elif extension in [".csv", "text/csv"]:
             return cls.create_reader("csv")
-        elif extension in [".docx", ".doc"]:
+        elif extension in [".docx", ".doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
             return cls.create_reader("docx")
         elif extension == ".json":
             return cls.create_reader("json")

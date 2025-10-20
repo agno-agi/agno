@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 class DeleteMemoriesRequest(BaseModel):
     memory_ids: List[str]
+    user_id: Optional[str] = None
 
 
 class UserMemorySchema(BaseModel):

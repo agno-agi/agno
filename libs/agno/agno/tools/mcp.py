@@ -22,6 +22,8 @@ except (ImportError, ModuleNotFoundError):
 
 def _prepare_command(command: str) -> list[str]:
     """Sanitize a command and split it into parts before using it to run a MCP server."""
+    import os
+    import shutil
     from shlex import split
 
     # Block dangerous characters
@@ -55,10 +57,53 @@ def _prepare_command(command: str) -> list[str]:
     }
 
     executable = parts[0].split("/")[-1]
+
+    # Check if it's a relative path starting with ./ or ../
+    if executable.startswith("./") or executable.startswith("../"):
+        # Allow relative paths to binaries
+        return parts
+
+    # Check if it's an absolute path to a binary
+    if executable.startswith("/") and os.path.isfile(executable):
+        # Allow absolute paths to existing files
+        return parts
+
+    # Check if it's a binary in current directory without ./
+    if "/" not in executable and os.path.isfile(executable):
+        # Allow binaries in current directory
+        return parts
+
+    # Check if it's a binary in PATH
+    if shutil.which(executable):
+        return parts
+
     if executable not in ALLOWED_COMMANDS:
         raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")
 
-    return parts
+    first_part = parts[0]
+    executable = first_part.split("/")[-1]
+
+    # Allow known commands
+    if executable in ALLOWED_COMMANDS:
+        return parts
+
+    # Allow relative paths to custom binaries
+    if first_part.startswith(("./", "../")):
+        return parts
+
+    # Allow absolute paths to existing files
+    if first_part.startswith("/") and os.path.isfile(first_part):
+        return parts
+
+    # Allow binaries in current directory without ./
+    if "/" not in first_part and os.path.isfile(first_part):
+        return parts
+
+    # Allow binaries in PATH
+    if shutil.which(first_part):
+        return parts
+
+    raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")
 
 
 @dataclass

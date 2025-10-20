@@ -2,13 +2,15 @@ from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.routing import APIRoute, APIRouter
+from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.models.message import Message
 from agno.os.config import AgentOSConfig
 from agno.team.team import Team
 from agno.tools import Toolkit
@@ -17,7 +19,7 @@ from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
 
-def get_db(dbs: dict[str, BaseDb], db_id: Optional[str] = None) -> BaseDb:
+def get_db(dbs: dict[str, Union[BaseDb, AsyncBaseDb]], db_id: Optional[str] = None) -> Union[BaseDb, AsyncBaseDb]:
     """Return the database with the given ID, or the first database if no ID is provided."""
 
     # Raise if multiple databases are provided but no db_id is provided
@@ -54,23 +56,31 @@ def get_knowledge_instance_by_db_id(knowledge_instances: List[Knowledge], db_id:
 
 
 def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> str:
-    """Get the run input from the given run dictionary"""
+    """Get the run input from the given run dictionary
+
+    Uses the RunInput/TeamRunInput object which stores the original user input.
+    """
+
+    # For agent or team runs, use the stored input_content
+    if not is_workflow_run and run_dict.get("input") is not None:
+        input_data = run_dict.get("input")
+        if isinstance(input_data, dict) and input_data.get("input_content") is not None:
+            return stringify_input_content(input_data["input_content"])
 
     if is_workflow_run:
+        # Check the input field directly
+        if run_dict.get("input") is not None:
+            input_value = run_dict.get("input")
+            return str(input_value)
+
+        # Check the step executor runs for fallback
         step_executor_runs = run_dict.get("step_executor_runs", [])
         if step_executor_runs:
             for message in reversed(step_executor_runs[0].get("messages", [])):
                 if message.get("role") == "user":
                     return message.get("content", "")
 
-        # Check the input field directly as final fallback
-        if run_dict.get("input") is not None:
-            input_value = run_dict.get("input")
-            if isinstance(input_value, str):
-                return input_value
-            else:
-                return str(input_value)
-
+    # Final fallback: scan messages
     if run_dict.get("messages") is not None:
         for message in reversed(run_dict["messages"]):
             if message.get("role") == "user":
@@ -89,22 +99,46 @@ def get_session_name(session: Dict[str, Any]) -> str:
 
     # Otherwise use the original user message
     else:
-        runs = session.get("runs", [])
+        runs = session.get("runs", []) or []
 
         # For teams, identify the first Team run and avoid using the first member's run
         if session.get("session_type") == "team":
-            run = runs[0] if not runs[0].get("agent_id") else runs[1]
+            run = None
+            for r in runs:
+                # If agent_id is not present, it's a team run
+                if not r.get("agent_id"):
+                    run = r
+                    break
 
-        # For workflows, pass along the first step_executor_run
+            # Fallback to first run if no team run found
+            if run is None and runs:
+                run = runs[0]
+
         elif session.get("session_type") == "workflow":
             try:
-                run = session["runs"][0]["step_executor_runs"][0]
+                workflow_run = runs[0]
+                workflow_input = workflow_run.get("input")
+                if isinstance(workflow_input, str):
+                    return workflow_input
+                elif isinstance(workflow_input, dict):
+                    try:
+                        import json
+
+                        return json.dumps(workflow_input)
+                    except (TypeError, ValueError):
+                        pass
+
+                workflow_name = session.get("workflow_data", {}).get("name")
+                return f"New {workflow_name} Session" if workflow_name else ""
             except (KeyError, IndexError, TypeError):
                 return ""
 
         # For agents, use the first run
         else:
-            run = runs[0]
+            run = runs[0] if runs else None
+
+        if run is None:
+            return ""
 
         if not isinstance(run, dict):
             run = run.to_dict()
@@ -114,6 +148,23 @@ def get_session_name(session: Dict[str, Any]) -> str:
                 if message["role"] == "user":
                     return message["content"]
     return ""
+
+
+def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
+    input_media: Dict[str, List[Any]] = {
+        "images": [],
+        "videos": [],
+        "audios": [],
+        "files": [],
+    }
+
+    input = run_dict.get("input", [])
+    input_media["images"].extend(input.get("images", []))
+    input_media["videos"].extend(input.get("videos", []))
+    input_media["audios"].extend(input.get("audios", []))
+    input_media["files"].extend(input.get("files", []))
+
+    return input_media
 
 
 def process_image(file: UploadFile) -> Image:
@@ -150,13 +201,17 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         return None
 
 
-def extract_format(file: UploadFile):
-    _format = None
+def extract_format(file: UploadFile) -> Optional[str]:
+    """Extract the File format from file name or content_type."""
+    # Get the format from the filename
     if file.filename and "." in file.filename:
-        _format = file.filename.split(".")[-1].lower()
-    elif file.content_type:
-        _format = file.content_type.split("/")[-1]
-    return _format
+        return file.filename.split(".")[-1].lower()
+
+    # Fallback to the file content_type
+    if file.content_type:
+        return file.content_type.strip().split("/")[-1]
+
+    return None
 
 
 def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
@@ -467,3 +522,29 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
     elif isinstance(step, Workflow):
         # Nested workflow
         collect_mcp_tools_from_workflow(step, mcp_tools)
+
+
+def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:
+    """Convert any given input_content into its string representation.
+
+    This handles both serialized (dict) and live (object) input_content formats.
+    """
+    import json
+
+    if isinstance(input_content, str):
+        return input_content
+    elif isinstance(input_content, Message):
+        return json.dumps(input_content.to_dict())
+    elif isinstance(input_content, dict):
+        return json.dumps(input_content, indent=2, default=str)
+    elif isinstance(input_content, list):
+        if input_content:
+            # Handle live Message objects
+            if isinstance(input_content[0], Message):
+                return json.dumps([m.to_dict() for m in input_content])
+            # Handle serialized Message dicts
+            elif isinstance(input_content[0], dict) and input_content[0].get("role") == "user":
+                return input_content[0].get("content", str(input_content))
+        return str(input_content)
+    else:
+        return str(input_content)

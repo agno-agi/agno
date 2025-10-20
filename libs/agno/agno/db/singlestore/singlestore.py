@@ -797,7 +797,7 @@ class SingleStoreDb(BaseDb):
             raise e
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk upsert multiple sessions for improved performance on large datasets.
@@ -841,6 +841,8 @@ class SingleStoreDb(BaseDb):
                     agent_data = []
                     for session in agent_sessions:
                         session_dict = session.to_dict()
+                        # Use preserved updated_at if flag is set, otherwise use current time
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         agent_data.append(
                             {
                                 "session_id": session_dict.get("session_id"),
@@ -853,7 +855,7 @@ class SingleStoreDb(BaseDb):
                                 "summary": session_dict.get("summary"),
                                 "metadata": session_dict.get("metadata"),
                                 "created_at": session_dict.get("created_at"),
-                                "updated_at": session_dict.get("created_at"),
+                                "updated_at": updated_at,
                             }
                         )
 
@@ -867,7 +869,7 @@ class SingleStoreDb(BaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             runs=stmt.inserted.runs,
-                            updated_at=int(time.time()),
+                            updated_at=stmt.inserted.updated_at,
                         )
                         sess.execute(stmt, agent_data)
 
@@ -890,6 +892,8 @@ class SingleStoreDb(BaseDb):
                     team_data = []
                     for session in team_sessions:
                         session_dict = session.to_dict()
+                        # Use preserved updated_at if flag is set, otherwise use current time
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         team_data.append(
                             {
                                 "session_id": session_dict.get("session_id"),
@@ -902,7 +906,7 @@ class SingleStoreDb(BaseDb):
                                 "summary": session_dict.get("summary"),
                                 "metadata": session_dict.get("metadata"),
                                 "created_at": session_dict.get("created_at"),
-                                "updated_at": session_dict.get("created_at"),
+                                "updated_at": updated_at,
                             }
                         )
 
@@ -916,7 +920,7 @@ class SingleStoreDb(BaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             runs=stmt.inserted.runs,
-                            updated_at=int(time.time()),
+                            updated_at=stmt.inserted.updated_at,
                         )
                         sess.execute(stmt, team_data)
 
@@ -939,6 +943,8 @@ class SingleStoreDb(BaseDb):
                     workflow_data = []
                     for session in workflow_sessions:
                         session_dict = session.to_dict()
+                        # Use preserved updated_at if flag is set, otherwise use current time
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         workflow_data.append(
                             {
                                 "session_id": session_dict.get("session_id"),
@@ -951,7 +957,7 @@ class SingleStoreDb(BaseDb):
                                 "summary": session_dict.get("summary"),
                                 "metadata": session_dict.get("metadata"),
                                 "created_at": session_dict.get("created_at"),
-                                "updated_at": session_dict.get("created_at"),
+                                "updated_at": updated_at,
                             }
                         )
 
@@ -965,7 +971,7 @@ class SingleStoreDb(BaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             runs=stmt.inserted.runs,
-                            updated_at=int(time.time()),
+                            updated_at=stmt.inserted.updated_at,
                         )
                         sess.execute(stmt, workflow_data)
 
@@ -990,11 +996,12 @@ class SingleStoreDb(BaseDb):
             return []
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
@@ -1009,6 +1016,8 @@ class SingleStoreDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
                 success = result.rowcount > 0
@@ -1021,11 +1030,12 @@ class SingleStoreDb(BaseDb):
             log_error(f"Error deleting memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1037,6 +1047,8 @@ class SingleStoreDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
                     log_debug(f"No memories found with ids: {memory_ids}")
@@ -1073,12 +1085,15 @@ class SingleStoreDb(BaseDb):
             log_error(f"Exception reading from memory table: {e}")
             raise e
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[UserMemory]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -1095,6 +1110,8 @@ class SingleStoreDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
 
                 result = sess.execute(stmt).fetchone()
                 if not result:
@@ -1325,7 +1342,7 @@ class SingleStoreDb(BaseDb):
             raise e
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk upsert multiple user memories for improved performance on large datasets.
@@ -1350,9 +1367,12 @@ class SingleStoreDb(BaseDb):
 
             # Prepare data for bulk insert
             memory_data = []
+            current_time = int(time.time())
             for memory in memories:
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
+                # Use preserved updated_at if flag is set, otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at else current_time
                 memory_data.append(
                     {
                         "memory_id": memory.memory_id,
@@ -1362,7 +1382,7 @@ class SingleStoreDb(BaseDb):
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
-                        "updated_at": int(time.time()),
+                        "updated_at": updated_at,
                     }
                 )
 
@@ -1378,7 +1398,7 @@ class SingleStoreDb(BaseDb):
                         user_id=stmt.inserted.user_id,
                         agent_id=stmt.inserted.agent_id,
                         team_id=stmt.inserted.team_id,
-                        updated_at=int(time.time()),
+                        updated_at=stmt.inserted.updated_at,
                     )
                     sess.execute(stmt, memory_data)
 
