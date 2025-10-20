@@ -541,21 +541,18 @@ class AgentOS:
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
+        seen_ids = set()
         knowledge_instances: List[Knowledge] = []
 
         def _add_knowledge_if_not_duplicate(knowledge: "Knowledge") -> None:
             """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
-            # Check if the exact same object is already in the list
-            for existing in knowledge_instances:
-                if existing is knowledge:
-                    return
-                # Check if there's already a knowledge instance with the same database ID
-                if (
-                    knowledge.contents_db
-                    and existing.contents_db
-                    and knowledge.contents_db.id == existing.contents_db.id
-                ):
-                    return
+            # Use database ID if available, otherwise use object ID as fallback
+            key = knowledge.contents_db.id if knowledge.contents_db else id(knowledge)
+            
+            if key in seen_ids:
+                return
+                
+            seen_ids.add(key)
             knowledge_instances.append(knowledge)
 
         for agent in self.agents or []:
