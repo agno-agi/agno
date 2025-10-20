@@ -4,18 +4,20 @@ from typing import Any, Dict, List, Optional, Union
 
 
 @dataclass
-class CulturalKnowledge:
-    """Model for Cultural Knowledge"""
+class CulturalNotion:
+    """Model for Cultural Notion"""
 
-    # The id of the cultural knowledge, auto-generated if not provided
+    # The id of the cultural notion, auto-generated if not provided
     id: Optional[str] = None
-    name: str
+
+    name: Optional[str] = None
     summary: Optional[str] = None
     content: Optional[str] = None
     categories: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
     notes: Optional[List[str]] = None
     input: Optional[str] = None
+
     created_at: Optional[int] = field(default=None)
     updated_at: Optional[int] = field(default=None)
 
@@ -25,12 +27,8 @@ class CulturalKnowledge:
     def __post_init__(self):
         if not isinstance(self.name, str) or not self.name.strip():
             raise ValueError("name must be a non-empty string")
-        self.created_at = (
-            _now_epoch_s() if self.created_at is None else _to_epoch_s(self.created_at)
-        )
-        self.updated_at = (
-            self.created_at if self.updated_at is None else _to_epoch_s(self.updated_at)
-        )
+        self.created_at = _now_epoch_s() if self.created_at is None else _to_epoch_s(self.created_at)
+        self.updated_at = self.created_at if self.updated_at is None else _to_epoch_s(self.updated_at)
 
     def bump_updated_at(self) -> None:
         """Bump updated_at to now (UTC)."""
@@ -38,23 +36,17 @@ class CulturalKnowledge:
 
     def preview(self) -> Dict[str, Any]:
         """Return a preview of the cultural knowledge"""
-        _preview = {
+        _preview: Dict[str, Any] = {
             "name": self.name,
         }
         if self.categories is not None:
             _preview["categories"] = self.categories
         if self.summary is not None:
-            _preview["summary"] = (
-                self.summary[:100] + "..." if len(self.summary) > 100 else self.summary
-            )
+            _preview["summary"] = self.summary[:100] + "..." if len(self.summary) > 100 else self.summary
         if self.content is not None:
-            _preview["content"] = (
-                self.content[:100] + "..." if len(self.content) > 100 else self.content
-            )
+            _preview["content"] = self.content[:100] + "..." if len(self.content) > 100 else self.content
         if self.notes is not None:
-            _preview["notes"] = [
-                note[:100] + "..." if len(note) > 100 else note for note in self.notes
-            ]
+            _preview["notes"] = [note[:100] + "..." if len(note) > 100 else note for note in self.notes]
         return _preview
 
     def to_dict(self) -> Dict[str, Any]:
@@ -67,23 +59,15 @@ class CulturalKnowledge:
             "metadata": self.metadata,
             "notes": self.notes,
             "input": self.input,
-            "created_at": (
-                _epoch_to_rfc3339_z(self.created_at)
-                if self.created_at is not None
-                else None
-            ),
-            "updated_at": (
-                _epoch_to_rfc3339_z(self.updated_at)
-                if self.updated_at is not None
-                else None
-            ),
+            "created_at": (_epoch_to_rfc3339_z(self.created_at) if self.created_at is not None else None),
+            "updated_at": (_epoch_to_rfc3339_z(self.updated_at) if self.updated_at is not None else None),
             "agent_id": self.agent_id,
             "team_id": self.team_id,
         }
         return {k: v for k, v in _dict.items() if v is not None}
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CulturalKnowledge":
+    def from_dict(cls, data: Dict[str, Any]) -> "CulturalNotion":
         d = dict(data)
 
         # Preserve 0 and None explicitly; only process if key exists
@@ -127,8 +111,4 @@ def _to_epoch_s(value: Union[int, float, str, datetime]) -> int:
 
 
 def _epoch_to_rfc3339_z(ts: Union[int, float]) -> str:
-    return (
-        datetime.fromtimestamp(float(ts), tz=timezone.utc)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")

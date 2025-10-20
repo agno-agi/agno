@@ -27,7 +27,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
+from agno.db.schemas.culture import CulturalNotion
 from agno.exceptions import (
     InputCheckError,
     ModelProviderError,
@@ -164,6 +166,14 @@ class Agent:
     dependencies: Optional[Dict[str, Any]] = None
     # If True, add the dependencies to the user prompt
     add_dependencies_to_context: bool = False
+
+    # --- Agent Culture ---
+    # Culture manager to use for this agent
+    culture_manager: Optional[CultureManager] = None
+    # Enable the agent to manage cultural notions of the user
+    enable_agent_culture: bool = False
+    # If True, the agent adds a reference to the user cultural notions in the response
+    add_culture_to_context: Optional[bool] = None
 
     # --- Agent Memory ---
     # Memory manager to use for this agent
@@ -382,6 +392,9 @@ class Agent:
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
         add_memories_to_context: Optional[bool] = None,
+        culture_manager: Optional[CultureManager] = None,
+        enable_agent_culture: bool = False,
+        add_culture_to_context: Optional[bool] = None,
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
@@ -476,6 +489,10 @@ class Agent:
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
         self.add_memories_to_context = add_memories_to_context
+
+        self.culture_manager = culture_manager
+        self.enable_agent_culture = enable_agent_culture
+        self.add_culture_to_context = add_culture_to_context
 
         self.session_summary_manager = session_summary_manager
         self.enable_session_summaries = enable_session_summaries
@@ -669,6 +686,21 @@ class Agent:
                 f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
             )
 
+    def _set_culture_manager(self) -> None:
+        if self.db is None:
+            log_warning("Database not provided. Cultural notions will not be stored.")
+
+        if self.culture_manager is None:
+            self.culture_manager = CultureManager(model=self.model, db=self.db)
+        else:
+            if self.culture_manager.model is None:
+                self.culture_manager.model = self.model
+            if self.culture_manager.db is None:
+                self.culture_manager.db = self.db
+
+        if self.add_culture_to_context is None:
+            self.add_culture_to_context = self.enable_agent_culture or self.culture_manager is not None
+
     def _set_memory_manager(self) -> None:
         if self.db is None:
             log_warning("Database not provided. Memories will not be stored.")
@@ -709,6 +741,8 @@ class Agent:
         self.set_id()
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
+        if self.enable_agent_culture or self.culture_manager is not None:
+            self._set_culture_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
 
@@ -4428,7 +4462,7 @@ class Agent:
                             run_response,
                         )
 
-    def _make_memories_and_summaries(
+    def _make_memories_cultural_notions_and_summaries(
         self,
         run_response: RunOutput,
         run_messages: RunMessages,
@@ -4440,10 +4474,11 @@ class Agent:
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
 
-            # Create user memories
             user_message_str = (
                 run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
             )
+
+            # Create user memories
             if user_message_str is not None and self.memory_manager is not None and not self.enable_agentic_memory:
                 log_debug("Creating user memories.")
                 futures.append(
@@ -4486,6 +4521,33 @@ class Agent:
                 else:
                     log_warning("Unable to add messages to memory")
 
+            # Create cultural notions
+            if user_message_str is not None and self.culture_manager is not None and not self.enable_agent_culture:
+                log_debug("Creating cultural notions.")
+                futures.append(executor.submit(self.culture_manager.create_cultural_notions, message=user_message_str))
+
+            # Parse messages if provided
+            if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
+                parsed_messages = []
+                for _im in run_messages.extra_messages:
+                    if isinstance(_im, Message):
+                        parsed_messages.append(_im)
+                    elif isinstance(_im, dict):
+                        try:
+                            parsed_messages.append(Message(**_im))
+                        except Exception as e:
+                            log_warning(f"Failed to validate message during cultural notion update: {e}")
+                    else:
+                        log_warning(f"Unsupported message type: {type(_im)}")
+                        continue
+
+                if len(parsed_messages) > 0 and self.culture_manager is not None:
+                    futures.append(
+                        executor.submit(self.culture_manager.create_cultural_notions, messages=parsed_messages)
+                    )
+                else:
+                    log_warning("Unable to add messages to cultural notions")
+
             # Create session summary
             if self.session_summary_manager is not None:
                 log_debug("Creating session summary.")
@@ -4514,7 +4576,7 @@ class Agent:
                         create_memory_update_completed_event(from_run_response=run_response), run_response
                     )
 
-    async def _amake_memories_and_summaries(
+    async def _amake_memories_cultural_notions_and_summaries(
         self,
         run_response: RunOutput,
         run_messages: RunMessages,
@@ -4560,6 +4622,38 @@ class Agent:
                 )
             else:
                 log_warning("Unable to add messages to memory")
+
+        # Create cultural notions
+        if run_messages.user_message is not None and self.culture_manager is not None and not self.enable_agent_culture:
+            log_debug("Creating cultural notions.")
+
+            tasks.append(
+                self.culture_manager.acreate_cultural_notions(message=run_messages.user_message.get_content_string())
+            )
+
+        # Parse messages if provided
+        if (
+            self.culture_manager is not None
+            and run_messages.extra_messages is not None
+            and len(run_messages.extra_messages) > 0
+        ):
+            parsed_messages = []
+            for _im in run_messages.extra_messages:
+                if isinstance(_im, Message):
+                    parsed_messages.append(_im)
+                elif isinstance(_im, dict):
+                    try:
+                        parsed_messages.append(Message(**_im))
+                    except Exception as e:
+                        log_warning(f"Failed to validate message during cultural notion update: {e}")
+                    else:
+                        log_warning(f"Unsupported message type: {type(_im)}")
+                        continue
+
+            if len(parsed_messages) > 0:
+                tasks.append(self.culture_manager.acreate_cultural_notions(messages=parsed_messages))
+            else:
+                log_warning("Unable to add messages to cultural notions")
 
         # Create session summary
         if self.session_summary_manager is not None:
@@ -5775,6 +5869,20 @@ class Agent:
 
         return await self.memory_manager.aget_user_memories(user_id=user_id)
 
+    def get_culture_notions(self) -> Optional[List[CulturalNotion]]:
+        """Get the cultural notions the agent has access to"""
+        if self.culture_manager is None:
+            return None
+
+        return self.culture_manager.get_all_notions()
+
+    async def aget_culture_notions(self) -> Optional[List[CulturalNotion]]:
+        """Get the cultural notions the agent has access to"""
+        if self.culture_manager is None:
+            return None
+
+        return await self.culture_manager.aget_all_notions()
+
     def _format_message_with_state_variables(
         self,
         message: Any,
@@ -6042,6 +6150,23 @@ class Agent:
                     "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
                     "</updating_user_memories>\n\n"
                 )
+
+        # 3.3.10 Then add cultural notions to the system prompt
+        if self.enable_agent_culture or self.culture_manager:
+            if not self.culture_manager:
+                self._set_culture_manager()
+
+            cultural_notions = self.culture_manager.get_all_notions()  # type: ignore
+
+            # TODO: prompts
+            if cultural_notions is not None:
+                system_message_content += (
+                    "You have access to cultural notions that you can use to personalize your response:\n\n"
+                )
+                system_message_content += "<cultural_notions>\n"
+                for _notion in cultural_notions:  # type: ignore
+                    system_message_content += f"\n- {_notion.summary}"  # TODO: summary or content?
+                system_message_content += "\n</cultural_notions>\n\n"
 
         # 3.3.11 Then add a summary of the interaction to the system prompt
         if self.add_session_summary_to_context and session.summary is not None:
@@ -6316,6 +6441,23 @@ class Agent:
                     "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
                     "</updating_user_memories>\n\n"
                 )
+
+        # 3.3.10 Then add cultural notions to the system prompt
+        if self.enable_agent_culture or self.culture_manager:
+            if not self.culture_manager:
+                self._set_culture_manager()
+
+            cultural_notions = await self.culture_manager.get_all_notions()  # type: ignore
+
+            # TODO: prompts
+            if cultural_notions is not None:
+                system_message_content += (
+                    "You have access to cultural notions that you can use to personalize your response:\n\n"
+                )
+                system_message_content += "<cultural_notions>\n"
+                for _notion in cultural_notions:  # type: ignore
+                    system_message_content += f"\n- {_notion.summary}"  # TODO: summary or content?
+                system_message_content += "\n</cultural_notions>\n\n"
 
         # 3.3.11 Then add a summary of the interaction to the system prompt
         if self.add_session_summary_to_context and session.summary is not None:
@@ -8257,6 +8399,27 @@ class Agent:
             update_user_memory_function = update_user_memory  # type: ignore
 
         return Function.from_callable(update_user_memory_function, name="update_user_memory")
+
+    def _get_update_culture_notion_function(self, async_mode: bool = False) -> Function:
+        def update_cultural_notion(notion: str) -> str:
+            """Use this function to update a cultural notion."""
+            self.culture_manager = cast(CultureManager, self.culture_manager)
+            response = self.culture_manager.update_cultural_notion_task(task=task, notion=notion)
+
+            return response
+
+        async def aupdate_cultural_notion(notion: str) -> str:
+            """Use this function to update a cultural notion asynchronously."""
+            self.culture_manager = cast(CultureManager, self.culture_manager)
+            response = await self.culture_manager.aupdate_cultural_notion_task(task=task, notion=notion)
+            return response
+
+        if async_mode:
+            update_cultural_notion_function = aupdate_cultural_notion
+        else:
+            update_cultural_notion_function = update_cultural_notion  # type: ignore
+
+        return Function.from_callable(update_cultural_notion_function, name="update_cultural_notion")
 
     def _get_chat_history_function(self, session: AgentSession) -> Callable:
         def get_chat_history(num_chats: Optional[int] = None) -> str:
