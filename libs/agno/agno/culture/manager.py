@@ -409,8 +409,8 @@ class CultureManager:
 
         if existing_knowledge and len(existing_knowledge) > 0:
             system_prompt_lines.append("\n<existing_knowledge>")
-            for existing_knowledge in existing_knowledge:
-                system_prompt_lines.append(f"Knowledge: {existing_knowledge.get('content')}")
+            for _existing_knowledge in existing_knowledge:  # type: ignore
+                system_prompt_lines.append(f"Knowledge: {_existing_knowledge.get('content')}")
                 system_prompt_lines.append("")
             system_prompt_lines.append("</existing_knowledge>")
 
@@ -542,7 +542,6 @@ class CultureManager:
         self.determine_tools_for_model(
             self._get_db_tools(
                 db,
-                task,
                 enable_delete_knowledge=delete_knowledge,
                 enable_clear_knowledge=clear_knowledge,
                 enable_update_knowledge=update_knowledge,
@@ -610,7 +609,6 @@ class CultureManager:
             self.determine_tools_for_model(
                 self._get_db_tools(
                     db,
-                    task,
                     enable_delete_knowledge=delete_knowledge,
                     enable_clear_knowledge=clear_knowledge,
                     enable_update_knowledge=update_knowledge,
