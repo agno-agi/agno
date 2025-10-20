@@ -1,5 +1,6 @@
 """
-Create/Update cultural knowledge after every interaction with your Agent.
+Create or update cultural knowledge after every interaction with your Agent. The Culture Manager will be called after every interaction to create or update cultural knowledge.
+Based on the interaction, the Culture Manager will decide to add or update cultural knowledge.
 """
 
 from agno.agent import Agent
@@ -7,7 +8,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 
 # Setup the SQLite database
-db = SqliteDb(db_file="tmp/demo_2.db")
+db = SqliteDb(db_file="tmp/demo.db")
 
 # Define the Agent
 agent = Agent(
