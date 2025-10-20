@@ -25,8 +25,7 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     # Collect tool_call_ids to keep (most recent N)
     tool_call_ids_list: List[str] = []
     for msg in reversed(messages):
-        if msg.role == "tool":
-            if len(tool_call_ids_list) < max_tool_calls:
+        if msg.role == "tool" and len(tool_call_ids_list) < max_tool_calls:
                 if msg.tool_call_id:
                     tool_call_ids_list.append(msg.tool_call_id)
 
