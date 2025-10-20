@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.schemas import UserMemory
-from agno.db.schemas.culture import CulturalArtifact
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.session import Session
@@ -27,7 +27,7 @@ class BaseDb(ABC):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        cultural_artifacts_table: Optional[str] = None,
+        cultural_knowledge_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -36,7 +36,9 @@ class BaseDb(ABC):
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
-        self.cultural_artifacts_table_name = cultural_artifacts_table or "agno_cultural_artifacts"
+        self.cultural_knowledge_table_name = (
+            cultural_knowledge_table or "agno_cultural_knowledge"
+        )
 
     # --- Sessions ---
     @abstractmethod
@@ -110,7 +112,9 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+    def delete_user_memories(
+        self, memory_ids: List[str], user_id: Optional[str] = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -276,21 +280,21 @@ class BaseDb(ABC):
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
-    # --- Cultural Artifacts ---
+    # --- Cultural Knowledge ---
     @abstractmethod
-    def clear_cultural_artifacts(self) -> None:
+    def clear_cultural_knowledge(self) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def delete_cultural_artifact(self, id: str) -> None:
+    def delete_cultural_knowledge(self, id: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def get_cultural_artifact(self, id: str) -> Optional[CulturalArtifact]:
+    def get_cultural_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
     @abstractmethod
-    def get_cultural_artifacts(
+    def get_cultural_knowledges(
         self,
         name: Optional[str] = None,
         limit: Optional[int] = None,
@@ -299,11 +303,13 @@ class BaseDb(ABC):
         sort_order: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-    ) -> Optional[List[CulturalArtifact]]:
+    ) -> Optional[List[CulturalKnowledge]]:
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_cultural_artifact(self, cultural_artifact: CulturalArtifact) -> Optional[CulturalArtifact]:
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge
+    ) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
 
@@ -384,11 +390,15 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
+    async def delete_user_memory(
+        self, memory_id: str, user_id: Optional[str] = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+    async def delete_user_memories(
+        self, memory_ids: List[str], user_id: Optional[str] = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod

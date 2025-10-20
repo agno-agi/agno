@@ -29,21 +29,21 @@ class CultureManager:
 
     # Model used for artifact management
     model: Optional[Model] = None
-    # The database to store cultural artifacts
+    # The database to store cultural knowledge
     db: Optional[BaseDb] = None
 
     # ----- db tools ---------
-    # If the CultureManager can add artifacts
+    # If the CultureManager can add knowledge
     add_artifacts: bool = True
-    # If the CultureManager can update artifacts
+    # If the CultureManager can update knowledge
     update_artifacts: bool = True
-    # If the CultureManager can delete artifacts
+    # If the CultureManager can delete knowledge
     delete_artifacts: bool = True
-    # If the CultureManager can clear artifacts
+    # If the CultureManager can clear knowledge
     clear_artifacts: bool = True
 
     # ----- internal settings ---------
-    # Whether artifacts were updated in the last run of the CultureManager
+    # Whether knowledge were updated in the last run of the CultureManager
     artifacts_updated: bool = False
     debug_mode: bool = False
 
@@ -94,7 +94,7 @@ class CultureManager:
 
     # -*- Retrieve Artifacts -*-
     def get_all_artifacts(self) -> Optional[List[CulturalArtifact]]:
-        """Get all cultural artifacts in the database"""
+        """Get all cultural knowledge in the database"""
         if self.db:
             return self.db.get_cultural_artifacts()
         return None
@@ -106,7 +106,7 @@ class CultureManager:
         return None
 
     def get_artifacts_by_name(self, name: str) -> Optional[List[CulturalArtifact]]:
-        """Get the cultural artifacts by name"""
+        """Get the cultural knowledge by name"""
         if self.db:
             return self.db.get_cultural_artifacts(name=name)
         return None
@@ -140,7 +140,7 @@ class CultureManager:
             return None
 
     def clear_all_artifacts(self) -> None:
-        """Clears all cultural artifacts."""
+        """Clears all cultural knowledge."""
         if self.db:
             self.db.clear_cultural_artifacts()
 
@@ -157,7 +157,7 @@ class CultureManager:
 
         if self.db is None:
             log_warning("CultureDb not provided.")
-            return "Please provide a db to store cultural artifacts"
+            return "Please provide a db to store cultural knowledge"
 
         if not messages and not message:
             raise ValueError("You must provide either a message or a list of messages")
@@ -168,11 +168,11 @@ class CultureManager:
         if not messages or not isinstance(messages, list):
             raise ValueError("Invalid messages list")
 
-        artifacts = self.get_all_artifacts()
-        if artifacts is None:
-            artifacts = []
+        knowledge = self.get_all_artifacts()
+        if knowledge is None:
+            knowledge = []
 
-        existing_artifacts = [artifact.preview() for artifact in artifacts]
+        existing_artifacts = [artifact.preview() for artifact in knowledge]
         response = self.create_or_update_artifacts(
             messages=messages,
             existing_artifacts=existing_artifacts,
@@ -188,12 +188,12 @@ class CultureManager:
     def create_or_update_artifacts(
         self,
         messages: List[Message],
-        existing_artifacts: List[Dict[str, Any]],
+        existing_knowledge: List[Dict[str, Any]],
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         db: Optional[BaseDb] = None,
-        update_artifacts: bool = True,
-        add_artifacts: bool = True,
+        update_knowledge: bool = True,
+        add_knowledge: bool = True,
     ) -> str:
         if self.model is None:
             log_error("No model provided for CultureManager")
@@ -201,38 +201,38 @@ class CultureManager:
 
         log_debug("CultureManager Start", center=True)
 
-        # if len(messages) == 1:
-        #     input_string = messages[0].get_content_string()
-        # else:
-        #     input_string = f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
+        if len(messages) == 1:
+            input_string = messages[0].get_content_string()
+        else:
+            input_string = f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
 
-        # model_copy = deepcopy(self.model)
-        # # Update the Model (set defaults, add logit etc.)
-        # self.determine_tools_for_model(
-        #     self._get_db_tools(
-        #         user_id,
-        #         db,
-        #         input_string,
-        #         agent_id=agent_id,
-        #         team_id=team_id,
-        #         enable_add_memory=add_memories,
-        #         enable_update_memory=update_memories,
-        #         enable_delete_memory=False,
-        #         enable_clear_memory=False,
-        #     ),
-        # )
+        model_copy = deepcopy(self.model)
+        # Update the Model (set defaults, add logit etc.)
+        self.determine_tools_for_model(
+            self._get_culture_db_tools(
+                db=db,
+                input_string=input_string,
+                enable_add_artifacts=add_artifacts,
+                enable_update_artifacts=False,
+                enable_delete_artifacts=False,
+                enable_clear_artifacts=False,
+                agent_id=agent_id,
+                team_id=team_id,
+            ),
+        )
 
-        # # Prepare the List of messages to send to the Model
-        # messages_for_model: List[Message] = [
-        #     self.get_system_message(
-        #         existing_memories=existing_memories,
-        #         enable_update_memory=update_memories,
-        #         enable_add_memory=add_memories,
-        #         enable_delete_memory=False,
-        #         enable_clear_memory=False,
-        #     ),
-        #     *messages,
-        # ]
+        # Prepare the List of messages to send to the Model
+        messages_for_model: List[Message] = [
+            self.get_system_message(
+                existing_artifacts=existing_artifacts,
+                enable_update_artifacts=update_artifacts,
+                enable_add_artifacts=add_artifacts,
+                enable_delete_artifacts=delete_artifacts,
+                enable_clear_artifacts=clear_artifacts,
+                agent_id=agent_id,
+                team_id=team_id,
+            ),
+        )
 
         # # Generate a response from the Model (includes running function calls)
         # response = model_copy.response(
@@ -246,3 +246,125 @@ class CultureManager:
         # log_debug("MemoryManager End", center=True)
 
         # return response.content or "No response from model"
+
+    # -*- Tools to update the CultureDb -*-
+    def _get_culture_db_tools(
+        self,
+        db: BaseDb,
+        input_string: str,
+        enable_add_artifacts: bool = True,
+        enable_update_artifacts: bool = True,
+        enable_delete_artifacts: bool = True,
+        enable_clear_artifacts: bool = True,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> List[Callable]:
+        def add_cultural_artifact(
+            name: str,
+            summary: Optional[str] = None,
+            content: Optional[str] = None,
+            categories: Optional[List[str]] = None,
+        ) -> str:
+            """Use this function to add a cultural artifact to the database.
+            Args:
+                name (str): The name of the cultural artifact.
+                summary (Optional[str]): The summary of the cultural artifact.
+                content (Optional[str]): The content of the cultural artifact.
+                categories (Optional[List[str]]): The categories of the cultural artifact (e.g. ["name", "hobbies", "location"]).
+            Returns:
+                str: A message indicating if the cultural artifact was added successfully or not.
+            """
+            from uuid import uuid4
+
+            from agno.db.base import UserMemory
+
+            try:
+                artifact_id = str(uuid4())
+                db.upsert_cultural_artifact(
+                    CulturalArtifact(
+                        id=artifact_id,
+                        name=name,
+                        summary=summary,
+                        content=content,
+                        categories=categories,
+                        agent_id=agent_id,
+                        team_id=team_id,
+                    )
+                )
+                log_debug(f"Cultural artifact added: {artifact_id}")
+                return "Cultural artifact added successfully"
+            except Exception as e:
+                log_warning(f"Error storing cultural artifact in db: {e}")
+                return f"Error adding cultural artifact: {e}"
+
+        def update_cultural_artifact(
+            artifact_id: str,
+            name: str,
+            summary: Optional[str] = None,
+            content: Optional[str] = None,
+            categories: Optional[List[str]] = None,
+        ) -> str:
+            """Use this function to update an existing cultural artifact in the database.
+            Args:
+                artifact_id (str): The id of the cultural artifact to be updated.
+                name (str): The name of the cultural artifact.
+                summary (Optional[str]): The summary of the cultural artifact.
+                content (Optional[str]): The content of the cultural artifact.
+                categories (Optional[List[str]]): The categories of the cultural artifact (e.g. ["name", "hobbies", "location"]).
+            Returns:
+                str: A message indicating if the cultural artifact was updated successfully or not.
+            """
+            from agno.db.base import CulturalArtifact
+
+            try:
+                db.upsert_cultural_artifact(
+                    CulturalArtifact(
+                        id=artifact_id,
+                        name=name,
+                        summary=summary,
+                        content=content,
+                        categories=categories,
+                        agent_id=agent_id,
+                        team_id=team_id,
+                    )
+                )
+                log_debug("Memory updated")
+                return "Memory updated successfully"
+            except Exception as e:
+                log_warning(f"Error storing memory in db: {e}")
+                return f"Error adding memory: {e}"
+
+        def delete_cultural_artifact(artifact_id: str) -> str:
+            """Use this function to delete a single cultural artifact from the database.
+            Args:
+                artifact_id (str): The id of the cultural artifact to be deleted.
+            Returns:
+                str: A message indicating if the cultural artifact was deleted successfully or not.
+            """
+            try:
+                db.delete_cultural_artifact(artifact_id=artifact_id)
+                log_debug("Cultural artifact deleted")
+                return "Cultural artifact deleted successfully"
+            except Exception as e:
+                log_warning(f"Error deleting cultural artifact in db: {e}")
+                return f"Error deleting cultural artifact: {e}"
+
+        def clear_cultural_artifacts() -> str:
+            """Use this function to remove all (or clear all) cultural knowledge from the database.
+            Returns:
+                str: A message indicating if the cultural artifact was cleared successfully or not.
+            """
+            db.clear_cultural_artifacts()
+            log_debug("Cultural artifact cleared")
+            return "Cultural artifact cleared successfully"
+
+        functions: List[Callable] = []
+        if enable_add_artifacts:
+            functions.append(add_cultural_artifact)
+        if enable_update_artifacts:
+            functions.append(update_cultural_artifact)
+        if enable_delete_artifacts:
+            functions.append(delete_cultural_artifact)
+        if enable_clear_artifacts:
+            functions.append(clear_cultural_artifacts)
+        return functions
