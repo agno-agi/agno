@@ -1714,7 +1714,7 @@ class Agent:
             agent_session.upsert_run(run=run_response)
 
             # 12. Update Agent Memory
-            async for _ in self._amake_memories_and_summaries(
+            async for _ in self._amake_memories_cultural_knowledge_and_summaries(
                 run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
             ):
                 pass
@@ -1970,7 +1970,7 @@ class Agent:
             agent_session.upsert_run(run=run_response)
 
             # 11. Update Agent Memory
-            async for event in self._amake_memories_and_summaries(
+            async for event in self._amake_memories_cultural_knowledge_and_summaries(
                 run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
             ):
                 yield event
@@ -3077,7 +3077,7 @@ class Agent:
                 run_response.metrics.stop_timer()
 
             # 12. Update Agent Memory
-            async for _ in self._amake_memories_and_summaries(
+            async for _ in self._amake_memories_cultural_knowledge_and_summaries(
                 run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
             ):
                 pass
@@ -3319,7 +3319,7 @@ class Agent:
             self._update_session_metrics(session=agent_session, run_response=run_response)
 
             # 12. Update Agent Memory
-            async for event in self._amake_memories_and_summaries(
+            async for event in self._amake_memories_cultural_knowledge_and_summaries(
                 run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
             ):
                 yield event

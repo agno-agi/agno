@@ -303,7 +303,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_cultural_knowledge(self, cultural_notion: CulturalKnowledge) -> Optional[CulturalKnowledge]:
+    def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
 
@@ -569,5 +569,5 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def upsert_cultural_knowledge(self, cultural_notion: CulturalKnowledge) -> Optional[CulturalKnowledge]:
+    async def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
