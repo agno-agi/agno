@@ -193,7 +193,7 @@ class CultureManager:
         existing_notions = [notion.preview() for notion in notions]
 
         self.db = cast(BaseDb, self.db)
-        response = self.create_or_update_notions(
+        response = self.create_or_update_cultural_notions(
             messages=messages,
             existing_notions=existing_notions,
             db=self.db,
@@ -231,7 +231,7 @@ class CultureManager:
         existing_notions = [notion.preview() for notion in knowledge]
 
         self.db = cast(AsyncBaseDb, self.db)
-        response = await self.acreate_or_update_notions(
+        response = await self.acreate_or_update_cultural_notions(
             messages=messages,
             existing_notions=existing_notions,
             db=self.db,
@@ -241,112 +241,70 @@ class CultureManager:
 
         return response
 
-    def create_or_update_notions(
+    def update_culture_task(self, task: str) -> str:
+        """Updates the culture with a task"""
+
+        if not self.db:
+            log_warning("CultureDb not provided.")
+            return "Please provide a db to store cultural knowledge"
+
+        if not isinstance(self.db, BaseDb):
+            raise ValueError(
+                "update_culture_task() is not supported with an async DB. Please use aupdate_culture_task() instead."
+            )
+
+        notions = self.get_all_notions()
+        if notions is None:
+            notions = []
+
+        existing_notions = [notion.preview() for notion in notions]
+
+        self.db = cast(BaseDb, self.db)
+        response = self.run_cultural_notion_task(
+            task=task,
+            existing_notions=existing_notions,
+            db=self.db,
+            delete_notions=self.delete_notions,
+            update_notions=self.update_notions,
+            add_notions=self.add_notions,
+            clear_notions=self.clear_notions,
+        )
+
+        return response
+
+    async def aupdate_culture_task(
         self,
-        messages: List[Message],
-        existing_notions: List[Dict[str, Any]],
-        db: BaseDb,
-        add_notions: bool = True,
-        clear_notions: bool = True,
-        delete_notions: bool = False,
-        update_notions: bool = True,
+        task: str,
     ) -> str:
-        if self.model is None:
-            log_error("No model provided for CultureManager")
-            return "No model provided for CultureManager"
+        """Updates the culture with a task asynchronously"""
 
-        log_debug("CultureManager Start", center=True)
+        if not self.db:
+            log_warning("CultureDb not provided.")
+            return "Please provide a db to store cultural knowledge"
 
-        model_copy = deepcopy(self.model)
-        # Update the Model (set defaults, add logit etc.)
-        self.determine_tools_for_model(
-            self._get_db_tools(
-                db=db,
-                enable_add_notions=add_notions,
-                enable_update_notions=update_notions,
-                enable_delete_notions=delete_notions,
-                enable_clear_notions=clear_notions,
-            ),
+        if not isinstance(self.db, AsyncBaseDb):
+            raise ValueError(
+                "aupdate_culture_task() is not supported with a sync DB. Please use update_culture_task() instead."
+            )
+
+        notions = await self.aget_all_notions()
+        if notions is None:
+            notions = []
+
+        existing_notions = [notion.preview() for notion in notions]
+
+        self.db = cast(AsyncBaseDb, self.db)
+        response = await self.arun_cultural_notion_task(
+            task=task,
+            existing_notions=existing_notions,
+            db=self.db,
+            delete_notions=self.delete_notions,
+            update_notions=self.update_notions,
+            add_notions=self.add_notions,
+            clear_notions=self.clear_notions,
         )
 
-        # Prepare the List of messages to send to the Model
-        messages_for_model: List[Message] = [
-            self.get_system_message(
-                existing_notions=existing_notions,
-                enable_update_notions=update_notions,
-                enable_add_notions=add_notions,
-                enable_delete_notions=delete_notions,
-                enable_clear_notions=clear_notions,
-            ),
-        ]
-
-        # # Generate a response from the Model (includes running function calls)
-        response = model_copy.response(
-            messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
-        )
-
-        if response.tool_calls is not None and len(response.tool_calls) > 0:
-            self.notions_updated = True
-
-        log_debug("Cultural Notion Manager End", center=True)
-
-        return response.content or "No response from model"
-
-    async def acreate_or_update_notions(
-        self,
-        messages: List[Message],
-        existing_notions: List[Dict[str, Any]],
-        db: AsyncBaseDb,
-        add_notions: bool = True,
-        clear_notions: bool = True,
-        delete_notions: bool = False,
-        update_notions: bool = True,
-    ) -> str:
-        if self.model is None:
-            log_error("No model provided for CultureManager")
-            return "No model provided for CultureManager"
-
-        log_debug("CultureManager Start", center=True)
-
-        model_copy = deepcopy(self.model)
-        db = cast(AsyncBaseDb, db)
-
-        self.determine_tools_for_model(
-            await self._aget_db_tools(
-                db=db,
-                enable_add_notions=add_notions,
-                enable_update_notions=update_notions,
-                enable_delete_notions=delete_notions,
-                enable_clear_notions=clear_notions,
-            ),
-        )
-
-        # Prepare the List of messages to send to the Model
-        messages_for_model: List[Message] = [
-            self.get_system_message(
-                existing_notions=existing_notions,
-                enable_update_notions=update_notions,
-                enable_add_notions=add_notions,
-                enable_delete_notions=delete_notions,
-                enable_clear_notions=clear_notions,
-            ),
-        ]
-
-        # # Generate a response from the Model (includes running function calls)
-        response = await model_copy.aresponse(
-            messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
-        )
-
-        if response.tool_calls is not None and len(response.tool_calls) > 0:
-            self.notions_updated = True
-
-        log_debug("Cultural Notion Manager End", center=True)
-
-        return response.content or "No response from model"
+        return response
 
     # -*- Utility Functions -*-
     def determine_tools_for_model(self, tools: List[Callable]) -> None:
@@ -369,59 +327,191 @@ class CultureManager:
     def get_system_message(
         self,
         existing_notions: Optional[List[Dict[str, Any]]] = None,
-        enable_delete_notions: bool = True,
+        enable_delete_notion: bool = True,
         enable_clear_notions: bool = True,
-        enable_update_notions: bool = True,
-        enable_add_notions: bool = True,
+        enable_update_notion: bool = True,
+        enable_add_notion: bool = True,
     ) -> Message:
         if self.system_message is not None:
             return Message(role="system", content=self.system_message)
 
         culture_capture_instructions = self.culture_capture_instructions or dedent(
             """\
-            WIP
-            """
+            Cultural notions should capture shared knowledge, insights, and practices that can improve your performance across conversations:
+            - Best practices and successful approaches discovered during previous conversations
+            - Common patterns in user behavior, preferences, or needs that remain true across conversations
+            - Organizational knowledge, processes, or contextual information
+            - Insights about effective communication styles or problem-solving methods
+            - Domain-specific knowledge or expertise that emerges from conversations
+            - Any other valuable understanding that should be preserved and shared across agents
+        """
         )
 
-        # -*- Return a system message for the culture manager
         system_prompt_lines = [
-            "WIP",
+            "You are a Culture Manager responsible for managing shared organizational knowledge and insights. "
+            "You will be provided with criteria for cultural notions to capture in the <notions_to_capture> section and a list of existing notions in the <existing_notions> section.",
             "",
+            "## When to add or update cultural notions",
+            "- Your first task is to decide if a cultural notion needs to be added, updated, or deleted based on discovered insights OR if no changes are needed.",
+            "- If you discover knowledge that meets the criteria in the <notions_to_capture> section and is not already captured in the <existing_notions> section, you should capture it as a cultural notion.",
+            "- If no valuable organizational knowledge emerges from the interaction, no notion updates are needed.",
+            "- If the existing notions in the <existing_notions> section capture all relevant insights, no notion updates are needed.",
+            "",
+            "## How to add or update cultural notions",
+            "- If you decide to add a new notion, create notions that capture key insights for future reference across the organization.",
+            "- Notions should be clear, actionable statements that encapsulate valuable knowledge without being overly specific to individual cases.",
+            "  - Example: If multiple users struggle with a concept, a notion could be `Users often need step-by-step guidance when learning API integration`.",
+            "  - Example: If a particular approach works well, a notion could be `Visual examples significantly improve user understanding of complex workflows`.",
+            "- Don't make a single notion too broad or complex, create multiple notions if needed to capture distinct insights.",
+            "- Don't duplicate information across notions. Rather update existing notions if they cover similar ground.",
+            "- If organizational practices change, update relevant notions to reflect current approaches while preserving historical context when valuable.",
+            "- When updating a notion, enhance it with new insights rather than completely overwriting existing knowledge.",
+            "- Focus on knowledge that transcends individual conversations and provides value to future interactions.",
+            "",
+            "## Criteria for creating cultural notions",
+            "Use the following criteria to determine if discovered knowledge should be captured as a cultural notion.",
+            "",
+            "<notions_to_capture>",
             culture_capture_instructions,
+            "</notions_to_capture>",
             "",
+            "## Updating cultural notions",
+            "You will also be provided with a list of existing cultural notions in the <existing_notions> section. You can:",
+            "  - Decide to make no changes.",
         ]
-        if enable_add_notions:
-            system_prompt_lines.append("  - Decide to add a new cultural notion, using the `add_cultural_notion` tool.")
-        if enable_update_notions:
+
+        if enable_add_notion:
+            system_prompt_lines.append("  - Decide to add a new cultural notion, using the `add_notion` tool.")
+        if enable_update_notion:
             system_prompt_lines.append(
-                "  - Decide to update an existing cultural notion, using the `update_cultural_notion` tool."
+                "  - Decide to update an existing cultural notion, using the `update_notion` tool."
             )
-        if enable_delete_notions:
+        if enable_delete_notion:
             system_prompt_lines.append(
-                "  - Decide to delete an existing cultural notion, using the `delete_cultural_notion` tool."
+                "  - Decide to delete an existing cultural notion, using the `delete_notion` tool."
             )
         if enable_clear_notions:
-            system_prompt_lines.append(
-                "  - Decide to clear all cultural notions, using the `clear_cultural_notions` tool."
-            )
+            system_prompt_lines.append("  - Decide to clear all cultural notions, using the `clear_notions` tool.")
 
         system_prompt_lines += [
             "You can call multiple tools in a single response if needed. ",
-            "Only add or update memories if it is necessary to capture key information provided by the user.",
+            "Only add or update cultural notions if valuable organizational knowledge emerges that should be preserved and shared.",
         ]
 
         if existing_notions and len(existing_notions) > 0:
-            system_prompt_lines.append("\n<existing_memories>")
+            system_prompt_lines.append("\n<existing_notions>")
             for existing_notion in existing_notions:
-                system_prompt_lines.append(f"ID: {existing_notion['id']}")
-                system_prompt_lines.append(f"Notion: {existing_notion['notion']}")
+                system_prompt_lines.append(f"ID: {existing_notion['notion_id']}")
+                system_prompt_lines.append(f"Notion: {existing_notion['content']}")
                 system_prompt_lines.append("")
-            system_prompt_lines.append("</existing_memories>")
+            system_prompt_lines.append("</existing_notions>")
 
         if self.additional_instructions:
             system_prompt_lines.append(self.additional_instructions)
 
         return Message(role="system", content="\n".join(system_prompt_lines))
+
+    def create_or_update_cultural_notions(
+        self,
+        messages: List[Message],
+        existing_notions: List[Dict[str, Any]],
+        db: BaseDb,
+        update_notions: bool = True,
+        add_notions: bool = True,
+    ) -> str:
+        if self.model is None:
+            log_error("No model provided for culture manager")
+            return "No model provided for culture manager"
+
+        log_debug("CultureManager Start", center=True)
+
+        model_copy = deepcopy(self.model)
+        # Update the Model (set defaults, add logit etc.)
+        self.determine_tools_for_model(
+            self._get_db_tools(
+                db,
+                enable_add_notions=add_notions,
+                enable_update_notions=update_notions,
+                enable_delete_notions=False,
+                enable_clear_notions=False,
+            ),
+        )
+
+        # Prepare the List of messages to send to the Model
+        messages_for_model: List[Message] = [
+            self.get_system_message(
+                existing_notions=existing_notions,
+                enable_update_notion=update_notions,
+                enable_add_notion=add_notions,
+                enable_delete_notion=False,
+                enable_clear_notions=False,
+            ),
+            *messages,
+        ]
+
+        # Generate a response from the Model (includes running function calls)
+        response = model_copy.response(
+            messages=messages_for_model,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+        )
+
+        if response.tool_calls is not None and len(response.tool_calls) > 0:
+            self.memories_updated = True
+
+        log_debug("MemoryManager End", center=True)
+
+        return response.content or "No response from model"
+
+    async def acreate_or_update_cultural_notions(
+        self,
+        messages: List[Message],
+        existing_notions: List[Dict[str, Any]],
+        db: AsyncBaseDb,
+        update_notions: bool = True,
+        add_notions: bool = True,
+    ) -> str:
+        if self.model is None:
+            log_error("No model provided for cultural notion manager")
+            return "No model provided for cultural notion manager"
+
+        log_debug("Cultural Notion Manager Start", center=True)
+
+        model_copy = deepcopy(self.model)
+        db = cast(AsyncBaseDb, db)
+
+        self.determine_tools_for_model(
+            await self._aget_db_tools(
+                db,
+                enable_update_notions=update_notions,
+                enable_add_notions=add_notions,
+            ),
+        )
+
+        # Prepare the List of messages to send to the Model
+        messages_for_model: List[Message] = [
+            self.get_system_message(
+                existing_notions=existing_notions,
+                enable_update_notion=update_notions,
+                enable_add_notion=add_notions,
+            ),
+            # For models that require a non-system message
+            *messages,
+        ]
+
+        # Generate a response from the Model (includes running function calls)
+        response = await model_copy.aresponse(
+            messages=messages_for_model,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+        )
+
+        if response.tool_calls is not None and len(response.tool_calls) > 0:
+            self.notions_updated = True
+
+        log_debug("Cultural Notion Manager End", center=True)
+
+        return response.content or "No response from model"
 
     def run_cultural_notion_task(
         self,

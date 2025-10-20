@@ -6155,18 +6155,39 @@ class Agent:
         if self.enable_agent_culture or self.culture_manager:
             if not self.culture_manager:
                 self._set_culture_manager()
+                _culture_manager_not_set = True
 
             cultural_notions = self.culture_manager.get_all_notions()  # type: ignore
 
-            # TODO: prompts
-            if cultural_notions is not None:
-                system_message_content += (
-                    "You have access to cultural notions that you can use to personalize your response:\n\n"
-                )
+            if cultural_notions and len(cultural_notions) > 0:
+                system_message_content += "You have access to shared cultural notions that provide context and guidance for your interactions:\n\n"
                 system_message_content += "<cultural_notions>\n"
                 for _notion in cultural_notions:  # type: ignore
-                    system_message_content += f"\n- {_notion.summary}"  # TODO: summary or content?
+                    system_message_content += f"\n- {_notion.content}"  # Use content over summary for full context
                 system_message_content += "\n</cultural_notions>\n\n"
+                system_message_content += (
+                    "Note: these cultural notions represent shared understanding and practices. "
+                    "Use them to inform your responses while adapting to the current conversation context.\n"
+                )
+            else:
+                system_message_content += (
+                    "You have the capability to access shared cultural notions, "
+                    "but no cultural notions are currently available.\n"
+                )
+
+            if _culture_manager_not_set:
+                self.culture_manager = None
+
+            if self.enable_agent_culture:
+                system_message_content += (
+                    "\n<contributing_to_culture>\n"
+                    "- You have access to the `create_or_update_notions` tool that you can use to add new cultural notions or update existing ones.\n"
+                    "- If you discover insights, patterns, or knowledge that could benefit other agents or future interactions, use this tool to contribute to the shared culture.\n"
+                    "- Cultural notions should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
+                    "- Use this tool when you identify valuable knowledge that should be preserved and shared across the organization.\n"
+                    "- If you use the `create_or_update_notions` tool, you may mention the contribution to the user if relevant.\n"
+                    "</contributing_to_culture>\n\n"
+                )
 
         # 3.3.11 Then add a summary of the interaction to the system prompt
         if self.add_session_summary_to_context and session.summary is not None:
@@ -6446,18 +6467,39 @@ class Agent:
         if self.enable_agent_culture or self.culture_manager:
             if not self.culture_manager:
                 self._set_culture_manager()
+                _culture_manager_not_set = True
 
-            cultural_notions = await self.culture_manager.get_all_notions()  # type: ignore
+            cultural_notions = await self.culture_manager.aget_all_notions()  # type: ignore
 
-            # TODO: prompts
-            if cultural_notions is not None:
-                system_message_content += (
-                    "You have access to cultural notions that you can use to personalize your response:\n\n"
-                )
+            if cultural_notions and len(cultural_notions) > 0:
+                system_message_content += "You have access to shared cultural notions that provide context and guidance for your interactions:\n\n"
                 system_message_content += "<cultural_notions>\n"
                 for _notion in cultural_notions:  # type: ignore
-                    system_message_content += f"\n- {_notion.summary}"  # TODO: summary or content?
+                    system_message_content += f"\n- {_notion.content}"  # Use content over summary for full context
                 system_message_content += "\n</cultural_notions>\n\n"
+                system_message_content += (
+                    "Note: these cultural notions represent shared understanding and practices. "
+                    "Use them to inform your responses while adapting to the current conversation context.\n"
+                )
+            else:
+                system_message_content += (
+                    "You have the capability to access shared cultural notions, "
+                    "but no cultural notions are currently available.\n"
+                )
+
+            if _culture_manager_not_set:
+                self.culture_manager = None
+
+            if self.enable_agent_culture:
+                system_message_content += (
+                    "\n<contributing_to_culture>\n"
+                    "- You have access to the `create_or_update_notions` tool that you can use to add new cultural notions or update existing ones.\n"
+                    "- If you discover insights, patterns, or knowledge that could benefit other agents or future interactions, use this tool to contribute to the shared culture.\n"
+                    "- Cultural notions should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
+                    "- Use this tool when you identify valuable knowledge that should be preserved and shared across the organization.\n"
+                    "- If you use the `create_or_update_notions` tool, you may mention the contribution to the user if relevant.\n"
+                    "</contributing_to_culture>\n\n"
+                )
 
         # 3.3.11 Then add a summary of the interaction to the system prompt
         if self.add_session_summary_to_context and session.summary is not None:
@@ -8401,17 +8443,17 @@ class Agent:
         return Function.from_callable(update_user_memory_function, name="update_user_memory")
 
     def _get_update_culture_notion_function(self, async_mode: bool = False) -> Function:
-        def update_cultural_notion(notion: str) -> str:
+        def update_cultural_notion(task: str) -> str:
             """Use this function to update a cultural notion."""
             self.culture_manager = cast(CultureManager, self.culture_manager)
-            response = self.culture_manager.update_cultural_notion_task(task=task, notion=notion)
+            response = self.culture_manager.update_culture_task(task=task)
 
             return response
 
-        async def aupdate_cultural_notion(notion: str) -> str:
+        async def aupdate_cultural_notion(task: str) -> str:
             """Use this function to update a cultural notion asynchronously."""
             self.culture_manager = cast(CultureManager, self.culture_manager)
-            response = await self.culture_manager.aupdate_cultural_notion_task(task=task, notion=notion)
+            response = await self.culture_manager.aupdate_culture_task(task=task)
             return response
 
         if async_mode:

@@ -1,3 +1,3 @@
-from agno.culture.manager import CulturalArtifact, CultureManager
+from agno.culture.manager import CulturalNotion, CultureManager
 
-__all__ = ["CultureManager", "CulturalArtifact"]
+__all__ = ["CultureManager", "CulturalNotion"]

@@ -5,9 +5,7 @@ from typing import Any
 try:
     from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
 except ImportError:
-    raise ImportError(
-        "`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`"
-    )
+    raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 
 SESSION_TABLE_SCHEMA = {
@@ -95,7 +93,7 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
-CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
+CULTURAL_NOTION_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False, "index": True},
     "summary": {"type": String, "nullable": True},
@@ -127,7 +125,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
-        "cultural_knowledge": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
+        "culture": CULTURAL_NOTION_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 
