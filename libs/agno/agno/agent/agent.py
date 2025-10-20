@@ -396,6 +396,7 @@ class Agent:
         add_memories_to_context: Optional[bool] = None,
         culture_manager: Optional[CultureManager] = None,
         enable_agent_culture: bool = False,
+        update_cultural_knowledge: bool = False,
         add_culture_to_context: Optional[bool] = None,
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
@@ -494,6 +495,7 @@ class Agent:
 
         self.culture_manager = culture_manager
         self.enable_agent_culture = enable_agent_culture
+        self.update_cultural_knowledge = update_cultural_knowledge
         self.add_culture_to_context = add_culture_to_context
 
         self.session_summary_manager = session_summary_manager
@@ -6143,16 +6145,16 @@ class Agent:
             if _culture_manager_not_set:
                 self.culture_manager = None
 
-            # if self.enable_agent_culture:
-            #     system_message_content += (
-            #         "\n<contributing_to_culture>\n"
-            #         "- You have access to the `create_or_update_cultural_knowledge` tool that you can use to add new cultural knowledge or update existing ones.\n"
-            #         "- If you discover insights, patterns, or knowledge that could benefit other agents or future interactions, use this tool to contribute to the shared culture.\n"
-            #         "- Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
-            #         "- Use this tool when you identify valuable knowledge that should be preserved and shared across the organization.\n"
-            #         "- If you use the `create_or_update_cultural_knowledge` tool, you may mention the contribution to the user if relevant.\n"
-            #         "</contributing_to_culture>\n\n"
-            #     )
+            if self.enable_agent_culture:
+                system_message_content += (
+                    "\n<contributing_to_culture>\n"
+                    "- You have access to the `create_or_update_cultural_knowledge` tool that you can use to add new cultural knowledge or update existing ones.\n"
+                    "- If you discover insights, patterns, or knowledge that could benefit other agents or future interactions, use this tool to contribute to the shared culture.\n"
+                    "- Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
+                    "- Use this tool when you identify valuable knowledge that should be preserved and shared across the organization.\n"
+                    "- If you use the `create_or_update_cultural_knowledge` tool, you may mention the contribution to the user if relevant.\n"
+                    "</contributing_to_culture>\n\n"
+                )
 
         # 3.3.11 Then add a summary of the interaction to the system prompt
         if self.add_session_summary_to_context and session.summary is not None:
@@ -6435,22 +6437,22 @@ class Agent:
                 self._set_culture_manager()
                 _culture_manager_not_set = True
 
-            cultural_knowledge = await self.culture_manager.aget_all_notions()  # type: ignore
+            cultural_knowledge = await self.culture_manager.aget_all_knowledge()  # type: ignore
 
             if cultural_knowledge and len(cultural_knowledge) > 0:
-                system_message_content += "You have access to shared cultural notions that provide context and guidance for your interactions:\n\n"
+                system_message_content += "You have access to shared cultural knowledge that provide context and guidance for your interactions:\n\n"
                 system_message_content += "<cultural_knowledge>\n"
-                for _notion in cultural_knowledge:  # type: ignore
-                    system_message_content += f"\n- {_notion.content}"  # Use content over summary for full context
+                for _knowledge in cultural_knowledge:  # type: ignore
+                    system_message_content += f"\n- {_knowledge.content}"
                 system_message_content += "\n</cultural_knowledge>\n\n"
                 system_message_content += (
-                    "Note: these cultural notions represent shared understanding and practices. "
+                    "Note: these cultural knowledge represent shared understanding and practices. "
                     "Use them to inform your responses while adapting to the current conversation context.\n"
                 )
             else:
                 system_message_content += (
-                    "You have the capability to access shared cultural notions, "
-                    "but no cultural notions are currently available.\n"
+                    "You have the capability to access shared cultural knowledge, "
+                    "but no cultural knowledge is currently available.\n"
                 )
 
             if _culture_manager_not_set:
@@ -6459,11 +6461,11 @@ class Agent:
             if self.enable_agent_culture:
                 system_message_content += (
                     "\n<contributing_to_culture>\n"
-                    "- You have access to the `create_or_update_notions` tool that you can use to add new cultural notions or update existing ones.\n"
+                    "- You have access to the `create_or_update_cultural_knowledge` tool that you can use to add new cultural knowledge or update existing ones.\n"
                     "- If you discover insights, patterns, or knowledge that could benefit other agents or future interactions, use this tool to contribute to the shared culture.\n"
-                    "- Cultural notions should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
+                    "- Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
                     "- Use this tool when you identify valuable knowledge that should be preserved and shared across the organization.\n"
-                    "- If you use the `create_or_update_notions` tool, you may mention the contribution to the user if relevant.\n"
+                    "- If you use the `create_or_update_cultural_knowledge` tool, you may mention the contribution to the user if relevant.\n"
                     "</contributing_to_culture>\n\n"
                 )
 
@@ -8427,7 +8429,7 @@ class Agent:
         else:
             update_cultural_knowledge_function = update_cultural_knowledge  # type: ignore
 
-        return Function.from_callable(update_cultural_knowledge_function, name="update_cultural_knowledge")
+        return Function.from_callable(update_cultural_knowledge_function, name="create_or_update_cultural_knowledge")
 
     def _get_chat_history_function(self, session: AgentSession) -> Callable:
         def get_chat_history(num_chats: Optional[int] = None) -> str:
