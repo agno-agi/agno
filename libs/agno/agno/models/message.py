@@ -2,6 +2,8 @@ import json
 from time import time
 from typing import Any, Dict, List, Optional, Sequence, Union
 
+from uuid import uuid4
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.media import Audio, File, Image, Video
@@ -50,6 +52,8 @@ class Citations(BaseModel):
 
 class Message(BaseModel):
     """Message sent to the Model"""
+
+    id: str = Field(default_factory=lambda: str(uuid4()))
 
     # The role of the message author.
     # One of system, user, assistant, or tool.
@@ -259,6 +263,7 @@ class Message(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         """Returns the message as a dictionary."""
         message_dict = {
+            "id": self.id,
             "content": self.content,
             "reasoning_content": self.reasoning_content,
             "from_history": self.from_history,
