@@ -276,7 +276,7 @@ class BaseDb(ABC):
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
-    # --- Cultural Notions ---
+    # --- Cultural Knowledge ---
     @abstractmethod
     def clear_cultural_knowledge(self) -> None:
         raise NotImplementedError
