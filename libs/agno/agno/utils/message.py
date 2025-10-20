@@ -47,7 +47,7 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
                 filtered_msg.tool_calls = [
                     tc
                     for tc in filtered_msg.tool_calls
-                    if tc.get("id") is not None and tc.get("id") in tool_call_ids_to_keep
+                    if tc.get("id") in tool_call_ids_to_keep
                 ]
 
             if filtered_msg.tool_calls:
