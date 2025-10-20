@@ -5,6 +5,9 @@ Integration examples showing how to connect Agno agents with external platforms 
 
 ## Available Integrations
 
+### [Claude Agent Skills](./claude_skills/)
+Integration with Claude's Agent Skills for creating PowerPoint presentations, Excel spreadsheets, Word documents, and analyzing PDFs. Includes examples for direct API usage, specialized agents, and multi-skill orchestration.
+
 ### [Discord](./discord/)
 Discord bot implementation with media support and user memory capabilities.
 
@@ -19,6 +22,10 @@ Monitoring and observability integrations for agent performance tracking.
 Install required dependencies based on the integration you want to use:
 
 ```bash
+# For Claude Agent Skills integration
+pip install anthropic agno
+export ANTHROPIC_API_KEY="your_api_key_here"
+
 # For Discord integration
 pip install discord.py agno
 
