@@ -18,26 +18,28 @@ def detect_file_extension(file_content: bytes) -> str:
         File extension including dot (e.g., '.xlsx', '.docx', '.pptx')
     """
     # Check magic bytes for common Office file formats
-    if file_content.startswith(b'PK\x03\x04'):
+    if file_content.startswith(b"PK\x03\x04"):
         # ZIP-based formats (Office 2007+)
-        if b'word/' in file_content[:2000]:
-            return '.docx'
-        elif b'xl/' in file_content[:2000]:
-            return '.xlsx'
-        elif b'ppt/' in file_content[:2000]:
-            return '.pptx'
+        if b"word/" in file_content[:2000]:
+            return ".docx"
+        elif b"xl/" in file_content[:2000]:
+            return ".xlsx"
+        elif b"ppt/" in file_content[:2000]:
+            return ".pptx"
         else:
-            return '.zip'
-    elif file_content.startswith(b'%PDF'):
-        return '.pdf'
-    elif file_content.startswith(b'\xd0\xcf\x11\xe0'):
+            return ".zip"
+    elif file_content.startswith(b"%PDF"):
+        return ".pdf"
+    elif file_content.startswith(b"\xd0\xcf\x11\xe0"):
         # Old Office format (97-2003)
-        return '.doc'  # Could also be .xls or .ppt, default to .doc
+        return ".doc"  # Could also be .xls or .ppt, default to .doc
     else:
-        return '.bin'
+        return ".bin"
 
 
-def download_skill_files(response, client, output_dir: str = ".", default_filename: str = None) -> List[str]:
+def download_skill_files(
+    response, client, output_dir: str = ".", default_filename: str = None
+) -> List[str]:
     """
     Download files created by Claude Agent Skills from the API response.
 
@@ -97,23 +99,36 @@ def download_skill_files(response, client, output_dir: str = ".", default_filena
                                 # Get filename from various sources
                                 filename = default_filename
 
-                                if not filename and hasattr(block.content, "stdout") and block.content.stdout:
+                                if (
+                                    not filename
+                                    and hasattr(block.content, "stdout")
+                                    and block.content.stdout
+                                ):
                                     # Try to extract filename from stdout (e.g., "test.pptx")
-                                    match = re.search(r'[\w\-]+\.(pptx|xlsx|docx|pdf)', block.content.stdout)
+                                    match = re.search(
+                                        r"[\w\-]+\.(pptx|xlsx|docx|pdf)",
+                                        block.content.stdout,
+                                    )
                                     if match:
                                         extracted_filename = match.group(0)
                                         # Verify the extension matches the actual file type
-                                        extracted_ext = os.path.splitext(extracted_filename)[1]
+                                        extracted_ext = os.path.splitext(
+                                            extracted_filename
+                                        )[1]
                                         if extracted_ext == detected_ext:
                                             filename = extracted_filename
                                         else:
                                             # Use the basename but with correct extension
-                                            basename = os.path.splitext(extracted_filename)[0]
+                                            basename = os.path.splitext(
+                                                extracted_filename
+                                            )[0]
                                             filename = f"{basename}{detected_ext}"
 
                                 # If still no filename, use file ID with detected extension
                                 if not filename:
-                                    filename = f"skill_output_{file_id[-8:]}{detected_ext}"
+                                    filename = (
+                                        f"skill_output_{file_id[-8:]}{detected_ext}"
+                                    )
 
                                 filepath = os.path.join(output_dir, filename)
 

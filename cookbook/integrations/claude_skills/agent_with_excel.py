@@ -10,11 +10,11 @@ Prerequisites:
 """
 
 import os
-from anthropic import Anthropic
+
 from agno.agent import Agent
 from agno.models.anthropic import Claude
+from anthropic import Anthropic
 from file_download_helper import download_skill_files
-
 
 # Create a simple agent with Excel skills
 excel_agent = Agent(
@@ -77,8 +77,10 @@ if __name__ == "__main__":
     # Download files from the agent's response
     if response.messages:
         for msg in response.messages:
-            if hasattr(msg, 'provider_data') and msg.provider_data:
-                files = download_skill_files(msg.provider_data, client, default_filename="sales_dashboard.xlsx")
+            if hasattr(msg, "provider_data") and msg.provider_data:
+                files = download_skill_files(
+                    msg.provider_data, client, default_filename="sales_dashboard.xlsx"
+                )
                 if files:
                     print(f"\n Successfully downloaded {len(files)} file(s):")
                     for file in files:

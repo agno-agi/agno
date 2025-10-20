@@ -217,9 +217,7 @@ class Claude(Model):
         if self.skills:
             _request_params["betas"] = self.betas
             _request_params["container"] = {
-                "skills": [
-                    {"type": "anthropic", "skill_id": skill, "version": "latest"} for skill in self.skills
-                ]
+                "skills": [{"type": "anthropic", "skill_id": skill, "version": "latest"} for skill in self.skills]
             }
         if self.request_params:
             _request_params.update(self.request_params)
