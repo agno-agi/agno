@@ -5,7 +5,7 @@ from typing import AsyncIterator
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.workflow import WorkflowRunOutputEvent
+from agno.run.workflow import WorkflowRunOutputEvent, WorkflowRunEvent
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -106,8 +106,24 @@ async def main():
         stream_intermediate_steps=True,
     )
     async for event in resp:
-        print(event)
-        print()
+        if event.event == WorkflowRunEvent.condition_execution_started.value:
+            print(event)
+            print()
+        elif event.event == WorkflowRunEvent.condition_execution_completed.value:
+            print(event)
+            print()
+        elif event.event == WorkflowRunEvent.workflow_started.value:
+            print(event)
+            print()
+        elif event.event == WorkflowRunEvent.step_started.value:
+            print(event)
+            print()
+        elif event.event == WorkflowRunEvent.step_completed.value:
+            print(event)
+            print()
+        elif event.event == WorkflowRunEvent.workflow_completed.value:
+            print(event)
+            print()
 
 
 if __name__ == "__main__":

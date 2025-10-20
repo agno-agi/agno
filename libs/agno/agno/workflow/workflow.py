@@ -1589,7 +1589,7 @@ class Workflow:
                 return await func(**call_kwargs)  # type: ignore
 
     async def _load_or_create_session(
-        self, session_id: str, user_id: Optional[str], session_state: Dict[str, Any]
+        self, session_id: str, user_id: Optional[str], session_state: Optional[Dict[str, Any]]
     ) -> Tuple[WorkflowSession, Dict[str, Any]]:
         """Load or create session from database, update metadata, and prepare session state.
 
@@ -1604,14 +1604,15 @@ class Workflow:
         self._update_metadata(session=workflow_session)
 
         # Update session state from DB
-        session_state = self._load_session_state(session=workflow_session, session_state=session_state)
+        _session_state = session_state or {}
+        _session_state = self._load_session_state(session=workflow_session, session_state=_session_state)
 
-        return workflow_session, session_state
+        return workflow_session, _session_state
 
     async def _aexecute(
         self,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1786,7 +1787,7 @@ class Workflow:
     async def _aexecute_stream(
         self,
         session_id: str,
-        user_id: str,
+        user_id: Optional[str],
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
         session_state: Optional[Dict[str, Any]] = None,
