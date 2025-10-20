@@ -54,6 +54,9 @@ class CultureManager:
         self,
         model: Optional[Model] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        system_message: Optional[str] = None,
+        culture_capture_instructions: Optional[str] = None,
+        additional_instructions: Optional[str] = None,
         add_knowledge: bool = True,
         update_knowledge: bool = True,
         delete_knowledge: bool = False,
@@ -64,6 +67,9 @@ class CultureManager:
         if self.model is not None and isinstance(self.model, str):
             raise ValueError("Model must be a Model object, not a string")
         self.db = db
+        self.system_message = system_message
+        self.culture_capture_instructions = culture_capture_instructions
+        self.additional_instructions = additional_instructions
         self.add_knowledge = add_knowledge
         self.update_knowledge = update_knowledge
         self.delete_knowledge = delete_knowledge
