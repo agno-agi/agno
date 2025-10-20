@@ -13,6 +13,7 @@ from starlette.requests import Request
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
     AgentOSConfig,
     DatabaseConfig,
@@ -46,7 +47,6 @@ from agno.os.utils import (
 )
 from agno.team.team import Team
 from agno.utils.log import logger
-from agno.knowledge.knowledge import Knowledge
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow.workflow import Workflow
 
@@ -541,8 +541,8 @@ class AgentOS:
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
-        knowledge_instances = []
-        
+        knowledge_instances: List[Knowledge] = []
+
         def _add_knowledge_if_not_duplicate(knowledge: "Knowledge") -> None:
             """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
             # Check if the exact same object is already in the list
@@ -550,11 +550,14 @@ class AgentOS:
                 if existing is knowledge:
                     return
                 # Check if there's already a knowledge instance with the same database ID
-                if (knowledge.contents_db and existing.contents_db and 
-                    knowledge.contents_db.id == existing.contents_db.id):
+                if (
+                    knowledge.contents_db
+                    and existing.contents_db
+                    and knowledge.contents_db.id == existing.contents_db.id
+                ):
                     return
             knowledge_instances.append(knowledge)
-        
+
         for agent in self.agents or []:
             if agent.knowledge:
                 _add_knowledge_if_not_duplicate(agent.knowledge)
@@ -562,7 +565,7 @@ class AgentOS:
         for team in self.teams or []:
             if team.knowledge:
                 _add_knowledge_if_not_duplicate(team.knowledge)
-        
+
         for knowledge_base in self.knowledge_bases or []:
             _add_knowledge_if_not_duplicate(knowledge_base)
 

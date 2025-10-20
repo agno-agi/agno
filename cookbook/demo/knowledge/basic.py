@@ -1,11 +1,11 @@
+from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
-from agno.db.postgres.postgres import PostgresDb
-
-
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-contents_db = PostgresDb(db_url, id="standalone_knowledge_db", knowledge_table="standalone_knowledge")
+contents_db = PostgresDb(
+    db_url, id="standalone_knowledge_db", knowledge_table="standalone_knowledge"
+)
 
 knowledge = Knowledge(
     name="Standalone Knowledge",
