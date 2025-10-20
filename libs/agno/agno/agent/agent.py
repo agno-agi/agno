@@ -167,16 +167,6 @@ class Agent:
     # If True, add the dependencies to the user prompt
     add_dependencies_to_context: bool = False
 
-    # --- Agent Culture ---
-    # Culture manager to use for this agent
-    culture_manager: Optional[CultureManager] = None
-    # Enable the agent to manage cultural notions of the user
-    enable_agent_culture: bool = False
-    # Update cultural knowledge after every run
-    update_cultural_knowledge: bool = False
-    # If True, the agent adds a reference to the user cultural notions in the response
-    add_culture_to_context: Optional[bool] = None
-
     # --- Agent Memory ---
     # Memory manager to use for this agent
     memory_manager: Optional[MemoryManager] = None
@@ -361,6 +351,17 @@ class Agent:
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
 
+    # --- Exprimental Settings ---
+    # --- Agent Culture ---
+    # Culture manager to use for this agent
+    culture_manager: Optional[CultureManager] = None
+    # Enable the agent to manage cultural notions of the user
+    enable_agent_culture: bool = False
+    # Update cultural knowledge after every run
+    update_cultural_knowledge: bool = False
+    # If True, the agent adds a reference to the user cultural notions in the response
+    add_culture_to_context: Optional[bool] = None
+
     # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
@@ -394,10 +395,6 @@ class Agent:
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
         add_memories_to_context: Optional[bool] = None,
-        culture_manager: Optional[CultureManager] = None,
-        enable_agent_culture: bool = False,
-        update_cultural_knowledge: bool = False,
-        add_culture_to_context: Optional[bool] = None,
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
@@ -463,6 +460,10 @@ class Agent:
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
         role: Optional[str] = None,
+        culture_manager: Optional[CultureManager] = None,
+        enable_agent_culture: bool = False,
+        update_cultural_knowledge: bool = False,
+        add_culture_to_context: Optional[bool] = None,
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
@@ -492,11 +493,6 @@ class Agent:
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
         self.add_memories_to_context = add_memories_to_context
-
-        self.culture_manager = culture_manager
-        self.enable_agent_culture = enable_agent_culture
-        self.update_cultural_knowledge = update_cultural_knowledge
-        self.add_culture_to_context = add_culture_to_context
 
         self.session_summary_manager = session_summary_manager
         self.enable_session_summaries = enable_session_summaries
@@ -586,6 +582,11 @@ class Agent:
         self.events_to_skip = events_to_skip
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
+
+        self.culture_manager = culture_manager
+        self.enable_agent_culture = enable_agent_culture
+        self.update_cultural_knowledge = update_cultural_knowledge
+        self.add_culture_to_context = add_culture_to_context
 
         self.debug_mode = debug_mode
         if debug_level not in [1, 2]:
@@ -932,7 +933,11 @@ class Agent:
         self._parse_response_with_parser_model(model_response, run_messages)
 
         # 5. Update the RunOutput with the model response
-        self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+        self._update_run_response(
+            model_response=model_response,
+            run_response=run_response,
+            run_messages=run_messages,
+        )
 
         if self.store_media:
             self._store_media(run_response, model_response)
@@ -940,7 +945,10 @@ class Agent:
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             return self._handle_agent_run_paused(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                run_response=run_response,
+                run_messages=run_messages,
+                session=session,
+                user_id=user_id,
             )
 
         # Convert the response to the structured format if needed
@@ -969,7 +977,10 @@ class Agent:
 
         # 8. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
-            run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
+            run_response=run_response,
+            input=run_messages.user_message,
+            session_id=session.session_id,
+            user_id=user_id,
         )
 
         # 9. Add the RunOutput to Agent Session
@@ -977,7 +988,10 @@ class Agent:
 
         # 10. Update Agent Memory
         response_iterator = self._make_memories_cultural_knowledge_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+            run_response=run_response,
+            run_messages=run_messages,
+            session=session,
+            user_id=user_id,
         )
         # Consume the response iterator to ensure the memory is updated before the run is completed
         deque(response_iterator, maxlen=0)
@@ -1150,13 +1164,18 @@ class Agent:
 
             # If a parser model is provided, structure the response separately
             yield from self._parse_response_with_parser_model_stream(
-                session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+                session=session,
+                run_response=run_response,
+                stream_intermediate_steps=stream_intermediate_steps,
             )
 
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 yield from self._handle_agent_run_paused_stream(
-                    run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
                 )
                 return
 
@@ -1196,7 +1215,10 @@ class Agent:
 
             # 8. Update Agent Memory
             yield from self._make_memories_cultural_knowledge_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                run_response=run_response,
+                run_messages=run_messages,
+                session=session,
+                user_id=user_id,
             )
 
             # 9. Create the run completed event
@@ -1337,7 +1359,10 @@ class Agent:
             self._hooks_normalised = True
 
         session_id, user_id, session_state = self._initialize_session(
-            run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
         )
 
         # Initialize the Agent
@@ -1508,7 +1533,10 @@ class Agent:
 
                 if stream:
                     return generator_wrapper(  # type: ignore
-                        create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user")
+                        create_run_cancelled_event(
+                            from_run_response=run_response,
+                            reason="Operation cancelled by user",
+                        )
                     )
                 else:
                     return run_response
@@ -1661,7 +1689,9 @@ class Agent:
 
             # 9. Update the RunOutput with the model response
             self._update_run_response(
-                model_response=model_response, run_response=run_response, run_messages=run_messages
+                model_response=model_response,
+                run_response=run_response,
+                run_messages=run_messages,
             )
 
             # Optional: Store media
@@ -1671,7 +1701,10 @@ class Agent:
             # Break out of the run function if a tool call is paused
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 return self._handle_agent_run_paused(
-                    run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    session=agent_session,
+                    user_id=user_id,
                 )
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1715,7 +1748,10 @@ class Agent:
 
             # 12. Update Agent Memory
             async for _ in self._amake_memories_cultural_knowledge_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
+                run_response=run_response,
+                run_messages=run_messages,
+                session=agent_session,
+                user_id=user_id,
             ):
                 pass
 
@@ -1922,14 +1958,19 @@ class Agent:
 
             # If a parser model is provided, structure the response separately
             async for event in self._aparse_response_with_parser_model_stream(
-                session=agent_session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+                session=agent_session,
+                run_response=run_response,
+                stream_intermediate_steps=stream_intermediate_steps,
             ):
                 yield event
 
             # Break out of the run function if a tool call is paused
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 for item in self._handle_agent_run_paused_stream(
-                    run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    session=agent_session,
+                    user_id=user_id,
                 ):
                     yield item
                 return
@@ -1971,7 +2012,10 @@ class Agent:
 
             # 11. Update Agent Memory
             async for event in self._amake_memories_cultural_knowledge_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
+                run_response=run_response,
+                run_messages=run_messages,
+                session=agent_session,
+                user_id=user_id,
             ):
                 yield event
 
@@ -2115,7 +2159,10 @@ class Agent:
 
         # Initialize session
         session_id, user_id, session_state = self._initialize_session(
-            run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
         )
 
         # Initialize the Agent
@@ -2262,7 +2309,10 @@ class Agent:
 
                 if stream:
                     return async_generator_wrapper(  # type: ignore
-                        create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user")
+                        create_run_cancelled_event(
+                            from_run_response=run_response,
+                            reason="Operation cancelled by user",
+                        )
                     )
                 else:
                     return run_response
@@ -2569,12 +2619,19 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
         )
 
-        self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+        self._update_run_response(
+            model_response=model_response,
+            run_response=run_response,
+            run_messages=run_messages,
+        )
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             return self._handle_agent_run_paused(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                run_response=run_response,
+                run_messages=run_messages,
+                session=session,
+                user_id=user_id,
             )
 
         # 3. Calculate session metrics
@@ -2603,7 +2660,10 @@ class Agent:
 
         # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
-            run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
+            run_response=run_response,
+            input=run_messages.user_message,
+            session_id=session.session_id,
+            user_id=user_id,
         )
 
         # 5. Add the run to memory
@@ -2611,7 +2671,10 @@ class Agent:
 
         # 6. Update Agent Memory
         response_iterator = self._make_memories_cultural_knowledge_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+            run_response=run_response,
+            run_messages=run_messages,
+            session=session,
+            user_id=user_id,
         )
         # Consume the response iterator to ensure the memory is updated before the run is completed
         deque(response_iterator, maxlen=0)
@@ -2674,7 +2737,10 @@ class Agent:
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             yield from self._handle_agent_run_paused_stream(
-                run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                run_response=run_response,
+                run_messages=run_messages,
+                session=session,
+                user_id=user_id,
             )
             return
 
@@ -2702,7 +2768,10 @@ class Agent:
 
         # 4. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
-            run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
+            run_response=run_response,
+            input=run_messages.user_message,
+            session_id=session.session_id,
+            user_id=user_id,
         )
 
         # 5. Add the run to memory
@@ -2710,7 +2779,10 @@ class Agent:
 
         # 6. Update Agent Memory
         yield from self._make_memories_cultural_knowledge_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+            run_response=run_response,
+            run_messages=run_messages,
+            session=session,
+            user_id=user_id,
         )
 
         # 7. Create the run completed event
@@ -3036,7 +3108,9 @@ class Agent:
 
             # 9. Update the RunOutput with the model response
             self._update_run_response(
-                model_response=model_response, run_response=run_response, run_messages=run_messages
+                model_response=model_response,
+                run_response=run_response,
+                run_messages=run_messages,
             )
 
             if self.store_media:
@@ -3047,7 +3121,10 @@ class Agent:
             # Break out of the run function if a tool call is paused
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 return self._handle_agent_run_paused(
-                    run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    session=agent_session,
+                    user_id=user_id,
                 )
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3078,7 +3155,10 @@ class Agent:
 
             # 12. Update Agent Memory
             async for _ in self._amake_memories_cultural_knowledge_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
+                run_response=run_response,
+                run_messages=run_messages,
+                session=agent_session,
+                user_id=user_id,
             ):
                 pass
 
@@ -3276,7 +3356,10 @@ class Agent:
             # Break out of the run function if a tool call is paused
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 for item in self._handle_agent_run_paused_stream(
-                    run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    session=agent_session,
+                    user_id=user_id,
                 ):
                     yield item
                 return
@@ -3320,7 +3403,10 @@ class Agent:
 
             # 12. Update Agent Memory
             async for event in self._amake_memories_cultural_knowledge_and_summaries(
-                run_response=run_response, run_messages=run_messages, session=agent_session, user_id=user_id
+                run_response=run_response,
+                run_messages=run_messages,
+                session=agent_session,
+                user_id=user_id,
             ):
                 yield event
 
@@ -3396,7 +3482,9 @@ class Agent:
             yield self._handle_event(
                 run_response=run_response,
                 event=create_pre_hook_started_event(
-                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    from_run_response=run_response,
+                    run_input=run_input,
+                    pre_hook_name=hook.__name__,
                 ),
             )
             try:
@@ -3408,7 +3496,9 @@ class Agent:
                 yield self._handle_event(
                     run_response=run_response,
                     event=create_pre_hook_completed_event(
-                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                        from_run_response=run_response,
+                        run_input=run_input,
+                        pre_hook_name=hook.__name__,
                     ),
                 )
 
@@ -3458,7 +3548,9 @@ class Agent:
             yield self._handle_event(
                 run_response=run_response,
                 event=create_pre_hook_started_event(
-                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    from_run_response=run_response,
+                    run_input=run_input,
+                    pre_hook_name=hook.__name__,
                 ),
             )
             try:
@@ -3474,7 +3566,9 @@ class Agent:
                 yield self._handle_event(
                     run_response=run_response,
                     event=create_pre_hook_completed_event(
-                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                        from_run_response=run_response,
+                        run_input=run_input,
+                        pre_hook_name=hook.__name__,
                     ),
                 )
 
@@ -3597,7 +3691,10 @@ class Agent:
 
         # Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
-            run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
+            run_response=run_response,
+            input=run_messages.user_message,
+            session_id=session.session_id,
+            user_id=user_id,
         )
 
         session.upsert_run(run=run_response)
@@ -3634,7 +3731,10 @@ class Agent:
 
         # Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
-            run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
+            run_response=run_response,
+            input=run_messages.user_message,
+            session_id=session.session_id,
+            user_id=user_id,
         )
         session.upsert_run(run=run_response)
         # Save session to storage
@@ -3741,7 +3841,9 @@ class Agent:
                     tool.tool_call_error = tool_execution.tool_call_error
                     yield self._handle_event(
                         create_tool_call_completed_event(
-                            from_run_response=run_response, tool=tool, content=call_result.content
+                            from_run_response=run_response,
+                            tool=tool,
+                            content=call_result.content,
                         ),
                         run_response,
                     )
@@ -3788,7 +3890,9 @@ class Agent:
                     tool.tool_call_error = tool_execution.tool_call_error
                     yield self._handle_event(
                         create_tool_call_completed_event(
-                            from_run_response=run_response, tool=tool, content=call_result.content
+                            from_run_response=run_response,
+                            tool=tool,
+                            content=call_result.content,
                         ),
                         run_response,
                     )
@@ -3963,7 +4067,12 @@ class Agent:
             for file in model_response.files:
                 self._add_file(file, run_response)  # Generated files go to run_response.files
 
-    def _update_run_response(self, model_response: ModelResponse, run_response: RunOutput, run_messages: RunMessages):
+    def _update_run_response(
+        self,
+        model_response: ModelResponse,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+    ):
         # Handle structured outputs
         if self.output_schema is not None and model_response.parsed is not None:
             # We get native structured outputs from the model
@@ -4004,7 +4113,9 @@ class Agent:
                 if tool_name.lower() in ["think", "analyze"]:
                     tool_args = tool_call.tool_args or {}
                     self._update_reasoning_content_from_tool_call(
-                        run_response=run_response, tool_name=tool_name, tool_args=tool_args
+                        run_response=run_response,
+                        tool_name=tool_name,
+                        tool_args=tool_args,
                     )
 
         # Update the run_response audio with the model response audio
@@ -4083,7 +4194,8 @@ class Agent:
 
             if all_reasoning_steps:
                 add_reasoning_metrics_to_metadata(
-                    run_response=run_response, reasoning_time_taken=reasoning_state["reasoning_time_taken"]
+                    run_response=run_response,
+                    reasoning_time_taken=reasoning_state["reasoning_time_taken"],
                 )
                 yield self._handle_event(
                     create_reasoning_completed_event(
@@ -4160,7 +4272,8 @@ class Agent:
 
             if all_reasoning_steps:
                 add_reasoning_metrics_to_metadata(
-                    run_response=run_response, reasoning_time_taken=reasoning_state["reasoning_time_taken"]
+                    run_response=run_response,
+                    reasoning_time_taken=reasoning_state["reasoning_time_taken"],
                 )
                 yield self._handle_event(
                     create_reasoning_completed_event(
@@ -4380,14 +4493,16 @@ class Agent:
                     # Yield each tool call started event
                     for tool in tool_executions_list:
                         yield self._handle_event(
-                            create_tool_call_started_event(from_run_response=run_response, tool=tool), run_response
+                            create_tool_call_started_event(from_run_response=run_response, tool=tool),
+                            run_response,
                         )
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
                 if model_response_event.updated_session_state is not None and session.session_data is not None:
                     merge_dictionaries(
-                        session.session_data["session_state"], model_response_event.updated_session_state
+                        session.session_data["session_state"],
+                        model_response_event.updated_session_state,
                     )
 
                 if model_response_event.images is not None:
@@ -4428,7 +4543,9 @@ class Agent:
                             tool_args = tool_call.tool_args or {}
 
                             reasoning_step = self._update_reasoning_content_from_tool_call(
-                                run_response=run_response, tool_name=tool_name, tool_args=tool_args
+                                run_response=run_response,
+                                tool_name=tool_name,
+                                tool_args=tool_args,
                             )
 
                             tool_call_metrics = tool_call.metrics
@@ -4444,7 +4561,9 @@ class Agent:
 
                         yield self._handle_event(
                             create_tool_call_completed_event(
-                                from_run_response=run_response, tool=tool_call, content=model_response_event.content
+                                from_run_response=run_response,
+                                tool=tool_call,
+                                content=model_response_event.content,
                             ),
                             run_response,
                         )
@@ -4453,7 +4572,8 @@ class Agent:
                     if reasoning_step is not None:
                         if reasoning_state and not reasoning_state["reasoning_started"]:
                             yield self._handle_event(
-                                create_reasoning_started_event(from_run_response=run_response), run_response
+                                create_reasoning_started_event(from_run_response=run_response),
+                                run_response,
                             )
                             reasoning_state["reasoning_started"] = True
 
@@ -4529,7 +4649,10 @@ class Agent:
             if user_message_str is not None and self.culture_manager is not None and not self.enable_agent_culture:
                 log_debug("Creating cultural knowledge.")
                 futures.append(
-                    executor.submit(self.culture_manager.create_cultural_knowledge, message=user_message_str)
+                    executor.submit(
+                        self.culture_manager.create_cultural_knowledge,
+                        message=user_message_str,
+                    )
                 )
 
             # Create session summary
@@ -4545,7 +4668,8 @@ class Agent:
             if futures:
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
-                        create_memory_update_started_event(from_run_response=run_response), run_response
+                        create_memory_update_started_event(from_run_response=run_response),
+                        run_response,
                     )
 
                 # Wait for all operations to complete and handle any errors
@@ -4557,7 +4681,8 @@ class Agent:
 
                 if self.stream_intermediate_steps:
                     yield self._handle_event(
-                        create_memory_update_completed_event(from_run_response=run_response), run_response
+                        create_memory_update_completed_event(from_run_response=run_response),
+                        run_response,
                     )
 
     async def _amake_memories_cultural_knowledge_and_summaries(
@@ -4575,7 +4700,9 @@ class Agent:
 
             tasks.append(
                 self.memory_manager.acreate_user_memories(
-                    message=run_messages.user_message.get_content_string(), user_id=user_id, agent_id=self.id
+                    message=run_messages.user_message.get_content_string(),
+                    user_id=user_id,
+                    agent_id=self.id,
                 )
             )
 
@@ -4627,7 +4754,8 @@ class Agent:
         if tasks:
             if self.stream_intermediate_steps:
                 yield self._handle_event(
-                    create_memory_update_started_event(from_run_response=run_response), run_response
+                    create_memory_update_started_event(from_run_response=run_response),
+                    run_response,
                 )
 
             # Execute all tasks concurrently and handle any errors
@@ -4638,7 +4766,8 @@ class Agent:
 
             if self.stream_intermediate_steps:
                 yield self._handle_event(
-                    create_memory_update_completed_event(from_run_response=run_response), run_response
+                    create_memory_update_completed_event(from_run_response=run_response),
+                    run_response,
                 )
 
     def _raise_if_async_tools(self) -> None:
@@ -4688,7 +4817,15 @@ class Agent:
 
             # If any of the tools has "agent" as parameter, set _rebuild_tools to True
             for tool in agent_tools:
-                param_names = {"agent", "session_state", "team", "images", "videos", "audios", "files"}
+                param_names = {
+                    "agent",
+                    "session_state",
+                    "team",
+                    "images",
+                    "videos",
+                    "audios",
+                    "files",
+                }
 
                 if isinstance(tool, Function):
                     if param_names & set(tool.parameters):
@@ -4748,13 +4885,17 @@ class Agent:
                 if self.enable_agentic_knowledge_filters:
                     agent_tools.append(
                         self._search_knowledge_base_with_agentic_filters_function(
-                            run_response=run_response, async_mode=async_mode, knowledge_filters=knowledge_filters
+                            run_response=run_response,
+                            async_mode=async_mode,
+                            knowledge_filters=knowledge_filters,
                         )
                     )
                 else:
                     agent_tools.append(
                         self._get_search_knowledge_base_function(
-                            run_response=run_response, async_mode=async_mode, knowledge_filters=knowledge_filters
+                            run_response=run_response,
+                            async_mode=async_mode,
+                            knowledge_filters=knowledge_filters,
                         )
                     )
                 self._rebuild_tools = True
@@ -4842,13 +4983,17 @@ class Agent:
                 if self.enable_agentic_knowledge_filters:
                     agent_tools.append(
                         self._search_knowledge_base_with_agentic_filters_function(
-                            run_response=run_response, async_mode=async_mode, knowledge_filters=knowledge_filters
+                            run_response=run_response,
+                            async_mode=async_mode,
+                            knowledge_filters=knowledge_filters,
                         )
                     )
                 else:
                     agent_tools.append(
                         self._get_search_knowledge_base_function(
-                            run_response=run_response, async_mode=async_mode, knowledge_filters=knowledge_filters
+                            run_response=run_response,
+                            async_mode=async_mode,
+                            knowledge_filters=knowledge_filters,
                         )
                     )
                 self._rebuild_tools = True
@@ -5672,7 +5817,10 @@ class Agent:
         self.save_session(session=session)  # type: ignore
 
     def set_session_name(
-        self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
+        self,
+        session_id: Optional[str] = None,
+        autogenerate: bool = False,
+        session_name: Optional[str] = None,
     ) -> AgentSession:
         """Set the session name and save to storage"""
         session_id = session_id or self.session_id
@@ -5996,7 +6144,14 @@ class Agent:
             location = get_location()
             if location:
                 location_str = ", ".join(
-                    filter(None, [location.get("city"), location.get("region"), location.get("country")])
+                    filter(
+                        None,
+                        [
+                            location.get("city"),
+                            location.get("region"),
+                            location.get("country"),
+                        ],
+                    )
                 )
                 if location_str:
                     additional_information.append(f"Your approximate location is: {location_str}.")
@@ -6011,7 +6166,8 @@ class Agent:
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
-                    dedent(f"""
+                    dedent(
+                        f"""
                     The knowledge base contains documents with these metadata filters: {valid_filters_str}.
                     Always use filters when the user query indicates specific metadata.
 
@@ -6027,7 +6183,8 @@ class Agent:
                     - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
 
                     You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
-                """)
+                """
+                    )
                 )
 
         # 3.3 Build the default system message for the Agent.
@@ -6308,7 +6465,14 @@ class Agent:
             location = get_location()
             if location:
                 location_str = ", ".join(
-                    filter(None, [location.get("city"), location.get("region"), location.get("country")])
+                    filter(
+                        None,
+                        [
+                            location.get("city"),
+                            location.get("region"),
+                            location.get("country"),
+                        ],
+                    )
                 )
                 if location_str:
                     additional_information.append(f"Your approximate location is: {location_str}.")
@@ -6323,7 +6487,8 @@ class Agent:
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
-                    dedent(f"""
+                    dedent(
+                        f"""
                     The knowledge base contains documents with these metadata filters: {valid_filters_str}.
                     Always use filters when the user query indicates specific metadata.
 
@@ -6339,7 +6504,8 @@ class Agent:
                     - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
 
                     You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
-                """)
+                """
+                    )
                 )
 
         # 3.3 Build the default system message for the Agent.
@@ -7106,7 +7272,9 @@ class Agent:
         return run_messages
 
     def _get_messages_for_parser_model(
-        self, model_response: ModelResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+        self,
+        model_response: ModelResponse,
+        response_format: Optional[Union[Dict, Type[BaseModel]]],
     ) -> List[Message]:
         """Get the messages for the parser model."""
         system_content = (
@@ -7124,7 +7292,9 @@ class Agent:
         ]
 
     def _get_messages_for_parser_model_stream(
-        self, run_response: RunOutput, response_format: Optional[Union[Dict, Type[BaseModel]]]
+        self,
+        run_response: RunOutput,
+        response_format: Optional[Union[Dict, Type[BaseModel]]],
     ) -> List[Message]:
         """Get the messages for the parser model."""
         system_content = (
@@ -7160,7 +7330,11 @@ class Agent:
         return messages
 
     def get_relevant_docs_from_knowledge(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
+        self,
+        query: str,
+        num_documents: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant docs from the knowledge base to answer a query.
 
@@ -7235,7 +7409,11 @@ class Agent:
             raise e
 
     async def aget_relevant_docs_from_knowledge(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
+        self,
+        query: str,
+        num_documents: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.knowledge.document import Document
@@ -7570,7 +7748,10 @@ class Agent:
     def _reason(self, run_response: RunOutput, run_messages: RunMessages) -> Iterator[RunOutputEvent]:
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
-            yield self._handle_event(create_reasoning_started_event(from_run_response=run_response), run_response)
+            yield self._handle_event(
+                create_reasoning_started_event(from_run_response=run_response),
+                run_response,
+            )
 
         use_default_reasoning = False
 
@@ -7631,56 +7812,64 @@ class Agent:
 
                     log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
                     reasoning_message = get_deepseek_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_groq:
                     from agno.reasoning.groq import get_groq_reasoning
 
                     log_debug("Starting Groq Reasoning", center=True, symbol="=")
                     reasoning_message = get_groq_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_openai:
                     from agno.reasoning.openai import get_openai_reasoning
 
                     log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
                     reasoning_message = get_openai_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_ollama:
                     from agno.reasoning.ollama import get_ollama_reasoning
 
                     log_debug("Starting Ollama Reasoning", center=True, symbol="=")
                     reasoning_message = get_ollama_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_ai_foundry:
                     from agno.reasoning.azure_ai_foundry import get_ai_foundry_reasoning
 
                     log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
                     reasoning_message = get_ai_foundry_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_gemini:
                     from agno.reasoning.gemini import get_gemini_reasoning
 
                     log_debug("Starting Gemini Reasoning", center=True, symbol="=")
                     reasoning_message = get_gemini_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_anthropic:
                     from agno.reasoning.anthropic import get_anthropic_reasoning
 
                     log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
                     reasoning_message = get_anthropic_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_vertexai:
                     from agno.reasoning.vertexai import get_vertexai_reasoning
 
                     log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
                     reasoning_message = get_vertexai_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
 
                 if reasoning_message is None:
@@ -7713,7 +7902,10 @@ class Agent:
 
         if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
-            from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
+            from agno.reasoning.helpers import (
+                get_next_action,
+                update_messages_with_reasoning,
+            )
 
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
@@ -7779,7 +7971,8 @@ class Agent:
                     if self.stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
-                                run_response=run_response, reasoning_step=reasoning_step
+                                run_response=run_response,
+                                reasoning_step=reasoning_step,
                             )
 
                             yield self._handle_event(
@@ -7838,7 +8031,10 @@ class Agent:
     async def _areason(self, run_response: RunOutput, run_messages: RunMessages) -> Any:
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
-            yield self._handle_event(create_reasoning_started_event(from_run_response=run_response), run_response)
+            yield self._handle_event(
+                create_reasoning_started_event(from_run_response=run_response),
+                run_response,
+            )
 
         use_default_reasoning = False
 
@@ -7899,56 +8095,64 @@ class Agent:
 
                     log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
                     reasoning_message = await aget_deepseek_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_groq:
                     from agno.reasoning.groq import aget_groq_reasoning
 
                     log_debug("Starting Groq Reasoning", center=True, symbol="=")
                     reasoning_message = await aget_groq_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_openai:
                     from agno.reasoning.openai import aget_openai_reasoning
 
                     log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
                     reasoning_message = await aget_openai_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_ollama:
                     from agno.reasoning.ollama import get_ollama_reasoning
 
                     log_debug("Starting Ollama Reasoning", center=True, symbol="=")
                     reasoning_message = get_ollama_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_ai_foundry:
                     from agno.reasoning.azure_ai_foundry import get_ai_foundry_reasoning
 
                     log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
                     reasoning_message = get_ai_foundry_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_gemini:
                     from agno.reasoning.gemini import aget_gemini_reasoning
 
                     log_debug("Starting Gemini Reasoning", center=True, symbol="=")
                     reasoning_message = await aget_gemini_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_anthropic:
                     from agno.reasoning.anthropic import aget_anthropic_reasoning
 
                     log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
                     reasoning_message = await aget_anthropic_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
                 elif is_vertexai:
                     from agno.reasoning.vertexai import aget_vertexai_reasoning
 
                     log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
                     reasoning_message = await aget_vertexai_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
                     )
 
                 if reasoning_message is None:
@@ -7981,7 +8185,10 @@ class Agent:
 
         if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
-            from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
+            from agno.reasoning.helpers import (
+                get_next_action,
+                update_messages_with_reasoning,
+            )
 
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
@@ -8047,7 +8254,8 @@ class Agent:
                     if self.stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
-                                run_response=run_response, reasoning_step=reasoning_step
+                                run_response=run_response,
+                                reasoning_step=reasoning_step,
                             )
 
                             # Yield the response with the updated reasoning_content
@@ -8137,7 +8345,10 @@ class Agent:
                 response_format=parser_response_format,
             )
             self._process_parser_response(
-                model_response, run_messages, parser_model_response, messages_for_parser_model
+                model_response,
+                run_messages,
+                parser_model_response,
+                messages_for_parser_model,
             )
         else:
             log_warning("A response model is required to parse the response with a parser model")
@@ -8157,19 +8368,28 @@ class Agent:
                 response_format=parser_response_format,
             )
             self._process_parser_response(
-                model_response, run_messages, parser_model_response, messages_for_parser_model
+                model_response,
+                run_messages,
+                parser_model_response,
+                messages_for_parser_model,
             )
         else:
             log_warning("A response model is required to parse the response with a parser model")
 
     def _parse_response_with_parser_model_stream(
-        self, session: AgentSession, run_response: RunOutput, stream_intermediate_steps: bool = True
+        self,
+        session: AgentSession,
+        run_response: RunOutput,
+        stream_intermediate_steps: bool = True,
     ):
         """Parse the model response using the parser model"""
         if self.parser_model is not None:
             if self.output_schema is not None:
                 if stream_intermediate_steps:
-                    yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
+                    yield self._handle_event(
+                        create_parser_model_response_started_event(run_response),
+                        run_response,
+                    )
 
                 parser_model_response = ModelResponse(content="")
                 parser_response_format = self._get_response_format(self.parser_model)
@@ -8202,19 +8422,28 @@ class Agent:
                     log_warning("Unable to parse response with parser model")
 
                 if stream_intermediate_steps:
-                    yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
+                    yield self._handle_event(
+                        create_parser_model_response_completed_event(run_response),
+                        run_response,
+                    )
 
             else:
                 log_warning("A response model is required to parse the response with a parser model")
 
     async def _aparse_response_with_parser_model_stream(
-        self, session: AgentSession, run_response: RunOutput, stream_intermediate_steps: bool = True
+        self,
+        session: AgentSession,
+        run_response: RunOutput,
+        stream_intermediate_steps: bool = True,
     ):
         """Parse the model response using the parser model stream."""
         if self.parser_model is not None:
             if self.output_schema is not None:
                 if stream_intermediate_steps:
-                    yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
+                    yield self._handle_event(
+                        create_parser_model_response_started_event(run_response),
+                        run_response,
+                    )
 
                 parser_model_response = ModelResponse(content="")
                 parser_response_format = self._get_response_format(self.parser_model)
@@ -8249,7 +8478,10 @@ class Agent:
                     log_warning("Unable to parse response with parser model")
 
                 if stream_intermediate_steps:
-                    yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
+                    yield self._handle_event(
+                        create_parser_model_response_completed_event(run_response),
+                        run_response,
+                    )
             else:
                 log_warning("A response model is required to parse the response with a parser model")
 
@@ -8429,7 +8661,10 @@ class Agent:
         else:
             update_cultural_knowledge_function = update_cultural_knowledge  # type: ignore
 
-        return Function.from_callable(update_cultural_knowledge_function, name="create_or_update_cultural_knowledge")
+        return Function.from_callable(
+            update_cultural_knowledge_function,
+            name="create_or_update_cultural_knowledge",
+        )
 
     def _get_chat_history_function(self, session: AgentSession) -> Callable:
         def get_chat_history(num_chats: Optional[int] = None) -> str:
@@ -8506,7 +8741,10 @@ class Agent:
         return f"Updated session state: {session_state}"
 
     def _get_search_knowledge_base_function(
-        self, run_response: RunOutput, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
+        self,
+        run_response: RunOutput,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        async_mode: bool = False,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -8526,7 +8764,9 @@ class Agent:
             docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
-                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                    query=query,
+                    references=docs_from_knowledge,
+                    time=round(retrieval_timer.elapsed, 4),
                 )
                 # Add the references to the run_response
                 if run_response.references is None:
@@ -8555,7 +8795,9 @@ class Agent:
             docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
-                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                    query=query,
+                    references=docs_from_knowledge,
+                    time=round(retrieval_timer.elapsed, 4),
                 )
                 if run_response.references is None:
                     run_response.references = []
@@ -8575,7 +8817,10 @@ class Agent:
         return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")
 
     def _search_knowledge_base_with_agentic_filters_function(
-        self, run_response: RunOutput, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
+        self,
+        run_response: RunOutput,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        async_mode: bool = False,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -8598,7 +8843,9 @@ class Agent:
             docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
-                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                    query=query,
+                    references=docs_from_knowledge,
+                    time=round(retrieval_timer.elapsed, 4),
                 )
                 # Add the references to the run_response
                 if run_response.references is None:
@@ -8631,7 +8878,9 @@ class Agent:
             docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
-                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                    query=query,
+                    references=docs_from_knowledge,
+                    time=round(retrieval_timer.elapsed, 4),
                 )
                 if run_response.references is None:
                     run_response.references = []
@@ -8648,7 +8897,10 @@ class Agent:
         else:
             search_knowledge_base_function = search_knowledge_base  # type: ignore
 
-        return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base_with_agentic_filters")
+        return Function.from_callable(
+            search_knowledge_base_function,
+            name="search_knowledge_base_with_agentic_filters",
+        )
 
     def add_to_knowledge(self, query: str, result: str) -> str:
         """Use this function to add information to the knowledge base for future use.
@@ -8703,7 +8955,9 @@ class Agent:
             self.db = cast(BaseDb, self.db)
 
             selected_sessions = self.db.get_sessions(
-                session_type=SessionType.AGENT, limit=num_history_sessions, user_id=user_id
+                session_type=SessionType.AGENT,
+                limit=num_history_sessions,
+                user_id=user_id,
             )
 
             all_messages = []
@@ -9312,7 +9566,12 @@ class Agent:
 
         if input:
             self.print_response(
-                input=input, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+                input=input,
+                stream=stream,
+                markdown=markdown,
+                user_id=user_id,
+                session_id=session_id,
+                **kwargs,
             )
 
         _exit_on = exit_on or ["exit", "quit", "bye"]
@@ -9322,7 +9581,12 @@ class Agent:
                 break
 
             self.print_response(
-                input=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+                input=message,
+                stream=stream,
+                markdown=markdown,
+                user_id=user_id,
+                session_id=session_id,
+                **kwargs,
             )
 
     async def acli_app(
@@ -9345,7 +9609,12 @@ class Agent:
 
         if input:
             await self.aprint_response(
-                input=input, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+                input=input,
+                stream=stream,
+                markdown=markdown,
+                user_id=user_id,
+                session_id=session_id,
+                **kwargs,
             )
 
         _exit_on = exit_on or ["exit", "quit", "bye"]
@@ -9355,7 +9624,12 @@ class Agent:
                 break
 
             await self.aprint_response(
-                input=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+                input=message,
+                stream=stream,
+                markdown=markdown,
+                user_id=user_id,
+                session_id=session_id,
+                **kwargs,
             )
 
     ###########################################################################
@@ -9392,7 +9666,11 @@ class Agent:
 
         try:
             create_agent_run(
-                run=AgentRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
+                run=AgentRunCreate(
+                    session_id=session_id,
+                    run_id=run_id,
+                    data=self._get_telemetry_data(),
+                ),
             )
         except Exception as e:
             log_debug(f"Could not create Agent run telemetry event: {e}")
@@ -9408,7 +9686,11 @@ class Agent:
 
         try:
             await acreate_agent_run(
-                run=AgentRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
+                run=AgentRunCreate(
+                    session_id=session_id,
+                    run_id=run_id,
+                    data=self._get_telemetry_data(),
+                )
             )
 
         except Exception as e:
