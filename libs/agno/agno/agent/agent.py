@@ -5833,19 +5833,19 @@ class Agent:
 
         return await self.memory_manager.aget_user_memories(user_id=user_id)
 
-    def get_culture_notions(self) -> Optional[List[CulturalKnowledge]]:
+    def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
         """Get the cultural notions the agent has access to"""
         if self.culture_manager is None:
             return None
 
-        return self.culture_manager.get_all_notions()
+        return self.culture_manager.get_all_knowledge()
 
-    async def aget_culture_notions(self) -> Optional[List[CulturalKnowledge]]:
+    async def aget_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
         """Get the cultural notions the agent has access to"""
         if self.culture_manager is None:
             return None
 
-        return await self.culture_manager.aget_all_notions()
+        return await self.culture_manager.aget_all_knowledge()
 
     def _format_message_with_state_variables(
         self,

@@ -45,11 +45,11 @@ migration_batch_size = 5000
 # For Postgres:
 #
 
-db = PostgresDb(
-    db_url=db_url,
-    session_table=v2_sessions_table_name,
-    memory_table=v2_memories_table_name,
-)
+# db = PostgresDb(
+#     db_url=db_url,
+#     session_table=v2_sessions_table_name,
+#     memory_table=v2_memories_table_name,
+# )
 
 # For MySQL:
 #
