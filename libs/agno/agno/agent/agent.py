@@ -6288,7 +6288,7 @@ class Agent:
             if cultural_knowledge and len(cultural_knowledge) > 0:
                 system_message_content += (
                     "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
-                    "for your reasoning, communication, and decision-making.\n\n"
+                    "for your reasoning, communication, and decision-making. "
                     "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
                     "emerged across agents and teams. It encodes collective experience — including preferred "
                     "approaches, common patterns, lessons learned, and ethical guardrails.\n\n"
@@ -6302,9 +6302,11 @@ class Agent:
                     "collective intelligence of the system.\n\n"
                     "Below is the currently available Cultural Knowledge for this context:\n\n"
                 )
-                system_message_content += "<cultural_knowledge>\n"
+                system_message_content += "<cultural_knowledge>"
                 for _knowledge in cultural_knowledge:  # type: ignore
-                    system_message_content += f"\n- {_knowledge.content}"  # Use content over summary for full context
+                    system_message_content += f"\n- {_knowledge.id}"
+                    system_message_content += f"\n- {_knowledge.name}: {_knowledge.summary}"
+                    system_message_content += f"\n- {_knowledge.content}"
                 system_message_content += "\n</cultural_knowledge>\n\n"
             else:
                 system_message_content += (

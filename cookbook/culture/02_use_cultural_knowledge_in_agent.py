@@ -30,7 +30,7 @@ agent = Agent(
     # This flag will add the cultural knowledge to the agent's context
     add_culture_to_context=True,
     # This flag will enable the agent to add or update cultural knowledge automatically
-    enable_agent_culture=True,
+    enable_agentic_culture=True,
     # This flag will run the CultureManager after every run
     # update_cultural_knowledge=True,
     model=Claude(id="claude-sonnet-4-5"),
@@ -43,5 +43,7 @@ agent = Agent(
 #   "Start technical explanations with code examples and then reasoning"
 # The Agent will apply that here, starting with a concrete FastAPI example.
 agent.print_response(
-    "Create a short tutorial on how to set up a FastAPI service using Docker. "
+    "Create a short tutorial on how to set up a FastAPI service using Docker. ",
+    stream=True,
+    markdown=True,
 )
