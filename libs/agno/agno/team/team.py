@@ -2431,7 +2431,7 @@ class Team:
         )
 
         self.model = cast(Model, self.model)
-        
+
         if self.metadata is not None:
             if metadata is None:
                 metadata = self.metadata
