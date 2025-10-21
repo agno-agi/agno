@@ -547,12 +547,11 @@ class AgentOS:
         def _add_knowledge_if_not_duplicate(knowledge: "Knowledge") -> None:
             """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
             # Use database ID if available, otherwise use object ID as fallback
-            key = knowledge.contents_db.id if knowledge.contents_db else id(knowledge)
-
-            if key in seen_ids:
+            if not knowledge.contents_db:
                 return
-
-            seen_ids.add(key)
+            if knowledge.contents_db.id in seen_ids:
+                return
+            seen_ids.add(knowledge.contents_db.id)
             knowledge_instances.append(knowledge)
 
         for agent in self.agents or []:
