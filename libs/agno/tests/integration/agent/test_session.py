@@ -7,6 +7,18 @@ from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
 
 
+def add_item(session_state: Dict[str, Any], item: str) -> str:
+    """Add an item to the shopping list (sync version)."""
+    session_state["shopping_list"].append(item)
+    return f"The shopping list is now {session_state['shopping_list']}"
+
+
+async def async_add_item(session_state: Dict[str, Any], item: str) -> str:
+    """Add an item to the shopping list (async version)."""
+    session_state["shopping_list"].append(item)
+    return f"The shopping list is now {session_state['shopping_list']}"
+
+
 def chat_agent_factory(shared_db, session_id: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None):
     """Create an agent with storage and memory for testing."""
     return Agent(
@@ -107,12 +119,6 @@ def test_agent_session_state_switch_session_id(shared_db):
 
 
 def test_agent_with_state_on_agent(shared_db):
-    # Define a tool that increments our counter and returns the new value
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
-        """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
-
     # Create an Agent that maintains state
     agent = Agent(
         db=shared_db,
@@ -132,12 +138,6 @@ def test_agent_with_state_on_agent(shared_db):
 
 
 def test_agent_with_state_on_agent_stream(shared_db):
-    # Define a tool that increments our counter and returns the new value
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
-        """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
-
     # Create an Agent that maintains state
     agent = Agent(
         db=shared_db,
@@ -167,12 +167,6 @@ def test_agent_with_state_on_agent_stream(shared_db):
 
 
 def test_agent_with_state_on_run(shared_db):
-    # Define a tool that increments our counter and returns the new value
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
-        """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
-
     # Create an Agent that maintains state
     agent = Agent(
         db=shared_db,
@@ -197,12 +191,6 @@ def test_agent_with_state_on_run(shared_db):
 
 
 def test_agent_with_state_on_run_stream(shared_db):
-    # Define a tool that increments our counter and returns the new value
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
-        """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
-
     # Create an Agent that maintains state
     agent = Agent(
         db=shared_db,
@@ -233,16 +221,10 @@ def test_agent_with_state_on_run_stream(shared_db):
 
 
 async def test_agent_with_state_on_run_async(shared_db):
-    # Define a tool that increments our counter and returns the new value
-    async def add_item(session_state: Dict[str, Any], item: str) -> str:
-        """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
-
     # Create an Agent that maintains state
     agent = Agent(
         db=shared_db,
-        tools=[add_item],
+        tools=[async_add_item],
         instructions="Current state (shopping list) is: {shopping_list}",
         markdown=True,
     )
@@ -263,16 +245,10 @@ async def test_agent_with_state_on_run_async(shared_db):
 
 
 async def test_agent_with_state_on_run_stream_async(shared_db):
-    # Define a tool that increments our counter and returns the new value
-    async def add_item(session_state: Dict[str, Any], item: str) -> str:
-        """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
-
     # Create an Agent that maintains state
     agent = Agent(
         db=shared_db,
-        tools=[add_item],
+        tools=[async_add_item],
         instructions="Current state (shopping list) is: {shopping_list}",
         markdown=True,
     )
@@ -317,13 +293,6 @@ def test_add_session_state_to_context(shared_db):
 
 def test_session_state_in_run_output(shared_db):
     """Test that RunOutput contains the updated session_state in non-streaming mode."""
-
-    # Tool to update the session_state
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
-        """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
-
     session_id = str(uuid.uuid4())
     model = OpenAIChat(id="gpt-4o-mini")
     agent = Agent(
@@ -374,7 +343,7 @@ def test_session_state_in_run_output(shared_db):
         # but with mocked LLM API responses
         response = agent.run("Add apples to my shopping list")
 
-    # Verify RunOutput has session_state field (structure test)
+    # Verify RunOutput has session_state field
     assert response.session_state is not None, "RunOutput should have session_state"
     assert isinstance(response.session_state, dict), "session_state should be a dict"
     assert "shopping_list" in response.session_state, "shopping_list key should be present"
@@ -387,13 +356,6 @@ def test_session_state_in_run_output(shared_db):
 
 def test_session_state_in_run_completed_event_stream(shared_db):
     """Test that RunCompletedEvent contains session_state in streaming mode."""
-
-    # Reuse the existing shopping list pattern
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
-        """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
-
     session_id = str(uuid.uuid4())
     model = OpenAIChat(id="gpt-4o-mini")
     agent = Agent(
@@ -461,13 +423,6 @@ def test_session_state_in_run_completed_event_stream(shared_db):
 
 async def test_session_state_in_run_output_async(shared_db):
     """Test that RunOutput contains session_state in async non-streaming mode."""
-
-    # Reuse the existing shopping list pattern with async tool
-    async def add_item(session_state: Dict[str, Any], item: str) -> str:
-        """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
-
     session_id = str(uuid.uuid4())
     model = OpenAIChat(id="gpt-4o-mini")
     agent = Agent(
@@ -475,7 +430,7 @@ async def test_session_state_in_run_output_async(shared_db):
         db=shared_db,
         session_id=session_id,
         session_state={"shopping_list": []},
-        tools=[add_item],
+        tools=[async_add_item],
         markdown=True,
     )
 
@@ -516,7 +471,7 @@ async def test_session_state_in_run_output_async(shared_db):
     with patch.object(client.chat.completions, "create", side_effect=[mock_completion, mock_completion_final]):
         response = await agent.arun("Add apples to my shopping list")
 
-    # Verify RunOutput has session_state field (structure test)
+    # Verify RunOutput has session_state
     assert response.session_state is not None, "RunOutput should have session_state"
     assert isinstance(response.session_state, dict), "session_state should be a dict"
     assert "shopping_list" in response.session_state, "shopping_list key should be present"
@@ -529,13 +484,6 @@ async def test_session_state_in_run_output_async(shared_db):
 
 async def test_session_state_in_run_completed_event_stream_async(shared_db):
     """Test that RunCompletedEvent contains session_state in async streaming mode."""
-
-    # Reuse the existing shopping list pattern with async tool
-    async def add_item(session_state: Dict[str, Any], item: str) -> str:
-        """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
-
     session_id = str(uuid.uuid4())
     model = OpenAIChat(id="gpt-4o-mini")
     agent = Agent(
@@ -543,7 +491,7 @@ async def test_session_state_in_run_completed_event_stream_async(shared_db):
         db=shared_db,
         session_id=session_id,
         session_state={"shopping_list": ["bananas"]},
-        tools=[add_item],
+        tools=[async_add_item],
         markdown=True,
     )
 
