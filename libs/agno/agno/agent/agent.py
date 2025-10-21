@@ -704,7 +704,9 @@ class Agent:
                 self.culture_manager.db = self.db
 
         if self.add_culture_to_context is None:
-            self.add_culture_to_context = self.enable_agentic_culture or self.culture_manager is not None
+            self.add_culture_to_context = (
+                self.enable_agentic_culture or self.update_cultural_knowledge or self.culture_manager is not None
+            )
 
     def _set_memory_manager(self) -> None:
         if self.db is None:
@@ -746,7 +748,12 @@ class Agent:
         self.set_id()
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
-        if self.update_cultural_knowledge or self.enable_agentic_culture or self.culture_manager is not None:
+        if (
+            self.add_culture_to_context
+            or self.update_cultural_knowledge
+            or self.enable_agentic_culture
+            or self.culture_manager is not None
+        ):
             self._set_culture_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
@@ -4646,7 +4653,7 @@ class Agent:
                     log_warning("Unable to add messages to memory")
 
             # Create cultural knowledge
-            if user_message_str is not None and self.culture_manager is not None and not self.enable_agentic_culture:
+            if user_message_str is not None and self.culture_manager is not None and self.update_cultural_knowledge:
                 log_debug("Creating cultural knowledge.")
                 futures.append(
                     executor.submit(
@@ -4738,7 +4745,7 @@ class Agent:
         if (
             run_messages.user_message is not None
             and self.culture_manager is not None
-            and not self.enable_agentic_culture
+            and self.update_cultural_knowledge
         ):
             log_debug("Creating cultural knowledge.")
 
@@ -6277,7 +6284,7 @@ class Agent:
                 )
 
         # 3.3.10 Then add cultural knowledge to the system prompt
-        if self.enable_agentic_culture or self.culture_manager:
+        if self.add_culture_to_context:
             _culture_manager_not_set = None
             if not self.culture_manager:
                 self._set_culture_manager()
@@ -6304,10 +6311,11 @@ class Agent:
                 )
                 system_message_content += "<cultural_knowledge>"
                 for _knowledge in cultural_knowledge:  # type: ignore
-                    system_message_content += f"\n- {_knowledge.id}"
-                    system_message_content += f"\n- {_knowledge.name}: {_knowledge.summary}"
-                    system_message_content += f"\n- {_knowledge.content}"
-                system_message_content += "\n</cultural_knowledge>\n\n"
+                    system_message_content += "\n---"
+                    system_message_content += f"\nName: {_knowledge.name}"
+                    system_message_content += f"\nSummary: {_knowledge.summary}"
+                    system_message_content += f"\nContent: {_knowledge.content}"
+                system_message_content += "\n</cultural_knowledge>\n"
             else:
                 system_message_content += (
                     "You have the capability to access shared **Cultural Knowledge**, which normally provides "
@@ -6323,7 +6331,7 @@ class Agent:
             if self.enable_agentic_culture:
                 system_message_content += (
                     "\n<contributing_to_culture>\n"
-                    "You can use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared culture.\n"
+                    "When you discover an insight, pattern, rule, or best practice that will help future agents, use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared cultural knowledge.\n"
                     "\n"
                     "When to contribute:\n"
                     "- You discover a reusable insight, pattern, rule, or best practice that will help future agents.\n"
@@ -6620,7 +6628,7 @@ class Agent:
                 )
 
         # 3.3.10 Then add cultural knowledge to the system prompt
-        if self.enable_agentic_culture or self.culture_manager:
+        if self.add_culture_to_context:
             _culture_manager_not_set = None
             if not self.culture_manager:
                 self._set_culture_manager()
@@ -6645,10 +6653,13 @@ class Agent:
                     "collective intelligence of the system.\n\n"
                     "Below is the currently available Cultural Knowledge for this context:\n\n"
                 )
-                system_message_content += "<cultural_knowledge>\n"
+                system_message_content += "<cultural_knowledge>"
                 for _knowledge in cultural_knowledge:  # type: ignore
-                    system_message_content += f"\n- {_knowledge.content}"  # Use content over summary for full context
-                system_message_content += "\n</cultural_knowledge>\n\n"
+                    system_message_content += "\n---"
+                    system_message_content += f"\nName: {_knowledge.name}"
+                    system_message_content += f"\nSummary: {_knowledge.summary}"
+                    system_message_content += f"\nContent: {_knowledge.content}"
+                system_message_content += "\n</cultural_knowledge>\n"
             else:
                 system_message_content += (
                     "You have the capability to access shared **Cultural Knowledge**, which normally provides "
@@ -6664,7 +6675,7 @@ class Agent:
             if self.enable_agentic_culture:
                 system_message_content += (
                     "\n<contributing_to_culture>\n"
-                    "You can use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared culture.\n"
+                    "When you discover an insight, pattern, rule, or best practice that will help future agents, use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared cultural knowledge.\n"
                     "\n"
                     "When to contribute:\n"
                     "- You discover a reusable insight, pattern, rule, or best practice that will help future agents.\n"

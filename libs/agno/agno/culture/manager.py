@@ -349,7 +349,7 @@ class CultureManager:
             Cultural knowledge should capture shared knowledge, insights, and practices that can improve performance across agents:
             - Best practices and successful approaches discovered in previous interactions
             - Common patterns in user behavior, team workflows, or recurring issues
-            - Organizational processes, design principles, or rules of operation
+            - Processes, design principles, or rules of operation
             - Guardrails, decision rationales, or ethical guidelines
             - Domain-specific lessons that generalize beyond one case
             - Communication styles or collaboration methods that lead to better outcomes
@@ -359,7 +359,7 @@ class CultureManager:
 
         system_prompt_lines: List[str] = [
             "You are the **Cultural Knowledge Manager**, responsible for maintaining, evolving, and safeguarding "
-            "the shared cultural knowledge of the organization. "
+            "the shared cultural knowledge for Agents and Multi-Agent Teams. "
             "You will be provided with criteria for cultural knowledge to capture in the <knowledge_to_capture> section, "
             "and the existing cultural knowledge in the <existing_knowledge> section.",
             "",
@@ -403,7 +403,7 @@ class CultureManager:
             "- Mark uncertain insights as `confidence=low`.",
             "",
             "## Tool usage",
-            "You can call multiple tools in a single response. Use them only when valuable organizational knowledge emerges.",
+            "You can call multiple tools in a single response. Use them only when valuable cultural knowledge emerges.",
         ]
 
         # Tool permissions (based on flags)
@@ -430,7 +430,7 @@ class CultureManager:
         system_prompt_lines += [
             "",
             "## When no changes are needed",
-            "If no valuable organizational knowledge emerges, or everything is already captured, respond with exactly:",
+            "If no valuable cultural knowledge emerges, or everything is already captured, respond with exactly:",
             "`No changes needed`",
         ]
 

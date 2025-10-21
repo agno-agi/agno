@@ -1,13 +1,12 @@
 """
 Use cultural knowledge with your Agents.
 
-This example demonstrates how an Agent automatically reads and applies
+This example demonstrates how an Agent reads and applies
 the cultural knowledge created earlier (see `01_create_cultural_knowledge.py`).
 
-When `enable_agent_culture=True`, the Agent:
-- Loads relevant cultural knowledge from the database.
-- Applies shared norms, rules, and best practices during reasoning.
-- May add or update cultural knowledge based on new insights.
+When `add_culture_to_context=True`, the Agent:
+- Loads relevant cultural knowledge from the database
+- Adds it to the context with instructions on how to use it.
 """
 
 from agno.agent import Agent
@@ -15,9 +14,8 @@ from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 
 # ---------------------------------------------------------------------------
-# Step 1. Initialize the database with existing cultural knowledge
+# Step 1. Initialize the database (same one used in 01_create_cultural_knowledge.py)
 # ---------------------------------------------------------------------------
-# The same SQLite file used in `01_create_cultural_knowledge.py`
 db = SqliteDb(db_file="tmp/demo.db")
 
 # ---------------------------------------------------------------------------
@@ -29,12 +27,13 @@ agent = Agent(
     db=db,
     # This flag will add the cultural knowledge to the agent's context
     add_culture_to_context=True,
-    # This flag will enable the agent to add or update cultural knowledge automatically
-    enable_agentic_culture=True,
-    # This flag will run the CultureManager after every run
+    # This flag will update cultural knowledge after every run
     # update_cultural_knowledge=True,
     model=Claude(id="claude-sonnet-4-5"),
 )
+
+# (Optional) Quick A/B switch to show the difference without culture:
+# agent_no_culture = Agent(model=Claude(id="claude-sonnet-4-5"))
 
 # ---------------------------------------------------------------------------
 # Step 3. Ask the Agent to generate a response that benefits from culture
@@ -42,8 +41,13 @@ agent = Agent(
 # If `01_create_cultural_knowledge.py` added principles like:
 #   "Start technical explanations with code examples and then reasoning"
 # The Agent will apply that here, starting with a concrete FastAPI example.
+print("\n=== With Culture ===\n")
 agent.print_response(
-    "Create a short tutorial on how to set up a FastAPI service using Docker. ",
+    "How do I set up a FastAPI service using Docker? ",
     stream=True,
     markdown=True,
 )
+
+# (Optional) Run without culture for contrast:
+# print("\n=== Without Culture ===\n")
+# agent_no_culture.print_response("How do I set up a FastAPI service using Docker?", stream=True, markdown=True)

@@ -42,10 +42,16 @@ culture_manager = CultureManager(
 # Try to phrase inputs as *reusable truths* or *guiding principles*,
 # not one-off observations.
 message = (
-    "When explaining technical concepts, start with a short, working example "
-    "before diving into details or theory. Developers respond best to concrete, "
-    "runnable snippets they can try immediately. Follow up with reasoning, "
-    "trade-offs, and references. Avoid long intros or abstract definitions."
+    "All technical guidance should follow the 'Operational Thinking' principle:\n"
+    "\n"
+    "1. **State the Objective** — What outcome are we trying to achieve and why.\n"
+    "2. **Show the Procedure** — List clear, reproducible steps (prefer commands or configs).\n"
+    "3. **Surface Pitfalls** — Mention what usually fails and how to detect it early.\n"
+    "4. **Define Validation** — How to confirm it’s working (logs, tests, metrics).\n"
+    "5. **Close the Loop** — Suggest next iterations or improvements.\n"
+    "\n"
+    "Keep answers short, structured, and directly actionable. Avoid general theory unless "
+    "it informs an operational decision."
 )
 
 culture_manager.create_cultural_knowledge(message=message)
