@@ -98,6 +98,8 @@ instructions = dedent(
 
 
 knowledge = Knowledge(
+    name="Agno Assist Knowledge",
+    description="A knowledge base for the Agno Assist agent",
     vector_db=PgVector(
         db_url=db_url,
         table_name="agno_assist_knowledge",
