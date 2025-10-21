@@ -1588,7 +1588,7 @@ class Workflow:
                 # For regular async functions, use the same signature inspection logic in fallback
                 return await func(**call_kwargs)  # type: ignore
 
-    async def _load_or_create_session(
+    async def _aload_or_create_session(
         self, session_id: str, user_id: Optional[str], session_state: Optional[Dict[str, Any]]
     ) -> Tuple[WorkflowSession, Dict[str, Any]]:
         """Load or create session from database, update metadata, and prepare session state.
@@ -1622,7 +1622,7 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         # Read existing session from database
-        workflow_session, session_state = await self._load_or_create_session(
+        workflow_session, session_state = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
@@ -1799,7 +1799,7 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         # Read existing session from database
-        workflow_session, session_state = await self._load_or_create_session(
+        workflow_session, session_state = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
@@ -2095,7 +2095,7 @@ class Workflow:
         )
 
         # Read existing session from database
-        workflow_session, session_state = await self._load_or_create_session(
+        workflow_session, session_state = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
@@ -2194,7 +2194,7 @@ class Workflow:
         )
 
         # Read existing session from database
-        workflow_session, session_state = await self._load_or_create_session(
+        workflow_session, session_state = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
