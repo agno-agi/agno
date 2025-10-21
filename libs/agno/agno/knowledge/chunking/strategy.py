@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 from agno.knowledge.document.base import Document
 
@@ -60,7 +60,13 @@ class ChunkingStrategyFactory:
     """Factory for creating chunking strategy instances."""
 
     @classmethod
-    def create_strategy(cls, strategy_type: ChunkingStrategyType, **kwargs) -> ChunkingStrategy:
+    def create_strategy(
+        cls,
+        strategy_type: ChunkingStrategyType,
+        chunk_size: Optional[int] = None,
+        overlap: Optional[int] = None,
+        **kwargs,
+    ) -> ChunkingStrategy:
         """Create an instance of the chunking strategy with the given parameters."""
         strategy_map = {
             ChunkingStrategyType.AGENTIC_CHUNKER: cls._create_agentic_chunking,
@@ -71,7 +77,7 @@ class ChunkingStrategyFactory:
             ChunkingStrategyType.ROW_CHUNKER: cls._create_row_chunking,
             ChunkingStrategyType.MARKDOWN_CHUNKER: cls._create_markdown_chunking,
         }
-        return strategy_map[strategy_type](**kwargs)
+        return strategy_map[strategy_type](chunk_size=chunk_size, overlap=overlap, **kwargs)
 
     @classmethod
     def _create_agentic_chunking(cls, **kwargs) -> ChunkingStrategy:

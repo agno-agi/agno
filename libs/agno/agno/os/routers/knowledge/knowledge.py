@@ -102,6 +102,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         text_content: Optional[str] = Form(None, description="Raw text content to process"),
         reader_id: Optional[str] = Form(None, description="ID of the reader to use for content processing"),
         chunker: Optional[str] = Form(None, description="Chunking strategy to apply during processing"),
+        chunk_size: Optional[int] = Form(None, description="Chunk size to use for processing"),
+        chunk_overlap: Optional[int] = Form(None, description="Chunk overlap to use for processing"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
     ):
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
@@ -172,7 +174,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         content.content_hash = content_hash
         content.id = generate_id(content_hash)
 
-        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker)
+        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap)
 
         response = ContentResponseSchema(
             id=content.id,
@@ -929,6 +931,8 @@ async def process_content(
     content: Content,
     reader_id: Optional[str] = None,
     chunker: Optional[str] = None,
+    chunk_size: Optional[int] = None,
+    chunk_overlap: Optional[int] = None,
 ):
     """Background task to process the content"""
 
@@ -951,7 +955,7 @@ async def process_content(
                 content.reader = reader
         if chunker and content.reader:
             # Set the chunker name on the reader - let the reader handle it internally
-            content.reader.set_chunking_strategy_from_string(chunker)
+            content.reader.set_chunking_strategy_from_string(chunker, chunk_size=chunk_size, overlap=chunk_overlap)
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
