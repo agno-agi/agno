@@ -4609,8 +4609,13 @@ class Agent:
                 run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
             )
 
-            # Create user memories
-            if user_message_str is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+            # Create user memories (skip if message is empty or None)
+            if (
+                user_message_str is not None
+                and user_message_str.strip() != ""
+                and self.memory_manager is not None
+                and not self.enable_agentic_memory
+            ):
                 log_debug("Creating user memories.")
                 futures.append(
                     executor.submit(
@@ -4640,11 +4645,18 @@ class Agent:
                         log_warning(f"Unsupported message type: {type(_im)}")
                         continue
 
-                if len(parsed_messages) > 0 and self.memory_manager is not None:
+                # Filter out messages with empty content before passing to memory manager
+                non_empty_messages = [
+                    msg
+                    for msg in parsed_messages
+                    if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
+                ]
+
+                if len(non_empty_messages) > 0 and self.memory_manager is not None:
                     futures.append(
                         executor.submit(
                             self.memory_manager.create_user_memories,
-                            messages=parsed_messages,
+                            messages=non_empty_messages,
                             user_id=user_id,
                             agent_id=self.id,
                         )
@@ -4701,13 +4713,21 @@ class Agent:
     ) -> AsyncIterator[RunOutputEvent]:
         tasks: List[Any] = []
 
-        # Create user memories from single message
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        # Create user memories from single message (skip if message is empty or None)
+        user_message_str = (
+            run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+        )
+        if (
+            user_message_str is not None
+            and user_message_str.strip() != ""
+            and self.memory_manager is not None
+            and not self.enable_agentic_memory
+        ):
             log_debug("Creating user memories.")
 
             tasks.append(
                 self.memory_manager.acreate_user_memories(
-                    message=run_messages.user_message.get_content_string(),
+                    message=user_message_str,
                     user_id=user_id,
                     agent_id=self.id,
                 )
@@ -4732,26 +4752,27 @@ class Agent:
                     log_warning(f"Unsupported message type: {type(_im)}")
                     continue
 
-            if len(parsed_messages) > 0:
+            # Filter out messages with empty content before passing to memory manager
+            non_empty_messages = [
+                msg
+                for msg in parsed_messages
+                if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
+            ]
+
+            if len(non_empty_messages) > 0:
                 tasks.append(
                     self.memory_manager.acreate_user_memories(
-                        messages=parsed_messages, user_id=user_id, agent_id=self.id
+                        messages=non_empty_messages, user_id=user_id, agent_id=self.id
                     )
                 )
             else:
-                log_warning("Unable to add messages to memory")
+                log_debug("No non-empty messages to add to memory")
 
         # Create cultural knowledge
-        if (
-            run_messages.user_message is not None
-            and self.culture_manager is not None
-            and self.update_cultural_knowledge
-        ):
+        if user_message_str is not None and self.culture_manager is not None and self.update_cultural_knowledge:
             log_debug("Creating cultural knowledge.")
 
-            tasks.append(
-                self.culture_manager.acreate_cultural_knowledge(message=run_messages.user_message.get_content_string())
-            )
+            tasks.append(self.culture_manager.acreate_cultural_knowledge(message=user_message_str))
 
         # Create session summary
         if self.session_summary_manager is not None:
@@ -6772,12 +6793,12 @@ class Agent:
                 **kwargs,
             )
         # 2. Build the user message for the Agent
-        elif input is None or (isinstance(input, str) and input.strip() == ""):
-            # If we have any media, return a message with a default prompt to analyze the media
+        elif input is None:
+            # If we have any media, return a message with empty content
             if images is not None or audio is not None or videos is not None or files is not None:
                 return Message(
                     role=self.user_message_role or "user",
-                    content="Analyze the provided media.",
+                    content="",
                     images=None if not self.send_media_to_model else images,
                     audio=None if not self.send_media_to_model else audio,
                     videos=None if not self.send_media_to_model else videos,
