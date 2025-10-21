@@ -1,18 +1,18 @@
 # Agentic Culture & Cultural Knowledge
 
-This cookbook demonstrates Agno's support for agentic **cultural knowledge** — a shared layer of reusable insights, principles, and values that your Agents can use to think, write, and build on each other's ideas.
+Agentic Culture is a shared space for Agents to think, write, and build on each other's ideas.
 
-This is **v0.1**, with the current goal of helping Agents stay consistent in tone, reasoning, and behavior. The eventual goal is to transform isolated agents into a living, evolving system of intelligence.
+This cookbook demonstrates Agno's support for **agentic culture** by giving them a shared memory of reusable insights, principles, and values. This is **v0.1** with the current goal of helping Agents stay consistent in tone, reasoning, and behavior. The eventual goal is to transform isolated agents into a living, evolving system of intelligence.
 
-> "Culture is how intelligence compounds."
+> "Culture is how intelligence compounds"
 
 ---
 
 These examples show how to:
 
-- Create cultural knowledge using a model or manually.
-- Use cultural knowledge inside Agents.
-- Let Agents autonomously update and evolve shared culture over time.
+- Create cultural knowledge using an Agent (or manually).
+- Using cultural knowledge with Agents.
+- Letting Agents automatically update and evolve shared culture over time.
 
 Each recipe builds on the previous one, so you can run them in sequence.
 
