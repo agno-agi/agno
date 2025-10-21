@@ -1,8 +1,8 @@
 # Agentic Culture & Cultural Knowledge
 
-Agentic Culture is a shared space for Agents to think, write, and build on each other's ideas.
+Agentic Culture provides a shared space for Agents to think, write, and build on each other's ideas.
 
-This cookbook demonstrates Agno's support for **agentic culture** by giving them a shared memory of reusable insights, principles, and values. This is **v0.1** with the current goal of helping Agents stay consistent in tone, reasoning, and behavior. The eventual goal is to transform isolated agents into a living, evolving system of intelligence.
+This cookbook demonstrates Agno's support for **agentic culture** by giving Agents and Multi-Agent Teams a shared memory of reusable insights, principles, and values. This is **v0.1** with the current goal of helping Agents stay consistent in tone, reasoning, and behavior. The eventual goal is to transform isolated agents into a living, evolving system of intelligence.
 
 > "Culture is how intelligence compounds"
 
