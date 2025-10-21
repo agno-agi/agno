@@ -330,9 +330,9 @@ class Agent:
     # Stream the response from the Agent
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Agent
-    stream_events: bool = False
+    stream_events: Optional[bool] = None
     # [Deprecated] Stream the intermediate steps from the Agent
-    stream_intermediate_steps: bool = False
+    stream_intermediate_steps: Optional[bool] = None
 
     # Persist the events on the run response
     store_events: bool = False
@@ -445,8 +445,8 @@ class Agent:
         use_json_mode: bool = False,
         save_response_to_file: Optional[str] = None,
         stream: Optional[bool] = None,
-        stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
         role: Optional[str] = None,
@@ -560,8 +560,7 @@ class Agent:
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
-        self.stream_events = stream_events
-        self.stream_intermediate_steps = stream_intermediate_steps
+        self.stream_events = stream_events or stream_intermediate_steps
 
         self.store_events = store_events
         self.role = role
@@ -1367,18 +1366,10 @@ class Agent:
             stream_events = False
 
         if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
+            stream_events = False if self.stream_events is None else self.stream_events
 
         self.stream = self.stream or stream
-        self.stream_events = (
-            self.stream_events
-            or self.stream_intermediate_steps
-            or ((stream_intermediate_steps or stream_events) and self.stream)
-        )
+        self.stream_events = self.stream_events or stream_events
 
         # Prepare arguments for the model
         response_format = self._get_response_format() if self.parser_model is None else None
@@ -2139,18 +2130,10 @@ class Agent:
             stream_events = False
 
         if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
+            stream_events = False if self.stream_events is None else self.stream_events
 
         self.stream = self.stream or stream
-        self.stream_events = bool(
-            self.stream_events
-            or self.stream_intermediate_steps
-            or ((stream_events or stream_intermediate_steps) and self.stream)
-        )
+        self.stream_events = self.stream_events or stream_events
 
         # Prepare arguments for the model
         response_format = self._get_response_format() if self.parser_model is None else None
@@ -2403,22 +2386,14 @@ class Agent:
             stream_events = False
 
         if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
+            stream_events = False if self.stream_events is None else self.stream_events
 
         # Can't stream events if streaming is disabled
         if stream is False:
             stream_events = False
 
         self.stream = self.stream or stream
-        self.stream_events = (
-            self.stream_events
-            or self.stream_intermediate_steps
-            or ((stream_intermediate_steps or stream_events) and self.stream)
-        )
+        self.stream_events = self.stream_events or stream_events
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
@@ -2839,22 +2814,14 @@ class Agent:
             stream_events = False
 
         if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
+            stream_events = False if self.stream_events is None else self.stream_events
 
         # Can't have stream_intermediate_steps if stream is False
         if stream is False:
             stream_events = False
 
         self.stream = self.stream or stream
-        self.stream_events = bool(
-            self.stream_events
-            or self.stream_intermediate_steps
-            or ((stream_events or stream_intermediate_steps) and self.stream)
-        )
+        self.stream_events = self.stream_events or stream_events
 
         # Get knowledge filters
         effective_filters = knowledge_filters
@@ -4559,7 +4526,7 @@ class Agent:
                 )
 
             if futures:
-                if self.stream_events or self.stream_intermediate_steps:
+                if self.stream_events:
                     yield self._handle_event(
                         create_memory_update_started_event(from_run_response=run_response), run_response
                     )
@@ -4571,7 +4538,7 @@ class Agent:
                     except Exception as e:
                         log_warning(f"Error in memory/summary operation: {str(e)}")
 
-                if self.stream_events or self.stream_intermediate_steps:
+                if self.stream_events:
                     yield self._handle_event(
                         create_memory_update_completed_event(from_run_response=run_response), run_response
                     )
@@ -4633,7 +4600,7 @@ class Agent:
             )
 
         if tasks:
-            if self.stream_events or self.stream_intermediate_steps:
+            if self.stream_events:
                 yield self._handle_event(
                     create_memory_update_started_event(from_run_response=run_response), run_response
                 )
@@ -4644,7 +4611,7 @@ class Agent:
             except Exception as e:
                 log_warning(f"Error in memory/summary operation: {str(e)}")
 
-            if self.stream_events or self.stream_intermediate_steps:
+            if self.stream_events:
                 yield self._handle_event(
                     create_memory_update_completed_event(from_run_response=run_response), run_response
                 )
@@ -7479,7 +7446,7 @@ class Agent:
 
     def _reason(self, run_response: RunOutput, run_messages: RunMessages) -> Iterator[RunOutputEvent]:
         # Yield a reasoning started event
-        if self.stream_events or self.stream_intermediate_steps:
+        if self.stream_events:
             yield self._handle_event(create_reasoning_started_event(from_run_response=run_response), run_response)
 
         use_default_reasoning = False
@@ -7603,7 +7570,7 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-                if self.stream_intermediate_steps:
+                if self.stream_events:
                     yield self._handle_event(
                         create_reasoning_completed_event(
                             from_run_response=run_response,
@@ -7686,7 +7653,7 @@ class Agent:
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
-                    if self.stream_events or self.stream_intermediate_steps:
+                    if self.stream_events:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
                                 run_response=run_response, reasoning_step=reasoning_step
@@ -7735,7 +7702,7 @@ class Agent:
             )
 
             # Yield the final reasoning completed event
-            if self.stream_events or self.stream_intermediate_steps:
+            if self.stream_events:
                 yield self._handle_event(
                     create_reasoning_completed_event(
                         from_run_response=run_response,
@@ -7747,7 +7714,7 @@ class Agent:
 
     async def _areason(self, run_response: RunOutput, run_messages: RunMessages) -> Any:
         # Yield a reasoning started event
-        if self.stream_events or self.stream_intermediate_steps:
+        if self.stream_events:
             yield self._handle_event(create_reasoning_started_event(from_run_response=run_response), run_response)
 
         use_default_reasoning = False
@@ -7871,7 +7838,7 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-                if self.stream_events or self.stream_intermediate_steps:
+                if self.stream_events:
                     yield self._handle_event(
                         create_reasoning_completed_event(
                             from_run_response=run_response,
@@ -7954,7 +7921,7 @@ class Agent:
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
-                    if self.stream_events or self.stream_intermediate_steps:
+                    if self.stream_events:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
                                 run_response=run_response, reasoning_step=reasoning_step
@@ -8003,7 +7970,7 @@ class Agent:
             )
 
             # Yield the final reasoning completed event
-            if self.stream_events or self.stream_intermediate_steps:
+            if self.stream_events:
                 yield self._handle_event(
                     create_reasoning_completed_event(
                         from_run_response=run_response,
@@ -8751,11 +8718,7 @@ class Agent:
             stream_events = False
 
         if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
+            stream_events = False if self.stream_events is None else self.stream_events
 
         if stream:
             print_response_stream(
@@ -8863,11 +8826,7 @@ class Agent:
             stream_events = False
 
         if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
+            stream_events = False if self.stream_events is None else self.stream_events
 
         if stream:
             await aprint_response_stream(

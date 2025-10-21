@@ -50,7 +50,7 @@ async def run_team(task: str):
     await team_leader.aprint_response(
         task,
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
         show_full_reasoning=True,
     )
 

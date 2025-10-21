@@ -115,7 +115,7 @@ def test_tool_use_with_structured_output_stream():
     response_stream = agent.run(
         "Research the latest trends in machine learning on the internet and provide a summary",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     responses = []
@@ -172,7 +172,7 @@ async def test_async_tool_use_with_structured_output_stream():
     final_content = None
 
     async for event in agent.arun(
-        "Research web development trends using available data", stream=True, stream_intermediate_steps=True
+        "Research web development trends using available data", stream=True, stream_events=True
     ):
         responses.append(event)
 

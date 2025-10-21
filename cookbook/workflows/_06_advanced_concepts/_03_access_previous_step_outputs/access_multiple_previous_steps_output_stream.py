@@ -65,7 +65,7 @@ def create_comprehensive_report(step_input: StepInput) -> StepOutput:
         ## HackerNews Insights
         {hackernews_data[:500]}...
 
-        ## Web Research Findings  
+        ## Web Research Findings
         {web_data[:500]}...
     """
 
@@ -102,5 +102,5 @@ if __name__ == "__main__":
     workflow.print_response(
         "Latest developments in artificial intelligence and machine learning",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )

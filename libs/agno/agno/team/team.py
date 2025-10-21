@@ -343,9 +343,9 @@ class Team:
     # Stream the response from the Team
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Agent
-    stream_events: bool = False
+    stream_events: Optional[bool] = None
     # [Deprecated] Stream the intermediate steps from the Agent
-    stream_intermediate_steps: bool = False
+    stream_intermediate_steps: Optional[bool] = None
     # Stream the member events from the Team
     stream_member_events: bool = True
 
@@ -458,8 +458,8 @@ class Team:
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
         stream: Optional[bool] = None,
-        stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         store_events: bool = False,
         events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
         store_member_responses: bool = False,
@@ -574,8 +574,7 @@ class Team:
         self.reasoning_max_steps = reasoning_max_steps
 
         self.stream = stream
-        self.stream_events = stream_events
-        self.stream_intermediate_steps = stream_intermediate_steps
+        self.stream_events = stream_events or stream_intermediate_steps
         self.store_events = store_events
         self.store_member_responses = store_member_responses
 
@@ -1671,18 +1670,10 @@ class Team:
             stream_events = False
 
         if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
+            stream_events = False if self.stream_events is None else self.stream_events
 
         self.stream = self.stream or stream
-        self.stream_events = bool(
-            self.stream_events
-            or self.stream_intermediate_steps
-            or ((stream_events or stream_intermediate_steps) and self.stream)
-        )
+        self.stream_events = self.stream_events or stream_events
 
         # Configure the model for runs
         response_format: Optional[Union[Dict, Type[BaseModel]]] = (
@@ -2437,18 +2428,10 @@ class Team:
             stream_events = False
 
         if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
+            stream_events = False if self.stream_events is None else self.stream_events
 
         self.stream = self.stream or stream
-        self.stream_events = bool(
-            self.stream_events
-            or self.stream_intermediate_steps
-            or ((stream_events or stream_intermediate_steps) and self.stream)
-        )
+        self.stream_events = self.stream_events or stream_events
 
         # Configure the model for runs
         response_format: Optional[Union[Dict, Type[BaseModel]]] = (
@@ -3149,7 +3132,7 @@ class Team:
                 )
 
             if futures:
-                if self.stream_intermediate_steps:
+                if self.stream_events:
                     yield self._handle_event(
                         create_team_memory_update_started_event(from_run_response=run_response), run_response
                     )
@@ -3161,7 +3144,7 @@ class Team:
                     except Exception as e:
                         log_warning(f"Error in memory/summary operation: {str(e)}")
 
-                if self.stream_intermediate_steps:
+                if self.stream_events:
                     yield self._handle_event(
                         create_team_memory_update_completed_event(from_run_response=run_response),
                         run_response,
@@ -3188,7 +3171,7 @@ class Team:
             tasks.append(self.session_summary_manager.acreate_session_summary(session=session))
 
         if tasks:
-            if self.stream_intermediate_steps:
+            if self.stream_events:
                 yield self._handle_event(
                     create_team_memory_update_started_event(from_run_response=run_response), run_response
                 )
@@ -3199,7 +3182,7 @@ class Team:
             except Exception as e:
                 log_warning(f"Error in memory/summary operation: {str(e)}")
 
-            if self.stream_intermediate_steps:
+            if self.stream_events:
                 yield self._handle_event(
                     create_team_memory_update_completed_event(from_run_response=run_response), run_response
                 )
@@ -3581,11 +3564,7 @@ class Team:
             stream_events = False
 
         if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
+            stream_events = False if self.stream_events is None else self.stream_events
 
         if stream:
             print_response_stream(
@@ -3690,11 +3669,7 @@ class Team:
             stream_events = False
 
         if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
+            stream_events = False if self.stream_events is None else self.stream_events
 
         if stream:
             await aprint_response_stream(
@@ -4119,7 +4094,7 @@ class Team:
         run_response: TeamRunOutput,
         run_messages: RunMessages,
     ) -> Iterator[TeamRunOutputEvent]:
-        if self.stream_events or self.stream_intermediate_steps:
+        if self.stream_events:
             yield self._handle_event(create_team_reasoning_started_event(from_run_response=run_response), run_response)
 
         use_default_reasoning = False
@@ -4241,7 +4216,7 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-                if self.stream_events or self.stream_intermediate_steps:
+                if self.stream_events:
                     yield self._handle_event(
                         create_team_reasoning_completed_event(
                             from_run_response=run_response,
@@ -4326,7 +4301,7 @@ class Team:
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
-                    if self.stream_events or self.stream_intermediate_steps:
+                    if self.stream_events:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
                                 run_response, reasoning_step
@@ -4374,7 +4349,7 @@ class Team:
             )
 
             # Yield the final reasoning completed event
-            if self.stream_events or self.stream_intermediate_steps:
+            if self.stream_events:
                 yield self._handle_event(
                     create_team_reasoning_completed_event(
                         from_run_response=run_response,
@@ -4389,7 +4364,7 @@ class Team:
         run_response: TeamRunOutput,
         run_messages: RunMessages,
     ) -> AsyncIterator[TeamRunOutputEvent]:
-        if self.stream_events or self.stream_intermediate_steps:
+        if self.stream_events:
             yield self._handle_event(create_team_reasoning_started_event(from_run_response=run_response), run_response)
 
         use_default_reasoning = False
@@ -4510,7 +4485,7 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-                if self.stream_events or self.stream_intermediate_steps:
+                if self.stream_events:
                     yield self._handle_event(
                         create_team_reasoning_completed_event(
                             from_run_response=run_response,
@@ -4594,7 +4569,7 @@ class Team:
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
-                    if self.stream_events or self.stream_intermediate_steps:
+                    if self.stream_events:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
                                 run_response, reasoning_step
@@ -4642,7 +4617,7 @@ class Team:
             )
 
             # Yield the final reasoning completed event
-            if self.stream_events or self.stream_intermediate_steps:
+            if self.stream_events:
                 yield self._handle_event(
                     create_team_reasoning_completed_event(
                         from_run_response=run_response,
@@ -4928,7 +4903,7 @@ class Team:
                 input=user_message,
                 user_id=user_id,
                 stream=self.stream or False,
-                stream_events=self.stream_events or self.stream_intermediate_steps,
+                stream_events=self.stream_events,
                 async_mode=async_mode,
                 images=images,  # type: ignore
                 videos=videos,  # type: ignore

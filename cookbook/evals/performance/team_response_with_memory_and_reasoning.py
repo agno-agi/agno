@@ -1001,7 +1001,7 @@ weather_agent = Agent(
     add_history_to_context=True,
     read_tool_call_history=False,
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 
 activities_agent = Agent(
@@ -1015,7 +1015,7 @@ activities_agent = Agent(
     add_history_to_context=True,
     read_tool_call_history=False,
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 
 team = Team(
@@ -1031,7 +1031,7 @@ team = Team(
     add_history_to_context=True,
     read_team_history=False,
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 
 
