@@ -320,17 +320,19 @@ def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKn
     # Extract content, categories, and notes from the JSON content field
     content_json = db_row.get("content", {}) or {}
 
-    return CulturalKnowledge.from_dict({
-        "id": db_row.get("id"),
-        "name": db_row.get("name"),
-        "summary": db_row.get("summary"),
-        "content": content_json.get("content"),
-        "categories": content_json.get("categories"),
-        "notes": content_json.get("notes"),
-        "metadata": db_row.get("metadata"),
-        "input": db_row.get("input"),
-        "created_at": db_row.get("created_at"),
-        "updated_at": db_row.get("updated_at"),
-        "agent_id": db_row.get("agent_id"),
-        "team_id": db_row.get("team_id"),
-    })
+    return CulturalKnowledge.from_dict(
+        {
+            "id": db_row.get("id"),
+            "name": db_row.get("name"),
+            "summary": db_row.get("summary"),
+            "content": content_json.get("content"),
+            "categories": content_json.get("categories"),
+            "notes": content_json.get("notes"),
+            "metadata": db_row.get("metadata"),
+            "input": db_row.get("input"),
+            "created_at": db_row.get("created_at"),
+            "updated_at": db_row.get("updated_at"),
+            "agent_id": db_row.get("agent_id"),
+            "team_id": db_row.get("team_id"),
+        }
+    )
