@@ -98,6 +98,21 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
+CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False, "index": True},
+    "summary": {"type": String, "nullable": True},
+    "content": {"type": String, "nullable": True},
+    "categories": {"type": JSON, "nullable": True},
+    "notes": {"type": JSON, "nullable": True},
+    "metadata": {"type": JSON, "nullable": True},
+    "input": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "agent_id": {"type": String, "nullable": True},
+    "team_id": {"type": String, "nullable": True},
+}
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -115,6 +130,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
+        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

@@ -6,6 +6,7 @@ from typing import List, Literal, Optional, Sequence
 from surrealdb import RecordID
 
 from agno.db.base import SessionType
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -16,6 +17,7 @@ from agno.session.workflow import WorkflowSession
 
 TableType = Literal[
     "agents",
+    "culture",
     "evals",
     "knowledge",
     "memories",
@@ -204,6 +206,26 @@ def serialize_knowledge_row(knowledge_row: KnowledgeRow, knowledge_table_name: s
     return dict_
 
 
+def deserialize_cultural_knowledge(cultural_knowledge_raw: dict) -> CulturalKnowledge:
+    copy = cultural_knowledge_raw.copy()
+
+    copy = deserialize_record_id(copy, "id")
+    copy = desurrealize_dates(copy)
+
+    return CulturalKnowledge.model_validate(copy)
+
+
+def serialize_cultural_knowledge(cultural_knowledge: CulturalKnowledge, culture_table_name: str) -> dict:
+    dict_ = cultural_knowledge.model_dump()
+    if cultural_knowledge.id is not None:
+        dict_["id"] = RecordID(culture_table_name, cultural_knowledge.id)
+
+    # surrealize dates
+    dict_ = surrealize_dates(dict_)
+
+    return dict_
+
+
 def desurrealize_eval_run_record(eval_run_record_raw: dict) -> dict:
     copy = eval_run_record_raw.copy()
 
@@ -244,6 +266,12 @@ def get_schema(table_type: TableType, table_name: str) -> str:
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     elif table_type == "knowledge":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            """)
+    elif table_type == "culture":
         return dedent(f"""
             {define_table}
             DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();

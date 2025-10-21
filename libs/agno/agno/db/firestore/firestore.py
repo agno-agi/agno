@@ -13,6 +13,7 @@ from agno.db.firestore.utils import (
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -39,6 +40,7 @@ class FirestoreDb(BaseDb):
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
+        culture_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -52,6 +54,7 @@ class FirestoreDb(BaseDb):
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
+            culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -68,6 +71,7 @@ class FirestoreDb(BaseDb):
             metrics_table=metrics_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
+            culture_table=culture_collection,
         )
 
         _client: Optional[Client] = db_client
@@ -145,6 +149,17 @@ class FirestoreDb(BaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.knowledge_collection
+
+        if table_type == "culture":
+            if not hasattr(self, "culture_collection"):
+                if self.culture_table_name is None:
+                    raise ValueError("Culture collection was not provided on initialization")
+                self.culture_collection = self._get_or_create_collection(
+                    collection_name=self.culture_table_name,
+                    collection_type="culture",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.culture_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -1006,6 +1021,199 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception deleting all memories: {e}")
+            raise e
+
+    # -- Cultural Knowledge methods --
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture")
+
+            # Get all documents in the collection
+            docs = collection_ref.stream()
+
+            # Delete all documents in batches
+            batch = self.db_client.batch()
+            batch_count = 0
+
+            for doc in docs:
+                batch.delete(doc.reference)
+                batch_count += 1
+
+                # Firestore batch has a limit of 500 operations
+                if batch_count >= 500:
+                    batch.commit()
+                    batch = self.db_client.batch()
+                    batch_count = 0
+
+            # Commit remaining operations
+            if batch_count > 0:
+                batch.commit()
+
+        except Exception as e:
+            log_error(f"Exception deleting all cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture")
+            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
+
+            for doc in docs:
+                doc.reference.delete()
+                log_debug(f"Deleted cultural knowledge with ID: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting cultural knowledge: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture")
+            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).limit(1).stream()
+
+            for doc in docs:
+                result = doc.to_dict()
+                if not deserialize:
+                    return result
+                return CulturalKnowledge.model_validate(result)
+
+            return None
+
+        except Exception as e:
+            log_error(f"Error getting cultural knowledge: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge with filtering and pagination.
+
+        Args:
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture")
+
+            # Build query with filters
+            query = collection_ref
+            if agent_id is not None:
+                query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
+            if team_id is not None:
+                query = query.where(filter=FieldFilter("team_id", "==", team_id))
+
+            # Get all matching documents
+            docs = query.stream()
+            results = [doc.to_dict() for doc in docs]
+
+            # Apply name filter (Firestore doesn't support regex in queries)
+            if name is not None:
+                results = [r for r in results if name.lower() in r.get("name", "").lower()]
+
+            total_count = len(results)
+
+            # Apply sorting
+            sorted_results = apply_sorting(records=results, sort_by=sort_by, sort_order=sort_order)
+
+            # Apply pagination
+            paginated_results = apply_pagination(records=sorted_results, limit=limit, page=page)
+
+            if not deserialize:
+                return paginated_results, total_count
+
+            return [CulturalKnowledge.model_validate(item) for item in paginated_results]
+
+        except Exception as e:
+            log_error(f"Error getting all cultural knowledge: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert cultural knowledge in Firestore.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture", create_collection_if_not_found=True)
+            update_doc = cultural_knowledge.model_dump()
+
+            # Find and update or create new document
+            docs = collection_ref.where(filter=FieldFilter("id", "==", cultural_knowledge.id)).limit(1).stream()
+
+            doc_found = False
+            for doc in docs:
+                doc.reference.set(update_doc)
+                doc_found = True
+                break
+
+            if not doc_found:
+                collection_ref.add(update_doc)
+
+            if not deserialize:
+                return update_doc
+
+            return CulturalKnowledge.model_validate(update_doc)
+
+        except Exception as e:
+            log_error(f"Error upserting cultural knowledge: {e}")
             raise e
 
     # -- Metrics methods --

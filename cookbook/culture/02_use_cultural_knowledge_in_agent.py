@@ -18,18 +18,19 @@ from agno.models.anthropic import Claude
 # ---------------------------------------------------------------------------
 db = SqliteDb(db_file="tmp/demo.db")
 
+
 # ---------------------------------------------------------------------------
 # Step 2. Initialize the Agent with cultural knowledge enabled
 # ---------------------------------------------------------------------------
 # The Agent will automatically load shared cultural knowledge (e.g., how to
 # format responses, how to write tutorials, or tone/style preferences).
 agent = Agent(
-    db=db,
-    # This flag will add the cultural knowledge to the agent's context
-    add_culture_to_context=True,
-    # This flag will update cultural knowledge after every run
-    # update_cultural_knowledge=True,
     model=Claude(id="claude-sonnet-4-5"),
+    db=db,
+    # This flag will add the cultural knowledge to the agent's context:
+    add_culture_to_context=True,
+    # This flag will update cultural knowledge after every run:
+    # update_cultural_knowledge=True,
 )
 
 # (Optional) Quick A/B switch to show the difference without culture:
