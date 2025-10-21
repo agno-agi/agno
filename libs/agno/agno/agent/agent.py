@@ -3261,16 +3261,6 @@ class Agent:
         # 2. Read existing session from db
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
 
-        # 2. Process model response
-        async for event in self._ahandle_model_response_stream(
-            session=session,
-            run_response=run_response,
-            run_messages=run_messages,
-            response_format=response_format,
-            stream_intermediate_steps=stream_intermediate_steps,
-            session_state=run_response.session_state,
-        ):
-            yield event
         # 3. Update session state and metadata
         self._update_metadata(session=agent_session)
         if session_state is not None:
