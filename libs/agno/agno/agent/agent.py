@@ -6401,12 +6401,12 @@ class Agent:
                 **kwargs,
             )
         # 2. Build the user message for the Agent
-        elif input is None:
-            # If we have any media, return a message with empty content
+        elif input is None or (isinstance(input, str) and input.strip() == ""):
+            # If we have any media, return a message with a default prompt to analyze the media
             if images is not None or audio is not None or videos is not None or files is not None:
                 return Message(
                     role=self.user_message_role or "user",
-                    content="",
+                    content="Analyze the provided media.",
                     images=None if not self.send_media_to_model else images,
                     audio=None if not self.send_media_to_model else audio,
                     videos=None if not self.send_media_to_model else videos,
