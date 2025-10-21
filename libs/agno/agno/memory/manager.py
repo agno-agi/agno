@@ -12,7 +12,13 @@ from agno.db.schemas import UserMemory
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_warning, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import (
+    log_debug,
+    log_error,
+    log_warning,
+    set_log_level_to_debug,
+    set_log_level_to_info,
+)
 from agno.utils.prompts import get_json_output_prompt
 from agno.utils.string import parse_response_model_str
 
@@ -21,7 +27,8 @@ class MemorySearchResponse(BaseModel):
     """Model for Memory Search Response."""
 
     memory_ids: List[str] = Field(
-        ..., description="The IDs of the memories that are most semantically similar to the query."
+        ...,
+        description="The IDs of the memories that are most semantically similar to the query.",
     )
 
 
@@ -32,11 +39,11 @@ class MemoryManager:
     # Model used for memory management
     model: Optional[Model] = None
 
-    # Provide the system message for the manager as a string. If not provided, a default prompt will be used.
+    # Provide the system message for the manager as a string. If not provided, the default system message will be used.
     system_message: Optional[str] = None
-    # Provide the memory capture instructions for the manager as a string. If not provided, a default prompt will be used.
+    # Provide the memory capture instructions for the manager as a string. If not provided, the default memory capture instructions will be used.
     memory_capture_instructions: Optional[str] = None
-    # Additional instructions for the manager. These instructions are appended to the default system prompt.
+    # Additional instructions for the manager. These instructions are appended to the default system message.
     additional_instructions: Optional[str] = None
 
     # Whether memories were created in the last run
@@ -731,14 +738,16 @@ class MemoryManager:
         if self.system_message is not None:
             return Message(role="system", content=self.system_message)
 
-        memory_capture_instructions = self.memory_capture_instructions or dedent("""\
+        memory_capture_instructions = self.memory_capture_instructions or dedent(
+            """\
             Memories should capture personal information about the user that is relevant to the current conversation, such as:
             - Personal facts: name, age, occupation, location, interests, and preferences
             - Opinions and preferences: what the user likes, dislikes, enjoys, or finds frustrating
             - Significant life events or experiences shared by the user
             - Important context about the user's current situation, challenges, or goals
             - Any other details that offer meaningful insight into the user's personality, perspective, or needs
-        """)
+        """
+        )
 
         # -*- Return a system message for the memory manager
         system_prompt_lines = [
@@ -852,7 +861,9 @@ class MemoryManager:
 
         # Generate a response from the Model (includes running function calls)
         response = model_copy.response(
-            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+            messages=messages_for_model,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -928,7 +939,9 @@ class MemoryManager:
 
         # Generate a response from the Model (includes running function calls)
         response = await model_copy.aresponse(
-            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+            messages=messages_for_model,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -983,7 +996,9 @@ class MemoryManager:
 
         # Generate a response from the Model (includes running function calls)
         response = model_copy.response(
-            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+            messages=messages_for_model,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -1051,7 +1066,9 @@ class MemoryManager:
 
         # Generate a response from the Model (includes running function calls)
         response = await model_copy.aresponse(
-            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+            messages=messages_for_model,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
