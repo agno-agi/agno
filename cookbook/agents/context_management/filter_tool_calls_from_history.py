@@ -1,10 +1,10 @@
 """
-This example demonstrates max_tool_calls_in_context to limit tool calls sent to the model.
+This example demonstrates max_tool_calls_from_history to limit tool calls sent to the model.
 
 How it works:
 1. Database stores ALL runs (no limit)
 2. num_history_runs loads last N runs from database (default: 3)
-3. max_tool_calls_in_context filters loaded history to keep only M most recent tool calls
+3. max_tool_calls_from_history filters loaded history to keep only M most recent tool calls
 
 Flow: Database → Load History → Filter Tool Calls → Send to Model
 
@@ -39,7 +39,7 @@ agent = Agent(
     tools=[get_weather_for_city],
     instructions="You are a weather assistant. Get the weather using the get_weather_for_city tool.",
     # Only keep 3 most recent tool calls from history in context (reduces token costs)
-    max_tool_calls_in_context=3,
+    max_tool_calls_from_history=3,
     db=SqliteDb(db_file="tmp/weather_data.db"),
     add_history_to_context=True,
     markdown=True,
@@ -58,7 +58,7 @@ cities = [
 ]
 
 print("\n" + "=" * 90)
-print("Tool Call Filtering Demo: max_tool_calls_in_context=3")
+print("Tool Call Filtering Demo: max_tool_calls_from_history=3")
 print("=" * 90)
 print(
     f"{'Run':<5} | {'City':<15} | {'History':<8} | {'Current':<8} | {'In Context':<11} | {'In DB':<8}"

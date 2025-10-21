@@ -6,7 +6,7 @@ from agno.models.openai import OpenAIChat
 
 @pytest.fixture
 def agent(shared_db):
-    """Create an agent with db and max_tool_calls_in_context for testing."""
+    """Create an agent with db and max_tool_calls_from_history for testing."""
 
     def get_weather(city: str) -> str:
         return f"The weather in {city} is sunny."
@@ -17,7 +17,7 @@ def agent(shared_db):
         db=shared_db,
         instructions="Get the weather for the requested city. Use the get_weather tool.",
         add_history_to_context=True,
-        max_tool_calls_in_context=1,
+        max_tool_calls_from_history=1,
     )
 
 
@@ -80,7 +80,7 @@ def test_tool_calls_in_db(agent):
 
 
 def test_no_filtering(shared_db):
-    """Test that max_tool_calls_in_context=None keeps all tool calls."""
+    """Test that max_tool_calls_from_history=None keeps all tool calls."""
 
     def get_weather(city: str) -> str:
         return f"The weather in {city} is sunny."

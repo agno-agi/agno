@@ -187,7 +187,7 @@ class Agent:
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
     # Maximum number of tool calls to include from history (None = no limit)
-    max_tool_calls_in_context: Optional[int] = None
+    max_tool_calls_from_history: Optional[int] = None
 
     # --- Knowledge ---
     knowledge: Optional[Knowledge] = None
@@ -402,7 +402,7 @@ class Agent:
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
-        max_tool_calls_in_context: Optional[int] = None,
+        max_tool_calls_from_history: Optional[int] = None,
         store_media: bool = True,
         store_tool_messages: bool = True,
         store_history_messages: bool = True,
@@ -503,7 +503,7 @@ class Agent:
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
-        self.max_tool_calls_in_context = max_tool_calls_in_context
+        self.max_tool_calls_from_history = max_tool_calls_from_history
 
         if add_history_to_context and not db:
             log_warning(
@@ -7018,8 +7018,8 @@ class Agent:
                     _msg.from_history = True
 
                 # Filter tool calls from history if limit is set (before adding to run_messages)
-                if self.max_tool_calls_in_context is not None:
-                    filter_tool_calls(history_copy, self.max_tool_calls_in_context)
+                if self.max_tool_calls_from_history is not None:
+                    filter_tool_calls(history_copy, self.max_tool_calls_from_history)
 
                 log_debug(f"Adding {len(history_copy)} messages from history")
 
@@ -7215,8 +7215,8 @@ class Agent:
                     _msg.from_history = True
 
                 # Filter tool calls from history if limit is set (before adding to run_messages)
-                if self.max_tool_calls_in_context is not None:
-                    filter_tool_calls(history_copy, self.max_tool_calls_in_context)
+                if self.max_tool_calls_from_history is not None:
+                    filter_tool_calls(history_copy, self.max_tool_calls_from_history)
 
                 log_debug(f"Adding {len(history_copy)} messages from history")
 
