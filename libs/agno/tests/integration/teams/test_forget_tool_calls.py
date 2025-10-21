@@ -7,7 +7,7 @@ from agno.team import Team
 
 @pytest.fixture
 def team_with_max_tool_calls(shared_db):
-    """Create a team with max_history_tool_calls=2."""
+    """Create a team with max_tool_calls_from_history=2."""
 
     def search_web(query: str) -> str:
         return f"Search results for: {query}"
@@ -29,13 +29,13 @@ def team_with_max_tool_calls(shared_db):
         tools=[search_web],  # Team has its own tools
         db=shared_db,
         add_history_to_context=True,
-        max_history_tool_calls=2,  # Keep only last 2 tool calls
+        max_tool_calls_from_history=2,  # Keep only last 2 tool calls
         debug_mode=False,
     )
 
 
 def test_team_max_tool_calls_basic(team_with_max_tool_calls):
-    """Test that max_history_tool_calls works for teams across multiple runs."""
+    """Test that max_tool_calls_from_history works for teams across multiple runs."""
     team = team_with_max_tool_calls
 
     # Run 1: First tool call
@@ -94,7 +94,7 @@ def test_team_max_tool_calls_no_filtering_when_under_limit(shared_db):
         tools=[simple_tool],
         db=shared_db,
         add_history_to_context=True,
-        max_history_tool_calls=5,  # High limit
+        max_tool_calls_from_history=5,  # High limit
         debug_mode=False,
     )
 

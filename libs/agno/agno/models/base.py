@@ -145,26 +145,26 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
-    def _filter_messages(self, messages: List[Message], max_history_tool_calls: int) -> None:
+    def _filter_messages(self, messages: List[Message], max_tool_calls_from_history: int) -> None:
         """
         Filter messages (in-place) to keep only the most recent N tool calls.
 
         Args:
             messages: List of messages
-            max_history_tool_calls: Number of recent tool calls to keep
+            max_tool_calls_from_history: Number of recent tool calls to keep
         """
         # Count total tool calls (not messages) - each tool result = 1 tool call
         tool_call_count = sum(1 for m in messages if m.role == "tool")
 
         # No filtering needed
-        if tool_call_count <= max_history_tool_calls:
+        if tool_call_count <= max_tool_calls_from_history:
             return
 
         # Collect tool_call_ids to keep (most recent N)
         tool_call_ids_list: List[str] = []
         for msg in reversed(messages):
             if msg.role == "tool":
-                if len(tool_call_ids_list) < max_history_tool_calls:
+                if len(tool_call_ids_list) < max_tool_calls_from_history:
                     if msg.tool_call_id:
                         tool_call_ids_list.append(msg.tool_call_id)
 
@@ -264,7 +264,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
-        max_history_tool_calls: Optional[int] = None,
+        max_tool_calls_from_history: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -280,8 +280,8 @@ class Model(ABC):
 
         while True:
             # Apply message filtering before each model call
-            if max_history_tool_calls is not None:
-                self._filter_messages(messages, max_history_tool_calls)
+            if max_tool_calls_from_history is not None:
+                self._filter_messages(messages, max_tool_calls_from_history)
 
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
@@ -417,7 +417,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         send_media_to_model: bool = True,
-        max_history_tool_calls: Optional[int] = None,
+        max_tool_calls_from_history: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -431,9 +431,9 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
-            # Apply message filtering before each API call if max_history_tool_calls is set
-            if max_history_tool_calls is not None:
-                self._filter_messages(messages, max_history_tool_calls)
+            # Apply message filtering before each API call if max_tool_calls_from_history is set
+            if max_tool_calls_from_history is not None:
+                self._filter_messages(messages, max_tool_calls_from_history)
 
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
@@ -665,7 +665,7 @@ class Model(ABC):
             model_response.extra.update(provider_response.extra)
 
     # Generate a unique ID for each tool call if missing. Mostly for Ollama
-    # id is required for max_history_tool_calls feature
+    # id is required for max_tool_calls_from_history feature
     def _ensure_tool_call_ids(self, tool_calls: List[Dict[str, Any]]) -> None:
         """Ensure all tool calls have unique IDs. Generate UUIDs if missing."""
         from uuid import uuid4
@@ -700,7 +700,7 @@ class Model(ABC):
 
         # Add tool calls to assistant message
         if provider_response.tool_calls is not None and len(provider_response.tool_calls) > 0:
-            # Ensure all tool calls have IDs (required for max_history_tool_calls and tool result matching)
+            # Ensure all tool calls have IDs (required for max_tool_calls_from_history and tool result matching)
             self._ensure_tool_call_ids(provider_response.tool_calls)
             assistant_message.tool_calls = provider_response.tool_calls
 
@@ -790,7 +790,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
-        max_history_tool_calls: Optional[int] = None,
+        max_tool_calls_from_history: Optional[int] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -803,9 +803,9 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
-            # Apply message filtering before each API call if max_history_tool_calls is set
-            if max_history_tool_calls is not None:
-                self._filter_messages(messages, max_history_tool_calls)
+            # Apply message filtering before each API call if max_tool_calls_from_history is set
+            if max_tool_calls_from_history is not None:
+                self._filter_messages(messages, max_tool_calls_from_history)
 
             assistant_message = Message(role=self.assistant_message_role)
             # Create assistant message and stream data
@@ -838,7 +838,7 @@ class Model(ABC):
                     assistant_message.audio_output = stream_data.response_audio
                 if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
-                    # Ensure all tool calls have IDs (required for max_history_tool_calls)
+                    # Ensure all tool calls have IDs (required for max_tool_calls_from_history)
                     self._ensure_tool_call_ids(assistant_message.tool_calls)
 
             else:
@@ -965,7 +965,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[RunOutput] = None,
         send_media_to_model: bool = True,
-        max_history_tool_calls: Optional[int] = None,
+        max_tool_calls_from_history: Optional[int] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -978,9 +978,9 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
-            # Apply message filtering before each API call if max_history_tool_calls is set
-            if max_history_tool_calls is not None:
-                self._filter_messages(messages, max_history_tool_calls)
+            # Apply message filtering before each API call if max_tool_calls_from_history is set
+            if max_tool_calls_from_history is not None:
+                self._filter_messages(messages, max_tool_calls_from_history)
 
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
@@ -1012,7 +1012,7 @@ class Model(ABC):
                     assistant_message.audio_output = stream_data.response_audio
                 if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
-                    # Ensure all tool calls have IDs (required for max_history_tool_calls)
+                    # Ensure all tool calls have IDs (required for max_tool_calls_from_history)
                     self._ensure_tool_call_ids(assistant_message.tool_calls)
 
             else:

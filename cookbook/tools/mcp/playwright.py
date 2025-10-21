@@ -25,7 +25,7 @@ async def run_agent(message: str) -> None:
             markdown=True,
             exponential_backoff=True,
             db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
-            max_history_tool_calls=3,  # Keep only the last 3 tool calls in context
+            max_tool_calls_from_history=3,  # Keep only the last 3 tool calls in context
             add_history_to_context=True,
             session_id="playwright_personality_session",
         )

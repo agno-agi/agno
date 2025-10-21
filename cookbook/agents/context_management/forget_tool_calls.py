@@ -1,5 +1,5 @@
 """
-This example shows how to set max_history_tool_calls to forget tool calls with history.
+This example shows how to set max_tool_calls_from_history to forget tool calls with history.
 
 Run 1: 0 history + 1 current = 1 total → saves [1]
 Run 2: 1 history + 1 current = 2 total → saves [1,2]
@@ -28,7 +28,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_weather_for_city],
     instructions="You are a weather assistant. Get the weather using the get_weather_for_city tool.",
-    max_history_tool_calls=3,
+    max_tool_calls_from_history=3,
     db=SqliteDb(db_file="tmp/weather_data.db"),
     add_history_to_context=True,
     markdown=True,

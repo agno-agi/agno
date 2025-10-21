@@ -279,7 +279,7 @@ class Team:
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
     # Maximum number of tool calls to keep in context (for memory management)
-    max_history_tool_calls: Optional[int] = None
+    max_tool_calls_from_history: Optional[int] = None
     # A list of hooks to be called before and after the tool call
     tool_hooks: Optional[List[Callable]] = None
 
@@ -429,7 +429,7 @@ class Team:
         send_media_to_model: bool = True,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
-        max_history_tool_calls: Optional[int] = None,
+        max_tool_calls_from_history: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
@@ -534,7 +534,7 @@ class Team:
         self.tools = tools
         self.tool_choice = tool_choice
         self.tool_call_limit = tool_call_limit
-        self.max_history_tool_calls = max_history_tool_calls
+        self.max_tool_calls_from_history = max_tool_calls_from_history
         self.tool_hooks = tool_hooks
 
         # Initialize hooks with backward compatibility
@@ -1157,9 +1157,9 @@ class Team:
         # Check for cancellation before model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # Log if max_history_tool_calls is set
-        if self.max_history_tool_calls is not None:
-            log_debug(f"Keeping maximum of {self.max_history_tool_calls} tool calls in context")
+        # Log if max_tool_calls_from_history is set
+        if self.max_tool_calls_from_history is not None:
+            log_debug(f"Keeping maximum of {self.max_tool_calls_from_history} tool calls in context")
 
         # 4. Get the model response for the team leader
         self.model = cast(Model, self.model)
@@ -1170,7 +1170,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
-            max_history_tool_calls=self.max_history_tool_calls,
+            max_tool_calls_from_history=self.max_tool_calls_from_history,
             send_media_to_model=self.send_media_to_model,
         )
 
@@ -1357,9 +1357,9 @@ class Team:
             # Check for cancellation before model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # Log if max_history_tool_calls is set
-            if self.max_history_tool_calls is not None:
-                log_debug(f"Keeping maximum of {self.max_history_tool_calls} tool calls in context")
+            # Log if max_tool_calls_from_history is set
+            if self.max_tool_calls_from_history is not None:
+                log_debug(f"Keeping maximum of {self.max_tool_calls_from_history} tool calls in context")
 
             # 4. Get a response from the model
             if self.output_model is None:
@@ -1893,9 +1893,9 @@ class Team:
         # Check for cancellation before model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # Log if max_history_tool_calls is set
-        if self.max_history_tool_calls is not None:
-            log_debug(f"Keeping maximum of {self.max_history_tool_calls} tool calls in context")
+        # Log if max_tool_calls_from_history is set
+        if self.max_tool_calls_from_history is not None:
+            log_debug(f"Keeping maximum of {self.max_tool_calls_from_history} tool calls in context")
 
         # 7. Get the model response for the team leader
         self.model = cast(Model, self.model)
@@ -1905,7 +1905,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
-            max_history_tool_calls=self.max_history_tool_calls,
+            max_tool_calls_from_history=self.max_tool_calls_from_history,
             response_format=response_format,
             send_media_to_model=self.send_media_to_model,
         )  # type: ignore
@@ -2112,9 +2112,9 @@ class Team:
             # Check for cancellation before model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # Log if max_history_tool_calls is set
-            if self.max_history_tool_calls is not None:
-                log_debug(f"Keeping maximum of {self.max_history_tool_calls} tool calls in context")
+            # Log if max_tool_calls_from_history is set
+            if self.max_tool_calls_from_history is not None:
+                log_debug(f"Keeping maximum of {self.max_tool_calls_from_history} tool calls in context")
 
             # 9. Get a response from the model
             if self.output_model is None:
@@ -2601,7 +2601,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
-            max_history_tool_calls=self.max_history_tool_calls,
+            max_tool_calls_from_history=self.max_tool_calls_from_history,
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
         ):
@@ -2682,7 +2682,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
-            max_history_tool_calls=self.max_history_tool_calls,
+            max_tool_calls_from_history=self.max_tool_calls_from_history,
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
         )  # type: ignore
