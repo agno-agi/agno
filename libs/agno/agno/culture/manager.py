@@ -389,7 +389,7 @@ class CultureManager:
             "- `name`: short, specific title (required).",
             "- `summary`: one-line purpose or takeaway.",
             "- `content`: reusable insight, rule, or guideline (required).",
-            "- `categories`: list of tags (e.g., ['agents', 'guardrails']).",
+            "- `categories`: list of tags (e.g., ['agents', 'guardrails', 'rule', 'principle', 'practice', 'pattern', 'doctrine', 'story']).",
             "- `notes`: list of contextual notes, rationale, or examples.",
             "- `metadata`: optional structured info (e.g., source, author, version).",
             "",

@@ -1,5 +1,4 @@
-"""
-Create cultural knowledge to use with your Agents.
+"""Create cultural knowledge to use with your Agents.
 
 This minimal example demonstrates how to use Agno's `CultureManager`
 to create and persist shared cultural knowledge that can be used with your Agents.
