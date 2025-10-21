@@ -2120,7 +2120,7 @@ class Workflow:
                     self.save_session(session=workflow_session)
 
                 if self.agent is not None:
-                    result = await self._aexecute_workflow_agent(
+                    await self._aexecute_workflow_agent(
                         user_input=input,  # type: ignore
                         session=workflow_session,
                         execution_input=inputs,
@@ -2129,9 +2129,6 @@ class Workflow:
                         stream_intermediate_steps=False,
                         **kwargs,
                     )
-                    # Update workflow_run_response with the result
-                    workflow_run_response.content = result.content  # type: ignore
-                    workflow_run_response.status = result.status  # type: ignore
                 else:
                     await self._aexecute(
                         session=workflow_session,
@@ -2207,13 +2204,6 @@ class Workflow:
             status=RunStatus.pending,
         )
 
-        # Store PENDING response immediately
-        workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self.asave_session(session=workflow_session)
-        else:
-            self.save_session(session=workflow_session)
-
         # Prepare execution input
         inputs = WorkflowExecutionInput(
             input=input,
@@ -2229,13 +2219,6 @@ class Workflow:
         async def execute_workflow_background_stream():
             """Background execution with streaming and WebSocket broadcasting"""
             try:
-                # Update status to RUNNING and save
-                workflow_run_response.status = RunStatus.running
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
-
                 if self.agent is not None:
                     result = await self._aexecute_workflow_agent(
                         user_input=input,  # type: ignore
@@ -2254,7 +2237,14 @@ class Workflow:
                     log_debug(
                         f"Background streaming execution (workflow agent) completed with status: {workflow_run_response.status}"
                     )
-                else:
+                else:   
+                    # Update status to RUNNING and save
+                    workflow_run_response.status = RunStatus.running
+                    if self._has_async_db():
+                        await self.asave_session(session=workflow_session)
+                    else:
+                        self.save_session(session=workflow_session)
+
                     # Execute with streaming - consume all events (they're auto-broadcast via _handle_event)
                     async for event in self._aexecute_stream(
                         execution_input=inputs,
