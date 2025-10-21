@@ -132,7 +132,7 @@ async_postgres = ["asyncpg"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
-redis = ["redis"]
+redis = ["redis", "redisvl"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
@@ -439,6 +439,7 @@ module = [
   "qdrant_client.*",
   "rapidocr_onnxruntime.*",
   "redis.*",
+  "redisvl.*",
   "replicate.*",
   "requests.*",
   "scrapegraph_py.*",
