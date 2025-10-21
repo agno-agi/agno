@@ -316,7 +316,7 @@ class CultureManager:
         return response
 
     # -*- Utility Functions -*-
-    def determine_tools_for_model(self, tools: List[Callable]) -> None:
+    def _determine_tools_for_model(self, tools: List[Callable]) -> None:
         # Have to reset each time, because of different user IDs
         self._tools_for_model = []
         self._functions_for_model = {}
@@ -455,7 +455,7 @@ class CultureManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.determine_tools_for_model(
+        self._determine_tools_for_model(
             self._get_db_tools(
                 db,
                 enable_add_knowledge=add_knowledge,
@@ -508,7 +508,7 @@ class CultureManager:
         model_copy = deepcopy(self.model)
         db = cast(AsyncBaseDb, db)
 
-        self.determine_tools_for_model(
+        self._determine_tools_for_model(
             await self._aget_db_tools(
                 db,
                 enable_update_knowledge=update_knowledge,
@@ -559,7 +559,7 @@ class CultureManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.determine_tools_for_model(
+        self._determine_tools_for_model(
             self._get_db_tools(
                 db,
                 enable_delete_knowledge=delete_knowledge,
@@ -615,7 +615,7 @@ class CultureManager:
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
         if isinstance(db, AsyncBaseDb):
-            self.determine_tools_for_model(
+            self._determine_tools_for_model(
                 await self._aget_db_tools(
                     db,
                     enable_delete_knowledge=delete_knowledge,
@@ -625,7 +625,7 @@ class CultureManager:
                 ),
             )
         else:
-            self.determine_tools_for_model(
+            self._determine_tools_for_model(
                 self._get_db_tools(
                     db,
                     enable_delete_knowledge=delete_knowledge,
@@ -718,18 +718,6 @@ class CultureManager:
                 raise ValueError("Culture db not initialized")
             self.db = cast(BaseDb, self.db)
             self.db.upsert_cultural_knowledge(cultural_knowledge=knowledge)
-            return "Cultural knowledge added successfully"
-        except Exception as e:
-            log_warning(f"Error storing cultural knowledge in db: {e}")
-            return f"Error adding cultural knowledge: {e}"
-
-    async def _aupsert_db_knowledge(self, knowledge: CulturalKnowledge) -> str:
-        """Use this function to add a cultural knowledge to the database."""
-        try:
-            if not self.db:
-                raise ValueError("Culture db not initialized")
-            self.db = cast(AsyncBaseDb, self.db)
-            await self.db.upsert_cultural_knowledge(cultural_knowledge=knowledge)
             return "Cultural knowledge added successfully"
         except Exception as e:
             log_warning(f"Error storing cultural knowledge in db: {e}")
