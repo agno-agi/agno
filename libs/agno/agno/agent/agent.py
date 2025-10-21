@@ -351,7 +351,7 @@ class Agent:
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
 
-    # --- Exprimental Settings ---
+    # --- Experimental Features ---
     # --- Agent Culture ---
     # Culture manager to use for this agent
     culture_manager: Optional[CultureManager] = None
