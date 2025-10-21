@@ -558,36 +558,36 @@ class SurrealDb(BaseDb):
         where_clauses: List[WhereClause] = []
         if agent_id is not None:
             agent_rec_id = RecordID(self._get_table("agents"), agent_id)
-            where_clauses.append(("agent", "=", agent_rec_id))
+            where_clauses.append(("agent", "=", agent_rec_id))  # type: ignore
         if team_id is not None:
             team_rec_id = RecordID(self._get_table("teams"), team_id)
-            where_clauses.append(("team", "=", team_rec_id))
+            where_clauses.append(("team", "=", team_rec_id))  # type: ignore
         if name is not None:
-            where_clauses.append(("string::lowercase(name)", "CONTAINS", name.lower()))
+            where_clauses.append(("string::lowercase(name)", "CONTAINS", name.lower()))  # type: ignore
 
         # Build query for total count
         count_query = COUNT_QUERY.format(
             table=table,
             where=""
             if not where_clauses
-            else f"WHERE {' AND '.join(f'{w[0]} {w[1]} ${chr(97 + i)}' for i, w in enumerate(where_clauses))}",
+            else f"WHERE {' AND '.join(f'{w[0]} {w[1]} ${chr(97 + i)}' for i, w in enumerate(where_clauses))}",  # type: ignore
         )
-        params = {chr(97 + i): w[2] for i, w in enumerate(where_clauses)}
+        params = {chr(97 + i): w[2] for i, w in enumerate(where_clauses)}  # type: ignore
         total_count = self._query_one(count_query, params, int) or 0
 
         # Build main query
         order_limit = order_limit_start(sort_by, sort_order, limit, page)
         query = f"SELECT * FROM {table}"
         if where_clauses:
-            query += f" WHERE {' AND '.join(f'{w[0]} {w[1]} ${chr(97 + i)}' for i, w in enumerate(where_clauses))}"
+            query += f" WHERE {' AND '.join(f'{w[0]} {w[1]} ${chr(97 + i)}' for i, w in enumerate(where_clauses))}"  # type: ignore
         query += order_limit
 
         results = self._query(query, params, list) or []
 
         if not deserialize:
-            return results, total_count
+            return results, total_count  # type: ignore
 
-        return [deserialize_cultural_knowledge(r) for r in results]
+        return [deserialize_cultural_knowledge(r) for r in results]  # type: ignore
 
     def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
