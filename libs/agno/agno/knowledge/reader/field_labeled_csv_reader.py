@@ -33,8 +33,6 @@ class FieldLabeledCSVReader(Reader):
         self.format_headers = format_headers
         self.skip_empty_fields = skip_empty_fields
 
-        logger.info(f"FieldLabeledCSVReader initialized - chunk_title: {chunk_title}, field_names: {self.field_names}")
-
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Chunking is not supported - each row is already a logical document unit."""
