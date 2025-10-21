@@ -4665,7 +4665,12 @@ class Agent:
                     log_warning("Unable to add messages to memory")
 
             # Create cultural knowledge
-            if user_message_str is not None and self.culture_manager is not None and self.update_cultural_knowledge:
+            if (
+                user_message_str is not None
+                and user_message_str.strip() != ""
+                and self.culture_manager is not None
+                and self.update_cultural_knowledge
+            ):
                 log_debug("Creating cultural knowledge.")
                 futures.append(
                     executor.submit(
@@ -4769,7 +4774,12 @@ class Agent:
                 log_warning("Unable to add messages to memory")
 
         # Create cultural knowledge
-        if user_message_str is not None and self.culture_manager is not None and self.update_cultural_knowledge:
+        if (
+            user_message_str is not None
+            and user_message_str.strip() != ""
+            and self.culture_manager is not None
+            and self.update_cultural_knowledge
+        ):
             log_debug("Creating cultural knowledge.")
 
             tasks.append(self.culture_manager.acreate_cultural_knowledge(message=user_message_str))
