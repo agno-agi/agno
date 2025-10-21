@@ -20,7 +20,10 @@ from agno.utils.log import (
 
 @dataclass
 class CultureManager:
-    """Culture Manager"""
+    """Culture Manager
+
+    Notice: Culture is an experimental feature and is subject to change.
+    """
 
     # Model used for culture management
     model: Optional[Model] = None

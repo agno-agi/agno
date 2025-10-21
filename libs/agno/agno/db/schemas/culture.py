@@ -7,7 +7,10 @@ from typing_extensions import List
 
 @dataclass
 class CulturalKnowledge:
-    """Model for Cultural Knowledge"""
+    """Model for Cultural Knowledge
+
+    Notice: Culture is an experimental feature and is subject to change.
+    """
 
     # The id of the cultural knowledge, auto-generated if not provided
     id: Optional[str] = None

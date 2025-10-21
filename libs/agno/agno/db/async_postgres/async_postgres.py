@@ -9,10 +9,12 @@ from agno.db.async_postgres.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_schema,
+    deserialize_cultural_knowledge,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
+    serialize_cultural_knowledge,
 )
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.schemas.culture import CulturalKnowledge
@@ -959,10 +961,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if row is None:
                     return None
 
-                if not deserialize:
-                    return dict(row._mapping)
+                db_row = dict(row._mapping)
 
-                return CulturalKnowledge.model_validate(dict(row._mapping))
+                if not deserialize:
+                    return db_row
+
+                return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
             log_warning(f"Exception reading cultural knowledge: {e}")
@@ -1030,10 +1034,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                 result = await sess.execute(stmt)
                 rows = result.fetchall()
 
-                if not deserialize:
-                    return [dict(row._mapping) for row in rows], total_count
+                db_rows = [dict(row._mapping) for row in rows]
 
-                return [CulturalKnowledge.model_validate(dict(row._mapping)) for row in rows]
+                if not deserialize:
+                    return db_rows, total_count
+
+                return [deserialize_cultural_knowledge(row) for row in db_rows]
 
         except Exception as e:
             log_warning(f"Exception reading all cultural knowledge: {e}")
@@ -1056,26 +1062,57 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="culture")
-            cultural_knowledge_dict = cultural_knowledge.model_dump()
-            cultural_knowledge_dict["updated_at"] = int(time.time())
+
+            # Generate ID if not present
+            if cultural_knowledge.id is None:
+                cultural_knowledge.id = str(uuid4())
+
+            # Serialize content, categories, and notes into a JSON dict for DB storage
+            content_dict = serialize_cultural_knowledge(cultural_knowledge)
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Use PostgreSQL-specific insert with on_conflict_do_update
-                insert_stmt = postgresql.insert(table).values(**cultural_knowledge_dict)
-
-                # Update all fields except id on conflict
-                update_dict = {k: v for k, v in cultural_knowledge_dict.items() if k != "id"}
-                upsert_stmt = insert_stmt.on_conflict_do_update(
-                    index_elements=["id"],
-                    set_=update_dict
+                insert_stmt = postgresql.insert(table).values(
+                    id=cultural_knowledge.id,
+                    name=cultural_knowledge.name,
+                    summary=cultural_knowledge.summary,
+                    content=content_dict if content_dict else None,
+                    metadata=cultural_knowledge.metadata,
+                    input=cultural_knowledge.input,
+                    created_at=cultural_knowledge.created_at,
+                    updated_at=int(time.time()),
+                    agent_id=cultural_knowledge.agent_id,
+                    team_id=cultural_knowledge.team_id,
                 )
 
-                await sess.execute(upsert_stmt)
+                # Update all fields except id on conflict
+                update_dict = {
+                    "name": cultural_knowledge.name,
+                    "summary": cultural_knowledge.summary,
+                    "content": content_dict if content_dict else None,
+                    "metadata": cultural_knowledge.metadata,
+                    "input": cultural_knowledge.input,
+                    "updated_at": int(time.time()),
+                    "agent_id": cultural_knowledge.agent_id,
+                    "team_id": cultural_knowledge.team_id,
+                }
+                upsert_stmt = insert_stmt.on_conflict_do_update(index_elements=["id"], set_=update_dict).returning(
+                    table
+                )
+
+                result = await sess.execute(upsert_stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+                db_row = dict(row._mapping)
 
             if not deserialize:
-                return cultural_knowledge_dict
+                return db_row
 
-            return CulturalKnowledge.model_validate(cultural_knowledge_dict)
+            # Deserialize from DB format to model format
+            return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
             log_warning(f"Exception upserting cultural knowledge: {e}")
