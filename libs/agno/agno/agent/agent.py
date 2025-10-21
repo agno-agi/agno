@@ -4766,7 +4766,7 @@ class Agent:
                     )
                 )
             else:
-                log_debug("No non-empty messages to add to memory")
+                log_warning("Unable to add messages to memory")
 
         # Create cultural knowledge
         if user_message_str is not None and self.culture_manager is not None and self.update_cultural_knowledge:
