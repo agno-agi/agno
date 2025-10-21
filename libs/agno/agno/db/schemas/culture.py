@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Optional, Union
+
+from typing_extensions import List
 
 
 @dataclass
@@ -9,12 +11,13 @@ class CulturalKnowledge:
 
     # The id of the cultural knowledge, auto-generated if not provided
     id: Optional[str] = None
-
     name: Optional[str] = None
-    summary: Optional[str] = None
+
     content: Optional[str] = None
     categories: Optional[List[str]] = None
     notes: Optional[List[str]] = None
+
+    summary: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     input: Optional[str] = None
 

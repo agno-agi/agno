@@ -212,11 +212,11 @@ def deserialize_cultural_knowledge(cultural_knowledge_raw: dict) -> CulturalKnow
     copy = deserialize_record_id(copy, "id")
     copy = desurrealize_dates(copy)
 
-    return CulturalKnowledge.model_validate(copy)
+    return CulturalKnowledge.from_dict(copy)
 
 
 def serialize_cultural_knowledge(cultural_knowledge: CulturalKnowledge, culture_table_name: str) -> dict:
-    dict_ = cultural_knowledge.model_dump()
+    dict_ = asdict(cultural_knowledge)
     if cultural_knowledge.id is not None:
         dict_["id"] = RecordID(culture_table_name, cultural_knowledge.id)
 

@@ -98,8 +98,6 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
     "name": {"type": String, "nullable": False, "index": True},
     "summary": {"type": String, "nullable": True},
     "content": {"type": String, "nullable": True},
-    "categories": {"type": JSON, "nullable": True},
-    "notes": {"type": JSON, "nullable": True},
     "metadata": {"type": JSON, "nullable": True},
     "input": {"type": String, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": True},
