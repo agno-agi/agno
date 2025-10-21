@@ -9700,7 +9700,12 @@ class Agent:
             "parser_model": self.parser_model.to_dict() if self.parser_model else None,
             "output_model": self.output_model.to_dict() if self.output_model else None,
             "has_tools": self.tools is not None,
-            "has_memory": self.enable_user_memories is True,
+            "has_memory": self.enable_user_memories is True
+            or self.enable_agentic_memory is True
+            or self.memory_manager is not None,
+            "has_culture": self.enable_agentic_culture is True
+            or self.update_cultural_knowledge is True
+            or self.culture_manager is not None,
             "has_reasoning": self.reasoning is True,
             "has_knowledge": self.knowledge is not None,
             "has_input_schema": self.input_schema is not None,

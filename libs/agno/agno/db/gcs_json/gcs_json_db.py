@@ -8,8 +8,10 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.gcs_json.utils import (
     apply_sorting,
     calculate_date_metrics,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    serialize_cultural_knowledge_for_db,
 )
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -1201,7 +1203,7 @@ class GcsJsonDb(BaseDb):
                 if item.get("id") == id:
                     if not deserialize:
                         return item
-                    return CulturalKnowledge.model_validate(item)
+                    return deserialize_cultural_knowledge_from_db(item)
 
             return None
         except Exception as e:
@@ -1269,7 +1271,7 @@ class GcsJsonDb(BaseDb):
             if not deserialize:
                 return filtered_items, total_count
 
-            return [CulturalKnowledge.model_validate(item) for item in filtered_items]
+            return [deserialize_cultural_knowledge_from_db(item) for item in filtered_items]
 
         except Exception as e:
             log_warning(f"Error getting all cultural knowledge: {e}")
@@ -1292,7 +1294,23 @@ class GcsJsonDb(BaseDb):
         """
         try:
             cultural_knowledge_list = self._read_json_file(self.culture_table_name, create_table_if_not_found=True)
-            cultural_knowledge_dict = cultural_knowledge.model_dump()
+
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the item dict with serialized content
+            cultural_knowledge_dict = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
 
             # Find existing item to update
             item_updated = False
@@ -1309,7 +1327,8 @@ class GcsJsonDb(BaseDb):
 
             if not deserialize:
                 return cultural_knowledge_dict
-            return cultural_knowledge
+
+            return deserialize_cultural_knowledge_from_db(cultural_knowledge_dict)
 
         except Exception as e:
             log_warning(f"Error upserting cultural knowledge: {e}")

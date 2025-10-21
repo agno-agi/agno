@@ -212,6 +212,13 @@ def deserialize_cultural_knowledge(cultural_knowledge_raw: dict) -> CulturalKnow
     copy = deserialize_record_id(copy, "id")
     copy = desurrealize_dates(copy)
 
+    # Extract content, categories, and notes from the content field
+    content_json = copy.get("content", {}) or {}
+    if isinstance(content_json, dict):
+        copy["content"] = content_json.get("content")
+        copy["categories"] = content_json.get("categories")
+        copy["notes"] = content_json.get("notes")
+
     return CulturalKnowledge.from_dict(copy)
 
 
@@ -219,6 +226,21 @@ def serialize_cultural_knowledge(cultural_knowledge: CulturalKnowledge, culture_
     dict_ = asdict(cultural_knowledge)
     if cultural_knowledge.id is not None:
         dict_["id"] = RecordID(culture_table_name, cultural_knowledge.id)
+
+    # Serialize content, categories, and notes into a single content dict for DB storage
+    content_dict = {}
+    if cultural_knowledge.content is not None:
+        content_dict["content"] = cultural_knowledge.content
+    if cultural_knowledge.categories is not None:
+        content_dict["categories"] = cultural_knowledge.categories
+    if cultural_knowledge.notes is not None:
+        content_dict["notes"] = cultural_knowledge.notes
+
+    # Replace the separate fields with the combined content field
+    dict_["content"] = content_dict if content_dict else None
+    # Remove the now-redundant fields since they're in content
+    dict_.pop("categories", None)
+    dict_.pop("notes", None)
 
     # surrealize dates
     dict_ = surrealize_dates(dict_)

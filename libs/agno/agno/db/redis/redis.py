@@ -10,12 +10,14 @@ from agno.db.redis.utils import (
     apply_sorting,
     calculate_date_metrics,
     create_index_entries,
+    deserialize_cultural_knowledge_from_db,
     deserialize_data,
     fetch_all_sessions_data,
     generate_redis_key,
     get_all_keys_for_table,
     get_dates_to_calculate_metrics_for,
     remove_index_entries,
+    serialize_cultural_knowledge_for_db,
     serialize_data,
 )
 from agno.db.schemas.culture import CulturalKnowledge
@@ -1543,7 +1545,7 @@ class RedisDb(BaseDb):
             if not deserialize:
                 return cultural_knowledge
 
-            return CulturalKnowledge.model_validate(cultural_knowledge)
+            return deserialize_cultural_knowledge_from_db(cultural_knowledge)
 
         except Exception as e:
             log_error(f"Error getting cultural knowledge: {e}")
@@ -1601,7 +1603,7 @@ class RedisDb(BaseDb):
             if not deserialize:
                 return paginated_items, len(filtered_items)
 
-            return [CulturalKnowledge.model_validate(item) for item in paginated_items]
+            return [deserialize_cultural_knowledge_from_db(item) for item in paginated_items]
 
         except Exception as e:
             log_error(f"Error getting all cultural knowledge: {e}")
@@ -1623,11 +1625,25 @@ class RedisDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            data = cultural_knowledge.model_dump()
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+            item_id = cultural_knowledge.id or str(uuid4())
 
-            success = self._store_record(
-                "culture", cultural_knowledge.id, data, index_fields=["name", "agent_id", "team_id"]
-            )
+            # Create the item dict with serialized content
+            data = {
+                "id": item_id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            success = self._store_record("culture", item_id, data, index_fields=["name", "agent_id", "team_id"])
 
             if not success:
                 return None
@@ -1635,7 +1651,7 @@ class RedisDb(BaseDb):
             if not deserialize:
                 return data
 
-            return CulturalKnowledge.model_validate(data)
+            return deserialize_cultural_knowledge_from_db(data)
 
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")

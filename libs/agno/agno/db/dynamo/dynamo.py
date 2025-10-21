@@ -13,6 +13,7 @@ from agno.db.dynamo.utils import (
     build_topic_filter_expression,
     calculate_date_metrics,
     create_table_if_not_exists,
+    deserialize_cultural_knowledge_from_db,
     deserialize_eval_record,
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
@@ -23,6 +24,7 @@ from agno.db.dynamo.utils import (
     get_dates_to_calculate_metrics_for,
     merge_with_existing_session,
     prepare_session_data,
+    serialize_cultural_knowledge_for_db,
     serialize_eval_record,
     serialize_knowledge_row,
     serialize_to_dynamo_item,
@@ -1928,8 +1930,11 @@ class DynamoDb(BaseDb):
             if not item:
                 return None
 
-            item = deserialize_from_dynamodb_item(item)
-            return CulturalKnowledge.from_dict(item) if deserialize else item
+            db_row = deserialize_from_dynamodb_item(item)
+            if not deserialize:
+                return db_row
+
+            return deserialize_cultural_knowledge_from_db(db_row)
         except Exception as e:
             log_error(f"Failed to get cultural knowledge {id}: {e}")
             raise e
@@ -1963,7 +1968,7 @@ class DynamoDb(BaseDb):
                 filter_expressions.append("team_id = :team_id")
                 expression_values[":team_id"] = {"S": team_id}
 
-            scan_kwargs = {"TableName": table_name}
+            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
             if filter_expressions:
                 scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
                 scan_kwargs["ExpressionAttributeValues"] = expression_values
@@ -1980,33 +1985,33 @@ class DynamoDb(BaseDb):
                 response = self.client.scan(**scan_kwargs)
                 items.extend(response.get("Items", []))
 
-            # Deserialize items
-            all_cultural_knowledge = [deserialize_from_dynamodb_item(item) for item in items]
+            # Deserialize items from DynamoDB format
+            db_rows = [deserialize_from_dynamodb_item(item) for item in items]
 
             # Apply sorting
             if sort_by:
                 reverse = sort_order == "desc" if sort_order else False
-                all_cultural_knowledge.sort(key=lambda x: x.get(sort_by, ""), reverse=reverse)
+                db_rows.sort(key=lambda x: x.get(sort_by, ""), reverse=reverse)
 
             # Apply pagination
-            total_count = len(all_cultural_knowledge)
+            total_count = len(db_rows)
             if limit and page:
                 start = (page - 1) * limit
-                all_cultural_knowledge = all_cultural_knowledge[start:start + limit]
+                db_rows = db_rows[start : start + limit]
             elif limit:
-                all_cultural_knowledge = all_cultural_knowledge[:limit]
+                db_rows = db_rows[:limit]
 
             if not deserialize:
-                return all_cultural_knowledge, total_count
+                return db_rows, total_count
 
-            return [CulturalKnowledge.from_dict(ck) for ck in all_cultural_knowledge]
+            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
         except Exception as e:
             log_error(f"Failed to get all cultural knowledge: {e}")
             raise e
 
     def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[CulturalKnowledge]:
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
         """Upsert a cultural knowledge entry into the database."""
         try:
             from uuid import uuid4
@@ -2016,10 +2021,29 @@ class DynamoDb(BaseDb):
             if not cultural_knowledge.id:
                 cultural_knowledge.id = str(uuid4())
 
-            item = serialize_to_dynamo_item(cultural_knowledge.to_dict())
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the item dict with serialized content
+            item_dict = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            # Convert to DynamoDB format
+            item = serialize_to_dynamo_item(item_dict)
             self.client.put_item(TableName=table_name, Item=item)
 
             return self.get_cultural_knowledge(cultural_knowledge.id, deserialize=deserialize)
+
         except Exception as e:
             log_error(f"Failed to upsert cultural knowledge: {e}")
             raise e

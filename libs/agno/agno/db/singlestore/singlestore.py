@@ -15,10 +15,12 @@ from agno.db.singlestore.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_schema,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
+    serialize_cultural_knowledge_for_db,
 )
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -2106,11 +2108,11 @@ class SingleStoreDb(BaseDb):
                 if result is None:
                     return None
 
-                cultural_knowledge_raw = dict(result._mapping)
-                if not cultural_knowledge_raw or not deserialize:
-                    return cultural_knowledge_raw
+                db_row = dict(result._mapping)
+                if not db_row or not deserialize:
+                    return db_row
 
-            return CulturalKnowledge.from_dict(cultural_knowledge_raw)
+            return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
             log_error(f"Exception reading from cultural knowledge table: {e}")
@@ -2179,12 +2181,12 @@ class SingleStoreDb(BaseDb):
                 if not result:
                     return [] if deserialize else ([], 0)
 
-                all_cultural_knowledge_raw = [record._mapping for record in result]
+                db_rows = [dict(record._mapping) for record in result]
 
                 if not deserialize:
-                    return all_cultural_knowledge_raw, total_count
+                    return db_rows, total_count
 
-            return [CulturalKnowledge.from_dict(record) for record in all_cultural_knowledge_raw]
+            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
 
         except Exception as e:
             log_error(f"Error reading from cultural knowledge table: {e}")
@@ -2213,39 +2215,36 @@ class SingleStoreDb(BaseDb):
             if cultural_knowledge.id is None:
                 cultural_knowledge.id = str(uuid4())
 
+            # Serialize content, categories, and notes into a JSON dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
             with self.Session() as sess, sess.begin():
                 stmt = mysql.insert(table).values(
                     id=cultural_knowledge.id,
                     name=cultural_knowledge.name,
                     summary=cultural_knowledge.summary,
-                    content=cultural_knowledge.content,
-                    categories=cultural_knowledge.categories,
-                    notes=cultural_knowledge.notes,
+                    content=content_dict if content_dict else None,
                     metadata=cultural_knowledge.metadata,
                     input=cultural_knowledge.input,
                     created_at=cultural_knowledge.created_at,
-                    updated_at=cultural_knowledge.updated_at,
+                    updated_at=int(time.time()),
                     agent_id=cultural_knowledge.agent_id,
                     team_id=cultural_knowledge.team_id,
                 )
                 stmt = stmt.on_duplicate_key_update(
                     name=cultural_knowledge.name,
                     summary=cultural_knowledge.summary,
-                    content=cultural_knowledge.content,
-                    categories=cultural_knowledge.categories,
-                    notes=cultural_knowledge.notes,
+                    content=content_dict if content_dict else None,
                     metadata=cultural_knowledge.metadata,
                     input=cultural_knowledge.input,
-                    created_at=cultural_knowledge.created_at,
-                    updated_at=cultural_knowledge.updated_at,
+                    updated_at=int(time.time()),
                     agent_id=cultural_knowledge.agent_id,
                     team_id=cultural_knowledge.team_id,
                 )
                 sess.execute(stmt)
 
             # Fetch the inserted/updated row
-            cultural_knowledge_raw = self.get_cultural_knowledge(id=cultural_knowledge.id, deserialize=deserialize)
-            return cultural_knowledge_raw
+            return self.get_cultural_knowledge(id=cultural_knowledge.id, deserialize=deserialize)
 
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")

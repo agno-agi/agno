@@ -10,8 +10,10 @@ from agno.db.mongo.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    serialize_cultural_knowledge_for_db,
 )
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -1231,12 +1233,13 @@ class MongoDb(BaseDb):
             if result is None:
                 return None
 
-            if not deserialize:
-                return result
-
-            # Remove MongoDB's _id field before creating CulturalKnowledge object
+            # Remove MongoDB's _id field
             result_filtered = {k: v for k, v in result.items() if k != "_id"}
-            return CulturalKnowledge.model_validate(result_filtered)
+
+            if not deserialize:
+                return result_filtered
+
+            return deserialize_cultural_knowledge_from_db(result_filtered)
 
         except Exception as e:
             log_error(f"Error getting cultural knowledge: {e}")
@@ -1299,14 +1302,13 @@ class MongoDb(BaseDb):
             # Apply pagination
             paginated_results = apply_pagination(records=sorted_results, limit=limit, page=page)
 
-            if not deserialize:
-                return paginated_results, total_count
+            # Remove MongoDB's _id field from all results
+            results_filtered = [{k: v for k, v in item.items() if k != "_id"} for item in paginated_results]
 
-            # Remove MongoDB's _id field before creating CulturalKnowledge objects
-            return [
-                CulturalKnowledge.model_validate({k: v for k, v in item.items() if k != "_id"})
-                for item in paginated_results
-            ]
+            if not deserialize:
+                return results_filtered, total_count
+
+            return [deserialize_cultural_knowledge_from_db(item) for item in results_filtered]
 
         except Exception as e:
             log_error(f"Error getting all cultural knowledge: {e}")
@@ -1332,19 +1334,35 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
-            update_doc = cultural_knowledge.model_dump()
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the document with serialized content
+            update_doc = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
 
             result = collection.replace_one({"id": cultural_knowledge.id}, update_doc, upsert=True)
 
             if result.upserted_id:
                 update_doc["_id"] = result.upserted_id
 
-            if not deserialize:
-                return update_doc
+            # Remove MongoDB's _id field
+            doc_filtered = {k: v for k, v in update_doc.items() if k != "_id"}
 
-            # Remove MongoDB's _id field before creating CulturalKnowledge object
-            update_doc_filtered = {k: v for k, v in update_doc.items() if k != "_id"}
-            return CulturalKnowledge.model_validate(update_doc_filtered)
+            if not deserialize:
+                return doc_filtered
+
+            return deserialize_cultural_knowledge_from_db(doc_filtered)
 
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")

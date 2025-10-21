@@ -10,8 +10,10 @@ from agno.db.firestore.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    serialize_cultural_knowledge_for_db,
 )
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -1102,7 +1104,7 @@ class FirestoreDb(BaseDb):
                 result = doc.to_dict()
                 if not deserialize:
                     return result
-                return CulturalKnowledge.model_validate(result)
+                return deserialize_cultural_knowledge_from_db(result)
 
             return None
 
@@ -1170,7 +1172,7 @@ class FirestoreDb(BaseDb):
             if not deserialize:
                 return paginated_results, total_count
 
-            return [CulturalKnowledge.model_validate(item) for item in paginated_results]
+            return [deserialize_cultural_knowledge_from_db(item) for item in paginated_results]
 
         except Exception as e:
             log_error(f"Error getting all cultural knowledge: {e}")
@@ -1193,7 +1195,23 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="culture", create_collection_if_not_found=True)
-            update_doc = cultural_knowledge.model_dump()
+
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the update document with serialized content
+            update_doc = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
 
             # Find and update or create new document
             docs = collection_ref.where(filter=FieldFilter("id", "==", cultural_knowledge.id)).limit(1).stream()
@@ -1210,7 +1228,7 @@ class FirestoreDb(BaseDb):
             if not deserialize:
                 return update_doc
 
-            return CulturalKnowledge.model_validate(update_doc)
+            return deserialize_cultural_knowledge_from_db(update_doc)
 
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")
@@ -1596,6 +1614,9 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="evals")
+            if not collection_ref:
+                return None
+
             docs = collection_ref.where(filter=FieldFilter("run_id", "==", eval_run_id)).stream()
 
             eval_run_raw = None
@@ -1736,6 +1757,8 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="evals")
+            if not collection_ref:
+                return None
 
             docs = collection_ref.where(filter=FieldFilter("run_id", "==", eval_run_id)).stream()
             doc_ref = next((doc.reference for doc in docs), None)

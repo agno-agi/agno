@@ -2196,7 +2196,7 @@ class SqliteDb(BaseDb):
 
     def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[CulturalKnowledge]:
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
         """Upsert a cultural artifact into the database.
 
         Args:
@@ -2255,7 +2255,7 @@ class SqliteDb(BaseDb):
                 if row is None:
                     return None
 
-            db_row = dict(row._mapping)
+            db_row: Dict[str, Any] = dict(row._mapping)
             if not db_row or not deserialize:
                 return db_row
 

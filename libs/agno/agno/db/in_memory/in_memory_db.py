@@ -8,8 +8,10 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.in_memory.utils import (
     apply_sorting,
     calculate_date_metrics,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    serialize_cultural_knowledge_for_db,
 )
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -1068,7 +1070,9 @@ class InMemoryDb(BaseDb):
             for ck_data in self._cultural_knowledge:
                 if ck_data.get("id") == id:
                     ck_data_copy = deepcopy(ck_data)
-                    return CulturalKnowledge.from_dict(ck_data_copy) if deserialize else ck_data_copy
+                    if not deserialize:
+                        return ck_data_copy
+                    return deserialize_cultural_knowledge_from_db(ck_data_copy)
             return None
         except Exception as e:
             log_error(f"Error getting cultural knowledge: {e}")
@@ -1113,20 +1117,35 @@ class InMemoryDb(BaseDb):
             if not deserialize:
                 return [deepcopy(ck) for ck in filtered_ck], total_count
 
-            return [CulturalKnowledge.from_dict(deepcopy(ck)) for ck in filtered_ck]
+            return [deserialize_cultural_knowledge_from_db(deepcopy(ck)) for ck in filtered_ck]
         except Exception as e:
             log_error(f"Error getting all cultural knowledge: {e}")
             raise e
 
     def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[CulturalKnowledge]:
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
         """Upsert a cultural knowledge entry into in-memory storage."""
         try:
             if not cultural_knowledge.id:
                 cultural_knowledge.id = str(uuid4())
 
-            ck_dict = cultural_knowledge.to_dict()
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the item dict with serialized content
+            ck_dict = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
 
             # Remove existing entry with same id
             self._cultural_knowledge = [ck for ck in self._cultural_knowledge if ck.get("id") != cultural_knowledge.id]

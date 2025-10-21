@@ -10,9 +10,11 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.json.utils import (
     apply_sorting,
     calculate_date_metrics,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     hydrate_session,
+    serialize_cultural_knowledge_for_db,
 )
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -1232,7 +1234,9 @@ class JsonDb(BaseDb):
             cultural_knowledge = self._read_json_file(self.culture_table_name)
             for ck in cultural_knowledge:
                 if ck.get("id") == id:
-                    return CulturalKnowledge.from_dict(ck) if deserialize else ck
+                    if not deserialize:
+                        return ck
+                    return deserialize_cultural_knowledge_from_db(ck)
             return None
         except Exception as e:
             log_error(f"Error getting cultural knowledge: {e}")
@@ -1280,7 +1284,7 @@ class JsonDb(BaseDb):
             if not deserialize:
                 return filtered, total_count
 
-            return [CulturalKnowledge.from_dict(ck) for ck in filtered]
+            return [deserialize_cultural_knowledge_from_db(ck) for ck in filtered]
         except Exception as e:
             log_error(f"Error getting all cultural knowledge: {e}")
             raise e
@@ -1295,11 +1299,28 @@ class JsonDb(BaseDb):
 
             all_cultural_knowledge = self._read_json_file(self.culture_table_name, create_table_if_not_found=True)
 
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the item dict with serialized content
+            ck_dict = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
             # Remove existing entry
             all_cultural_knowledge = [ck for ck in all_cultural_knowledge if ck.get("id") != cultural_knowledge.id]
 
             # Add new entry
-            all_cultural_knowledge.append(cultural_knowledge.to_dict())
+            all_cultural_knowledge.append(ck_dict)
 
             self._write_json_file(self.culture_table_name, all_cultural_knowledge)
 
