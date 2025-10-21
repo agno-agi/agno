@@ -275,17 +275,18 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
 
 
 # -- Cultural Knowledge util methods --
-def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
+def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> str:
     """Serialize a CulturalKnowledge object for database storage.
 
     Converts the model's separate content, categories, and notes fields
-    into a single JSON dict for the database content column.
+    into a single JSON string for the database content column.
+    SQLite requires JSON to be stored as strings.
 
     Args:
         cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
 
     Returns:
-        Dict[str, Any]: A dictionary with the content field as JSON containing content, categories, and notes.
+        str: A JSON string containing content, categories, and notes.
     """
     content_dict: Dict[str, Any] = {}
     if cultural_knowledge.content is not None:
@@ -295,7 +296,7 @@ def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -
     if cultural_knowledge.notes is not None:
         content_dict["notes"] = cultural_knowledge.notes
 
-    return content_dict if content_dict else {}
+    return json.dumps(content_dict) if content_dict else None  # type: ignore
 
 
 def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
@@ -312,21 +313,23 @@ def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKn
     """
     # Extract content, categories, and notes from the JSON content field
     content_json = db_row.get("content", {}) or {}
-    # SQLite may return JSON as string, so parse it if needed
+
     if isinstance(content_json, str):
         content_json = json.loads(content_json) if content_json else {}
 
-    return CulturalKnowledge.from_dict({
-        "id": db_row.get("id"),
-        "name": db_row.get("name"),
-        "summary": db_row.get("summary"),
-        "content": content_json.get("content"),
-        "categories": content_json.get("categories"),
-        "notes": content_json.get("notes"),
-        "metadata": db_row.get("metadata"),
-        "input": db_row.get("input"),
-        "created_at": db_row.get("created_at"),
-        "updated_at": db_row.get("updated_at"),
-        "agent_id": db_row.get("agent_id"),
-        "team_id": db_row.get("team_id"),
-    })
+    return CulturalKnowledge.from_dict(
+        {
+            "id": db_row.get("id"),
+            "name": db_row.get("name"),
+            "summary": db_row.get("summary"),
+            "content": content_json.get("content"),
+            "categories": content_json.get("categories"),
+            "notes": content_json.get("notes"),
+            "metadata": db_row.get("metadata"),
+            "input": db_row.get("input"),
+            "created_at": db_row.get("created_at"),
+            "updated_at": db_row.get("updated_at"),
+            "agent_id": db_row.get("agent_id"),
+            "team_id": db_row.get("team_id"),
+        }
+    )

@@ -2219,15 +2219,15 @@ class SqliteDb(BaseDb):
             if cultural_knowledge.id is None:
                 cultural_knowledge.id = str(uuid4())
 
-            # Serialize content, categories, and notes into a JSON dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+            # Serialize content, categories, and notes into a JSON string for DB storage (SQLite requires strings)
+            content_json_str = serialize_cultural_knowledge_for_db(cultural_knowledge)
 
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
                     id=cultural_knowledge.id,
                     name=cultural_knowledge.name,
                     summary=cultural_knowledge.summary,
-                    content=content_dict if content_dict else None,
+                    content=content_json_str,
                     metadata=cultural_knowledge.metadata,
                     input=cultural_knowledge.input,
                     created_at=cultural_knowledge.created_at,
@@ -2240,7 +2240,7 @@ class SqliteDb(BaseDb):
                     set_=dict(
                         name=cultural_knowledge.name,
                         summary=cultural_knowledge.summary,
-                        content=content_dict if content_dict else None,
+                        content=content_json_str,
                         metadata=cultural_knowledge.metadata,
                         input=cultural_knowledge.input,
                         updated_at=int(time.time()),
