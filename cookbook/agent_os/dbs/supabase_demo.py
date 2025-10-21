@@ -1,3 +1,5 @@
+"""Example showing how to use AgentOS with Supabase as our database provider"""
+
 from os import getenv
 
 from agno.agent import Agent

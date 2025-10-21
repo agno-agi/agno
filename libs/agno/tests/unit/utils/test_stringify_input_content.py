@@ -19,6 +19,7 @@ def test_stringify_string_input():
     assert result == input_str
     assert isinstance(result, str)
 
+
 def test_stringify_message_object_input():
     """Test that Message objects are serialized correctly."""
     msg = Message(role="user", content="Hello, world!")
@@ -301,4 +302,3 @@ def test_get_run_input_with_basemodel_dict():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

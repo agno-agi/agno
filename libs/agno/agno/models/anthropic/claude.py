@@ -59,6 +59,17 @@ class Claude(Model):
     For more information, see: https://docs.anthropic.com/en/api/messages
     """
 
+    # Models that DO NOT support extended thinking
+    # All future models are assumed to support thinking
+    # Based on official Anthropic documentation: https://docs.claude.com/en/docs/about-claude/models/overview
+    NON_THINKING_MODELS = {
+        # Claude Haiku 3 family (does not support thinking)
+        "claude-3-haiku-20240307",
+        # Claude Haiku 3.5 family (does not support thinking)
+        "claude-3-5-haiku-20241022",
+        "claude-3-5-haiku-latest",
+    }
+
     id: str = "claude-sonnet-4-5-20250929"
     name: str = "Claude"
     provider: str = "Anthropic"
@@ -84,6 +95,12 @@ class Claude(Model):
     # Anthropic clients
     client: Optional[AnthropicClient] = None
     async_client: Optional[AsyncAnthropicClient] = None
+
+    def __post_init__(self):
+        """Validate model configuration after initialization"""
+        # Validate thinking support immediately at model creation
+        if self.thinking:
+            self._validate_thinking_support()
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
@@ -126,10 +143,30 @@ class Claude(Model):
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
 
+    def _validate_thinking_support(self) -> None:
+        """
+        Validate that the current model supports extended thinking.
+
+        Raises:
+            ValueError: If thinking is enabled but the model doesn't support it
+        """
+        if self.thinking and self.id in self.NON_THINKING_MODELS:
+            non_thinking_models = "\n  - ".join(sorted(self.NON_THINKING_MODELS))
+            raise ValueError(
+                f"Model '{self.id}' does not support extended thinking.\n\n"
+                f"The following models do NOT support thinking:\n  - {non_thinking_models}\n\n"
+                f"All other Claude models support extended thinking by default.\n"
+                f"For more information, see: https://docs.anthropic.com/en/docs/about-claude/models/overview"
+            )
+
     def get_request_params(self) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
         """
+        # Validate thinking support if thinking is enabled
+        if self.thinking:
+            self._validate_thinking_support()
+
         _request_params: Dict[str, Any] = {}
         if self.max_tokens:
             _request_params["max_tokens"] = self.max_tokens
