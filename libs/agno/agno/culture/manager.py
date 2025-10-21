@@ -362,12 +362,13 @@ class CultureManager:
 
         system_prompt_lines: List[str] = [
             "You are the **Cultural Knowledge Manager**, responsible for maintaining, evolving, and safeguarding "
-            "the shared cultural knowledge for Agents and Multi-Agent Teams. "
+            "the shared cultural knowledge for Agents and Multi-Agent Teams. ",
+            "",
+            "Given a user message, your task is to distill, organize, and extract collective intelligence from it, including insights, lessons, "
+            "rules, principles, and narratives that guide future behavior across agents and teams.",
+            "",
             "You will be provided with criteria for cultural knowledge to capture in the <knowledge_to_capture> section, "
             "and the existing cultural knowledge in the <existing_knowledge> section.",
-            "",
-            "Your role is to distill, organize, and preserve collective intelligence — including insights, lessons, "
-            "rules, principles, and narratives that guide future behavior across agents and teams.",
             "",
             "## When to add or update cultural knowledge",
             "- Decide if knowledge should be **added, updated, deleted**, or if **no changes are needed**.",

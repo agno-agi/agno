@@ -1,5 +1,4 @@
-"""
-Automatically update cultural knowledge based on Agent interactions.
+"""Automatically update cultural knowledge based on Agent interactions.
 
 This example demonstrates how an Agent can autonomously add or refine
 shared cultural knowledge after completing a task.
