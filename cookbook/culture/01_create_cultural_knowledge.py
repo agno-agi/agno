@@ -17,6 +17,7 @@ from rich.pretty import pprint
 # Step 1. Initialize the database used for storing cultural knowledge
 # ---------------------------------------------------------------------------
 db = SqliteDb(db_file="tmp/demo.db")
+
 # ---------------------------------------------------------------------------
 # Step 2. Create the Culture Manager
 # ---------------------------------------------------------------------------

@@ -32,8 +32,6 @@ culture_manager = CultureManager(db=db)
 response_format = CulturalKnowledge(
     name="Response Format Standard (Agno)",
     summary="Keep responses concise, scannable, and runnable-first where applicable.",
-    intent="practice",
-    confidence="medium",
     categories=["communication", "ux"],
     content=(
         "- Lead with the minimal runnable snippet or example when possible.\n"
