@@ -1,10 +1,10 @@
 import uuid
 from typing import Any, Dict, Optional
+from unittest.mock import MagicMock, patch
 
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
-from unittest.mock import MagicMock, patch
 
 
 def chat_agent_factory(shared_db, session_id: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None):
