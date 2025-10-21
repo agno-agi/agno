@@ -199,7 +199,7 @@ class CultureManager:
         if cultural_knowledge is None:
             cultural_knowledge = []
 
-        existing_knowledge = [cultural_knowledge.preview() for cultural_knowledge in cultural_knowledge]
+        existing_knowledge = [cultural_knowledge.to_dict() for cultural_knowledge in cultural_knowledge]
 
         self.db = cast(BaseDb, self.db)
         response = self.create_or_update_cultural_knowledge(
@@ -371,7 +371,7 @@ class CultureManager:
             "",
             "## When to add or update cultural knowledge",
             "- Decide if knowledge should be **added, updated, deleted**, or if **no changes are needed**.",
-            "- If new insights meet the criteria in <knowledge_to_capture> and are not already captured, add them.",
+            "- If new insights meet the criteria in <knowledge_to_capture> and are not already captured in the <existing_knowledge> section, add them.",
             "- If existing practices evolve, update relevant entries (while preserving historical context if useful).",
             "- If nothing new or valuable emerged, respond with exactly: `No changes needed`.",
             "",
@@ -389,7 +389,7 @@ class CultureManager:
             "- `name`: short, specific title (required).",
             "- `summary`: one-line purpose or takeaway.",
             "- `content`: reusable insight, rule, or guideline (required).",
-            "- `categories`: list of tags (e.g., ['agents', 'guardrails', 'rule', 'principle', 'practice', 'pattern', 'doctrine', 'story']).",
+            "- `categories`: list of tags (e.g., ['guardrails', 'rules', 'principles', 'practices', 'patterns', 'behaviors', 'stories']).",
             "- `notes`: list of contextual notes, rationale, or examples.",
             "- `metadata`: optional structured info (e.g., source, author, version).",
             "",
@@ -419,11 +419,16 @@ class CultureManager:
         if tool_lines:
             system_prompt_lines += [""] + tool_lines
 
+        print(existing_knowledge)
         if existing_knowledge and len(existing_knowledge) > 0:
             system_prompt_lines.append("\n<existing_knowledge>")
             for _existing_knowledge in existing_knowledge:  # type: ignore
-                system_prompt_lines.append(f"Knowledge: {_existing_knowledge.get('content')}")
-                system_prompt_lines.append("")
+                system_prompt_lines.append("--------------------------------")
+                system_prompt_lines.append(f"Knowledge ID: {_existing_knowledge.get('id')}")
+                system_prompt_lines.append(f"Name: {_existing_knowledge.get('name')}")
+                system_prompt_lines.append(f"Summary: {_existing_knowledge.get('summary')}")
+                system_prompt_lines.append(f"Categories: {_existing_knowledge.get('categories')}")
+                system_prompt_lines.append(f"Content: {_existing_knowledge.get('content')}")
             system_prompt_lines.append("</existing_knowledge>")
 
         # Final guardrail for no-op
@@ -740,10 +745,10 @@ class CultureManager:
         ) -> str:
             """Use this function to add a cultural knowledge to the database.
             Args:
-                name (str): The name of the cultural knowledge.
-                summary (Optional[str]): The summary of the cultural knowledge.
-                content (Optional[str]): The content of the cultural knowledge.
-                categories (Optional[List[str]]): The categories of the cultural knowledge (e.g. ["name", "hobbies", "location"]).
+                name (str): The name of the cultural knowledge. Short, specific title.
+                summary (Optional[str]): The summary of the cultural knowledge. One-line purpose or takeaway.
+                content (Optional[str]): The content of the cultural knowledge. Reusable insight, rule, or guideline.
+                categories (Optional[List[str]]): The categories of the cultural knowledge. List of tags (e.g. ["guardrails", "rules", "principles", "practices", "patterns", "behaviors", "stories"]).
             Returns:
                 str: A message indicating if the cultural knowledge was added successfully or not.
             """
@@ -776,10 +781,10 @@ class CultureManager:
             """Use this function to update an existing cultural knowledge in the database.
             Args:
                 knowledge_id (str): The id of the cultural knowledge to be updated.
-                name (str): The name of the cultural knowledge.
-                summary (Optional[str]): The summary of the cultural knowledge.
-                content (Optional[str]): The content of the cultural knowledge.
-                categories (Optional[List[str]]): The categories of the cultural knowledge (e.g. ["name", "hobbies", "location"]).
+                name (str): The name of the cultural knowledge. Short, specific title.
+                summary (Optional[str]): The summary of the cultural knowledge. One-line purpose or takeaway.
+                content (Optional[str]): The content of the cultural knowledge. Reusable insight, rule, or guideline.
+                categories (Optional[List[str]]): The categories of the cultural knowledge. List of tags (e.g. ["guardrails", "rules", "principles", "practices", "patterns", "behaviors", "stories"]).
             Returns:
                 str: A message indicating if the cultural knowledge was updated successfully or not.
             """
