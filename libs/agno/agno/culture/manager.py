@@ -419,7 +419,6 @@ class CultureManager:
         if tool_lines:
             system_prompt_lines += [""] + tool_lines
 
-        print(existing_knowledge)
         if existing_knowledge and len(existing_knowledge) > 0:
             system_prompt_lines.append("\n<existing_knowledge>")
             for _existing_knowledge in existing_knowledge:  # type: ignore
