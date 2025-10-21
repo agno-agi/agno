@@ -733,11 +733,9 @@ class Agent:
 
     def _initialize_session(
         self,
-        run_id: str,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        session_state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[str, Optional[str], Dict[str, Any]]:
+    ) -> Tuple[str, Optional[str]]:
         """Initialize the session for the agent."""
 
         if session_id is None:
@@ -754,26 +752,17 @@ class Agent:
         if user_id is None or user_id == "":
             user_id = self.user_id
 
-        # Determine the session_state
-        if session_state is None:
-            session_state = self.session_state or {}
-        else:
-            # If run session_state is provided, merge agent defaults under it
-            # This ensures run state takes precedence over agent defaults
-            if self.session_state:
-                base_state = self.session_state.copy()
-                merge_dictionaries(base_state, session_state)
-                session_state.clear()
-                session_state.update(base_state)
+        return session_id, user_id
 
-        if user_id is not None:
+    def _initialize_session_state(self, session_state: Dict[str, Any], user_id: Optional[str] = None, session_id: Optional[str] = None, run_id: Optional[str] = None   ) -> Dict[str, Any]:
+        """Initialize the session state for the agent."""
+        if user_id:
             session_state["current_user_id"] = user_id
         if session_id is not None:
             session_state["current_session_id"] = session_id
         if run_id is not None:
             session_state["current_run_id"] = run_id
-
-        return session_id, user_id, session_state  # type: ignore
+        return session_state
 
     def _run(
         self,
@@ -1298,8 +1287,8 @@ class Agent:
                 self.post_hooks = normalize_hooks(self.post_hooks)
             self._hooks_normalised = True
 
-        session_id, user_id, session_state = self._initialize_session(
-            run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
+        session_id, user_id = self._initialize_session(
+            session_id=session_id, user_id=user_id
         )
 
         # Initialize the Agent
@@ -1322,9 +1311,11 @@ class Agent:
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
 
+        # Initialize session state
+        session_state = self._initialize_session_state(session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id)
         # Update session state from DB
         session_state = self._load_session_state(session=agent_session, session_state=session_state)
-
+        print(f"Session state after load: {session_state}")
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
@@ -1536,6 +1527,9 @@ class Agent:
 
         # 2. Update metadata and session state
         self._update_metadata(session=agent_session)
+        # Initialize session state
+        session_state = self._initialize_session_state(session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id)
+        # Update session state from DB
         if session_state is not None:
             session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
@@ -1766,6 +1760,9 @@ class Agent:
 
         # 2. Update metadata and session state
         self._update_metadata(session=agent_session)
+        # Initialize session state
+        session_state = self._initialize_session_state(session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id)
+        # Update session state from DB
         if session_state is not None:
             session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
@@ -2076,8 +2073,8 @@ class Agent:
             self._hooks_normalised = True
 
         # Initialize session
-        session_id, user_id, session_state = self._initialize_session(
-            run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
+        session_id, user_id = self._initialize_session(
+            session_id=session_id, user_id=user_id
         )
 
         # Initialize the Agent
@@ -2322,10 +2319,9 @@ class Agent:
 
         session_id = run_response.session_id if run_response else session_id
 
-        session_id, user_id, session_state = self._initialize_session(
-            run_id=run_id,  # type: ignore
+        session_id, user_id = self._initialize_session(
             session_id=session_id,
-            user_id=user_id,  # type: ignore
+            user_id=user_id,
         )
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
@@ -2334,6 +2330,8 @@ class Agent:
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
 
+        # Initialize session state
+        session_state = self._initialize_session_state(session_state={}, user_id=user_id, session_id=session_id, run_id=run_id)
         # Update session state from DB
         session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
@@ -2764,10 +2762,9 @@ class Agent:
         if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
             raise ValueError("Session ID is required to continue a run from a run_id.")
 
-        session_id, user_id, session_state = self._initialize_session(
-            run_id=run_id,  # type: ignore
+        session_id, user_id = self._initialize_session(
             session_id=session_id,
-            user_id=user_id,  # type: ignore
+            user_id=user_id,
         )
 
         # Initialize the Agent
@@ -2819,7 +2816,6 @@ class Agent:
                         run_response=run_response,
                         updated_tools=updated_tools,
                         knowledge_filters=effective_filters,
-                        session_state=session_state,
                         run_id=run_id,
                         user_id=user_id,
                         session_id=session_id,
@@ -2837,7 +2833,6 @@ class Agent:
                         run_response=run_response,
                         updated_tools=updated_tools,
                         knowledge_filters=effective_filters,
-                        session_state=session_state,
                         run_id=run_id,
                         user_id=user_id,
                         response_format=response_format,
@@ -2889,7 +2884,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        session_state: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -2929,6 +2923,9 @@ class Agent:
 
         # 3. Update metadata and session state
         self._update_metadata(session=agent_session)
+        # Initialize session state
+        session_state = self._initialize_session_state(session_state={}, user_id=user_id, session_id=session_id, run_id=run_id)
+        # Update session state from DB
         if session_state is not None:
             session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
@@ -3091,7 +3088,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        session_state: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -3131,6 +3127,9 @@ class Agent:
 
         # 3. Update session state and metadata
         self._update_metadata(session=agent_session)
+        # Initialize session state
+        session_state = self._initialize_session_state(session_state={}, user_id=user_id, session_id=session_id, run_id=run_id)
+        # Update session state from DB
         if session_state is not None:
             session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
@@ -4672,7 +4671,7 @@ class Agent:
             self._rebuild_tools = True
 
         if self.enable_agentic_state:
-            agent_tools.append(self.update_session_state)
+            agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
 
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.knowledge_retriever is not None:
@@ -4766,7 +4765,7 @@ class Agent:
             self._rebuild_tools = True
 
         if self.enable_agentic_state:
-            agent_tools.append(self.update_session_state)
+            agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
 
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.knowledge_retriever is not None:
@@ -5385,12 +5384,16 @@ class Agent:
         if agent_session is None:
             # Creating new session if none found
             log_debug(f"Creating new AgentSession: {session_id}")
+            session_data = {}
+            if self.session_state is not None:
+                from copy import deepcopy
+                session_data["session_state"] = deepcopy(self.session_state)
             agent_session = AgentSession(
                 session_id=session_id,
                 agent_id=self.id,
                 user_id=user_id,
                 agent_data=self._get_agent_data(),
-                session_data={},
+                session_data=session_data,
                 metadata=self.metadata,
                 created_at=int(time()),
             )
@@ -5421,12 +5424,16 @@ class Agent:
         if agent_session is None:
             # Creating new session if none found
             log_debug(f"Creating new AgentSession: {session_id}")
+            session_data = {}
+            if self.session_state is not None:
+                from copy import deepcopy
+                session_data["session_state"] = deepcopy(self.session_state)
             agent_session = AgentSession(
                 session_id=session_id,
                 agent_id=self.id,
                 user_id=user_id,
                 agent_data=self._get_agent_data(),
-                session_data={},
+                session_data=session_data,
                 metadata=self.metadata,
                 created_at=int(time()),
             )
@@ -5700,6 +5707,29 @@ class Agent:
         if session is None:
             raise Exception("Session not found")
         return session.session_data.get("session_state", {}) if session.session_data is not None else {}
+
+    def update_session_state(self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None) -> str:
+        """
+        Update the session state for the given session ID and user ID.
+        Args:
+            session_state_updates: The updates to apply to the session state. Should be a dictionary of key-value pairs.
+            session_id: The session ID to update. If not provided, the current cached session ID is used.
+        Returns:
+            dict: The updated session state.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        session = self.get_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+
+        for key, value in session_state_updates.items():
+            session.session_data["session_state"][key] = value
+
+        self.save_session(session=session)
+
+        return session.session_data["session_state"]
 
     def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
         """Get the session metrics for the given session ID and user ID."""
@@ -6076,7 +6106,7 @@ class Agent:
             system_message_content += f"{get_response_model_format_prompt(self.output_schema)}"
 
         # 3.3.15 Add the session state to the system message
-        if self.add_session_state_to_context and session_state is not None:
+        if add_session_state_to_context and session_state is not None:
             system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
         # Return the system message
@@ -8318,7 +8348,7 @@ class Agent:
 
         return get_tool_call_history
 
-    def update_session_state(self, session_state, session_state_updates: dict) -> str:
+    def _update_session_state_tool(self, session_state, session_state_updates: dict) -> str:
         """
         Update the shared session state.  Provide any updates as a dictionary of key-value pairs.
         Example:

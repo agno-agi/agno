@@ -759,11 +759,11 @@ class Team:
 
     def _initialize_session(
         self,
-        run_id: str,
-        user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        session_state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[str, Optional[str], Dict[str, Any]]:
+        user_id: Optional[str] = None,
+    ) -> Tuple[str, Optional[str]]:
+        """Initialize the session for the team."""
+
         if session_id is None:
             if self.session_id:
                 session_id = self.session_id
@@ -775,30 +775,22 @@ class Team:
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Use the default user_id when necessary
-        if user_id is None:
+        if user_id is None or user_id == "":
             user_id = self.user_id
 
-        # Determine the session_state with proper precedence
-        if session_state is None:
-            session_state = self.session_state or {}
-        else:
-            # If run session_state is provided, merge agent defaults under it
-            # This ensures run state takes precedence over agent defaults
-            if self.session_state:
-                from agno.utils.merge_dict import merge_dictionaries
+        return session_id, user_id
 
-                base_state = self.session_state.copy()
-                merge_dictionaries(base_state, session_state)
-                session_state.clear()
-                session_state.update(base_state)
-
-        if user_id is not None:
+    def _initialize_session_state(
+        self, session_state: Dict[str, Any], user_id: Optional[str] = None, session_id: Optional[str] = None, run_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Initialize the session state for the team."""
+        if user_id:
             session_state["current_user_id"] = user_id
         if session_id is not None:
             session_state["current_session_id"] = session_id
-        session_state["current_run_id"] = run_id
-
-        return session_id, user_id, session_state  # type: ignore
+        if run_id is not None:
+            session_state["current_run_id"] = run_id
+        return session_state
 
     def _has_async_db(self) -> bool:
         """Return True if the db the team is equipped with is an Async implementation"""
@@ -1600,9 +1592,7 @@ class Team:
                 self.post_hooks = normalize_hooks(self.post_hooks)
             self._hooks_normalised = True
 
-        session_id, user_id, session_state = self._initialize_session(
-            run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
-        )
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
@@ -1624,6 +1614,8 @@ class Team:
         team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=team_session)
 
+        # Initialize session state
+        session_state = self._initialize_session_state(session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id)
         # Update session state from DB
         session_state = self._load_session_state(session=team_session, session_state=session_state)
 
@@ -1854,6 +1846,9 @@ class Team:
 
         # 2. Update metadata and session state
         self._update_metadata(session=team_session)
+        # Initialize session state
+        session_state = self._initialize_session_state(session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id)
+        # Update session state from DB
         session_state = self._load_session_state(session=team_session, session_state=session_state)  # type: ignore
 
         run_input = cast(TeamRunInput, run_response.input)
@@ -2068,6 +2063,9 @@ class Team:
 
         # 3. Update metadata and session state
         self._update_metadata(session=team_session)
+        # Initialize session state
+        session_state = self._initialize_session_state(session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id)
+        # Update session state from DB
         session_state = self._load_session_state(session=team_session, session_state=session_state)  # type: ignore
 
         # 4. Execute pre-hooks
@@ -2373,9 +2371,7 @@ class Team:
                 self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)
             self._hooks_normalised = True
 
-        session_id, user_id, session_state = self._initialize_session(
-            run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
-        )
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
@@ -2427,7 +2423,7 @@ class Team:
         )
 
         self.model = cast(Model, self.model)
-        
+
         if self.metadata is not None:
             if metadata is None:
                 metadata = self.metadata
@@ -4809,7 +4805,7 @@ class Team:
             _tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
 
         if self.enable_agentic_state:
-            _tools.append(self.update_session_state)
+            _tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
 
         if self.search_session_history:
             _tools.append(
@@ -6345,7 +6341,7 @@ class Team:
 
         return get_team_history
 
-    def update_session_state(self, session_state, session_state_updates: dict) -> str:
+    def _update_session_state_tool(self, session_state, session_state_updates: dict) -> str:
         """
         Update the shared session state.  Provide any updates as a dictionary of key-value pairs.
         Example:
@@ -7607,6 +7603,29 @@ class Team:
         if session is None:
             raise Exception("Session not found")
         return session.session_data.get("session_state", {}) if session.session_data is not None else {}
+
+    def update_session_state(self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None) -> str:
+        """
+        Update the session state for the given session ID and user ID.
+        Args:
+            session_state_updates: The updates to apply to the session state. Should be a dictionary of key-value pairs.
+            session_id: The session ID to update. If not provided, the current cached session ID is used.
+        Returns:
+            dict: The updated session state.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        session = self.get_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+
+        for key, value in session_state_updates.items():
+            session.session_data["session_state"][key] = value
+
+        self.save_session(session=session)
+
+        return session.session_data["session_state"]
 
     def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
         """Get the session metrics for the given session ID and user ID."""

@@ -1,13 +1,17 @@
 import logging
-from typing import List, Optional, Union, cast
+import time
+from typing import Any, Dict, List, Optional, Union, cast
+from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentSessionDetailSchema,
     BadRequestResponse,
+    CreateSessionRequest,
     DeleteSessionRequest,
     InternalServerErrorResponse,
     NotFoundResponse,
@@ -19,6 +23,7 @@ from agno.os.schema import (
     TeamRunSchema,
     TeamSessionDetailSchema,
     UnauthenticatedResponse,
+    UpdateSessionRequest,
     ValidationErrorResponse,
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
@@ -145,6 +150,135 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
                 total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,  # type: ignore
             ),
         )
+
+    @router.post(
+        "/sessions",
+        response_model=Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema],
+        status_code=201,
+        operation_id="create_session",
+        summary="Create Empty Session",
+        description=(
+            "Create a new empty session with optional configuration. "
+            "Useful for pre-creating sessions with specific session_state, metadata, or other properties "
+            "before running any agent/team/workflow interactions. "
+            "The session can later be used by providing its session_id in run requests."
+        ),
+        responses={
+            201: {
+                "description": "Session created successfully",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "agent_session_example": {
+                                "summary": "Example created agent session",
+                                "value": {
+                                    "user_id": "user-123",
+                                    "agent_session_id": "new-session-id",
+                                    "session_id": "new-session-id",
+                                    "session_name": "New Session",
+                                    "session_state": {"key": "value"},
+                                    "metadata": {"key": "value"},
+                                    "agent_id": "agent-1",
+                                    "created_at": "2025-10-21T12:00:00Z",
+                                    "updated_at": "2025-10-21T12:00:00Z",
+                                },
+                            }
+                        }
+                    }
+                },
+            },
+            400: {"description": "Invalid request parameters", "model": BadRequestResponse},
+            422: {"description": "Validation error", "model": ValidationErrorResponse},
+            500: {"description": "Failed to create session", "model": InternalServerErrorResponse},
+        },
+    )
+    async def create_session(
+        request: Request,
+        session_type: SessionType = Query(
+            default=SessionType.AGENT, 
+            alias="type",
+            description="Type of session to create (agent, team, or workflow)"
+        ),
+        create_session_request: CreateSessionRequest = Body(
+            default=CreateSessionRequest(),
+            description="Session configuration data"
+        ),
+        db_id: Optional[str] = Query(default=None, description="Database ID to create session in"),
+    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+        db = get_db(dbs, db_id)
+
+        # Get user_id from request state if available (from auth middleware)
+        user_id = create_session_request.user_id
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        # Generate session_id if not provided
+        session_id = create_session_request.session_id or str(uuid4())
+        
+        # Prepare session_data with session_state and session_name
+        session_data: dict[str, Any] = {}
+        if create_session_request.session_state is not None:
+            session_data["session_state"] = create_session_request.session_state
+        if create_session_request.session_name is not None:
+            session_data["session_name"] = create_session_request.session_name
+        
+        current_time = int(time.time())
+
+        # Create the appropriate session type
+        if session_type == SessionType.AGENT:
+            session = AgentSession(
+                session_id=session_id,
+                agent_id=create_session_request.agent_id,
+                user_id=user_id,
+                session_data=session_data if session_data else None,
+                metadata=create_session_request.metadata,
+                created_at=current_time,
+                updated_at=current_time,
+            )
+        elif session_type == SessionType.TEAM:
+            session = TeamSession(
+                session_id=session_id,
+                team_id=create_session_request.team_id,
+                user_id=user_id,
+                session_data=session_data if session_data else None,
+                metadata=create_session_request.metadata,
+                created_at=current_time,
+                updated_at=current_time,
+            )
+        elif session_type == SessionType.WORKFLOW:
+            session = WorkflowSession(
+                session_id=session_id,
+                workflow_id=create_session_request.workflow_id,
+                user_id=user_id,
+                session_data=session_data if session_data else None,
+                metadata=create_session_request.metadata,
+                created_at=current_time,
+                updated_at=current_time,
+            )
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid session type: {session_type}")
+
+        # Upsert the session to the database
+        try:
+            if isinstance(db, AsyncBaseDb):
+                db = cast(AsyncBaseDb, db)
+                created_session = await db.upsert_session(session, deserialize=True)
+            else:
+                created_session = db.upsert_session(session, deserialize=True)
+            
+            if not created_session:
+                raise HTTPException(status_code=500, detail="Failed to create session")
+
+            # Return appropriate schema based on session type
+            if session_type == SessionType.AGENT:
+                return AgentSessionDetailSchema.from_session(created_session)  # type: ignore
+            elif session_type == SessionType.TEAM:
+                return TeamSessionDetailSchema.from_session(created_session)  # type: ignore
+            else:
+                return WorkflowSessionDetailSchema.from_session(created_session)  # type: ignore
+        except Exception as e:
+            logger.error(f"Error creating session: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
 
     @router.get(
         "/sessions/{session_id}",
@@ -546,7 +680,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
             raise HTTPException(
                 status_code=404, detail=f"Run with ID {run_id} not found in session {session_id}"
             )
-
+        
         # Return the appropriate schema based on run type
         if target_run.get("workflow_id") is not None:
             return WorkflowRunSchema.from_dict(target_run)
@@ -728,5 +862,132 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
             return TeamSessionDetailSchema.from_session(session)  # type: ignore
         else:
             return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
+
+    @router.patch(
+        "/sessions/{session_id}",
+        response_model=Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema],
+        status_code=200,
+        operation_id="update_session",
+        summary="Update Session",
+        description=(
+            "Update session properties such as session_name, session_state, metadata, or summary. "
+            "Use this endpoint to modify the session name, update state, add metadata, or update the session summary."
+        ),
+        responses={
+            200: {
+                "description": "Session updated successfully",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "update_summary": {
+                                "summary": "Update session summary",
+                                "value": {
+                                    "summary": {
+                                        "summary": "The user discussed project planning with the agent.",
+                                        "updated_at": "2025-10-21T14:30:00Z",
+                                    }
+                                },
+                            },
+                            "update_metadata": {
+                                "summary": "Update session metadata",
+                                "value": {
+                                    "metadata": {
+                                        "tags": ["planning", "project"],
+                                        "priority": "high",
+                                    }
+                                },
+                            },
+                            "update_session_name": {
+                                "summary": "Update session name",
+                                "value": {
+                                    "session_name": "Updated Session Name"
+                                },
+                            },
+                            "update_session_state": {
+                                "summary": "Update session state",
+                                "value": {
+                                    "session_state": {
+                                        "step": "completed",
+                                        "context": "Project planning finished",
+                                        "progress": 100,
+                                    }
+                                },
+                            },
+                        }
+                    }
+                },
+            },
+            404: {"description": "Session not found", "model": NotFoundResponse},
+            422: {"description": "Invalid request", "model": ValidationErrorResponse},
+            500: {"description": "Failed to update session", "model": InternalServerErrorResponse},
+        },
+    )
+    async def update_session(
+        request: Request,
+        session_id: str = Path(description="Session ID to update"),
+        session_type: SessionType = Query(
+            default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
+        ),
+        update_data: UpdateSessionRequest = Body(description="Session update data"),
+        user_id: Optional[str] = Query(default=None, description="User ID"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for update operation"),
+    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+        db = get_db(dbs, db_id)
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        # Get the existing session
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            existing_session = await db.get_session(
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=True
+            )
+        else:
+            existing_session = db.get_session(
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=True
+            )
+
+        if not existing_session:
+            raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
+
+        # Update session properties
+        # Handle session_name - stored in session_data
+        if update_data.session_name is not None:
+            if existing_session.session_data is None:
+                existing_session.session_data = {}
+            existing_session.session_data["session_name"] = update_data.session_name
+
+        # Handle session_state - stored in session_data
+        if update_data.session_state is not None:
+            if existing_session.session_data is None:
+                existing_session.session_data = {}
+            existing_session.session_data["session_state"] = update_data.session_state
+
+        if update_data.metadata is not None:
+            existing_session.metadata = update_data.metadata
+
+        if update_data.summary is not None:
+            from agno.session.summary import SessionSummary
+
+            existing_session.summary = SessionSummary.from_dict(update_data.summary)
+
+        # Upsert the updated session
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            updated_session = await db.upsert_session(existing_session, deserialize=True)
+        else:
+            updated_session = db.upsert_session(existing_session, deserialize=True)
+
+        if not updated_session:
+            raise HTTPException(status_code=500, detail="Failed to update session")
+
+        # Return appropriate schema based on session type
+        if session_type == SessionType.AGENT:
+            return AgentSessionDetailSchema.from_session(updated_session)  # type: ignore
+        elif session_type == SessionType.TEAM:
+            return TeamSessionDetailSchema.from_session(updated_session)  # type: ignore
+        else:
+            return WorkflowSessionDetailSchema.from_session(updated_session)  # type: ignore
 
     return router
