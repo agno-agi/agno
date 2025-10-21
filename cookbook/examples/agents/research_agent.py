@@ -114,12 +114,13 @@ research_agent = Agent(
     """),
     markdown=True,
     add_datetime_to_context=True,
+    max_tool_calls_from_history=3,
 )
 
 # Example usage with detailed research request
 if __name__ == "__main__":
     research_agent.print_response(
-        "Analyze the current state and future implications of artificial intelligence regulation worldwide",
+        "Analyze the current state and future implications of artificial intelligence regulation regionally. Focus specifically on the United States, Europe, and Asia. Then for some major countries as well",
         stream=True,
     )
 
