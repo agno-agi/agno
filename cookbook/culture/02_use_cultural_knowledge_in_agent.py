@@ -1,5 +1,4 @@
-"""
-Use cultural knowledge with your Agents.
+"""Use cultural knowledge with your Agents.
 
 This example demonstrates how an Agent reads and applies
 the cultural knowledge created earlier (see `01_create_cultural_knowledge.py`).

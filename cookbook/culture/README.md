@@ -12,15 +12,11 @@ Unlike Memory, which stores user-specific information ("Sarah prefers email"), C
 
 Using Culture, your Agents will be able to transmit relevant learnings to each other and across time - similarly to how we transmit knowledge across generations.
 
-## Agentic culture
-
-This cookbook demonstrates Agno's support for **agentic culture** by giving Agents and Multi-Agent Teams a shared memory of reusable insights, principles, and values. This is **v0.1** with the current goal of helping Agents stay consistent in tone, reasoning, and behavior. The eventual goal is to transform isolated agents into a living, evolving system of intelligence.
-
 > "Culture is how intelligence compounds"
 
----
+## Agentic Culture
 
-These examples show how to:
+This is **v0.1** with the current goal of helping Agents stay consistent in tone, reasoning, and behavior. The eventual goal is to transform isolated agents into a living, evolving system of intelligence. These examples show how to:
 
 - Create cultural knowledge using an Agent (or manually).
 - Using cultural knowledge with Agents.
@@ -118,7 +114,7 @@ Command: `python cookbook/culture/05_test_agent_with_cultural_knowledge.py`
 
 ---
 
-## Features to explore
+## Future Features to Explore
 
 - Integrate culture into your multi-agent teams (Teams API)
 - Use `CultureManager` programmatically to sync or version cultural knowledge
