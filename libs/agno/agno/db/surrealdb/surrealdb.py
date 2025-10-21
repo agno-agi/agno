@@ -517,9 +517,9 @@ class SurrealDb(BaseDb):
             return None
 
         if not deserialize:
-            return result
+            return result  # type: ignore
 
-        return deserialize_cultural_knowledge(result)
+        return deserialize_cultural_knowledge(result)  # type: ignore
 
     def get_all_cultural_knowledge(
         self,
@@ -613,9 +613,9 @@ class SurrealDb(BaseDb):
             return None
 
         if not deserialize:
-            return result
+            return result  # type: ignore
 
-        return deserialize_cultural_knowledge(result)
+        return deserialize_cultural_knowledge(result)  # type: ignore
 
     def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         """Delete a user memory from the database.

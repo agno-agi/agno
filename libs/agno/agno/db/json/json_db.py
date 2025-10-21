@@ -1291,7 +1291,7 @@ class JsonDb(BaseDb):
 
     def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[CulturalKnowledge]:
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
         """Upsert a cultural knowledge entry into JSON file."""
         try:
             if not cultural_knowledge.id:

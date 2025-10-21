@@ -6,7 +6,9 @@ from uuid import uuid4
 from agno.db.base import BaseDb, SessionType
 from agno.db.firestore.utils import (
     apply_pagination,
+    apply_pagination_to_records,
     apply_sorting,
+    apply_sorting_to_records,
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
@@ -1163,11 +1165,9 @@ class FirestoreDb(BaseDb):
 
             total_count = len(results)
 
-            # Apply sorting
-            sorted_results = apply_sorting(records=results, sort_by=sort_by, sort_order=sort_order)
-
-            # Apply pagination
-            paginated_results = apply_pagination(records=sorted_results, limit=limit, page=page)
+            # Apply sorting and pagination to in-memory results
+            sorted_results = apply_sorting_to_records(records=results, sort_by=sort_by, sort_order=sort_order)
+            paginated_results = apply_pagination_to_records(records=sorted_results, limit=limit, page=page)
 
             if not deserialize:
                 return paginated_results, total_count

@@ -2194,7 +2194,7 @@ class SingleStoreDb(BaseDb):
 
     def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[CulturalKnowledge]:
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
         """Upsert a cultural knowledge entry into the database.
 
         Args:

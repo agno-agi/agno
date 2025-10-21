@@ -123,6 +123,42 @@ def apply_pagination(query, limit: Optional[int] = None, page: Optional[int] = N
     return query
 
 
+def apply_sorting_to_records(
+    records: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Apply sorting to in-memory records (for cases where Firestore query sorting isn't possible)."""
+    if sort_by is None:
+        return records
+
+    def get_sort_key(record):
+        value = record.get(sort_by, 0)
+        if value is None:
+            return 0 if records and isinstance(records[0].get(sort_by, 0), (int, float)) else ""
+        return value
+
+    try:
+        is_reverse = sort_order == "desc"
+        return sorted(records, key=get_sort_key, reverse=is_reverse)
+    except Exception as e:
+        log_warning(f"Error sorting Firestore records: {e}")
+        return records
+
+
+def apply_pagination_to_records(
+    records: List[Dict[str, Any]], limit: Optional[int] = None, page: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Apply pagination to in-memory records (for cases where Firestore query pagination isn't possible)."""
+    if limit is None:
+        return records
+
+    if page is not None and page > 0:
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        return records[start_idx:end_idx]
+    else:
+        return records[:limit]
+
+
 # -- Metrics util methods --
 
 

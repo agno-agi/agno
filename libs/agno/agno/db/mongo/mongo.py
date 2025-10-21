@@ -1296,14 +1296,21 @@ class MongoDb(BaseDb):
             total_count = collection.count_documents(query)
 
             # Apply sorting
-            results = list(collection.find(query))
-            sorted_results = apply_sorting(records=results, sort_by=sort_by, sort_order=sort_order)
+            sort_criteria = apply_sorting({}, sort_by, sort_order)
 
             # Apply pagination
-            paginated_results = apply_pagination(records=sorted_results, limit=limit, page=page)
+            query_args = apply_pagination({}, limit, page)
+
+            cursor = collection.find(query)
+            if sort_criteria:
+                cursor = cursor.sort(sort_criteria)
+            if query_args.get("skip"):
+                cursor = cursor.skip(query_args["skip"])
+            if query_args.get("limit"):
+                cursor = cursor.limit(query_args["limit"])
 
             # Remove MongoDB's _id field from all results
-            results_filtered = [{k: v for k, v in item.items() if k != "_id"} for item in paginated_results]
+            results_filtered = [{k: v for k, v in item.items() if k != "_id"} for item in cursor]
 
             if not deserialize:
                 return results_filtered, total_count

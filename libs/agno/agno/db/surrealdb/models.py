@@ -1,7 +1,7 @@
 from dataclasses import asdict
 from datetime import date, datetime, timezone
 from textwrap import dedent
-from typing import List, Literal, Optional, Sequence
+from typing import Any, Dict, List, Literal, Optional, Sequence
 
 from surrealdb import RecordID
 
@@ -228,7 +228,7 @@ def serialize_cultural_knowledge(cultural_knowledge: CulturalKnowledge, culture_
         dict_["id"] = RecordID(culture_table_name, cultural_knowledge.id)
 
     # Serialize content, categories, and notes into a single content dict for DB storage
-    content_dict = {}
+    content_dict: Dict[str, Any] = {}
     if cultural_knowledge.content is not None:
         content_dict["content"] = cultural_knowledge.content
     if cultural_knowledge.categories is not None:
