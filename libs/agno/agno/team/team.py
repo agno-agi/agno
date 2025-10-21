@@ -6324,7 +6324,7 @@ class Team:
         """Get information about the members of the team, including their IDs, names, and roles."""
         return self.get_members_system_message_content(indent=0)
 
-    def _get_chat_history_function(self, session: TeamSession, async_mode: bool = False) -> Callable:
+    def _get_chat_history_function(self, session: TeamSession, async_mode: bool = False):
         def get_chat_history(num_chats: Optional[int] = None) -> str:
             """
             Use this function to get the team chat history in reverse chronological order.
@@ -6400,7 +6400,7 @@ class Team:
         if async_mode:
             get_chat_history_func = aget_chat_history
         else:
-            get_chat_history_func = get_chat_history
+            get_chat_history_func = get_chat_history  # type: ignore
         return Function.from_callable(get_chat_history_func, name="get_chat_history")
 
     def update_session_state(self, session_state, session_state_updates: dict) -> str:
@@ -6419,7 +6419,7 @@ class Team:
 
     def _get_previous_sessions_messages_function(
         self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
-    ) -> Callable:
+    ):
         """Factory function to create a get_previous_session_messages function.
 
         Args:
@@ -6535,9 +6535,9 @@ class Team:
             return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
 
         if self._has_async_db():
-            return aget_previous_session_messages
+            return Function.from_callable(aget_previous_session_messages, name="get_previous_session_messages")
         else:
-            return get_previous_session_messages
+            return Function.from_callable(get_previous_session_messages, name="get_previous_session_messages")
 
     def _get_history_for_member_agent(self, session: TeamSession, member_agent: Union[Agent, "Team"]) -> List[Message]:
         from copy import deepcopy
