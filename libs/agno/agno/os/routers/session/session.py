@@ -271,8 +271,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         operation_id="get_session_runs",
         summary="Get Session Runs",
         description=(
-            "Retrieve all runs (executions) for a specific session. Runs represent individual "
-            "interactions or executions within a session. Response schema varies based on session type."
+            "Retrieve all runs (executions) for a specific session with optional timestamp filtering. "
+            "Runs represent individual interactions or executions within a session. "
+            "Response schema varies based on session type."
         ),
         responses={
             200: {
@@ -386,8 +387,132 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
             default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
         ),
         user_id: Optional[str] = Query(default=None, description="User ID to query runs from"),
+        created_after: Optional[int] = Query(
+            default=None,
+            description="Filter runs created after this Unix timestamp (epoch time in seconds)",
+        ),
+        created_before: Optional[int] = Query(
+            default=None,
+            description="Filter runs created before this Unix timestamp (epoch time in seconds)",
+        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
     ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
+        db = get_db(dbs, db_id)
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        # Use timestamp filters directly (already in epoch format)
+        start_timestamp = created_after
+        end_timestamp = created_before
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            session = await db.get_session(
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+            )
+        else:
+            session = db.get_session(
+                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+            )
+
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+        runs = session.get("runs")  # type: ignore
+        if not runs:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
+
+        # Filter runs by timestamp if specified
+        filtered_runs = []
+        for run in runs:
+            if start_timestamp or end_timestamp:
+                run_created_at = run.get("created_at")
+                if run_created_at:
+                    # created_at is stored as epoch int
+                    if start_timestamp and run_created_at < start_timestamp:
+                        continue
+                    if end_timestamp and run_created_at > end_timestamp:
+                        continue
+
+            filtered_runs.append(run)
+
+        if not filtered_runs:
+            raise HTTPException(status_code=404, detail=f"No runs found matching the specified filters")
+
+        run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
+
+        if session_type == SessionType.AGENT:
+            return [RunSchema.from_dict(run) for run in filtered_runs]
+
+        elif session_type == SessionType.TEAM:
+            for run in filtered_runs:
+                if run.get("agent_id") is not None:
+                    run_responses.append(RunSchema.from_dict(run))
+                elif run.get("team_id") is not None:
+                    run_responses.append(TeamRunSchema.from_dict(run))
+            return run_responses
+
+        elif session_type == SessionType.WORKFLOW:
+            for run in filtered_runs:
+                if run.get("workflow_id") is not None:
+                    run_responses.append(WorkflowRunSchema.from_dict(run))
+                elif run.get("team_id") is not None:
+                    run_responses.append(TeamRunSchema.from_dict(run))
+                else:
+                    run_responses.append(RunSchema.from_dict(run))
+            return run_responses
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid session type: {session_type}")
+
+    @router.get(
+        "/sessions/{session_id}/runs/{run_id}",
+        response_model=Union[RunSchema, TeamRunSchema, WorkflowRunSchema],
+        status_code=200,
+        operation_id="get_session_run",
+        summary="Get Specific Run from Session",
+        description=(
+            "Retrieve a specific run by its ID from a session. Response schema varies based on the "
+            "run type (agent run, team run, or workflow run)."
+        ),
+        responses={
+            200: {
+                "description": "Run retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "agent_run": {
+                                "summary": "Example agent run",
+                                "value": {
+                                    "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                    "parent_run_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                    "agent_id": "basic-agent",
+                                    "user_id": "",
+                                    "run_input": "Which tools do you have access to?",
+                                    "content": "I don't have access to external tools.",
+                                    "run_response_format": "text",
+                                    "reasoning_content": "",
+                                    "created_at": "2025-09-08T15:52:10Z",
+                                },
+                            }
+                        }
+                    }
+                },
+            },
+            404: {"description": "Session or run not found", "model": NotFoundResponse},
+            422: {"description": "Invalid session type", "model": ValidationErrorResponse},
+        },
+    )
+    async def get_session_run(
+        request: Request,
+        session_id: str = Path(description="Session ID to get run from"),
+        run_id: str = Path(description="Run ID to retrieve"),
+        session_type: SessionType = Query(
+            default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
+        ),
+        user_id: Optional[str] = Query(default=None, description="User ID to query run from"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query run from"),
+    ) -> Union[RunSchema, TeamRunSchema, WorkflowRunSchema]:
         db = get_db(dbs, db_id)
 
         if hasattr(request.state, "user_id"):
@@ -410,30 +535,25 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 
-        run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
+        # Find the specific run
+        target_run = None
+        for run in runs:
+            if run.get("run_id") == run_id:
+                target_run = run
+                break
 
-        if session_type == SessionType.AGENT:
-            return [RunSchema.from_dict(run) for run in runs]
+        if not target_run:
+            raise HTTPException(
+                status_code=404, detail=f"Run with ID {run_id} not found in session {session_id}"
+            )
 
-        elif session_type == SessionType.TEAM:
-            for run in runs:
-                if run.get("agent_id") is not None:
-                    run_responses.append(RunSchema.from_dict(run))
-                elif run.get("team_id") is not None:
-                    run_responses.append(TeamRunSchema.from_dict(run))
-            return run_responses
-
-        elif session_type == SessionType.WORKFLOW:
-            for run in runs:
-                if run.get("workflow_id") is not None:
-                    run_responses.append(WorkflowRunSchema.from_dict(run))
-                elif run.get("team_id") is not None:
-                    run_responses.append(TeamRunSchema.from_dict(run))
-                else:
-                    run_responses.append(RunSchema.from_dict(run))
-            return run_responses
+        # Return the appropriate schema based on run type
+        if target_run.get("workflow_id") is not None:
+            return WorkflowRunSchema.from_dict(target_run)
+        elif target_run.get("team_id") is not None:
+            return TeamRunSchema.from_dict(target_run)
         else:
-            raise HTTPException(status_code=400, detail=f"Invalid session type: {session_type}")
+            return RunSchema.from_dict(target_run)
 
     @router.delete(
         "/sessions/{session_id}",
