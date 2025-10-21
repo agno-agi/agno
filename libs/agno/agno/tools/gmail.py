@@ -566,7 +566,7 @@ class GmailTools(Toolkit):
             # Remove the UNREAD label to mark the email as read
             modify_request = {"removeLabelIds": ["UNREAD"]}
 
-            self.service.users().messages().modify(userId="me", id=message_id, body=modify_request).execute() # type: ignore
+            self.service.users().messages().modify(userId="me", id=message_id, body=modify_request).execute()  # type: ignore
 
             return f"Successfully marked email {message_id} as read. Labels removed: UNREAD"
 
@@ -591,7 +591,7 @@ class GmailTools(Toolkit):
             # Add the UNREAD label to mark the email as unread
             modify_request = {"addLabelIds": ["UNREAD"]}
 
-            self.service.users().messages().modify(userId="me", id=message_id, body=modify_request).execute() # type: ignore
+            self.service.users().messages().modify(userId="me", id=message_id, body=modify_request).execute()  # type: ignore
 
             return f"Successfully marked email {message_id} as unread. Labels added: UNREAD"
 
