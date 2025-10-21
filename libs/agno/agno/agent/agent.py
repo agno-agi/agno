@@ -4539,7 +4539,7 @@ class Agent:
                     if session_state is not None:
                         merge_dictionaries(session_state, model_response_event.updated_session_state)
                     # update the DB session
-                    if session.session_data is not None:
+                    if session.session_data is not None and session.session_data.get("session_state") is not None:
                         merge_dictionaries(
                             session.session_data["session_state"], model_response_event.updated_session_state
                         )
