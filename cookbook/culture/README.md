@@ -1,6 +1,6 @@
 # Agentic Culture & Cultural Knowledge
 
-This cookbook demonstrates Agno's support for **cultural knowledge** — a shared layer of reusable insights, principles, and values that your Agents can use to think, write, and build on each other's ideas.
+This cookbook demonstrates Agno's support for agentic **cultural knowledge** — a shared layer of reusable insights, principles, and values that your Agents can use to think, write, and build on each other's ideas.
 
 This is **v0.1**, with the current goal of helping Agents stay consistent in tone, reasoning, and behavior. The eventual goal is to transform isolated agents into a living, evolving system of intelligence.
 
@@ -30,7 +30,7 @@ Each recipe builds on the previous one, so you can run them in sequence.
 
 ---
 
-## 🚀 Quick Setup
+## Quick Setup
 
 1. Create and activate a virtual environment:
 ```shell
@@ -54,9 +54,9 @@ A local SQLite database (tmp/demo.db) will store and persist shared cultural kno
 
 ---
 
-## 📂 File Overviews
+## File Overviews
 
-### **01_create_cultural_knowledge.py**
+#### 01_create_cultural_knowledge.py
 Create cultural knowledge using the `CultureManager` and a model.
 - Demonstrates how to feed insights or guiding principles to the system
 - Persists cultural knowledge (e.g., *Operational Thinking*) into a shared SQLite DB
@@ -66,7 +66,7 @@ Command: `python cookbook/culture/01_create_cultural_knowledge.py`
 
 ---
 
-### **02_use_cultural_knowledge_in_agent.py**
+#### 02_use_cultural_knowledge_in_agent.py
 Use existing cultural knowledge inside an Agent.
 - Shows how to initialize an Agent with `add_culture_to_context=True`
 - The Agent automatically loads shared culture and applies it during reasoning
@@ -77,7 +77,7 @@ Command: `python cookbook/culture/02_use_cultural_knowledge_in_agent.py`
 
 ---
 
-### **03_automatic_cultural_management.py**
+#### 03_automatic_cultural_management.py
 Let your Agent autonomously update cultural knowledge.
 - Enables `update_cultural_knowledge=True`
 - After each run, the Agent reflects on its response and updates the shared culture
@@ -87,7 +87,7 @@ Command: `python cookbook/culture/03_automatic_cultural_management.py`
 
 ---
 
-### **04_manually_add_culture.py**
+#### 04_manually_add_culture.py
 Manually seed cultural knowledge without using a model.
 - Adds reusable best practices directly via the `CulturalKnowledge` dataclass
 - Useful for organization-wide rules, tone guides, or safety policies
@@ -97,7 +97,7 @@ Command: `python cookbook/culture/04_manually_add_culture.py`
 
 ---
 
-### **05_test_agent_with_cultural_knowledge.py**
+#### 05_test_agent_with_cultural_knowledge.py
 Freestyle test file — interact with an Agent that has culture enabled.
 - Use this file to test arbitrary prompts and observe cultural influence
 - The Agent both *reads* and (optionally) *updates* shared cultural knowledge
@@ -106,7 +106,7 @@ Command: `python cookbook/culture/05_test_agent_with_cultural_knowledge.py`
 
 ---
 
-## 🧭 Features to explore
+## Features to explore
 
 - Integrate culture into your multi-agent teams (Teams API)
 - Use `CultureManager` programmatically to sync or version cultural knowledge
