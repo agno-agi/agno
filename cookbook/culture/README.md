@@ -18,7 +18,7 @@ Each recipe builds on the previous one, so you can run them in sequence.
 
 ---
 
-## 📚 Recipes in This Folder
+## Examples in this folder
 
 | File | Description |
 |------|--------------|
