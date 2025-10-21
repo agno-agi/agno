@@ -31,6 +31,30 @@ Each recipe builds on the previous one, so you can run them in sequence.
 
 ---
 
+## 🚀 Quick Setup
+
+1. Create and activate a virtual environment:
+```shell
+uv venv --python 3.12
+source .venv/bin/activate
+```
+
+2. Install dependencies:
+```shell
+uv pip install agno anthropic sqlalchemy
+```
+
+3. Set your Anthropic API key: `export ANTHROPIC_API_KEY="sk-ant-..."`
+
+4. Run any recipe
+```shell
+python cookbook/culture/01_create_cultural_knowledge.py
+```
+
+A local SQLite database (tmp/demo.db) will store and persist shared cultural knowledge across runs.
+
+---
+
 ## 📂 File Overviews
 
 ### **01_create_cultural_knowledge.py**
@@ -80,40 +104,6 @@ Freestyle test file — interact with an Agent that has culture enabled.
 - The Agent both *reads* and (optionally) *updates* shared cultural knowledge
 
 Command: `python cookbook/culture/05_test_agent_with_cultural_knowledge.py`
-
----
-
-## 🧠 Suggested Order of Execution
-
-1️⃣ **Create culture:** 01_create_cultural_knowledge.py
-2️⃣ **Use culture:** 02_use_cultural_knowledge_in_agent.py
-3️⃣ **Evolve culture:** 03_automatic_cultural_management.py
-4️⃣ **Manually seed culture:** 04_manually_add_culture.py
-5️⃣ **Test and explore:** 05_test_agent_with_cultural_knowledge.py
-
----
-
-## 🚀 Quick Setup
-
-1. Create and activate a virtual environment:
-```shell
-uv venv --python 3.12
-source .venv/bin/activate
-```
-
-2. Install dependencies:
-```shell
-uv pip install agno anthropic sqlalchemy
-```
-
-3. Set your Anthropic API key: `export ANTHROPIC_API_KEY="sk-ant-..."`
-
-4. Run any recipe
-```shell
-python cookbook/culture/01_create_cultural_knowledge.py
-```
-
-A local SQLite database (tmp/demo.db) will store and persist shared cultural knowledge across runs.
 
 ---
 
