@@ -26,6 +26,7 @@ class BaseDb(ABC):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        trace_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -34,6 +35,7 @@ class BaseDb(ABC):
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
+        self.trace_table_name = trace_table or "agno_traces"
 
     # --- Sessions ---
     @abstractmethod
@@ -264,6 +266,66 @@ class BaseDb(ABC):
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
+    # --- Traces ---
+    @abstractmethod
+    def create_trace(self, trace) -> None:
+        """Create a single trace span in the database.
+
+        Args:
+            trace: The TraceSpan object to store.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_traces_batch(self, traces: List) -> None:
+        """Create multiple trace spans in the database as a batch.
+
+        Args:
+            traces: List of TraceSpan objects to store.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_trace(self, span_id: str):
+        """Get a single trace span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[TraceSpan]: The trace span if found, None otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_traces(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = 100,
+    ) -> List:
+        """Get trace spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            start_time: Filter spans starting after this timestamp (nanoseconds).
+            end_time: Filter spans ending before this timestamp (nanoseconds).
+            limit: Maximum number of traces to return.
+
+        Returns:
+            List[TraceSpan]: List of matching trace spans.
+        """
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -276,6 +338,7 @@ class AsyncBaseDb(ABC):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        trace_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -283,6 +346,7 @@ class AsyncBaseDb(ABC):
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
+        self.trace_table_name = trace_table or "agno_traces"
 
     # --- Sessions ---
     @abstractmethod
@@ -495,4 +559,64 @@ class AsyncBaseDb(ABC):
     async def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    # --- Traces ---
+    @abstractmethod
+    async def create_trace(self, trace) -> None:
+        """Create a single trace span in the database.
+
+        Args:
+            trace: The TraceSpan object to store.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def create_traces_batch(self, traces: List) -> None:
+        """Create multiple trace spans in the database as a batch.
+
+        Args:
+            traces: List of TraceSpan objects to store.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_trace(self, span_id: str):
+        """Get a single trace span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[TraceSpan]: The trace span if found, None otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_traces(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = 100,
+    ) -> List:
+        """Get trace spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            start_time: Filter spans starting after this timestamp (nanoseconds).
+            end_time: Filter spans ending before this timestamp (nanoseconds).
+            limit: Maximum number of traces to return.
+
+        Returns:
+            List[TraceSpan]: List of matching trace spans.
+        """
         raise NotImplementedError
