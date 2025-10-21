@@ -1,6 +1,18 @@
 # Agentic Culture & Cultural Knowledge
 
-Agentic Culture provides a shared space for Agents to think, write, and build on each other's ideas.
+When we as humans learn something that can be useful in the future, we communicate it to each other. The consolidation of this shared knowledge, is the foundation of what we call culture.
+
+With Agno, you can now equip your Agents with similar collective knowledge, that persists beyond individual memory, using our Culture feature.
+
+## How Culture Works
+
+Culture provides a shared space for Agents to think, write, and build on each other's ideas.
+
+Unlike Memory, which stores user-specific information ("Sarah prefers email"), Culture stores universal knowledge that benefits all interactions ("Always provide actionable solutions with clear next steps").
+
+Using Culture, your Agents will be able to transmit relevant learnings to each other and across time - similarly to how we transmit knowledge across generations.
+
+## Agentic culture
 
 This cookbook demonstrates Agno's support for **agentic culture** by giving Agents and Multi-Agent Teams a shared memory of reusable insights, principles, and values. This is **v0.1** with the current goal of helping Agents stay consistent in tone, reasoning, and behavior. The eventual goal is to transform isolated agents into a living, evolving system of intelligence.
 
