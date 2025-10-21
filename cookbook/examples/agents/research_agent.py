@@ -114,7 +114,7 @@ research_agent = Agent(
     """),
     markdown=True,
     add_datetime_to_context=True,
-    max_tool_calls_in_context=3,
+    max_history_tool_calls=3,
 )
 
 # Example usage with detailed research request

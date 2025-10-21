@@ -4,7 +4,7 @@ Research Team with Context Management.
 This example demonstrates a research team that uses DuckDuckGo to search the web and accumulate tool calls. The older research results
 are automatically filtered out to keep the context focused on recent research results.
 
-When max_tool_calls_in_context is set to 3, the team will keep only the last 3 tool call results.
+When max_history_tool_calls is set to 3, the team will keep only the last 3 tool call results.
 """
 
 from textwrap import dedent
@@ -63,7 +63,7 @@ research_team = Team(
     session_id="research_session",
     add_history_to_context=True,
     num_history_runs=6,  # Load last 6 research queries
-    max_tool_calls_in_context=3,  # Keep only last 3 research results
+    max_history_tool_calls=3,  # Keep only last 3 research results
     markdown=True,
     debug_mode=True,
     show_members_responses=True,
