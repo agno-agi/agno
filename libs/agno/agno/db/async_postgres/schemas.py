@@ -3,6 +3,7 @@
 from typing import Any
 
 try:
+    from sqlalchemy.dialects.postgresql import JSONB
     from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
@@ -102,8 +103,8 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False, "index": True},
     "summary": {"type": String, "nullable": True},
-    "content": {"type": JSON, "nullable": True},
-    "metadata": {"type": JSON, "nullable": True},
+    "content": {"type": JSONB, "nullable": True},
+    "metadata": {"type": JSONB, "nullable": True},
     "input": {"type": String, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
