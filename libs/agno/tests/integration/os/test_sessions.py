@@ -15,7 +15,6 @@ from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
 
 
-
 @pytest.fixture
 def test_agent(shared_db):
     """Create a test agent with SQLite database."""
@@ -674,12 +673,9 @@ def test_create_empty_session_minimal(shared_db, test_agent: Agent):
     assert data["agent_id"] is None
     assert data.get("session_state") is None
     assert data.get("chat_history") == []
-    
+
     # Verify session was actually saved to database
-    saved_session = shared_db.get_session(
-        session_id=data["session_id"], 
-        session_type="agent"
-    )
+    saved_session = shared_db.get_session(session_id=data["session_id"], session_type="agent")
     assert saved_session is not None
     assert saved_session.session_id == data["session_id"]
     assert saved_session.session_data is None
@@ -705,12 +701,9 @@ def test_create_empty_session_with_session_state(shared_db, test_agent: Agent):
     assert "session_id" in data
     assert data["session_state"] == session_state
     assert data.get("chat_history") == []
-    
+
     # Verify session was actually saved to database
-    saved_session = shared_db.get_session(
-        session_id=data["session_id"], 
-        session_type="agent"
-    )
+    saved_session = shared_db.get_session(session_id=data["session_id"], session_type="agent")
     assert saved_session is not None
     assert saved_session.session_id == data["session_id"]
     assert saved_session.session_data == {"session_state": session_state}
@@ -728,7 +721,7 @@ def test_create_empty_session_with_all_params(shared_db, test_agent: Agent):
     session_state = {"key": "value"}
     metadata = {"source": "api", "version": "1.0"}
     session_name = "My Custom Session"
-    
+
     response = client.post(
         "/sessions",
         params={"type": "agent"},
@@ -752,11 +745,20 @@ def test_create_empty_session_with_all_params(shared_db, test_agent: Agent):
     assert data["user_id"] == "test-user-123"
     assert data.get("chat_history") == []
 
+    # Get session via endpoint
+    response = client.get(f"/sessions/{custom_session_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == custom_session_id
+    assert data["session_name"] == session_name
+    assert data["session_state"] == session_state
+    assert data["metadata"] == metadata
+    assert data["agent_id"] == test_agent.id
+    assert data["user_id"] == "test-user-123"
+    assert data.get("chat_history") == []
+
     # Verify session was actually saved to database
-    saved_session = shared_db.get_session(
-        session_id=custom_session_id, 
-        session_type="agent"
-    )
+    saved_session = shared_db.get_session(session_id=custom_session_id, session_type="agent")
     assert saved_session is not None
     assert saved_session.session_id == custom_session_id
 
@@ -779,7 +781,7 @@ def test_create_empty_session_auto_generates_id(shared_db, test_agent: Agent):
         params={"type": "agent"},
         json={},
     )
-    
+
     assert response1.status_code == 201
     assert response2.status_code == 201
 
@@ -789,7 +791,7 @@ def test_create_empty_session_auto_generates_id(shared_db, test_agent: Agent):
     # Both should have session_ids
     assert "session_id" in data1
     assert "session_id" in data2
-    
+
     # Session IDs should be different (UUIDs)
     assert data1["session_id"] != data2["session_id"]
 
@@ -797,7 +799,7 @@ def test_create_empty_session_auto_generates_id(shared_db, test_agent: Agent):
 def test_create_empty_team_session(shared_db, test_agent: Agent):
     """Test creating an empty team session."""
     from agno.team.team import Team
-    
+
     # Create a team
     test_team = Team(
         id="test-team-id",
@@ -806,7 +808,7 @@ def test_create_empty_team_session(shared_db, test_agent: Agent):
         model=OpenAIChat(id="gpt-4o"),
         db=shared_db,
     )
-    
+
     # Create test client
     agent_os = AgentOS(teams=[test_team])
     app = agent_os.get_app()
@@ -832,18 +834,18 @@ def test_create_empty_team_session(shared_db, test_agent: Agent):
 def test_create_empty_workflow_session(shared_db, test_agent: Agent):
     """Test creating an empty workflow session."""
     from agno.workflow.workflow import Workflow
-    
+
     # Create a workflow
     def simple_workflow(session_state):
         return "workflow result"
-    
+
     test_workflow = Workflow(
         id="test-workflow-id",
         name="test-workflow",
         steps=simple_workflow,
         db=shared_db,
     )
-    
+
     # Create test client
     agent_os = AgentOS(workflows=[test_workflow])
     app = agent_os.get_app()
@@ -864,4 +866,3 @@ def test_create_empty_workflow_session(shared_db, test_agent: Agent):
     assert "session_id" in data
     assert data["workflow_id"] == test_workflow.id
     assert data["session_state"] == {"workflow_step": 1}
-

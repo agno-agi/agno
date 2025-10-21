@@ -754,7 +754,13 @@ class Agent:
 
         return session_id, user_id
 
-    def _initialize_session_state(self, session_state: Dict[str, Any], user_id: Optional[str] = None, session_id: Optional[str] = None, run_id: Optional[str] = None   ) -> Dict[str, Any]:
+    def _initialize_session_state(
+        self,
+        session_state: Dict[str, Any],
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Initialize the session state for the agent."""
         if user_id:
             session_state["current_user_id"] = user_id
@@ -1287,9 +1293,7 @@ class Agent:
                 self.post_hooks = normalize_hooks(self.post_hooks)
             self._hooks_normalised = True
 
-        session_id, user_id = self._initialize_session(
-            session_id=session_id, user_id=user_id
-        )
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
@@ -1312,7 +1316,9 @@ class Agent:
         self._update_metadata(session=agent_session)
 
         # Initialize session state
-        session_state = self._initialize_session_state(session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id)
+        session_state = self._initialize_session_state(
+            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+        )
         # Update session state from DB
         session_state = self._load_session_state(session=agent_session, session_state=session_state)
         print(f"Session state after load: {session_state}")
@@ -1528,7 +1534,9 @@ class Agent:
         # 2. Update metadata and session state
         self._update_metadata(session=agent_session)
         # Initialize session state
-        session_state = self._initialize_session_state(session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id)
+        session_state = self._initialize_session_state(
+            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id
+        )
         # Update session state from DB
         if session_state is not None:
             session_state = self._load_session_state(session=agent_session, session_state=session_state)
@@ -1761,7 +1769,9 @@ class Agent:
         # 2. Update metadata and session state
         self._update_metadata(session=agent_session)
         # Initialize session state
-        session_state = self._initialize_session_state(session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id)
+        session_state = self._initialize_session_state(
+            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id
+        )
         # Update session state from DB
         if session_state is not None:
             session_state = self._load_session_state(session=agent_session, session_state=session_state)
@@ -2073,9 +2083,7 @@ class Agent:
             self._hooks_normalised = True
 
         # Initialize session
-        session_id, user_id = self._initialize_session(
-            session_id=session_id, user_id=user_id
-        )
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
@@ -2331,7 +2339,9 @@ class Agent:
         self._update_metadata(session=agent_session)
 
         # Initialize session state
-        session_state = self._initialize_session_state(session_state={}, user_id=user_id, session_id=session_id, run_id=run_id)
+        session_state = self._initialize_session_state(
+            session_state={}, user_id=user_id, session_id=session_id, run_id=run_id
+        )
         # Update session state from DB
         session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
@@ -2924,7 +2934,9 @@ class Agent:
         # 3. Update metadata and session state
         self._update_metadata(session=agent_session)
         # Initialize session state
-        session_state = self._initialize_session_state(session_state={}, user_id=user_id, session_id=session_id, run_id=run_id)
+        session_state = self._initialize_session_state(
+            session_state={}, user_id=user_id, session_id=session_id, run_id=run_id
+        )
         # Update session state from DB
         if session_state is not None:
             session_state = self._load_session_state(session=agent_session, session_state=session_state)
@@ -3128,7 +3140,9 @@ class Agent:
         # 3. Update session state and metadata
         self._update_metadata(session=agent_session)
         # Initialize session state
-        session_state = self._initialize_session_state(session_state={}, user_id=user_id, session_id=session_id, run_id=run_id)
+        session_state = self._initialize_session_state(
+            session_state={}, user_id=user_id, session_id=session_id, run_id=run_id
+        )
         # Update session state from DB
         if session_state is not None:
             session_state = self._load_session_state(session=agent_session, session_state=session_state)
@@ -5387,6 +5401,7 @@ class Agent:
             session_data = {}
             if self.session_state is not None:
                 from copy import deepcopy
+
                 session_data["session_state"] = deepcopy(self.session_state)
             agent_session = AgentSession(
                 session_id=session_id,
@@ -5427,6 +5442,7 @@ class Agent:
             session_data = {}
             if self.session_state is not None:
                 from copy import deepcopy
+
                 session_data["session_state"] = deepcopy(self.session_state)
             agent_session = AgentSession(
                 session_id=session_id,
@@ -5532,6 +5548,41 @@ class Agent:
         # Load and return the session from the database
         if self.db is not None:
             agent_session = cast(AgentSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+
+            # Cache the session if relevant
+            if agent_session is not None and self.cache_session:
+                self._agent_session = agent_session
+
+            return agent_session
+
+        log_debug(f"AgentSession {session_id_to_load} not found in db")
+        return None
+
+    async def aget_session(
+        self,
+        session_id: Optional[str] = None,
+    ) -> Optional[AgentSession]:
+        """Load an AgentSession from database or cache.
+
+        Args:
+            session_id: The session_id to load from storage.
+
+        Returns:
+            AgentSession: The AgentSession loaded from the database/cache or None if not found.
+        """
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+
+        # If there is a cached session, return it
+        if self.cache_session and hasattr(self, "_agent_session") and self._agent_session is not None:
+            if self._agent_session.session_id == session_id_to_load:
+                return self._agent_session
+
+        # Load and return the session from the database
+        if self.db is not None:
+            agent_session = cast(AgentSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
 
             # Cache the session if relevant
             if agent_session is not None and self.cache_session:
@@ -5728,6 +5779,31 @@ class Agent:
             session.session_data["session_state"][key] = value
 
         self.save_session(session=session)
+
+        return session.session_data["session_state"]
+
+    async def aupdate_session_state(
+        self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None
+    ) -> str:
+        """
+        Update the session state for the given session ID and user ID.
+        Args:
+            session_state_updates: The updates to apply to the session state. Should be a dictionary of key-value pairs.
+            session_id: The session ID to update. If not provided, the current cached session ID is used.
+        Returns:
+            dict: The updated session state.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        session = await self.aget_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+
+        for key, value in session_state_updates.items():
+            session.session_data["session_state"][key] = value
+
+        await self.asave_session(session=session)
 
         return session.session_data["session_state"]
 

@@ -1,12 +1,11 @@
 import logging
 import time
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentSessionDetailSchema,
@@ -30,6 +29,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
+from agno.session import AgentSession, TeamSession, WorkflowSession
 
 logger = logging.getLogger(__name__)
 
@@ -195,13 +195,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
     async def create_session(
         request: Request,
         session_type: SessionType = Query(
-            default=SessionType.AGENT, 
-            alias="type",
-            description="Type of session to create (agent, team, or workflow)"
+            default=SessionType.AGENT, alias="type", description="Type of session to create (agent, team, or workflow)"
         ),
         create_session_request: CreateSessionRequest = Body(
-            default=CreateSessionRequest(),
-            description="Session configuration data"
+            default=CreateSessionRequest(), description="Session configuration data"
         ),
         db_id: Optional[str] = Query(default=None, description="Database ID to create session in"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
@@ -214,14 +211,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
 
         # Generate session_id if not provided
         session_id = create_session_request.session_id or str(uuid4())
-        
+
         # Prepare session_data with session_state and session_name
         session_data: dict[str, Any] = {}
         if create_session_request.session_state is not None:
             session_data["session_state"] = create_session_request.session_state
         if create_session_request.session_name is not None:
             session_data["session_name"] = create_session_request.session_name
-        
+
         current_time = int(time.time())
 
         # Create the appropriate session type
@@ -265,7 +262,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
                 created_session = await db.upsert_session(session, deserialize=True)
             else:
                 created_session = db.upsert_session(session, deserialize=True)
-            
+
             if not created_session:
                 raise HTTPException(status_code=500, detail="Failed to create session")
 
@@ -572,7 +569,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
             filtered_runs.append(run)
 
         if not filtered_runs:
-            raise HTTPException(status_code=404, detail=f"No runs found matching the specified filters")
+            raise HTTPException(status_code=404, detail="No runs found matching the specified filters")
 
         run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
 
@@ -677,10 +674,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
                 break
 
         if not target_run:
-            raise HTTPException(
-                status_code=404, detail=f"Run with ID {run_id} not found in session {session_id}"
-            )
-        
+            raise HTTPException(status_code=404, detail=f"Run with ID {run_id} not found in session {session_id}")
+
         # Return the appropriate schema based on run type
         if target_run.get("workflow_id") is not None:
             return WorkflowRunSchema.from_dict(target_run)
@@ -899,9 +894,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
                             },
                             "update_session_name": {
                                 "summary": "Update session name",
-                                "value": {
-                                    "session_name": "Updated Session Name"
-                                },
+                                "value": {"session_name": "Updated Session Name"},
                             },
                             "update_session_state": {
                                 "summary": "Update session state",

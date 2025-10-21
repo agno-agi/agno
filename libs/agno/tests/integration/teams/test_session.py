@@ -16,6 +16,7 @@ def team_factory(shared_db, session_id: Optional[str] = None, session_state: Opt
         telemetry=False,
     )
 
+
 def test_team_set_session_name(shared_db):
     session_id = "session_1"
     session_state = {"test_key": "test_value"}
@@ -58,4 +59,3 @@ def test_team_get_session_metrics(shared_db):
     assert metrics.input_tokens > 0
     assert metrics.output_tokens > 0
     assert metrics.total_tokens == metrics.input_tokens + metrics.output_tokens
-

@@ -781,7 +781,11 @@ class Team:
         return session_id, user_id
 
     def _initialize_session_state(
-        self, session_state: Dict[str, Any], user_id: Optional[str] = None, session_id: Optional[str] = None, run_id: Optional[str] = None
+        self,
+        session_state: Dict[str, Any],
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Initialize the session state for the team."""
         if user_id:
@@ -1615,7 +1619,9 @@ class Team:
         self._update_metadata(session=team_session)
 
         # Initialize session state
-        session_state = self._initialize_session_state(session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id)
+        session_state = self._initialize_session_state(
+            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+        )
         # Update session state from DB
         session_state = self._load_session_state(session=team_session, session_state=session_state)
 
@@ -1847,7 +1853,9 @@ class Team:
         # 2. Update metadata and session state
         self._update_metadata(session=team_session)
         # Initialize session state
-        session_state = self._initialize_session_state(session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id)
+        session_state = self._initialize_session_state(
+            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id
+        )
         # Update session state from DB
         session_state = self._load_session_state(session=team_session, session_state=session_state)  # type: ignore
 
@@ -2064,7 +2072,9 @@ class Team:
         # 3. Update metadata and session state
         self._update_metadata(session=team_session)
         # Initialize session state
-        session_state = self._initialize_session_state(session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id)
+        session_state = self._initialize_session_state(
+            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id
+        )
         # Update session state from DB
         session_state = self._load_session_state(session=team_session, session_state=session_state)  # type: ignore
 
@@ -7446,6 +7456,41 @@ class Team:
         log_debug(f"TeamSession {session_id_to_load} not found in db")
         return None
 
+    async def aget_session(
+        self,
+        session_id: Optional[str] = None,
+    ) -> Optional[TeamSession]:
+        """Load an TeamSession from database.
+
+        Args:
+            session_id: The session_id to load from storage.
+
+        Returns:
+            TeamSession: The TeamSession loaded from the database or created if it does not exist.
+        """
+        if not session_id and not self.session_id:
+            return None
+
+        session_id_to_load = session_id or self.session_id
+
+        # If there is a cached session, return it
+        if self.cache_session and hasattr(self, "_team_session") and self._team_session is not None:
+            if self._team_session.session_id == session_id_to_load:
+                return self._team_session
+
+        # Load and return the session from the database
+        if self.db is not None:
+            team_session = cast(TeamSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
+
+            # Cache the session if relevant
+            if team_session is not None and self.cache_session:
+                self._team_session = team_session
+
+            return team_session
+
+        log_debug(f"TeamSession {session_id_to_load} not found in db")
+        return None
+
     def save_session(self, session: TeamSession) -> None:
         """Save the TeamSession to storage"""
         if self.db is not None and self.parent_team_id is None and self.workflow_id is None:
@@ -7624,6 +7669,31 @@ class Team:
             session.session_data["session_state"][key] = value
 
         self.save_session(session=session)
+
+        return session.session_data["session_state"]
+
+    async def aupdate_session_state(
+        self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None
+    ) -> str:
+        """
+        Update the session state for the given session ID and user ID.
+        Args:
+            session_state_updates: The updates to apply to the session state. Should be a dictionary of key-value pairs.
+            session_id: The session ID to update. If not provided, the current cached session ID is used.
+        Returns:
+            dict: The updated session state.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        session = await self.aget_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+
+        for key, value in session_state_updates.items():
+            session.session_data["session_state"][key] = value
+
+        await self.asave_session(session=session)
 
         return session.session_data["session_state"]
 
