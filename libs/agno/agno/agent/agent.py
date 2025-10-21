@@ -488,7 +488,9 @@ class Agent:
         self.num_history_runs = num_history_runs
         self.num_history_messages = num_history_messages
         if self.num_history_messages is not None and self.num_history_runs is not None:
-            log_warning("num_history_messages and num_history_runs cannot be set at the same time. Using num_history_runs.")
+            log_warning(
+                "num_history_messages and num_history_runs cannot be set at the same time. Using num_history_runs."
+            )
             self.num_history_messages = None
         if self.num_history_messages is None and self.num_history_runs is None:
             self.num_history_runs = 3
@@ -6837,7 +6839,7 @@ class Agent:
             skip_role = (
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
-            
+
             history: List[Message] = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
                 last_n_messages=self.num_history_messages,

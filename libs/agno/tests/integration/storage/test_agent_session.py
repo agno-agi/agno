@@ -8,23 +8,17 @@ from agno.db.base import SessionType
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
-from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.summary import SessionSummary
 
 
 def create_session_with_runs(shared_db, session_id: str, runs: list[RunOutput]) -> AgentSession:
     """Helper function to create and store a session with runs in the database"""
-    agent_session = AgentSession(
-        session_id=session_id,
-        agent_id="test_agent",
-        runs=runs,
-        created_at=int(time())
-    )
-    
+    agent_session = AgentSession(session_id=session_id, agent_id="test_agent", runs=runs, created_at=int(time()))
+
     # Store the session in the database
     shared_db.upsert_session(session=agent_session)
-    
+
     # Retrieve it back to ensure it's properly persisted
     return shared_db.get_session(session_id=session_id, session_type=SessionType.AGENT)
 
@@ -32,7 +26,7 @@ def create_session_with_runs(shared_db, session_id: str, runs: list[RunOutput]) 
 def test_get_messages_from_last_n_runs_basic(shared_db):
     """Test basic functionality of getting messages from last N runs"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     # Create 3 runs with messages
     runs = [
         RunOutput(
@@ -60,21 +54,21 @@ def test_get_messages_from_last_n_runs_basic(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
     assert agent_session is not None
     assert len(agent_session.runs) == 3
 
     # Test getting messages from last 2 runs
     messages = agent_session.get_messages_from_last_n_runs(last_n=2)
-    
+
     # Should get 4 messages (2 from each of the last 2 runs)
     assert len(messages) == 4
     assert messages[0].content == "Second user message"
     assert messages[1].content == "Second assistant response"
     assert messages[2].content == "Third user message"
     assert messages[3].content == "Third assistant response"
-    
+
     # Verify messages are not from history
     for msg in messages:
         assert not msg.from_history
@@ -83,7 +77,7 @@ def test_get_messages_from_last_n_runs_basic(shared_db):
 def test_get_messages_from_last_n_runs_with_last_n_messages(shared_db):
     """Test getting last N messages instead of last N runs"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     # Create multiple runs with system messages
     runs = [
         RunOutput(
@@ -116,13 +110,13 @@ def test_get_messages_from_last_n_runs_with_last_n_messages(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
     assert agent_session is not None
 
     # Test getting last 3 messages (should get system message + last 2 non-system messages)
     messages = agent_session.get_messages_from_last_n_runs(last_n_messages=3)
-    
+
     assert len(messages) == 3
     # System message should be first
     assert messages[0].role == "system"
@@ -135,7 +129,7 @@ def test_get_messages_from_last_n_runs_with_last_n_messages(shared_db):
 def test_get_messages_from_last_n_runs_with_last_n_messages_skip_system_message(shared_db):
     """Test getting last N messages instead of last N runs"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     # Create multiple runs with system messages
     runs = [
         RunOutput(
@@ -166,23 +160,24 @@ def test_get_messages_from_last_n_runs_with_last_n_messages_skip_system_message(
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
     assert agent_session is not None
 
     # Test getting last 3 messages (should get last 3 non-system messages)
     messages = agent_session.get_messages_from_last_n_runs(last_n_messages=3, skip_role="system")
-    
+
     assert len(messages) == 3
     # Then the last 3 non-system messages
     assert messages[0].content == "Second response"
     assert messages[1].content == "Third message"
     assert messages[2].content == "Third response"
 
+
 def test_get_messages_skip_history_messages(shared_db):
     """Test that messages tagged as from_history are skipped"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     # Create runs with some messages marked as history
     runs = [
         RunOutput(
@@ -202,21 +197,21 @@ def test_get_messages_skip_history_messages(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get messages with skip_history_messages=True (default)
     messages = agent_session.get_messages_from_last_n_runs(skip_history_messages=True)
-    
+
     # Should only get messages from run2 that are not from history
     assert len(messages) == 2
     assert all(not msg.from_history for msg in messages)
     assert messages[0].content == "New message"
     assert messages[1].content == "New response"
-    
+
     # Get messages with skip_history_messages=False
     messages_with_history = agent_session.get_messages_from_last_n_runs(skip_history_messages=False)
-    
+
     # Should get all messages including history
     assert len(messages_with_history) == 4
 
@@ -224,7 +219,7 @@ def test_get_messages_skip_history_messages(shared_db):
 def test_get_messages_skip_role(shared_db):
     """Test skipping messages with specific role"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -237,18 +232,18 @@ def test_get_messages_skip_role(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Skip system messages
     messages = agent_session.get_messages_from_last_n_runs(skip_role="system")
-    
+
     assert len(messages) == 3
     assert all(msg.role != "system" for msg in messages)
-    
+
     # Skip tool messages
     messages_no_tool = agent_session.get_messages_from_last_n_runs(skip_role="tool")
-    
+
     assert len(messages_no_tool) == 3
     assert all(msg.role != "tool" for msg in messages_no_tool)
 
@@ -256,7 +251,7 @@ def test_get_messages_skip_role(shared_db):
 def test_get_messages_skip_status(shared_db):
     """Test skipping runs with specific status"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     # Create runs with different statuses
     runs = [
         RunOutput(
@@ -283,19 +278,19 @@ def test_get_messages_skip_status(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # By default, should skip error, cancelled, and paused runs
     messages = agent_session.get_messages_from_last_n_runs()
-    
+
     assert len(messages) == 2  # Only messages from completed run
     assert messages[0].content == "Completed run"
     assert messages[1].content == "Completed response"
-    
+
     # Explicitly skip only error status
     messages_skip_error = agent_session.get_messages_from_last_n_runs(skip_status=[RunStatus.error])
-    
+
     # Should get messages from completed and cancelled runs
     assert len(messages_skip_error) == 3
 
@@ -303,7 +298,7 @@ def test_get_messages_skip_status(shared_db):
 def test_get_messages_filter_by_agent_id(shared_db):
     """Test filtering messages by agent_id"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     # Create runs from different agents
     runs = [
         RunOutput(
@@ -325,19 +320,19 @@ def test_get_messages_filter_by_agent_id(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get messages only from agent_1
     messages_agent1 = agent_session.get_messages_from_last_n_runs(agent_id="agent_1")
-    
+
     assert len(messages_agent1) == 2
     assert messages_agent1[0].content == "Agent 1 message"
     assert messages_agent1[1].content == "Agent 1 response"
-    
+
     # Get messages only from agent_2
     messages_agent2 = agent_session.get_messages_from_last_n_runs(agent_id="agent_2")
-    
+
     assert len(messages_agent2) == 2
     assert messages_agent2[0].content == "Agent 2 message"
     assert messages_agent2[1].content == "Agent 2 response"
@@ -346,7 +341,7 @@ def test_get_messages_filter_by_agent_id(shared_db):
 def test_get_messages_system_message_handling(shared_db):
     """Test that system messages are handled correctly and only added once"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     # Create multiple runs each with system messages
     runs = [
         RunOutput(
@@ -368,16 +363,16 @@ def test_get_messages_system_message_handling(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get all messages
     messages = agent_session.get_messages_from_last_n_runs()
-    
+
     # Count system messages - should only be 1
     system_messages = [msg for msg in messages if msg.role == "system"]
     assert len(system_messages) == 1
-    
+
     # System message should be first
     assert messages[0].role == "system"
 
@@ -385,20 +380,20 @@ def test_get_messages_system_message_handling(shared_db):
 def test_get_messages_empty_session(shared_db):
     """Test getting messages from an empty session"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     # Create session with no runs
     agent_session = create_session_with_runs(shared_db, session_id, [])
-    
+
     # Get messages from empty session
     messages = agent_session.get_messages_from_last_n_runs()
-    
+
     assert len(messages) == 0
 
 
 def test_get_messages_last_n_with_multiple_runs(shared_db):
     """Test getting messages from specific number of last runs"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     # Create 5 runs
     runs = [
         RunOutput(
@@ -411,24 +406,24 @@ def test_get_messages_last_n_with_multiple_runs(shared_db):
         )
         for i in range(5)
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get messages from last 2 runs only
     messages = agent_session.get_messages_from_last_n_runs(last_n=2)
-    
+
     # Should have 4 messages (2 messages per run * 2 runs)
     assert len(messages) == 4
-    
+
     # Verify we got the last 2 runs (runs 3 and 4)
     assert messages[0].content == "Message 3"
     assert messages[1].content == "Response 3"
     assert messages[2].content == "Message 4"
     assert messages[3].content == "Response 4"
-    
+
     # Get messages from last 1 run
     messages_one_run = agent_session.get_messages_from_last_n_runs(last_n=1)
-    
+
     # Should have 2 messages from the last run
     assert len(messages_one_run) == 2
     assert messages_one_run[0].content == "Message 4"
@@ -438,7 +433,7 @@ def test_get_messages_last_n_with_multiple_runs(shared_db):
 def test_get_messages_with_none_messages_in_run(shared_db):
     """Test handling runs with no messages"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     # Create run with None messages and run with valid messages
     runs = [
         RunOutput(
@@ -455,12 +450,12 @@ def test_get_messages_with_none_messages_in_run(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Should handle None messages gracefully
     messages = agent_session.get_messages_from_last_n_runs()
-    
+
     assert len(messages) == 2
     assert messages[0].content == "Valid message"
 
@@ -468,7 +463,7 @@ def test_get_messages_with_none_messages_in_run(shared_db):
 def test_get_messages_combined_filters(shared_db):
     """Test combining multiple filters"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     # Create runs with various characteristics
     runs = [
         RunOutput(
@@ -499,9 +494,9 @@ def test_get_messages_combined_filters(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Filter by agent_id, skip error status, skip history messages, and skip system role
     messages = agent_session.get_messages_from_last_n_runs(
         agent_id="agent_1",
@@ -509,7 +504,7 @@ def test_get_messages_combined_filters(shared_db):
         skip_history_messages=True,
         skip_role="system",
     )
-    
+
     # Should get messages from run1 and run3, excluding system, history, and error runs
     # From run1: only assistant message (user is history, system is skipped)
     # From run3: both user and assistant
@@ -523,7 +518,7 @@ def test_get_messages_combined_filters(shared_db):
 def test_to_dict_basic(shared_db):
     """Test converting AgentSession to dictionary"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -534,12 +529,12 @@ def test_to_dict_basic(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Convert to dict
     session_dict = agent_session.to_dict()
-    
+
     assert session_dict["session_id"] == session_id
     assert session_dict["agent_id"] == "test_agent"
     assert session_dict["runs"] is not None
@@ -550,26 +545,26 @@ def test_to_dict_basic(shared_db):
 def test_to_dict_with_summary(shared_db):
     """Test converting AgentSession with summary to dictionary"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     summary = SessionSummary(
         summary="Test session summary",
         topics=["topic1", "topic2"],
         updated_at=datetime.now(),
     )
-    
+
     agent_session = AgentSession(
         session_id=session_id,
         agent_id="test_agent",
         summary=summary,
         created_at=int(time()),
     )
-    
+
     shared_db.upsert_session(session=agent_session)
     retrieved_session = shared_db.get_session(session_id=session_id, session_type=SessionType.AGENT)
-    
+
     # Convert to dict
     session_dict = retrieved_session.to_dict()
-    
+
     assert session_dict["summary"] is not None
     assert session_dict["summary"]["summary"] == "Test session summary"
     assert session_dict["summary"]["topics"] == ["topic1", "topic2"]
@@ -578,7 +573,7 @@ def test_to_dict_with_summary(shared_db):
 def test_from_dict_basic(shared_db):
     """Test creating AgentSession from dictionary"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     session_data = {
         "session_id": session_id,
         "agent_id": "test_agent",
@@ -596,10 +591,10 @@ def test_from_dict_basic(shared_db):
             }
         ],
     }
-    
+
     # Create from dict
     agent_session = AgentSession.from_dict(session_data)
-    
+
     assert agent_session is not None
     assert agent_session.session_id == session_id
     assert agent_session.agent_id == "test_agent"
@@ -616,17 +611,17 @@ def test_from_dict_missing_session_id(shared_db):
         "agent_id": "test_agent",
         "runs": [],
     }
-    
+
     # Should return None with missing session_id
     agent_session = AgentSession.from_dict(session_data)
-    
+
     assert agent_session is None
 
 
 def test_from_dict_with_summary(shared_db):
     """Test creating AgentSession with summary from dictionary"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     session_data = {
         "session_id": session_id,
         "summary": {
@@ -635,9 +630,9 @@ def test_from_dict_with_summary(shared_db):
             "updated_at": datetime.now().isoformat(),
         },
     }
-    
+
     agent_session = AgentSession.from_dict(session_data)
-    
+
     assert agent_session is not None
     assert agent_session.summary is not None
     assert agent_session.summary.summary == "Test summary"
@@ -648,9 +643,9 @@ def test_from_dict_with_summary(shared_db):
 def test_upsert_run_add_new(shared_db):
     """Test adding a new run to session"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, [])
-    
+
     # Add a new run
     new_run = RunOutput(
         run_id="run1",
@@ -660,9 +655,9 @@ def test_upsert_run_add_new(shared_db):
             Message(role="assistant", content="New response"),
         ],
     )
-    
+
     agent_session.upsert_run(new_run)
-    
+
     assert len(agent_session.runs) == 1
     assert agent_session.runs[0].run_id == "run1"
 
@@ -670,7 +665,7 @@ def test_upsert_run_add_new(shared_db):
 def test_upsert_run_update_existing(shared_db):
     """Test updating an existing run"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -680,9 +675,9 @@ def test_upsert_run_update_existing(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Update existing run
     updated_run = RunOutput(
         run_id="run1",
@@ -692,9 +687,9 @@ def test_upsert_run_update_existing(shared_db):
             Message(role="assistant", content="Updated response"),
         ],
     )
-    
+
     agent_session.upsert_run(updated_run)
-    
+
     # Should still have only 1 run, but with updated content
     assert len(agent_session.runs) == 1
     assert agent_session.runs[0].run_id == "run1"
@@ -705,9 +700,9 @@ def test_upsert_run_update_existing(shared_db):
 def test_upsert_run_multiple(shared_db):
     """Test adding multiple runs"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, [])
-    
+
     # Add multiple runs
     for i in range(3):
         run = RunOutput(
@@ -718,7 +713,7 @@ def test_upsert_run_multiple(shared_db):
             ],
         )
         agent_session.upsert_run(run)
-    
+
     assert len(agent_session.runs) == 3
     assert agent_session.runs[0].run_id == "run0"
     assert agent_session.runs[1].run_id == "run1"
@@ -729,7 +724,7 @@ def test_upsert_run_multiple(shared_db):
 def test_get_run_exists(shared_db):
     """Test retrieving an existing run"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -742,12 +737,12 @@ def test_get_run_exists(shared_db):
             messages=[Message(role="user", content="Message 2")],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get specific run
     run = agent_session.get_run("run2")
-    
+
     assert run is not None
     assert run.run_id == "run2"
     assert run.messages[0].content == "Message 2"
@@ -756,7 +751,7 @@ def test_get_run_exists(shared_db):
 def test_get_run_not_exists(shared_db):
     """Test retrieving a non-existent run"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -764,24 +759,24 @@ def test_get_run_not_exists(shared_db):
             messages=[Message(role="user", content="Message 1")],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Try to get non-existent run
     run = agent_session.get_run("non_existent")
-    
+
     assert run is None
 
 
 def test_get_run_empty_session(shared_db):
     """Test retrieving run from empty session"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, [])
-    
+
     # Try to get run from empty session
     run = agent_session.get_run("run1")
-    
+
     assert run is None
 
 
@@ -789,7 +784,7 @@ def test_get_run_empty_session(shared_db):
 def test_get_tool_calls_basic(shared_db):
     """Test retrieving tool calls from messages"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -811,12 +806,12 @@ def test_get_tool_calls_basic(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get tool calls
     tool_calls = agent_session.get_tool_calls()
-    
+
     assert len(tool_calls) == 1
     assert tool_calls[0]["id"] == "call1"
     assert tool_calls[0]["function"]["name"] == "search"
@@ -825,7 +820,7 @@ def test_get_tool_calls_basic(shared_db):
 def test_get_tool_calls_multiple_runs(shared_db):
     """Test retrieving tool calls from multiple runs"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -851,12 +846,12 @@ def test_get_tool_calls_multiple_runs(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get all tool calls (should be in reverse order - most recent first)
     tool_calls = agent_session.get_tool_calls()
-    
+
     assert len(tool_calls) == 3
     # Should be reversed (run2 before run1)
     assert tool_calls[0]["id"] == "call2"
@@ -867,7 +862,7 @@ def test_get_tool_calls_multiple_runs(shared_db):
 def test_get_tool_calls_with_limit(shared_db):
     """Test retrieving limited number of tool calls"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -884,12 +879,12 @@ def test_get_tool_calls_with_limit(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get only 2 tool calls
     tool_calls = agent_session.get_tool_calls(num_calls=2)
-    
+
     assert len(tool_calls) == 2
     assert tool_calls[0]["id"] == "call1"
     assert tool_calls[1]["id"] == "call2"
@@ -898,7 +893,7 @@ def test_get_tool_calls_with_limit(shared_db):
 def test_get_tool_calls_no_tools(shared_db):
     """Test retrieving tool calls when there are none"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -909,12 +904,12 @@ def test_get_tool_calls_no_tools(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get tool calls
     tool_calls = agent_session.get_tool_calls()
-    
+
     assert len(tool_calls) == 0
 
 
@@ -922,7 +917,7 @@ def test_get_tool_calls_no_tools(shared_db):
 def test_get_messages_for_session_basic(shared_db):
     """Test getting user/assistant message pairs"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -942,12 +937,12 @@ def test_get_messages_for_session_basic(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get messages for session
     messages = agent_session.get_messages_for_session()
-    
+
     # Should get 4 messages (2 user + 2 assistant), no system
     assert len(messages) == 4
     assert messages[0].role == "user"
@@ -963,7 +958,7 @@ def test_get_messages_for_session_basic(shared_db):
 def test_get_messages_for_session_custom_roles(shared_db):
     """Test getting messages with custom assistant roles"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -974,12 +969,12 @@ def test_get_messages_for_session_custom_roles(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get messages with custom assistant role
     messages = agent_session.get_messages_for_session(assistant_role=["model"])
-    
+
     assert len(messages) == 2
     assert messages[0].role == "user"
     assert messages[1].role == "model"
@@ -988,7 +983,7 @@ def test_get_messages_for_session_custom_roles(shared_db):
 def test_get_messages_for_session_skip_history(shared_db):
     """Test that history messages are skipped"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -1007,12 +1002,12 @@ def test_get_messages_for_session_skip_history(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get messages, skipping history
     messages = agent_session.get_messages_for_session(skip_history_messages=True)
-    
+
     # Should only get new messages
     assert len(messages) == 2
     assert messages[0].content == "New user"
@@ -1022,7 +1017,7 @@ def test_get_messages_for_session_skip_history(shared_db):
 def test_get_messages_for_session_incomplete_pairs(shared_db):
     """Test handling of incomplete user/assistant pairs"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -1049,12 +1044,12 @@ def test_get_messages_for_session_incomplete_pairs(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get messages - only complete pairs
     messages = agent_session.get_messages_for_session()
-    
+
     # Should only get the complete pair from run3
     assert len(messages) == 2
     assert messages[0].content == "Complete user"
@@ -1065,25 +1060,25 @@ def test_get_messages_for_session_incomplete_pairs(shared_db):
 def test_get_session_summary_exists(shared_db):
     """Test getting session summary when it exists"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     summary = SessionSummary(
         summary="Test summary",
         topics=["topic1", "topic2"],
         updated_at=datetime.now(),
     )
-    
+
     agent_session = AgentSession(
         session_id=session_id,
         summary=summary,
         created_at=int(time()),
     )
-    
+
     shared_db.upsert_session(session=agent_session)
     retrieved_session = shared_db.get_session(session_id=session_id, session_type=SessionType.AGENT)
-    
+
     # Get summary
     session_summary = retrieved_session.get_session_summary()
-    
+
     assert session_summary is not None
     assert session_summary.summary == "Test summary"
     assert session_summary.topics == ["topic1", "topic2"]
@@ -1092,12 +1087,12 @@ def test_get_session_summary_exists(shared_db):
 def test_get_session_summary_none(shared_db):
     """Test getting session summary when it doesn't exist"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, [])
-    
+
     # Get summary
     session_summary = agent_session.get_session_summary()
-    
+
     assert session_summary is None
 
 
@@ -1105,7 +1100,7 @@ def test_get_session_summary_none(shared_db):
 def test_get_chat_history_basic(shared_db):
     """Test getting chat history"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -1124,12 +1119,12 @@ def test_get_chat_history_basic(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get chat history
     chat_history = agent_session.get_chat_history()
-    
+
     assert len(chat_history) == 4
     assert chat_history[0].content == "Message 1"
     assert chat_history[1].content == "Response 1"
@@ -1140,7 +1135,7 @@ def test_get_chat_history_basic(shared_db):
 def test_get_chat_history_skip_from_history(shared_db):
     """Test that messages marked as from_history are excluded"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -1159,12 +1154,12 @@ def test_get_chat_history_skip_from_history(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get chat history
     chat_history = agent_session.get_chat_history()
-    
+
     # Should only include non-history messages
     assert len(chat_history) == 2
     assert chat_history[0].content == "New message"
@@ -1174,19 +1169,19 @@ def test_get_chat_history_skip_from_history(shared_db):
 def test_get_chat_history_empty(shared_db):
     """Test getting chat history from empty session"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, [])
-    
+
     # Get chat history
     chat_history = agent_session.get_chat_history()
-    
+
     assert len(chat_history) == 0
 
 
 def test_get_chat_history_all_roles(shared_db):
     """Test that chat history includes all roles"""
     session_id = f"test_session_{uuid.uuid4()}"
-    
+
     runs = [
         RunOutput(
             run_id="run1",
@@ -1199,15 +1194,14 @@ def test_get_chat_history_all_roles(shared_db):
             ],
         ),
     ]
-    
+
     agent_session = create_session_with_runs(shared_db, session_id, runs)
-    
+
     # Get chat history - should include all roles
     chat_history = agent_session.get_chat_history()
-    
+
     assert len(chat_history) == 4
     assert chat_history[0].role == "system"
     assert chat_history[1].role == "user"
     assert chat_history[2].role == "assistant"
     assert chat_history[3].role == "tool"
-

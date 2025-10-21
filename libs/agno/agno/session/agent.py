@@ -106,8 +106,10 @@ class AgentSession:
             if run.run_id == run_id:
                 return run
         return None
-    
-    def _should_skip_message(self, message: Message, skip_role: Optional[str] = None, skip_history_messages: bool = True) -> bool:
+
+    def _should_skip_message(
+        self, message: Message, skip_role: Optional[str] = None, skip_history_messages: bool = True
+    ) -> bool:
         """Processes a message for history"""
         # Skip messages that were tagged as history in previous runs
         if hasattr(message, "from_history") and message.from_history and skip_history_messages:
@@ -155,7 +157,7 @@ class AgentSession:
 
         # Filter by status
         session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_status]  # type: ignore
-        
+
         messages_from_history = []
         system_message = None
 
@@ -164,7 +166,7 @@ class AgentSession:
             for run_response in session_runs:
                 if not run_response or not run_response.messages:
                     continue
-                
+
                 for message in run_response.messages or []:
                     if self._should_skip_message(message, skip_role, skip_history_messages):
                         continue
@@ -175,9 +177,11 @@ class AgentSession:
                             system_message = message
                     else:
                         messages_from_history.append(message)
-            
+
             if system_message:
-                messages_from_history = [system_message] + messages_from_history[-(last_n_messages-1):]  # Grab one less message then add the system message
+                messages_from_history = [system_message] + messages_from_history[
+                    -(last_n_messages - 1) :
+                ]  # Grab one less message then add the system message
             else:
                 messages_from_history = messages_from_history[-last_n_messages:]
         else:
