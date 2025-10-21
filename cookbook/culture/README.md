@@ -4,8 +4,7 @@ This cookbook demonstrates Agno's support for **cultural knowledge** — a share
 
 This is **v0.1**, with the current goal of helping Agents stay consistent in tone, reasoning, and behavior. The eventual goal is to transform isolated agents into a living, evolving system of intelligence.
 
-> “Culture is how intelligence compounds.”
-> — *Agno Design Philosophy*
+> "Culture is how intelligence compounds."
 
 ---
 
