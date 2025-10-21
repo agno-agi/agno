@@ -138,7 +138,7 @@ class SessionSummaryManager:
         """Prepare messages for session summary generation. Returns None if no meaningful messages to summarize."""
         if not session:
             return None
-        
+
         self.model = cast(Model, self.model)
         response_format = self.get_response_format(self.model)
 
@@ -146,10 +146,10 @@ class SessionSummaryManager:
             conversation=session.get_messages_for_session(),  # type: ignore
             response_format=response_format,
         )
-        
+
         if system_message is None:
             return None
-        
+
         return [
             system_message,
             Message(role="user", content="Provide the summary of the conversation."),
@@ -211,12 +211,12 @@ class SessionSummaryManager:
             return None
 
         messages = self._prepare_summary_messages(session)
-        
+
         # Skip summary generation if there are no meaningful messages
         if messages is None:
             log_debug("No meaningful messages to summarize, skipping session summary")
             return None
-        
+
         response_format = self.get_response_format(self.model)
 
         summary_response = self.model.response(messages=messages, response_format=response_format)
@@ -238,12 +238,12 @@ class SessionSummaryManager:
             return None
 
         messages = self._prepare_summary_messages(session)
-        
+
         # Skip summary generation if there are no meaningful messages
         if messages is None:
             log_debug("No meaningful messages to summarize, skipping session summary")
             return None
-        
+
         response_format = self.get_response_format(self.model)
 
         summary_response = await self.model.aresponse(messages=messages, response_format=response_format)
