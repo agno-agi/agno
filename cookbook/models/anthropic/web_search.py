@@ -1,10 +1,14 @@
 from pprint import pprint
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.models.anthropic import Claude
 
 agent = Agent(
-    model=Claude(id="claude-sonnet-4-5", max_tokens=1024),
+    model=Claude(
+        id="claude-sonnet-4-20250514",
+    ),
+    db=InMemoryDb(),
     tools=[
         {
             "type": "web_search_20250305",
