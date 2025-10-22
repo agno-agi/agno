@@ -19,7 +19,7 @@
 
 ## What is Agno?
 
-Agno is a multi-agent framework and runtime. Fast, elegant and performant at scale.
+Agno is a multi-agent framework, runtime and control plane. Fast, elegant and performant at scale.
 
 It provides a rich set of primitives for building:
 
