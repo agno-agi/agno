@@ -33,7 +33,7 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_events=True)
 
     responses = []
     tool_call_seen = False
@@ -80,7 +80,7 @@ async def test_async_tool_use_stream():
     async for response in agent.arun(
         "What is the current price of TSLA?",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     ):
         if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:  # type: ignore
             if response.tool.tool_name:  # type: ignore

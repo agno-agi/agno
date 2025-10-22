@@ -105,5 +105,5 @@ if __name__ == "__main__":
     workflow.print_response(
         input="Research legal violation cases and create content about illegal financial practices",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )

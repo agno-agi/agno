@@ -85,7 +85,7 @@ async def custom_content_planning_function(
 
     try:
         response_iterator = content_planner.arun(
-            planning_prompt, stream=True, stream_intermediate_steps=True
+            planning_prompt, stream=True, stream_events=True
         )
         async for event in response_iterator:
             yield event
@@ -158,7 +158,7 @@ if __name__ == "__main__":
             },
             markdown=True,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
         )
     )
 

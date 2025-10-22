@@ -221,7 +221,7 @@ def attach_routes(
                     session_id=context_id,
                     user_id=user_id,
                     stream=True,
-                    stream_intermediate_steps=True,
+                    stream_events=True,
                     **kwargs,
                 )
             else:
@@ -234,7 +234,7 @@ def attach_routes(
                     session_id=context_id,
                     user_id=user_id,
                     stream=True,
-                    stream_intermediate_steps=True,
+                    stream_events=True,
                     **kwargs,
                 )
 

@@ -76,7 +76,7 @@ async def run_team_with_events(prompt: str):
     async for run_response_event in company_info_team.arun(
         prompt,
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     ):
         # Handle team-level events
         if run_response_event.event in [

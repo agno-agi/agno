@@ -37,7 +37,7 @@ def main():
     for event in workflow.run(
         "What is Python?",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     ):
         event_name = event.event if hasattr(event, "event") else type(event).__name__
         print(f"  → {event_name}")

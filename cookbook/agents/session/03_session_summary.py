@@ -17,11 +17,13 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     db=db,
     enable_session_summaries=True,
-    session_id="session_summary",
+    session_id="session_123",
 )
 
 agent.print_response("Hi my name is John and I live in New York")
 agent.print_response("I like to play basketball and hike in the mountains")
+
+print(agent.get_session_summary(session_id="session_123"))
 
 # Method 2: Set session_summary_manager
 
