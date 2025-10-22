@@ -5,6 +5,7 @@ from agno.knowledge.document import Document
 from agno.utils.string import generate_id
 
 
+
 class VectorDb(ABC):
     """Base class for Vector Databases"""
 
