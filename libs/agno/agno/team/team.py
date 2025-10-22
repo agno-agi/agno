@@ -2442,7 +2442,7 @@ class Team:
         )
 
         self.model = cast(Model, self.model)
-        
+
         if self.metadata is not None:
             if metadata is None:
                 metadata = self.metadata
@@ -4906,7 +4906,7 @@ class Team:
                 input=user_message,
                 user_id=user_id,
                 stream=self.stream or False,
-                stream_events=self.stream_events,
+                stream_events=self.stream_events or False,
                 async_mode=async_mode,
                 images=images,  # type: ignore
                 videos=videos,  # type: ignore
