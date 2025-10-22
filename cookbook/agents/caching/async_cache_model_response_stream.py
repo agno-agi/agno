@@ -1,5 +1,5 @@
 """
-Example showing how to cache model responses to avoid redundant API calls.
+Example showing async caching for streaming model responses.
 
 Run this cookbook twice to see the difference in response time.
 
@@ -7,14 +7,19 @@ The first time should take a while to run.
 The second time should be instant.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o", cache_response=True), debug_mode=True
+    model=OpenAIChat(id="gpt-4o", cache_response=True)
 )
 
 # Should take a while to run the first time, then replay from cache
-agent.print_response(
-    "Write me a short story about a cat that can talk and solve problems."
+asyncio.run(
+    agent.aprint_response(
+        "Write me a very very very short story about a cat that can talk and solve problems.",
+        stream=True,
+    )
 )

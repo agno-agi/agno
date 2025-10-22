@@ -1,5 +1,5 @@
 """
-Example showing how to cache streaming model responses.
+Example showing how to cache model responses to avoid redundant API calls.
 
 Run this cookbook twice to see the difference in response time.
 
@@ -11,10 +11,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o", cache_response=True), debug_mode=True
+    model=OpenAIChat(id="gpt-4o", cache_response=True)
 )
 
 # Should take a while to run the first time, then replay from cache
 agent.print_response(
-    "Write me a very very very short story about a cat that can talk and solve problems.", stream=True
+    "Write me a short story about a cat that can talk and solve problems."
 )

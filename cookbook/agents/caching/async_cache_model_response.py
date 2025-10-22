@@ -14,7 +14,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o", cache_response=True), debug_mode=True
+    model=OpenAIChat(id="gpt-4o", cache_response=True)
 )
 
 
