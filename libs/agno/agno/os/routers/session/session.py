@@ -222,6 +222,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         current_time = int(time.time())
 
         # Create the appropriate session type
+        session: Union[AgentSession, TeamSession, WorkflowSession]
         if session_type == SessionType.AGENT:
             session = AgentSession(
                 session_id=session_id,
@@ -949,18 +950,18 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         # Update session properties
         # Handle session_name - stored in session_data
         if update_data.session_name is not None:
-            if existing_session.session_data is None:
-                existing_session.session_data = {}
-            existing_session.session_data["session_name"] = update_data.session_name
+            if existing_session.session_data is None:  # type: ignore
+                existing_session.session_data = {}  # type: ignore
+            existing_session.session_data["session_name"] = update_data.session_name  # type: ignore
 
         # Handle session_state - stored in session_data
         if update_data.session_state is not None:
-            if existing_session.session_data is None:
-                existing_session.session_data = {}
-            existing_session.session_data["session_state"] = update_data.session_state
+            if existing_session.session_data is None:  # type: ignore
+                existing_session.session_data = {}  # type: ignore
+            existing_session.session_data["session_state"] = update_data.session_state  # type: ignore
 
         if update_data.metadata is not None:
-            existing_session.metadata = update_data.metadata
+            existing_session.metadata = update_data.metadata  # type: ignore
 
         if update_data.summary is not None:
             from agno.session.summary import SessionSummary

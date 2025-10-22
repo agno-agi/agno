@@ -524,7 +524,7 @@ class Workflow:
             session.session_data["session_state"] = {}
 
         for key, value in session_state_updates.items():
-            session.session_data["session_state"][key] = value
+            session.session_data["session_state"][key] = value  # type: ignore
 
         self.save_session(session=session)
 

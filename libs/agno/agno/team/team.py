@@ -7739,11 +7739,11 @@ class Team:
             session.session_data["session_state"] = {}
 
         for key, value in session_state_updates.items():
-            session.session_data["session_state"][key] = value
+            session.session_data["session_state"][key] = value  # type: ignore
 
         self.save_session(session=session)
 
-        return session.session_data["session_state"]
+        return session.session_data["session_state"]  # type: ignore
 
     async def aupdate_session_state(
         self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None
@@ -7767,11 +7767,11 @@ class Team:
             session.session_data["session_state"] = {}
 
         for key, value in session_state_updates.items():
-            session.session_data["session_state"][key] = value
+            session.session_data["session_state"][key] = value  # type: ignore
 
         await self.asave_session(session=session)
 
-        return session.session_data["session_state"]
+        return session.session_data["session_state"]  # type: ignore
 
     def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
         """Get the session metrics for the given session ID and user ID."""
