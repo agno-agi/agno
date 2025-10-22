@@ -158,7 +158,7 @@ class VectorSearchRequestSchema(BaseModel):
         limit: int = Field(20, description="Number of results per page", ge=1, le=100)
         page: int = Field(1, description="Page number", ge=1)
 
-    query: str = Field(..., description="The search query text", min_length=1)
+    query: str = Field(..., description="The search query text")
     db_id: Optional[str] = Field(None, description="The content database ID to search in")
     vector_db_ids: Optional[List[str]] = Field(None, description="List of vector database IDs to search in")
     search_type: Optional[str] = Field(None, description="The type of search to perform (vector, keyword, hybrid)")

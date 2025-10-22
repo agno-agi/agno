@@ -57,7 +57,8 @@ integration-tests = [
     "ddgs",
     "yfinance",
     "sqlalchemy",
-    "Pillow"
+    "Pillow",
+    "fastmcp"
 ]
 
 # Dependencies for Telemetry
