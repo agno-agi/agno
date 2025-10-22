@@ -4930,7 +4930,7 @@ class Agent:
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
-        if user_message_str is not None:
+        if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
             log_debug("Creating user memories.")
             self.memory_manager.create_user_memories(  # type: ignore
                 message=user_message_str,
@@ -4952,8 +4952,14 @@ class Agent:
                     log_warning(f"Unsupported message type: {type(_im)}")
                     continue
 
-            if len(parsed_messages) > 0 and self.memory_manager is not None:
-                self.memory_manager.create_user_memories(messages=parsed_messages, user_id=user_id, agent_id=self.id)  # type: ignore
+            # Filter out messages with empty content before passing to memory manager
+            non_empty_messages = [
+                msg
+                for msg in parsed_messages
+                if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
+            ]
+            if len(non_empty_messages) > 0 and self.memory_manager is not None:
+                self.memory_manager.create_user_memories(messages=non_empty_messages, user_id=user_id, agent_id=self.id)  # type: ignore
             else:
                 log_warning("Unable to add messages to memory")
 
@@ -4965,7 +4971,7 @@ class Agent:
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
-        if user_message_str is not None and self.memory_manager is not None:
+        if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
             log_debug("Creating user memories.")
             await self.memory_manager.acreate_user_memories(  # type: ignore
                 message=user_message_str,
@@ -4987,9 +4993,15 @@ class Agent:
                     log_warning(f"Unsupported message type: {type(_im)}")
                     continue
 
-            if len(parsed_messages) > 0 and self.memory_manager is not None:
+            # Filter out messages with empty content before passing to memory manager
+            non_empty_messages = [
+                msg
+                for msg in parsed_messages
+                if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
+            ]
+            if len(non_empty_messages) > 0 and self.memory_manager is not None:
                 await self.memory_manager.acreate_user_memories(  # type: ignore
-                    messages=parsed_messages, user_id=user_id, agent_id=self.id
+                    messages=non_empty_messages, user_id=user_id, agent_id=self.id
                 )
             else:
                 log_warning("Unable to add messages to memory")

@@ -3285,7 +3285,7 @@ class Team:
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
-        if user_message_str is not None and self.memory_manager is not None:
+        if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
             log_debug("Creating user memories.")
             self.memory_manager.create_user_memories(
                 message=user_message_str,
@@ -3301,7 +3301,7 @@ class Team:
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
-        if user_message_str is not None and self.memory_manager is not None:
+        if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
             log_debug("Creating user memories.")
             await self.memory_manager.acreate_user_memories(
                 message=user_message_str,
