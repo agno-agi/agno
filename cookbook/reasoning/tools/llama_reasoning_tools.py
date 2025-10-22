@@ -19,5 +19,5 @@ reasoning_agent = Agent(
 reasoning_agent.print_response(
     "What is the NVDA stock price? Write me a report",
     show_full_reasoning=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )

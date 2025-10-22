@@ -48,7 +48,7 @@ async def test():
     generator = agent.arun(
         "What is the weather and activities in San Francisco?",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
     async for event in generator:
         current_time = time.time() - start_time

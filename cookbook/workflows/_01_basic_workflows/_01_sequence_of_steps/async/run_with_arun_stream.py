@@ -5,6 +5,7 @@ from typing import AsyncIterator
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
+from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutputEvent
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -82,28 +83,48 @@ research_team = Team(
 )
 
 
-# Create and use workflow
-if __name__ == "__main__":
+async def main():
     content_creation_workflow = Workflow(
         name="Blog Post Workflow",
         description="Automated blog post creation from Hackernews and the web",
-        db=SqliteDb(
-            session_table="workflow_session",
-            db_file="tmp/workflow.db",
-        ),
         steps=[
             prepare_input_for_web_search,
             research_team,
             prepare_input_for_writer,
             writer_agent,
         ],
+        db=SqliteDb(
+            session_table="workflow_session",
+            db_file="tmp/workflow.db",
+        ),
     )
 
-    asyncio.run(
-        content_creation_workflow.aprint_response(
-            input="AI trends in 2024",
-            markdown=True,
-            stream=True,
-            stream_events=True,
-        )
+    resp: AsyncIterator[WorkflowRunOutputEvent] = content_creation_workflow.arun(
+        input="AI trends in 2024",
+        markdown=True,
+        stream=True,
+        stream_events=True,
     )
+    async for event in resp:
+        if event.event == WorkflowRunEvent.condition_execution_started.value:
+            print(event)
+            print()
+        elif event.event == WorkflowRunEvent.condition_execution_completed.value:
+            print(event)
+            print()
+        elif event.event == WorkflowRunEvent.workflow_started.value:
+            print(event)
+            print()
+        elif event.event == WorkflowRunEvent.step_started.value:
+            print(event)
+            print()
+        elif event.event == WorkflowRunEvent.step_completed.value:
+            print(event)
+            print()
+        elif event.event == WorkflowRunEvent.workflow_completed.value:
+            print(event)
+            print()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
