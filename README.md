@@ -27,9 +27,7 @@ It provides a rich set of primitives for building:
 - **Multi-Agent Teams** that operate autonomously under a team leader that maintains shared state and context.
 - **Step-based Workflows** for controlled, deterministic execution. Steps can be Agents, Teams, or a regular python functions and can run sequentially, in parallel, in loops, branches, or conditionally.
 
-Agno also provides a FastAPI-powered runtime for serving multi-agent systems in production, covering the entire software lifecycle (build → run → deploy). 
-
-Building Agents is easy, running them is hard, and that's where Agno shines.
+Agno also provides a FastAPI-powered runtime for serving multi-agent systems in production, covering the entire {build → run → deploy} lifecycle. Building Agents is easy, running them is hard, and that's where Agno shines.
 
 ## Example
 
