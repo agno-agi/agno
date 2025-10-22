@@ -5,6 +5,7 @@ In addition each team member has access to it's own history.
 Note: In this example the team leader has no access to the history of the team or the members themselves, so this show-cases how to use the history of the members themselves.
 """
 
+from uuid import uuid4
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -40,7 +41,6 @@ multi_lingual_q_and_a_team = Team(
     respond_directly=True,  # The team leader will not process responses from the members and instead will return them directly.
 )
 
-from uuid import uuid4
 
 session_id = f"conversation_{uuid4()}"
 

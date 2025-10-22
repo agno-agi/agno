@@ -16,7 +16,6 @@ The team leader coordinates the agents by:
 
 """
 
-import asyncio
 from typing import List
 
 from agno.agent import Agent

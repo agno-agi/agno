@@ -4,6 +4,7 @@ This example demonstrates a team where the team leader routes requests to the ap
 In addition each team member has access to the shared history of the team.
 """
 
+from uuid import uuid4
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -57,7 +58,6 @@ support_team = Team(
     show_members_responses=True,
 )
 
-from uuid import uuid4
 
 session_id = f"conversation_{uuid4()}"
 
