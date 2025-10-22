@@ -96,11 +96,11 @@ Agno is a remarkably feature-rich framework, covering all aspects of Agent Engin
 
 Every part of Agno is built for real-world deployment, where developer experience meets production performance.
 
-## AgentOS - production runtime for multi-agent systems
+## AgentOS - Production Runtime for Multi-Agent Systems
 
 AgentOS is Agno's high-performance runtime for serving multi-agent systems in production. Key features include:
 
-1. **Pre-built FastAPI Runtime**: AgentOS ships with a ready-to-use FastAPI app for running your agents, teams, and workflows. This provides a major head start when building an AI product.
+1. **Pre-built FastAPI Runtime**: AgentOS ships with a ready-to-use FastAPI app for orchestrating your agents, teams, and workflows. This provides a major head start when building an AI product.
 
 2. **Integrated Control Plane**: The [AgentOS UI](https://os.agno.com) connects directly to your runtime, letting you test, monitor, and manage your system in real time. This gives you unmatched visibility and control over your system.
 
