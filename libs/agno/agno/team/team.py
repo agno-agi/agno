@@ -1916,10 +1916,10 @@ class Team:
             session_state=session_state,
             user_id=user_id,
             input_message=run_input.input_content,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -2110,10 +2110,10 @@ class Team:
             async_mode=True,
             knowledge_filters=knowledge_filters,
             input_message=run_input.input_content,
-            images=images,
-            videos=videos,
-            audio=audio,
-            files=files,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -2127,10 +2127,10 @@ class Team:
             session_state=session_state,
             user_id=user_id,
             input_message=run_input.input_content,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -3113,8 +3113,13 @@ class Team:
             user_message_str = (
                 run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
             )
-            # Create user memories
-            if user_message_str is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+            # Create user memories (skip if message is empty or None)
+            if (
+                user_message_str is not None
+                and user_message_str.strip() != ""
+                and self.memory_manager is not None
+                and not self.enable_agentic_memory
+            ):
                 futures.append(
                     executor.submit(
                         self.memory_manager.create_user_memories,
@@ -3165,7 +3170,13 @@ class Team:
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
-        if user_message_str is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        # Create user memories (skip if message is empty or None)
+        if (
+            user_message_str is not None
+            and user_message_str.strip() != ""
+            and self.memory_manager is not None
+            and not self.enable_agentic_memory
+        ):
             tasks.append(
                 self.memory_manager.acreate_user_memories(message=user_message_str, user_id=user_id, team_id=self.id)
             )
