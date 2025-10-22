@@ -24,10 +24,12 @@ Agno is a multi-agent framework, runtime and control plane. Fast, elegant and pe
 It provides a rich set of primitives for building:
 
 - **Agents** with persistent state, knowledge retrieval, memory, and advanced features like human-in-the-loop, guardrails, dynamic context management and best-in-class MCP support.
-- **Multi-Agent Teams** that operate autonomously under a team leader who maintains shared state and agentic context, improving reasoning, quality, and over all performance.
+- **Multi-Agent Teams** that operate autonomously under a team leader that maintains shared state and context.
 - **Step-based Workflows** for controlled, deterministic execution. Steps can be Agents, Teams, or a regular python functions and can run sequentially, in parallel, in loops, branches, or conditionally.
 
-Agno also provides a FastAPI-powered runtime for serving your multi-agent system in production, powering the entire software lifecycle (build → run → deploy). Building Agents is easy, running them is hard, and that's where Agno shines.
+Agno also provides a FastAPI-powered runtime for serving multi-agent systems in production, covering the entire software lifecycle (build → run → deploy). 
+
+Building Agents is easy, running them is hard, and that's where Agno shines.
 
 ## Example
 
