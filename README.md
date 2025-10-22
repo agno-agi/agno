@@ -19,7 +19,7 @@
 
 ## What is Agno?
 
-Agno is a framework and runtime for building agentic software. Fast, elegant and performant at scale.
+Agno is a multi-agent framework and runtime. Fast, elegant and performant at scale.
 
 It provides a rich set of primitives for building:
 
@@ -27,7 +27,7 @@ It provides a rich set of primitives for building:
 - **Multi-Agent Teams** that operate autonomously under a team leader who maintains shared state and agentic context, improving reasoning, quality, and over all performance.
 - **Step-based Workflows** for controlled, deterministic execution. Steps can be Agents, Teams, or a regular python functions and can run sequentially, in parallel, in loops, branches, or conditionally.
 
-Agno also provides a FastAPI-powered runtime for serving your agents, teams and workflows in production, powering the entire software lifecycle (build → run → deploy). Building Agents is easy, running them is hard, and that's where Agno shines.
+Agno also provides a FastAPI-powered runtime for serving your multi-agent system in production, powering the entire software lifecycle (build → run → deploy). Building Agents is easy, running them is hard, and that's where Agno shines.
 
 ## Example
 
@@ -66,7 +66,7 @@ if __name__ == "__main__":
 
 ## Getting started
 
-If you're new to Agno, follow our [quickstart](https://docs.agno.com/introduction/quickstart) to build your first Agent and run it using the AgentOS.
+If you're new to Agno, follow our [quickstart](https://docs.agno.com/introduction/quickstart) to build your first Agent and chat with it using the AgentOS UI.
 
 After that, checkout the [examples gallery](https://docs.agno.com/examples/introduction) and build real-world applications with Agno.
 
@@ -82,9 +82,9 @@ After that, checkout the [examples gallery](https://docs.agno.com/examples/intro
 Agno is a remarkably feature-rich framework, covering all aspects of Agent Engineering:
 
 - **Model Agnostic**: Works with any model provider so you can use your favorite LLMs.
-- **Type safe**: Agents, Teams, and Workflows can accept structured inputs and generate structured outputs, enforced through `input_schema` and `output_schema`.
+- **Type Safe**: Agents, Teams, and Workflows can accept structured inputs and generate structured outputs, enforced through `input_schema` and `output_schema`.
 - **Persistent Storage**: Give your Agents, Teams and Workflows a database to persist session history and state.
-- **Agentic RAG**: Connect Agents to any vector store (called Knowledge in Agno) and enable Agentic RAG out of the box.
+- **Agentic RAG**: Connect Agents to any vector store (called Knowledge in Agno) and enable hybrid-search + reranking out of the box.
 - **User Memory**: Built-in memory system that lets Agents store and recall information about users across sessions.
 - **Human-in-the-Loop**: Native support for user confirmation, manual input, external tool execution, and admin overrides.
 - **MCP**: Best-in-class support for the Model Context Protocol (MCP), enabling Agents to interact with external systems through a standardized interface.
@@ -94,11 +94,11 @@ Agno is a remarkably feature-rich framework, covering all aspects of Agent Engin
 - **Dynamic Context Management**: Dynamically modify an Agent’s context by injecting variables, state, and function outputs. Use dependencies to add memories, skills, or retrieved documents before execution.
 - **Evals**: Evaluate your Agents across three key dimensions: Accuracy, Performance, and Reliability.
 
-Every part of Agno is built for real-world Agent Engineering, where developer experience meets production performance.
+Every part of Agno is built for real-world deployment, where developer experience meets production performance.
 
-## AgentOS - product runtime for agentic systems
+## AgentOS - production runtime for multi-agent systems
 
-AgentOS is Agno's high-performance runtime for running agentic systems in production. Key features include:
+AgentOS is Agno's high-performance runtime for serving multi-agent systems in production. Key features include:
 
 1. **Pre-built FastAPI runtime**: AgentOS ships with a ready-to-use FastAPI app for running your agents, teams, and workflows. This provides a major head start when building an AI product.
 
