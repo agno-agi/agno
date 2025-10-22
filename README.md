@@ -95,7 +95,7 @@ Agno is a remarkably feature-rich framework, purpose-built for large-scale multi
 |  | **Agent Lifecycle Hooks** | Pre- and post-hooks to validate or transform inputs and outputs. |
 |  | **MCP Integration** | First-class support for the Model Context Protocol (MCP) to connect Agents with external systems. |
 |  | **Toolkits** | 100+ built-in toolkits with thousands of tools, ready for use across data, code, web, and enterprise APIs. |
-| **Runtime & Evaluation** | **Runtime** | Pre-built FastAPI app with SSE compatible endpoints, ready for production on day 1. |
+| **Runtime & Evaluation** | **Runtime** | Pre-built FastAPI based runtime with SSE compatible endpoints, ready for production on day 1. |
 |  | **Control Plane (UI)** | Integrated interface to visualize, monitor, and debug agent activity in real time. |
 |  | **Natively Multimodal** | Agents can process and generate text, images, audio, video, and files. |
 |  | **Evals** | Measure your Agents' Accuracy, Performance, and Reliability. |
