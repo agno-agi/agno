@@ -15,6 +15,8 @@ from agno.os.utils import (
     format_tools,
     get_run_input,
     get_session_name,
+    get_agent_input_schema_dict,
+    get_team_input_schema_dict,
     get_workflow_input_schema_dict,
 )
 from agno.run.agent import RunOutput
@@ -180,6 +182,8 @@ class AgentResponse(BaseModel):
     response_settings: Optional[Dict[str, Any]] = None
     streaming: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    input_schema: Optional[Dict[str, Any]] = None
+
 
     class Config:
         exclude_none = True
@@ -375,6 +379,7 @@ class AgentResponse(BaseModel):
             "stream": agent.stream,
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
+
         return AgentResponse(
             id=agent.id,
             name=agent.name,
@@ -391,6 +396,7 @@ class AgentResponse(BaseModel):
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
             metadata=agent.metadata,
+            input_schema=get_agent_input_schema_dict(agent),
         )
 
 
@@ -411,6 +417,7 @@ class TeamResponse(BaseModel):
     streaming: Optional[Dict[str, Any]] = None
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
     metadata: Optional[Dict[str, Any]] = None
+    input_schema: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_team(cls, team: Team) -> "TeamResponse":
@@ -614,6 +621,7 @@ class TeamResponse(BaseModel):
                 for member in team.members
             ],
             metadata=team.metadata,
+            input_schema=get_team_input_schema_dict(team),
         )
 
 
