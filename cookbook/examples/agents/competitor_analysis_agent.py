@@ -190,7 +190,7 @@ competitor_analysis_agent = Agent(
     """),
     markdown=True,
     add_datetime_to_context=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 
 competitor_analysis_agent.print_response(

@@ -154,7 +154,7 @@ async def async_distributed_search():
 
     # Run async distributed search
     await distributed_search_team.aprint_response(
-        query, stream=True, stream_intermediate_steps=True
+        query, stream=True, stream_events=True
     )
 
 
@@ -174,9 +174,7 @@ def sync_distributed_search():
     )
 
     # Run distributed search
-    distributed_search_team.print_response(
-        query, stream=True, stream_intermediate_steps=True
-    )
+    distributed_search_team.print_response(query, stream=True, stream_events=True)
 
 
 if __name__ == "__main__":

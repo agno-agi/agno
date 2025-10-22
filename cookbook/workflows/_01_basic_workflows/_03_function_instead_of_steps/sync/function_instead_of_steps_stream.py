@@ -31,7 +31,7 @@ def custom_execution_function(
     # Run the Hackernews agent to gather research content
     research_content = ""
     for response in hackernews_agent.run(
-        execution_input.input, stream=True, stream_intermediate_steps=True
+        execution_input.input, stream=True, stream_events=True
     ):
         if hasattr(response, "content") and response.content:
             research_content += str(response.content)
@@ -53,9 +53,7 @@ def custom_execution_function(
 
         Please create a detailed, actionable content plan.
     """
-    yield from content_planner.run(
-        planning_prompt, stream=True, stream_intermediate_steps=True
-    )
+    yield from content_planner.run(planning_prompt, stream=True, stream_events=True)
 
 
 # Create and use workflow
@@ -72,5 +70,5 @@ if __name__ == "__main__":
     content_creation_workflow.print_response(
         input="AI trends in 2024",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )

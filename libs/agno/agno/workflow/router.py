@@ -267,6 +267,7 @@ class Router:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
@@ -288,7 +289,10 @@ class Router:
         steps_to_execute = self._route_steps(step_input, session_state)
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Yield router started event
             yield RouterExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -304,7 +308,7 @@ class Router:
 
         if not steps_to_execute:
             # Yield router completed event for empty case
-            if stream_intermediate_steps and workflow_run_response:
+            if stream_events and workflow_run_response:
                 yield RouterExecutionCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_name=workflow_run_response.workflow_name or "",
@@ -332,7 +336,7 @@ class Router:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
@@ -390,7 +394,7 @@ class Router:
 
         log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             # Yield router completed event
             yield RouterExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -520,6 +524,7 @@ class Router:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
@@ -541,7 +546,10 @@ class Router:
         steps_to_execute = await self._aroute_steps(step_input, session_state)
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Yield router started event
             yield RouterExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -556,7 +564,7 @@ class Router:
             )
 
         if not steps_to_execute:
-            if stream_intermediate_steps and workflow_run_response:
+            if stream_events and workflow_run_response:
                 # Yield router completed event for empty case
                 yield RouterExecutionCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -587,7 +595,7 @@ class Router:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
@@ -645,7 +653,7 @@ class Router:
 
         log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             # Yield router completed event
             yield RouterExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
