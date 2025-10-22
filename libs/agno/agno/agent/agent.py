@@ -4631,10 +4631,10 @@ class Agent:
                 run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
             )
 
-            # Create user memories 
+            # Create user memories
             if (
                 user_message_str is not None
-                and user_message_str.strip() != "" # Skip if user message is empty
+                and user_message_str.strip() != ""  # Skip if user message is empty
                 and self.memory_manager is not None
                 and not self.enable_agentic_memory
             ):
@@ -4689,7 +4689,7 @@ class Agent:
             # Create cultural knowledge
             if (
                 user_message_str is not None
-                and user_message_str.strip() != "" # Skip if user message is empty
+                and user_message_str.strip() != ""  # Skip if user message is empty
                 and self.culture_manager is not None
                 and self.update_cultural_knowledge
             ):
