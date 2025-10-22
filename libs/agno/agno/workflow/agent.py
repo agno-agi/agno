@@ -29,15 +29,18 @@ class WorkflowAgent(Agent):
         self,
         model: Model,
         instructions: Optional[str] = None,
+        add_workflow_history: bool = True,
+        num_history_runs: int = 5,
     ):
         """
         Initialize WorkflowAgent with restricted parameters.
         Args:
             model: The model to use for the agent (required)
-            name: Agent name (defaults to "Workflow Agent")
-            description: Agent description
             instructions: Custom instructions (will be combined with workflow context)
+            add_workflow_history: Whether to add workflow history to context (default: True)
+            num_history_runs: Number of previous workflow runs to include in context (default: 5)
         """
+        self.add_workflow_history = add_workflow_history
 
         default_instructions = """You are a workflow orchestration agent. Your job is to help users by either:
             1. **Answering directly** from the workflow history context if the question can be answered from previous runs
@@ -61,6 +64,7 @@ class WorkflowAgent(Agent):
             model=model,
             instructions=instructions or default_instructions,
             resolve_in_context=True,
+            num_history_runs=num_history_runs,
         )
 
     def create_workflow_tool(

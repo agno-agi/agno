@@ -7,9 +7,9 @@ It uses a post-hook which executes right after the response is processed.
 import asyncio
 from typing import Any, Dict
 
-from agno.team import Team
 from agno.models.openai import OpenAIChat
 from agno.run.team import TeamRunOutput
+from agno.team import Team
 from agno.tools.yfinance import YFinanceTools
 
 

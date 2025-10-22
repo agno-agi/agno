@@ -2237,7 +2237,7 @@ class Workflow:
                     log_debug(
                         f"Background streaming execution (workflow agent) completed with status: {workflow_run_response.status}"
                     )
-                else:   
+                else:
                     # Update status to RUNNING and save
                     workflow_run_response.status = RunStatus.running
                     if self._has_async_db():
@@ -2326,9 +2326,20 @@ class Workflow:
 
     def _get_workflow_agent_dependencies(self, session: WorkflowSession) -> Dict[str, Any]:
         """Build dependencies dict with workflow context to pass to agent.run()"""
-        history_context = (
-            session.get_workflow_history_context(num_runs=5) or "No previous workflow runs in this session."
-        )
+        # Get configuration from the WorkflowAgent instance
+        add_history = True
+        num_runs = 5
+
+        if self.agent and isinstance(self.agent, WorkflowAgent):
+            add_history = self.agent.add_workflow_history
+            num_runs = self.agent.num_history_runs
+
+        if add_history:
+            history_context = (
+                session.get_workflow_history_context(num_runs=num_runs) or "No previous workflow runs in this session."
+            )
+        else:
+            history_context = "No workflow history available."
 
         # Build workflow context with description and history
         workflow_context = ""

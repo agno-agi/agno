@@ -29,7 +29,7 @@ def add_references(step_input: StepInput):
 
 
 # Create a WorkflowAgent that will decide when to run the workflow
-workflow_agent = WorkflowAgent(model=OpenAIChat(id="gpt-4o-mini"))
+workflow_agent = WorkflowAgent(model=OpenAIChat(id="gpt-4o-mini"), num_history_runs=4)
 
 # Create workflow with the WorkflowAgent
 workflow = Workflow(
