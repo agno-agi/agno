@@ -671,12 +671,17 @@ class Workflow:
         if workflow_session is None:
             # Creating new session if none found
             log_debug(f"Creating new WorkflowSession: {session_id}")
+            session_data = {}
+            if self.session_state is not None:
+                from copy import deepcopy
+
+                session_data["session_state"] = deepcopy(self.session_state)
             workflow_session = WorkflowSession(
                 session_id=session_id,
                 workflow_id=self.id,
                 user_id=user_id,
                 workflow_data=self._get_workflow_data(),
-                session_data={},
+                session_data=session_data,
                 metadata=self.metadata,
                 created_at=int(time()),
             )
