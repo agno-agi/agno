@@ -348,10 +348,8 @@ class Workflow:
         self,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        session_state: Optional[Dict[str, Any]] = None,
-        run_id: Optional[str] = None,
-    ) -> Tuple[str, Optional[str], Dict[str, Any]]:
-        """Initialize the session for the agent."""
+    ) -> Tuple[str, Optional[str]]:
+        """Initialize the session for the workflow."""
 
         if session_id is None:
             if self.session_id:
@@ -364,27 +362,25 @@ class Workflow:
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Use the default user_id when necessary
-        if user_id is None:
+        if user_id is None or user_id == "":
             user_id = self.user_id
 
-        # Determine the session_state with proper precedence
-        if session_state is None:
-            session_state = self.session_state or {}
-        else:
-            # If run session_state is provided, merge agent defaults under it
-            # This ensures run state takes precedence over agent defaults
-            if self.session_state:
-                from agno.utils.merge_dict import merge_dictionaries
+        return session_id, user_id
 
-                base_state = self.session_state.copy()
-                merge_dictionaries(base_state, session_state)
-                session_state.clear()
-                session_state.update(base_state)
-
-        if user_id is not None:
+    def _initialize_session_state(
+        self,
+        session_state: Dict[str, Any],
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Initialize the session state for the workflow."""
+        if user_id:
             session_state["current_user_id"] = user_id
         if session_id is not None:
             session_state["current_session_id"] = session_id
+        if run_id is not None:
+            session_state["current_run_id"] = run_id
 
         session_state.update(
             {
@@ -396,7 +392,7 @@ class Workflow:
         if self.name:
             session_state["workflow_name"] = self.name
 
-        return session_id, user_id, session_state  # type: ignore
+        return session_state
 
     def _generate_workflow_session_name(self) -> str:
         """Generate a name for the workflow session"""
@@ -505,6 +501,62 @@ class Workflow:
         if session is None:
             raise Exception("Session not found")
         return session.session_data.get("session_state", {}) if session.session_data else {}
+
+    def update_session_state(
+        self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Update the session state for the given session ID.
+        Args:
+            session_state_updates: The updates to apply to the session state. Should be a dictionary of key-value pairs.
+            session_id: The session ID to update. If not provided, the current cached session ID is used.
+        Returns:
+            dict: The updated session state.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        session = self.get_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+
+        if session.session_data is not None and "session_state" not in session.session_data:
+            session.session_data["session_state"] = {}
+
+        for key, value in session_state_updates.items():
+            session.session_data["session_state"][key] = value  # type: ignore
+
+        self.save_session(session=session)
+
+        return session.session_data["session_state"]  # type: ignore
+
+    async def aupdate_session_state(
+        self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Update the session state for the given session ID (async).
+        Args:
+            session_state_updates: The updates to apply to the session state. Should be a dictionary of key-value pairs.
+            session_id: The session ID to update. If not provided, the current cached session ID is used.
+        Returns:
+            dict: The updated session state.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        session = await self.aget_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+
+        if session.session_data is not None and "session_state" not in session.session_data:
+            session.session_data["session_state"] = {}  # type: ignore
+
+        for key, value in session_state_updates.items():
+            session.session_data["session_state"][key] = value  # type: ignore
+
+        await self.asave_session(session=session)
+
+        return session.session_data["session_state"]  # type: ignore
 
     async def adelete_session(self, session_id: str):
         """Delete the current session and save to storage"""
@@ -2094,9 +2146,7 @@ class Workflow:
 
         self.initialize_workflow()
 
-        session_id, user_id, session_state = self._initialize_session(
-            session_id=session_id, user_id=user_id, session_state=session_state, run_id=run_id
-        )
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
         workflow_session, session_state = await self._aload_or_create_session(
@@ -2193,9 +2243,7 @@ class Workflow:
 
         self.initialize_workflow()
 
-        session_id, user_id, session_state = self._initialize_session(
-            session_id=session_id, user_id=user_id, session_state=session_state, run_id=run_id
-        )
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
         workflow_session, session_state = await self._aload_or_create_session(
@@ -2378,14 +2426,16 @@ class Workflow:
         run_id = str(uuid4())
 
         self.initialize_workflow()
-        session_id, user_id, session_state = self._initialize_session(
-            session_id=session_id, user_id=user_id, session_state=session_state, run_id=run_id
-        )
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
         workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=workflow_session)
 
+        # Initialize session state
+        session_state = self._initialize_session_state(
+            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+        )
         # Update session state from DB
         session_state = self._load_session_state(session=workflow_session, session_state=session_state)
 
@@ -2558,9 +2608,7 @@ class Workflow:
         run_id = str(uuid4())
 
         self.initialize_workflow()
-        session_id, user_id, session_state = self._initialize_session(
-            session_id=session_id, user_id=user_id, session_state=session_state, run_id=run_id
-        )
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
 
