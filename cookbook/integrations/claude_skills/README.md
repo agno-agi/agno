@@ -1,8 +1,8 @@
 # Claude Agent Skills for Agno
-https://docs.claude.com/en/docs/agents-and-tools/agent-skills/quickstart
+
 ## What are Claude Agent Skills?
 
-Claude can now use _Skills_ to improve how it performs specific tasks:
+[Claude Agent Skills](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills/quickstart) enable Claude to improve how it performs specific tasks:
 - **PowerPoint (pptx)**: Create professional presentations with slides, layouts, and formatting
 - **Excel (xlsx)**: Generate spreadsheets with formulas, charts, and data analysis
 - **Word (docx)**: Create and edit documents with rich formatting
@@ -144,10 +144,10 @@ Advanced example combining multiple skills:
 
 **Files created by Agent Skills are NOT automatically saved to your local filesystem.**
 
-When Claude creates a document (e.g., .pptx, .xlsx), it:
+When Claude creates a document (e.g., .pptx, .xlsx) using Agent Skills, it:
 1. Creates the file in a sandboxed execution environment
 2. Returns a **file ID** in the tool result
-3. You must download the file separately using the Files API
+3. You must download the file separately using the [Anthropic Files API](https://docs.anthropic.com/en/docs/build-with-claude/files)
 
 ### How to Download Files
 

@@ -20,8 +20,8 @@ from file_download_helper import download_skill_files
 document_agent = Agent(
     name="Document Creator",
     model=Claude(
-        id="claude-sonnet-4-5-20250929", 
-        skills=["docx"] # Provide the Word document Skills 
+        id="claude-sonnet-4-5-20250929",
+        skills=["docx"],  # Enable Word document skill
     ),
     instructions=[
         "You are a professional document writer with access to Word document skills.",
@@ -35,7 +35,7 @@ document_agent = Agent(
 if __name__ == "__main__":
     # Check for API key
     if not os.getenv("ANTHROPIC_API_KEY"):
-        raise("Error: ANTHROPIC_API_KEY environment variable not set")
+        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
 
     print("=" * 60)
     print("Agno Agent with Word Document Skills")

@@ -19,7 +19,10 @@ from file_download_helper import download_skill_files
 # Create a simple agent with Excel skills
 excel_agent = Agent(
     name="Excel Creator",
-    model=Claude(id="claude-sonnet-4-5-20250929", skills=["xlsx"]),
+    model=Claude(
+        id="claude-sonnet-4-5-20250929",
+        skills=["xlsx"],  # Enable Excel spreadsheet skill
+    ),
     instructions=[
         "You are a data analysis specialist with access to Excel skills.",
         "Create professional spreadsheets with well-formatted tables and accurate formulas.",
@@ -32,9 +35,7 @@ excel_agent = Agent(
 if __name__ == "__main__":
     # Check for API key
     if not os.getenv("ANTHROPIC_API_KEY"):
-        print("Error: ANTHROPIC_API_KEY environment variable not set")
-        print("Set it with: export ANTHROPIC_API_KEY='your_api_key_here'")
-        exit(1)
+        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
 
     print("=" * 60)
     print("Agno Agent with Excel Skills")

@@ -19,7 +19,10 @@ from file_download_helper import download_skill_files
 # Create a simple agent with PowerPoint skills
 powerpoint_agent = Agent(
     name="PowerPoint Creator",
-    model=Claude(id="claude-sonnet-4-5-20250929", skills=["pptx"]),
+    model=Claude(
+        id="claude-sonnet-4-5-20250929",
+        skills=["pptx"],  # Enable PowerPoint presentation skill
+    ),
     instructions=[
         "You are a professional presentation creator with access to PowerPoint skills.",
         "Create well-structured presentations with clear slides and professional design.",
@@ -32,9 +35,7 @@ powerpoint_agent = Agent(
 if __name__ == "__main__":
     # Check for API key
     if not os.getenv("ANTHROPIC_API_KEY"):
-        print("Error: ANTHROPIC_API_KEY environment variable not set")
-        print("Set it with: export ANTHROPIC_API_KEY='your_api_key_here'")
-        exit(1)
+        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
 
     print("=" * 60)
     print("Agno Agent with PowerPoint Skills")

@@ -19,7 +19,10 @@ from file_download_helper import download_skill_files
 # Create an agent with multiple skills
 multi_skill_agent = Agent(
     name="Multi-Skill Document Creator",
-    model=Claude(id="claude-sonnet-4-5-20250929", skills=["pptx", "xlsx", "docx"]),
+    model=Claude(
+        id="claude-sonnet-4-5-20250929",
+        skills=["pptx", "xlsx", "docx"],  # Enable PowerPoint, Excel, and Word skills
+    ),
     instructions=[
         "You are a comprehensive business document creator.",
         "You have access to PowerPoint, Excel, and Word document skills.",
@@ -32,9 +35,7 @@ multi_skill_agent = Agent(
 if __name__ == "__main__":
     # Check for API key
     if not os.getenv("ANTHROPIC_API_KEY"):
-        print("Error: ANTHROPIC_API_KEY environment variable not set")
-        print("Set it with: export ANTHROPIC_API_KEY='your_api_key_here'")
-        exit(1)
+        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
 
     print("=" * 60)
     print("Multi-Skill Agent - Document Package Creation")
