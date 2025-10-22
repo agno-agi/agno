@@ -23,7 +23,7 @@ Agno is a multi-agent framework and runtime. Fast, elegant and performant at sca
 
 It provides a rich set of primitives for building:
 
-- **Agents** with persistent state (stored in your database), knowledge retrieval (Agentic RAG), memory (for user preferences), and advanced features like human-in-the-loop, guardrails, dynamic context management and best-in-class MCP support.
+- **Agents** with persistent state, knowledge retrieval, memory, and advanced features like human-in-the-loop, guardrails, dynamic context management and best-in-class MCP support.
 - **Multi-Agent Teams** that operate autonomously under a team leader who maintains shared state and agentic context, improving reasoning, quality, and over all performance.
 - **Step-based Workflows** for controlled, deterministic execution. Steps can be Agents, Teams, or a regular python functions and can run sequentially, in parallel, in loops, branches, or conditionally.
 
@@ -100,11 +100,11 @@ Every part of Agno is built for real-world deployment, where developer experienc
 
 AgentOS is Agno's high-performance runtime for serving multi-agent systems in production. Key features include:
 
-1. **Pre-built FastAPI runtime**: AgentOS ships with a ready-to-use FastAPI app for running your agents, teams, and workflows. This provides a major head start when building an AI product.
+1. **Pre-built FastAPI Runtime**: AgentOS ships with a ready-to-use FastAPI app for running your agents, teams, and workflows. This provides a major head start when building an AI product.
 
 2. **Integrated Control Plane**: The [AgentOS UI](https://os.agno.com) connects directly to your runtime, letting you test, monitor, and manage your system in real time. This gives you unmatched visibility and control over your system.
 
-3. **Private by design**: AgentOS runs entirely in your cloud, ensuring complete data privacy. No data ever leaves your system. This is ideal for security-conscious enterprises.
+3. **Private by Design**: AgentOS runs entirely in your cloud, ensuring complete data privacy. No data ever leaves your system. This is ideal for security-conscious enterprises.
 
 Here's what the [AgentOS UI](https://os.agno.com) looks like in action:
 
