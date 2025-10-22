@@ -464,7 +464,7 @@ class AgentOS:
         """Auto-discover the databases used by all contextual agents, teams and workflows."""
 
         from agno.db.base import AsyncBaseDb, BaseDb
-        old_dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}
+
         dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]] = {}
         knowledge_dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}  # Track databases specifically used for knowledge
 
@@ -507,8 +507,10 @@ class AgentOS:
             "knowledge_table_name": db.knowledge_table_name,
         }
         return {k: v for k, v in table_names.items() if v is not None}
-        
-    def _register_db_with_validation(self, registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]], db: BaseDb) -> None:
+
+    def _register_db_with_validation(
+        self, registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]], db: BaseDb
+    ) -> None:
         """Register a database in the contextual OS after validating it is not conflicting with registered databases"""
         if db.id in registered_dbs:
             registered_dbs[db.id].append(db)
@@ -551,16 +553,16 @@ class AgentOS:
 
         dbs_with_specific_config = [db.db_id for db in session_config.dbs]
         for db_id, dbs in self.dbs.items():
-            tables = [db.session_table_name for db in dbs]
-            for db in dbs:
-                if db.id not in dbs_with_specific_config:
-                    session_config.dbs.append(
-                        DatabaseConfig(
-                            db_id=db.id,
-                            domain_config=SessionDomainConfig(display_name=db.id),
-                            tables=tables,
-                        )
+            if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.session_table_name for db in dbs))
+                session_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=SessionDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
+                )
 
         return session_config
 
@@ -571,13 +573,16 @@ class AgentOS:
             memory_config.dbs = []
 
         dbs_with_specific_config = [db.db_id for db in memory_config.dbs]
-
-        for db_id in self.dbs.keys():
+        
+        for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.memory_table_name for db in dbs))
                 memory_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=MemoryDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 
@@ -610,13 +615,16 @@ class AgentOS:
             metrics_config.dbs = []
 
         dbs_with_specific_config = [db.db_id for db in metrics_config.dbs]
-
-        for db_id in self.dbs.keys():
+        
+        for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.metrics_table_name for db in dbs))
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=MetricsDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 
@@ -629,13 +637,16 @@ class AgentOS:
             evals_config.dbs = []
 
         dbs_with_specific_config = [db.db_id for db in evals_config.dbs]
-
-        for db_id in self.dbs.keys():
+        
+        for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.eval_table_name for db in dbs))
                 evals_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=EvalsDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 

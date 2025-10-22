@@ -19,7 +19,9 @@ from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
 
-def get_db(dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], db_id: Optional[str] = None, table: Optional[str] = None) -> Union[BaseDb, AsyncBaseDb]:
+def get_db(
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], db_id: Optional[str] = None, table: Optional[str] = None
+) -> Union[BaseDb, AsyncBaseDb]:
     """Return the database with the given ID and/or table, or the first database if no ID/table is provided."""
 
     # If table is specified, find the database that has this table name
@@ -27,15 +29,20 @@ def get_db(dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], db_id: Optional[str
         for db_list in dbs.values():
             for db in db_list:
                 # Check if this database has the specified table name in any of its table attributes
-                if (hasattr(db, 'session_table_name') and db.session_table_name == table or
-                    hasattr(db, 'memory_table_name') and db.memory_table_name == table or
-                    hasattr(db, 'metrics_table_name') and db.metrics_table_name == table or
-                    hasattr(db, 'eval_table_name') and db.eval_table_name == table or
-                    hasattr(db, 'knowledge_table_name') and db.knowledge_table_name == table):
+                if (
+                    hasattr(db, "session_table_name")
+                    and db.session_table_name == table
+                    or hasattr(db, "memory_table_name")
+                    and db.memory_table_name == table
+                    or hasattr(db, "metrics_table_name")
+                    and db.metrics_table_name == table
+                    or hasattr(db, "eval_table_name")
+                    and db.eval_table_name == table
+                    or hasattr(db, "knowledge_table_name")
+                    and db.knowledge_table_name == table
+                ):
                     return db
-        raise HTTPException(
-            status_code=404, detail=f"No database found with table '{table}'"
-        )
+        raise HTTPException(status_code=404, detail=f"No database found with table '{table}'")
 
     # Raise if multiple databases are provided but no db_id is provided
     if not db_id and len(dbs) > 1:

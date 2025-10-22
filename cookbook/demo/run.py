@@ -18,7 +18,7 @@ config_path = str(Path(__file__).parent.joinpath("config.yaml"))
 # ************* Create the AgentOS *************
 agent_os = AgentOS(
     description="Demo AgentOS",
-    agents=[agno_assist, web_search_agent],
+    agents=[agno_assist, web_search_agent, agno_assist2],
     teams=[reasoning_finance_team, multilingual_team],
     workflows=[research_workflow, investment_workflow],
     knowledge=[knowledge_base],
