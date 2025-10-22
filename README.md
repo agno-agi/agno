@@ -19,7 +19,7 @@
 
 ## What is Agno?
 
-Agno is a framework and runtime for agentic software. Fast, elegant and performant at scale.
+Agno is a framework and runtime for building agentic software. Fast, elegant and performant at scale.
 
 It provides a rich set of primitives for building:
 
@@ -27,7 +27,7 @@ It provides a rich set of primitives for building:
 - **Multi-Agent Teams** that operate autonomously under a team leader who maintains shared state and agentic context, improving reasoning, quality, and over all performance.
 - **Step-based Workflows** for controlled, deterministic execution. Steps can be Agents, Teams, or a regular python functions and can run sequentially, in parallel, in loops, branches, or conditionally.
 
-But more importantly, Agno provides a FastAPI-powered runtime for serving your agents, teams and workflows in production, covering the entire sofware life cycle (build → run → deploy). Building Agents is easy, running them is hard, and that's where Agno shines.
+Agno also provides a FastAPI-powered runtime for serving your agents, teams and workflows in production, powering the entire software lifecycle (build → run → deploy). Building Agents is easy, running them is hard, and that's where Agno shines.
 
 ## Example
 
@@ -64,9 +64,28 @@ if __name__ == "__main__":
     agent_os.serve(app="agno_agent:app", reload=True)
 ```
 
-## What is the AgentOS?
+## Designed for Agent Engineering
 
-AgentOS is a high-performance runtime for multi-agent systems. Key features include:
+Agno is a remarkably feature-rich framework, covering all aspects of Agent Engineering:
+
+- **Model Agnostic**: Works with any model provider so you can use your favorite LLMs.
+- **Type safe**: Agents, Teams, and Workflows can accept structured inputs and generate structured outputs, enforced through `input_schema` and `output_schema`.
+- **Persistent Storage**: Give your Agents, Teams and Workflows a database to persist session history and state.
+- **Agentic RAG**: Connect Agents to any vector store (called Knowledge in Agno) and enable Agentic RAG out of the box.
+- **User Memory**: Built-in memory system that lets Agents store and recall information about users across sessions.
+- **Human-in-the-Loop**: Native support for user confirmation, manual input, external tool execution, and admin overrides.
+- **MCP**: Best-in-class support for the Model Context Protocol (MCP), enabling Agents to interact with external systems through a standardized interface.
+- **Guardrails**: Built-in safeguards for validating and protecting inputs sent to models.
+- **Agent Lifecycle Hooks**: Use pre-hooks and post-hooks to validate or modify inputs and outputs. Pre-hooks run before the Agent processes input — ideal for validation, security checks, and data preprocessing.
+- **Natively Multimodal**: Agno Agents support text, image, audio, video and files inputs and can generate text, image, audio, video and files as output.
+- **Dynamic Context Management**: Dynamically modify an Agent’s context by injecting variables, state, and function outputs. Use dependencies to add memories, skills, or retrieved documents before execution.
+- **Evals**: Evaluate your Agents across three key dimensions: Accuracy, Performance, and Reliability.
+
+Every part of Agno is built for real-world Agent Engineering, where developer experience meets production performance.
+
+## AgentOS - product runtime for agentic systems
+
+Building Agents is only part of the puzzle. AgentOS is Agno's high-performance runtime for serving your Agents, Teams, and Workflows in production. Key features include:
 
 1. **Pre-built FastAPI runtime**: AgentOS ships with a ready-to-use FastAPI app for running your agents, teams, and workflows. This gives you a major head start in building your AI product.
 
