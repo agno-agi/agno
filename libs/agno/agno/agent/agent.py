@@ -2965,7 +2965,7 @@ class Agent:
             )
 
             # Yield RunContentCompletedEvent
-            if stream_intermediate_steps:
+            if stream_events:
                 yield handle_event(  # type: ignore
                     create_run_content_completed_event(from_run_response=run_response),
                     run_response,
@@ -2993,7 +2993,7 @@ class Agent:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 session.upsert_run(run=run_response)
 
-                if stream_intermediate_steps:
+                if stream_events:
                     yield handle_event(  # type: ignore
                         create_session_summary_started_event(from_run_response=run_response),
                         run_response,
@@ -3005,7 +3005,7 @@ class Agent:
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
 
-                if stream_intermediate_steps:
+                if stream_events:
                     yield handle_event(  # type: ignore
                         create_session_summary_completed_event(
                             from_run_response=run_response, session_summary=session.summary
@@ -4859,7 +4859,7 @@ class Agent:
                         run_response.tools.extend(tool_executions_list)
 
                     # Yield each tool call started event
-                    if stream_intermediate_steps:
+                    if stream_events:
                         for tool in tool_executions_list:
                             yield handle_event(  # type: ignore
                                 create_tool_call_started_event(from_run_response=run_response, tool=tool),
@@ -4930,7 +4930,7 @@ class Agent:
                                     "reasoning_time_taken"
                                 ] + float(tool_call_metrics.duration)
 
-                        if stream_intermediate_steps:
+                        if stream_events:
                             yield handle_event(  # type: ignore
                                 create_tool_call_completed_event(
                                     from_run_response=run_response, tool=tool_call, content=model_response_event.content

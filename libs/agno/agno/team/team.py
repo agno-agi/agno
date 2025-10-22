@@ -1491,7 +1491,7 @@ class Team:
             yield from self._handle_reasoning_stream(
                 run_response=run_response,
                 run_messages=run_messages,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
             )
 
             # Check for cancellation before model processing
@@ -1546,7 +1546,7 @@ class Team:
             )
 
             # Yield RunContentCompletedEvent
-            if stream_intermediate_steps:
+            if stream_events:
                 yield handle_event(  # type: ignore
                     create_team_run_content_completed_event(from_run_response=run_response),
                     run_response,
@@ -1571,7 +1571,7 @@ class Team:
             # 8. Wait for background memory creation
             yield from wait_for_background_tasks_stream(
                 memory_future=memory_future,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 run_response=run_response,
             )
 
@@ -1581,7 +1581,7 @@ class Team:
                 # Upsert the RunOutput to Team Session before creating the session summary
                 session.upsert_run(run_response=run_response)
 
-                if stream_intermediate_steps:
+                if stream_events:
                     yield handle_event(  # type: ignore
                         create_team_session_summary_started_event(from_run_response=run_response),
                         run_response,
@@ -1592,7 +1592,7 @@ class Team:
                     self.session_summary_manager.create_session_summary(session=session)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
-                if stream_intermediate_steps:
+                if stream_events:
                     yield handle_event(  # type: ignore
                         create_team_session_summary_completed_event(
                             from_run_response=run_response, session_summary=session.summary
@@ -2310,7 +2310,7 @@ class Team:
             async for item in self._ahandle_reasoning_stream(
                 run_response=run_response,
                 run_messages=run_messages,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
             ):
                 raise_if_cancelled(run_response.run_id)  # type: ignore
                 yield item
@@ -2368,7 +2368,7 @@ class Team:
                 yield event
 
             # Yield RunContentCompletedEvent
-            if stream_intermediate_steps:
+            if stream_events:
                 yield handle_event(  # type: ignore
                     create_team_run_content_completed_event(from_run_response=run_response),
                     run_response,
@@ -2403,7 +2403,7 @@ class Team:
                 # Upsert the RunOutput to Team Session before creating the session summary
                 team_session.upsert_run(run_response=run_response)
 
-                if stream_intermediate_steps:
+                if stream_events:
                     yield handle_event(  # type: ignore
                         create_team_session_summary_started_event(from_run_response=run_response),
                         run_response,
@@ -2414,7 +2414,7 @@ class Team:
                     await self.session_summary_manager.acreate_session_summary(session=team_session)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
-                if stream_intermediate_steps:
+                if stream_events:
                     yield handle_event(  # type: ignore
                         create_team_session_summary_completed_event(
                             from_run_response=run_response, session_summary=team_session.summary
@@ -4123,40 +4123,38 @@ class Team:
     def _handle_reasoning(self, run_response: TeamRunOutput, run_messages: RunMessages):
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
-                run_response=run_response, run_messages=run_messages, stream_intermediate_steps=False
+                run_response=run_response, run_messages=run_messages, stream_events=False
             )
 
             # Consume the generator without yielding
             deque(reasoning_generator, maxlen=0)
 
     def _handle_reasoning_stream(
-        self, run_response: TeamRunOutput, run_messages: RunMessages, stream_intermediate_steps: bool
+        self, run_response: TeamRunOutput, run_messages: RunMessages, stream_events: bool
     ) -> Iterator[TeamRunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
                 run_response=run_response,
                 run_messages=run_messages,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
             )
             yield from reasoning_generator
 
     async def _ahandle_reasoning(self, run_response: TeamRunOutput, run_messages: RunMessages) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self._areason(
-                run_response=run_response, run_messages=run_messages, stream_intermediate_steps=False
-            )
+            reason_generator = self._areason(run_response=run_response, run_messages=run_messages, stream_events=False)
             # Consume the generator without yielding
             async for _ in reason_generator:
                 pass
 
     async def _ahandle_reasoning_stream(
-        self, run_response: TeamRunOutput, run_messages: RunMessages, stream_intermediate_steps: bool
+        self, run_response: TeamRunOutput, run_messages: RunMessages, stream_events: bool
     ) -> AsyncIterator[TeamRunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reason_generator = self._areason(
                 run_response=run_response,
                 run_messages=run_messages,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
             )
             async for item in reason_generator:
                 yield item

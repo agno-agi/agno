@@ -343,7 +343,7 @@ def test_intermediate_steps_with_session_summary(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -497,7 +497,7 @@ def test_post_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -552,7 +552,7 @@ async def test_async_post_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.arun("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.arun("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     async for run_response_delta in response_generator:
@@ -607,7 +607,7 @@ def test_pre_and_post_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("Hello", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("Hello", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
