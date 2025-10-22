@@ -88,16 +88,17 @@ Agno is a remarkably feature-rich framework, purpose-built for large-scale multi
 |  | **Dynamic Context Engineering** | Inject variables, state, and retrieved data on the fly to context. Perfect for dependency-driven agents. |
 | **Memory, Knowledge, and Persistence** | **Persistent Storage** | Give your Agents, Teams, and Workflows a database to persist session history, state, and messages. |
 |  | **User Memory** | Built-in memory system that allows Agents to recall user-specific context across sessions. |
-|  | **Agentic RAG** | Connect to any vector store (called **Knowledge** in Agno) with hybrid search + reranking out of the box. |
+|  | **Agentic RAG** | Connect to 20+ vector stores (called **Knowledge** in Agno) with hybrid search + reranking out of the box. |
 |  | **Culture (Collective Memory)** | Shared knowledge that compounds across agents and time. |
 | **Execution & Control** | **Human-in-the-Loop** | Native support for confirmations, manual overrides, and external tool execution. |
 |  | **Guardrails** | Built-in safeguards for validation, security, and prompt protection. |
 |  | **Agent Lifecycle Hooks** | Pre- and post-hooks to validate or transform inputs and outputs. |
 |  | **MCP Integration** | First-class support for the Model Context Protocol (MCP) to connect Agents with external systems. |
-| **Runtime & Evaluation** | **Natively Multimodal** | Agents can process and generate text, images, audio, video, and files. |
-|  | **Async Runtime** | Built on FastAPI with fully async execution, ideal for scaling concurrent Agents. |
-|  | **Evals** | Measure your Agents' Accuracy, Performance, and Reliability. |
+|  | **Toolkits** | 100+ built-in toolkits with thousands of tools, ready for use across data, code, web, and enterprise APIs. |
+| **Runtime & Evaluation** | **Runtime** | Pre-built FastAPI runtime with fully async execution, ready for production on day 1. |
 |  | **Control Plane (UI)** | Integrated interface to visualize, monitor, and debug agent activity in real time. |
+|  | **Natively Multimodal** | Agents can process and generate text, images, audio, video, and files. |
+|  | **Evals** | Measure your Agents' Accuracy, Performance, and Reliability. |
 | **Security & Privacy** | **Private by Design** | Runs entirely in your cloud. The UI connects directly to your AgentOS from your browser, no data is ever sent externally. |
 |  | **Data Governance** | Your data lives securely in your Agent database, no external data sharing or vendor lock-in. |
 |  | **Access Control** | Role-based access (RBAC) and per-agent permissions to protect sensitive contexts and tools. |
