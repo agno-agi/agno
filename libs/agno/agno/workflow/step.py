@@ -559,7 +559,6 @@ class Step:
                                 active_executor_run_response = event
                                 break
                             enriched_event = self._enrich_event_with_context(event, workflow_run_response, step_index)
-                            yield enriched_event  # type: ignore[misc]
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events:
                                 yield enriched_event  # type: ignore[misc]
@@ -990,7 +989,6 @@ class Step:
                                 active_executor_run_response = event
                                 break
                             enriched_event = self._enrich_event_with_context(event, workflow_run_response, step_index)
-                            yield enriched_event  # type: ignore[misc]
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events:
                                 yield enriched_event  # type: ignore[misc]

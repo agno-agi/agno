@@ -2744,7 +2744,7 @@ class Agent:
             run_messages=run_messages,
             response_format=response_format,
             stream_intermediate_steps=stream_intermediate_steps,
-            session_state=run_response.session_state,
+            session_state=session_state,
         ):
             yield event
 
@@ -4533,11 +4533,6 @@ class Agent:
                         merge_dictionaries(
                             session.session_data["session_state"], model_response_event.updated_session_state
                         )
-                if model_response_event.updated_session_state is not None and session.session_data is not None:
-                    merge_dictionaries(
-                        session.session_data["session_state"],
-                        model_response_event.updated_session_state,
-                    )
 
                 if model_response_event.images is not None:
                     for image in model_response_event.images:
