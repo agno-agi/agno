@@ -4609,10 +4609,10 @@ class Agent:
                 run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
             )
 
-            # Create user memories (skip if message is empty or None)
+            # Create user memories 
             if (
                 user_message_str is not None
-                and user_message_str.strip() != ""
+                and user_message_str.strip() != "" # Skip if user message is empty
                 and self.memory_manager is not None
                 and not self.enable_agentic_memory
             ):
