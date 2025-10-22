@@ -1579,7 +1579,7 @@ class Team:
                 run_response=run_response,
                 memory_future=memory_future,
                 stream_events=stream_events,
-                events_to_skip=self.events_to_skip,
+                events_to_skip=self.events_to_skip, # type: ignore
                 store_events=self.store_events,
             )
 
@@ -2422,7 +2422,7 @@ class Team:
                 run_response=run_response,
                 memory_task=memory_task,
                 stream_events=stream_events,
-                events_to_skip=self.events_to_skip,
+                events_to_skip=self.events_to_skip, # type: ignore
                 store_events=self.store_events,
             ):
                 yield event
