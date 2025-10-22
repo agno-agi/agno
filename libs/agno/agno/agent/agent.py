@@ -4667,7 +4667,7 @@ class Agent:
             # Create cultural knowledge
             if (
                 user_message_str is not None
-                and user_message_str.strip() != ""
+                and user_message_str.strip() != "" # Skip if user message is empty
                 and self.culture_manager is not None
                 and self.update_cultural_knowledge
             ):
