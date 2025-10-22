@@ -12,7 +12,7 @@ def add_item(session_state, item: str) -> str:
 # Create an Agent that maintains state
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    # Initialize the session state with a counter starting at 0 (this is the default session state for all users)
+    # Initialize the session state with an empty shopping list (this is the default session state for all users)
     session_state={"shopping_list": []},
     db=SqliteDb(db_file="tmp/agents.db"),
     tools=[add_item],
