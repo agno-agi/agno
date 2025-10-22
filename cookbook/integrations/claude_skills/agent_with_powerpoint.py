@@ -52,7 +52,7 @@ if __name__ == "__main__":
         "Save as 'q4_review.pptx'"
     )
 
-    print(f"\nCreating presentation...\n")
+    print("\nCreating presentation...\n")
 
     # Use the agent to create the presentation
     response = powerpoint_agent.run(prompt)

@@ -59,7 +59,7 @@ if __name__ == "__main__":
         "Save as 'sales_dashboard.xlsx'"
     )
 
-    print(f"\nCreating spreadsheet...\n")
+    print("\nCreating spreadsheet...\n")
 
     # Use the agent to create the spreadsheet
     response = excel_agent.run(prompt)

@@ -92,7 +92,11 @@ def download_skill_files(
                 detected_ext = detect_file_extension(file_data)
 
                 # Use default filename or generate one
-                filename = default_filename if default_filename else f"skill_output_{file_id[-8:]}{detected_ext}"
+                filename = (
+                    default_filename
+                    if default_filename
+                    else f"skill_output_{file_id[-8:]}{detected_ext}"
+                )
                 filepath = os.path.join(output_dir, filename)
 
                 # Save to disk

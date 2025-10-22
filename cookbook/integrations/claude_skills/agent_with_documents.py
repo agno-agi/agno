@@ -71,7 +71,7 @@ if __name__ == "__main__":
         "Save as 'mobile_app_proposal.docx'"
     )
 
-    print(f"\nCreating document...\n")
+    print("\nCreating document...\n")
 
     # Use the agent to create the document
     response = document_agent.run(prompt)

@@ -54,7 +54,7 @@ if __name__ == "__main__":
         "   - Growth trend: Strong December performance\n"
     )
 
-    print(f"\nCreating document package...\n")
+    print("\nCreating document package...\n")
 
     # Use the agent to create all documents
     response = multi_skill_agent.run(prompt)
