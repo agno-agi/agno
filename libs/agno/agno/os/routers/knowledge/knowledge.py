@@ -20,11 +20,8 @@ from agno.os.routers.knowledge.schemas import (
     ContentUpdateSchema,
     ReaderSchema,
     VectorDbSchema,
-<<<<<<< HEAD
     VectorSearchRequestSchema,
     VectorSearchResult,
-=======
->>>>>>> 0a307f6c3 (feat: Multi vectordb in Knowledge)
 )
 from agno.os.schema import (
     BadRequestResponse,
@@ -840,17 +837,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                             },
                             "vector_dbs": [
                                 {
-<<<<<<< HEAD
                                     "id": "vector_db_1",
                                     "name": "Vector DB 1",
                                     "description": "Vector DB 1 description",
                                     "search_types": ["vector", "keyword", "hybrid"],
                                 }
-=======
-                                    "id": "vectors1",
-                                    "name": "My Vector Collection",
-                                },
->>>>>>> 0a307f6c3 (feat: Multi vectordb in Knowledge)
                             ],
                             "filters": ["filter_tag_1", "filter_tag2"],
                         }
@@ -910,33 +901,25 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                     key=chunker_key, name=chunker_info.get("name"), description=chunker_info.get("description")
                 )
 
-<<<<<<< HEAD
         vector_dbs = []
-        if knowledge.vector_db:
-            search_types = knowledge.vector_db.get_supported_search_types()
-            name = knowledge.vector_db.name
-            db_id = knowledge.vector_db.id
+        for knowledge_vector_db in knowledge.vector_dbs:
+            search_types = knowledge_vector_db.get_supported_search_types()
+            name = knowledge_vector_db.name
+            db_id = knowledge_vector_db.id
             vector_dbs.append(
                 VectorDbSchema(
                     id=db_id,
                     name=name,
-                    description=knowledge.vector_db.description,
+                    description=knowledge_vector_db.description,
                     search_types=search_types,
                 )
             )
-=======
-
-        vector_dbs = []
-        for vector_db in knowledge.vector_dbs:
-            vector_dbs.append(VectorDbSchema(id=vector_db.id, name=vector_db.name))
->>>>>>> 0a307f6c3 (feat: Multi vectordb in Knowledge)
 
         return ConfigResponseSchema(
             readers=reader_schemas,
             vector_dbs=vector_dbs,
             readersForType=types_of_readers,
             chunkers=chunkers_dict,
-            vector_dbs=vector_dbs,
             filters=knowledge.get_filters(),
         )
 
