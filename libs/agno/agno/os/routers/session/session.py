@@ -963,14 +963,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         if update_data.summary is not None:
             from agno.session.summary import SessionSummary
 
-            existing_session.summary = SessionSummary.from_dict(update_data.summary)
+            existing_session.summary = SessionSummary.from_dict(update_data.summary)  # type: ignore
 
         # Upsert the updated session
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            updated_session = await db.upsert_session(existing_session, deserialize=True)
+            updated_session = await db.upsert_session(existing_session, deserialize=True)  # type: ignore
         else:
-            updated_session = db.upsert_session(existing_session, deserialize=True)
+            updated_session = db.upsert_session(existing_session, deserialize=True)  # type: ignore
 
         if not updated_session:
             raise HTTPException(status_code=500, detail="Failed to update session")

@@ -7665,6 +7665,9 @@ class Team:
         if session is None:
             raise Exception("Session not found")
 
+        if session.session_data is not None and "session_state" not in session.session_data:
+            session.session_data["session_state"] = {}
+
         for key, value in session_state_updates.items():
             session.session_data["session_state"][key] = value
 
@@ -7689,6 +7692,9 @@ class Team:
         session = await self.aget_session(session_id=session_id)  # type: ignore
         if session is None:
             raise Exception("Session not found")
+
+        if session.session_data is not None and "session_state" not in session.session_data:
+            session.session_data["session_state"] = {}
 
         for key, value in session_state_updates.items():
             session.session_data["session_state"][key] = value
