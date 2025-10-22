@@ -1,10 +1,8 @@
 # Claude Agent Skills for Agno
-
-This module provides examples of integrating Claude's Agent Skills with Agno's agent framework. Agent Skills are pre-built capabilities that extend Claude with specialized expertise in creating and analyzing documents, spreadsheets, presentations, and PDFs.
-
+https://docs.claude.com/en/docs/agents-and-tools/agent-skills/quickstart
 ## What are Claude Agent Skills?
 
-Claude Agent Skills are specialized capabilities that allow Claude to:
+Claude can now use _Skills_ to improve how it performs specific tasks:
 - **PowerPoint (pptx)**: Create professional presentations with slides, layouts, and formatting
 - **Excel (xlsx)**: Generate spreadsheets with formulas, charts, and data analysis
 - **Word (docx)**: Create and edit documents with rich formatting
@@ -18,7 +16,7 @@ Before you can use Claude Agent Skills, you'll need:
 
 1. **Python 3.8 or higher**
 2. **Anthropic API key** with access to Claude models
-3. **Required Python packages**:
+3. **Required Python packages (Only for file handling post its creation in Sandbox)**:
    - `anthropic` (for direct API access)
    - `agno` (for agent framework)
    - `python-pptx` (optional, for PowerPoint manipulation)
