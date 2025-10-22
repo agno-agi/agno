@@ -8,9 +8,12 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.gcs_json.utils import (
     apply_sorting,
     calculate_date_metrics,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -34,6 +37,7 @@ class GcsJsonDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
         project: Optional[str] = None,
         credentials: Optional[Any] = None,
         id: Optional[str] = None,
@@ -49,6 +53,7 @@ class GcsJsonDb(BaseDb):
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
             knowledge_table (Optional[str]): Name of the JSON file to store knowledge content.
+            culture_table (Optional[str]): Name of the JSON file to store cultural knowledge.
             project (Optional[str]): GCP project ID. If None, uses default project.
             location (Optional[str]): GCS bucket location. If None, uses default location.
             credentials (Optional[Any]): GCP credentials. If None, uses default credentials.
@@ -66,6 +71,7 @@ class GcsJsonDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            culture_table=culture_table,
         )
 
         self.bucket_name = bucket_name
@@ -1142,4 +1148,188 @@ class GcsJsonDb(BaseDb):
             return None
         except Exception as e:
             log_warning(f"Error renaming eval run {eval_run_id}: {e}")
+            raise e
+
+    # -- Cultural Knowledge methods --
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            self._write_json_file(self.culture_table_name, [])
+        except Exception as e:
+            log_warning(f"Exception deleting all cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            cultural_knowledge = self._read_json_file(self.culture_table_name)
+            cultural_knowledge = [item for item in cultural_knowledge if item.get("id") != id]
+            self._write_json_file(self.culture_table_name, cultural_knowledge)
+            log_debug(f"Deleted cultural knowledge with ID: {id}")
+        except Exception as e:
+            log_warning(f"Error deleting cultural knowledge: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            cultural_knowledge = self._read_json_file(self.culture_table_name)
+
+            for item in cultural_knowledge:
+                if item.get("id") == id:
+                    if not deserialize:
+                        return item
+                    return deserialize_cultural_knowledge_from_db(item)
+
+            return None
+        except Exception as e:
+            log_warning(f"Error getting cultural knowledge: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge with filtering and pagination.
+
+        Args:
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            cultural_knowledge = self._read_json_file(self.culture_table_name)
+
+            # Apply filters
+            filtered_items = []
+            for item in cultural_knowledge:
+                if agent_id is not None and item.get("agent_id") != agent_id:
+                    continue
+                if team_id is not None and item.get("team_id") != team_id:
+                    continue
+                if name is not None and name.lower() not in item.get("name", "").lower():
+                    continue
+
+                filtered_items.append(item)
+
+            total_count = len(filtered_items)
+
+            # Apply sorting
+            filtered_items = apply_sorting(filtered_items, sort_by, sort_order)
+
+            # Apply pagination
+            if limit is not None:
+                start_idx = 0
+                if page is not None:
+                    start_idx = (page - 1) * limit
+                filtered_items = filtered_items[start_idx : start_idx + limit]
+
+            if not deserialize:
+                return filtered_items, total_count
+
+            return [deserialize_cultural_knowledge_from_db(item) for item in filtered_items]
+
+        except Exception as e:
+            log_warning(f"Error getting all cultural knowledge: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert cultural knowledge in the GCS JSON file.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            cultural_knowledge_list = self._read_json_file(self.culture_table_name, create_table_if_not_found=True)
+
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the item dict with serialized content
+            cultural_knowledge_dict = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            # Find existing item to update
+            item_updated = False
+            for i, existing_item in enumerate(cultural_knowledge_list):
+                if existing_item.get("id") == cultural_knowledge.id:
+                    cultural_knowledge_list[i] = cultural_knowledge_dict
+                    item_updated = True
+                    break
+
+            if not item_updated:
+                cultural_knowledge_list.append(cultural_knowledge_dict)
+
+            self._write_json_file(self.culture_table_name, cultural_knowledge_list)
+
+            if not deserialize:
+                return cultural_knowledge_dict
+
+            return deserialize_cultural_knowledge_from_db(cultural_knowledge_dict)
+
+        except Exception as e:
+            log_warning(f"Error upserting cultural knowledge: {e}")
             raise e

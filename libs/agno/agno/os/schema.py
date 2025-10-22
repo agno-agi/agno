@@ -74,9 +74,10 @@ class InternalServerErrorResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    instantiated_at: str
 
     class Config:
-        json_schema_extra = {"example": {"status": "ok"}}
+        json_schema_extra = {"example": {"status": "ok", "instantiated_at": "1760169236.778903"}}
 
 
 class InterfaceResponse(BaseModel):
@@ -240,6 +241,7 @@ class AgentResponse(BaseModel):
             "parse_response": True,
             "use_json_mode": False,
             # Streaming defaults
+            "stream_events": False,
             "stream_intermediate_steps": False,
         }
 
@@ -372,6 +374,7 @@ class AgentResponse(BaseModel):
 
         streaming_info = {
             "stream": agent.stream,
+            "stream_events": agent.stream_events,
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
         return AgentResponse(
@@ -458,6 +461,7 @@ class TeamResponse(BaseModel):
             "parse_response": True,
             "use_json_mode": False,
             # Streaming defaults
+            "stream_events": False,
             "stream_intermediate_steps": False,
             "stream_member_events": False,
         }
@@ -577,6 +581,7 @@ class TeamResponse(BaseModel):
 
         streaming_info = {
             "stream": team.stream,
+            "stream_events": team.stream_events,
             "stream_intermediate_steps": team.stream_intermediate_steps,
             "stream_member_events": team.stream_member_events,
         }

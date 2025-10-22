@@ -113,7 +113,7 @@ def run_example():
         session_id="user-123",
         user_id="user-123",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     print("\n" + "=" * 80)
@@ -125,7 +125,7 @@ def run_example():
         session_id="user-123",
         user_id="user-123",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
 
