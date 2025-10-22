@@ -4139,12 +4139,6 @@ class Agent:
         # Update the run_response created_at with the model response created_at
         run_response.created_at = model_response.created_at
 
-        # Update session_state with changes from model response
-        if model_response.updated_session_state is not None and run_response.session_state is not None:
-            from agno.utils.merge_dict import merge_dictionaries
-
-            merge_dictionaries(run_response.session_state, model_response.updated_session_state)
-
         # Build a list of messages that should be added to the RunOutput
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         # Update the RunOutput messages
