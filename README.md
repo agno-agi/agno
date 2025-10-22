@@ -29,6 +29,19 @@ It provides a rich set of primitives for building:
 
 Agno also provides a FastAPI-powered runtime for serving multi-agent systems in production, covering the entire {build → run → deploy} lifecycle. Building Agents is easy, running them is hard, and that's where Agno shines.
 
+## Getting started
+
+If you're new to Agno, follow our [quickstart](https://docs.agno.com/introduction/quickstart) to build your first Agent and chat with it using the AgentOS UI.
+
+After that, checkout the [examples gallery](https://docs.agno.com/examples/introduction) and build real-world applications with Agno.
+
+## Documentation, Community & More Examples
+
+- Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
+- Cookbook: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
+- Community forum: <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">community.agno.com</a>
+- Discord: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
+
 ## Example
 
 Here’s an example of an Agent that connects to an MCP server, manages conversation state in a database, and is served using a FastAPI application that you can interact with using the [AgentOS UI](https://os.agno.com).
@@ -63,19 +76,6 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     agent_os.serve(app="agno_agent:app", reload=True)
 ```
-
-## Getting started
-
-If you're new to Agno, follow our [quickstart](https://docs.agno.com/introduction/quickstart) to build your first Agent and chat with it using the AgentOS UI.
-
-After that, checkout the [examples gallery](https://docs.agno.com/examples/introduction) and build real-world applications with Agno.
-
-## Documentation, Community & More Examples
-
-- Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
-- Cookbook: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
-- Community forum: <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">community.agno.com</a>
-- Discord: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
 
 ## Designed for Agent Engineering
 
