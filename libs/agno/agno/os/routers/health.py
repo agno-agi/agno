@@ -18,11 +18,11 @@ def get_health_router() -> APIRouter:
         responses={
             200: {
                 "description": "API is healthy and operational",
-                "content": {"application/json": {"example": {"status": "ok", "instantiation_time": "1760169236.778903"}}},
+                "content": {"application/json": {"example": {"status": "ok", "instantiated_at": "1760169236.778903"}}},
             }
         },
     )
     async def health_check() -> HealthResponse:
-        return HealthResponse(status="ok", instantiation_time=str(started_time_stamp))
+        return HealthResponse(status="ok", instantiated_at=str(started_time_stamp))
 
     return router

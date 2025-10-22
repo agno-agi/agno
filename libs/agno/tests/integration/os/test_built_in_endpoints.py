@@ -147,7 +147,7 @@ def test_create_workflow_run_with_kwargs(test_workflow: Workflow, test_os_client
         assert call_args.kwargs["extra_field_two"] == "bar"
 
 
-def test_health_endpoint_instantiation_time(test_os_client: TestClient):
+def test_health_endpoint_instantiated_at(test_os_client: TestClient):
     """Test that the health endpoint returns instantiation time."""
     response = test_os_client.get("/health")
     
@@ -155,11 +155,11 @@ def test_health_endpoint_instantiation_time(test_os_client: TestClient):
     
     response_data = response.json()
     assert response_data["status"] == "ok"
-    assert "instantiation_time" in response_data
+    assert "instantiated_at" in response_data
     
-    # Verify instantiation_time is a valid timestamp (can be converted to float)
-    instantiation_time = float(response_data["instantiation_time"])
-    assert instantiation_time > 0
+    # Verify instantiated_at is a valid timestamp (can be converted to float)
+    instantiated_at = float(response_data["instantiated_at"])
+    assert instantiated_at > 0
     
     # Make a second request to verify the instantiation time remains the same
     response2 = test_os_client.get("/health")
@@ -167,4 +167,4 @@ def test_health_endpoint_instantiation_time(test_os_client: TestClient):
     response2_data = response2.json()
     
     # The instantiation time should be the same across multiple calls
-    assert response_data["instantiation_time"] == response2_data["instantiation_time"]
+    assert response_data["instantiated_at"] == response2_data["instantiated_at"]
