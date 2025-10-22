@@ -250,7 +250,8 @@ class Model(ABC):
 
     def _streaming_responses_from_cache(self, cached_data: list) -> List[ModelResponse]:
         """Reconstruct streaming responses from cached data."""
-        return [ModelResponse.from_dict(r) for r in cached_data]
+        for cached_response in cached_data:
+            yield ModelResponse.from_dict(cached_response)
 
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
