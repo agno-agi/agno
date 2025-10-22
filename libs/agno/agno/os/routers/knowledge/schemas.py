@@ -115,7 +115,9 @@ class VectorDbSchema(BaseModel):
     id: str = Field(..., description="Unique identifier for the vector database")
     name: Optional[str] = Field(None, description="Name of the vector database")
     description: Optional[str] = Field(None, description="Description of the vector database")
-    search_types: Optional[List[str]] = Field(None, description="List of supported search types (vector, keyword, hybrid)")
+    search_types: Optional[List[str]] = Field(
+        None, description="List of supported search types (vector, keyword, hybrid)"
+    )
 
 
 class VectorSearchResult(BaseModel):

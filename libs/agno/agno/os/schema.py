@@ -25,9 +25,7 @@ from agno.workflow.workflow import Workflow
 
 
 class BadRequestResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}}
-    )
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
 
     detail: str = Field(..., description="Error detail message")
     error_code: Optional[str] = Field(None, description="Error code for categorization")
@@ -168,8 +166,6 @@ class ModelResponse(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    model_config = ConfigDict(exclude_none=True)
-
     id: Optional[str] = Field(None, description="Unique identifier for the agent")
     name: Optional[str] = Field(None, description="Name of the agent")
     db_id: Optional[str] = Field(None, description="Database identifier")
@@ -413,7 +409,9 @@ class TeamResponse(BaseModel):
     system_message: Optional[Dict[str, Any]] = Field(None, description="System message configurations")
     response_settings: Optional[Dict[str, Any]] = Field(None, description="Response settings")
     streaming: Optional[Dict[str, Any]] = Field(None, description="Streaming configurations")
-    members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = Field(None, description="List of team members (agents or teams)")
+    members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = Field(
+        None, description="List of team members (agents or teams)"
+    )
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
@@ -624,8 +622,6 @@ class TeamResponse(BaseModel):
 
 
 class WorkflowResponse(BaseModel):
-    model_config = ConfigDict(exclude_none=True)
-
     id: Optional[str] = Field(None, description="Unique identifier for the workflow")
     name: Optional[str] = Field(None, description="Name of the workflow")
     db_id: Optional[str] = Field(None, description="Database identifier")
