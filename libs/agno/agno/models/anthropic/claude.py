@@ -586,8 +586,21 @@ class Claude(Model):
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
 
-        # Store the raw provider response to access the files that are created the  antheropic's sandbox.
-        model_response.provider_data = response
+        # Extract file IDs if skills are enabled
+        if self.skills and response.content:
+            file_ids = []
+            for block in response.content:
+                if block.type == "bash_code_execution_tool_result":
+                    if hasattr(block, "content") and hasattr(block.content, "content"):
+                        if isinstance(block.content.content, list):
+                            for output_block in block.content.content:
+                                if hasattr(output_block, "file_id"):
+                                    file_ids.append(output_block.file_id)
+
+            if file_ids:
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["file_ids"] = file_ids
 
         return model_response
 

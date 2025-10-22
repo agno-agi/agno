@@ -44,7 +44,7 @@ def download_skill_files(
     Download files created by Claude Agent Skills from the API response.
 
     Args:
-        response: The Anthropic API response object
+        response: The Anthropic API response object OR a dict with 'file_ids' key
         client: Anthropic client instance
         output_dir: Directory to save files (default: current directory)
         default_filename: Default filename to use (will infer from content if not provided)
@@ -58,6 +58,10 @@ def download_skill_files(
         >>> response = client.beta.messages.create(...)
         >>> files = download_skill_files(response, client)
         >>> print(f"Downloaded: {files}")
+
+        >>> # Or with provider_data dict
+        >>> provider_data = {"file_ids": ["file_123", "file_456"]}
+        >>> files = download_skill_files(provider_data, client)
     """
     downloaded_files = []
     seen_file_ids = set()  # Track file IDs to avoid duplicates
@@ -65,7 +69,48 @@ def download_skill_files(
     import os
     import re
 
-    # Iterate through response content blocks
+    # Check if response is a dict with file_ids (from provider_data)
+    if isinstance(response, dict) and "file_ids" in response:
+        # Simple case: just download the file IDs
+        for file_id in response["file_ids"]:
+            if file_id in seen_file_ids:
+                continue
+            seen_file_ids.add(file_id)
+
+            print(f"Found file ID: {file_id}")
+
+            try:
+                # Download the file
+                file_content = client.beta.files.download(
+                    file_id=file_id, betas=["files-api-2025-04-14"]
+                )
+
+                # Read file content
+                file_data = file_content.read()
+
+                # Detect actual file type from content
+                detected_ext = detect_file_extension(file_data)
+
+                # Use default filename or generate one
+                filename = default_filename if default_filename else f"skill_output_{file_id[-8:]}{detected_ext}"
+                filepath = os.path.join(output_dir, filename)
+
+                # Save to disk
+                with open(filepath, "wb") as f:
+                    f.write(file_data)
+
+                downloaded_files.append(filepath)
+                print(f"Downloaded: {filepath}")
+
+            except Exception as e:
+                print(f"Failed to download file {file_id}: {e}")
+
+        return downloaded_files
+
+    # Original logic: Iterate through response content blocks
+    if not hasattr(response, "content"):
+        return downloaded_files
+
     for block in response.content:
         # Check for bash_code_execution_tool_result blocks (Skills API format)
         if block.type == "bash_code_execution_tool_result":
