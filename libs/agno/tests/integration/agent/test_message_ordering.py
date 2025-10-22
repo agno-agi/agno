@@ -34,12 +34,12 @@ def test_message_ordering_run():
     assert messages[1].role == "assistant"
     assert messages[1].content == "5 + 3 = 8"
     assert messages[1].id is not None
-    
+
     # Current user message should come last
     assert messages[2].role == "user"
     assert messages[2].content == "and if I add 7 to that result?"
     assert messages[2].id is not None
-    
+
     assert messages[3].role == "assistant"
     assert messages[3].id is not None
 

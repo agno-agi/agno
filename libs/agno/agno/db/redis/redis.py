@@ -10,14 +10,17 @@ from agno.db.redis.utils import (
     apply_sorting,
     calculate_date_metrics,
     create_index_entries,
+    deserialize_cultural_knowledge_from_db,
     deserialize_data,
     fetch_all_sessions_data,
     generate_redis_key,
     get_all_keys_for_table,
     get_dates_to_calculate_metrics_for,
     remove_index_entries,
+    serialize_cultural_knowledge_for_db,
     serialize_data,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -44,6 +47,7 @@ class RedisDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
     ):
         """
         Interface for interacting with a Redis database.
@@ -64,6 +68,7 @@ class RedisDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics
             eval_table (Optional[str]): Name of the table to store evaluation runs
             knowledge_table (Optional[str]): Name of the table to store knowledge documents
+            culture_table (Optional[str]): Name of the table to store cultural knowledge
 
         Raises:
             ValueError: If neither redis_client nor db_url is provided.
@@ -80,6 +85,7 @@ class RedisDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            culture_table=culture_table,
         )
 
         self.db_prefix = db_prefix
@@ -110,6 +116,9 @@ class RedisDb(BaseDb):
 
         elif table_type == "knowledge":
             return self.knowledge_table_name
+
+        elif table_type == "culture":
+            return self.culture_table_name
 
         else:
             raise ValueError(f"Unknown table type: {table_type}")
@@ -1475,3 +1484,175 @@ class RedisDb(BaseDb):
         except Exception as e:
             log_error(f"Error updating eval run name {eval_run_id}: {e}")
             raise
+
+    # -- Cultural Knowledge methods --
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="culture")
+
+            if keys:
+                self.redis_client.delete(*keys)
+
+        except Exception as e:
+            log_error(f"Exception deleting all cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            if self._delete_record("culture", id, index_fields=["name", "agent_id", "team_id"]):
+                log_debug(f"Successfully deleted cultural knowledge id: {id}")
+            else:
+                log_debug(f"No cultural knowledge found with id: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting cultural knowledge: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            cultural_knowledge = self._get_record("culture", id)
+
+            if cultural_knowledge is None:
+                return None
+
+            if not deserialize:
+                return cultural_knowledge
+
+            return deserialize_cultural_knowledge_from_db(cultural_knowledge)
+
+        except Exception as e:
+            log_error(f"Error getting cultural knowledge: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge with filtering and pagination.
+
+        Args:
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            all_cultural_knowledge = self._get_all_records("culture")
+
+            # Apply filters
+            filtered_items = []
+            for item in all_cultural_knowledge:
+                if agent_id is not None and item.get("agent_id") != agent_id:
+                    continue
+                if team_id is not None and item.get("team_id") != team_id:
+                    continue
+                if name is not None and name.lower() not in item.get("name", "").lower():
+                    continue
+
+                filtered_items.append(item)
+
+            sorted_items = apply_sorting(records=filtered_items, sort_by=sort_by, sort_order=sort_order)
+            paginated_items = apply_pagination(records=sorted_items, limit=limit, page=page)
+
+            if not deserialize:
+                return paginated_items, len(filtered_items)
+
+            return [deserialize_cultural_knowledge_from_db(item) for item in paginated_items]
+
+        except Exception as e:
+            log_error(f"Error getting all cultural knowledge: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert cultural knowledge in Redis.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+            item_id = cultural_knowledge.id or str(uuid4())
+
+            # Create the item dict with serialized content
+            data = {
+                "id": item_id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            success = self._store_record("culture", item_id, data, index_fields=["name", "agent_id", "team_id"])
+
+            if not success:
+                return None
+
+            if not deserialize:
+                return data
+
+            return deserialize_cultural_knowledge_from_db(data)
+
+        except Exception as e:
+            log_error(f"Error upserting cultural knowledge: {e}")
+            raise e
