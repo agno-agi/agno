@@ -4,7 +4,7 @@ This module provides examples of integrating Claude's Agent Skills with Agno's a
 
 ## What are Claude Agent Skills?
 
-Claude Agent Skills are specialized capabilities that allow Claude to:
+Claude can now use _Skills_ to improve how it performs specific tasks:
 - **PowerPoint (pptx)**: Create professional presentations with slides, layouts, and formatting
 - **Excel (xlsx)**: Generate spreadsheets with formulas, charts, and data analysis
 - **Word (docx)**: Create and edit documents with rich formatting
