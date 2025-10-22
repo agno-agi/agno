@@ -28,13 +28,15 @@ read_only_agent = Agent(
                 "get_emails_by_thread",
                 "mark_email_as_read",
                 "mark_email_as_unread",
+                "list_labels",
             ]
         )
     ],
-    description="You are a Gmail reading specialist that can search and read emails.",
+    description="You are a Gmail reading specialist that can search, read and label emails.",
     instructions=[
         "You can search and read Gmail messages but cannot send or draft emails.",
         "You can mark emails as read or unread for processing workflows.",
+        "You can list all available labels in the user's Gmail account.",
         "Summarize email contents and extract key details and dates.",
         "Show the email contents in a structured markdown format.",
     ],
@@ -61,9 +63,9 @@ agent = Agent(
     name="Full Gmail Agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[GmailTools()],
-    description="You are an expert Gmail Agent that can read, draft and send emails using Gmail.",
+    description="You are an expert Gmail Agent that can read, draft, send and label emails using Gmail.",
     instructions=[
-        "Based on user query, you can read, draft and send emails using Gmail.",
+        "Based on user query, you can read, draft, send and label emails using Gmail.",
         "While showing email contents, you can summarize the email contents, extract key details and dates.",
         "Show the email contents in a structured markdown format.",
         "Attachments can be added to the email",
@@ -92,7 +94,7 @@ agent.print_response(
     stream=True,
 )
 
-# Example 3: Send a new email with attachments
+# Example : Send a new email with attachments
 # agent.print_response(
 #     f"""Send an email to {email} with subject 'Subject'
 #     and body 'Body' and Attach the file 'tmp/attachment.pdf'""",
