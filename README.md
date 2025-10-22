@@ -77,34 +77,32 @@ if __name__ == "__main__":
     agent_os.serve(app="agno_agent:app", reload=True)
 ```
 
-## Designed for Production Grade Agent Engineering
+## Designed for Agent Engineering
 
-Agno is a remarkably feature-rich framework, purpose-built for large scale multi-agent deployments:
+Agno is a remarkably feature-rich framework, purpose-built for large-scale multi-agent deployments.
 
-### Core Intelligence
-- **Model Agnostic** — Works with any model provider so you can use your preferred LLMs.
-- **Type Safe** — Enforce structured I/O through `input_schema` and `output_schema` for predictable, composable behavior.
-- **Dynamic Context Management** — Inject variables, state, and retrieved data on the fly. Perfect for dependency-driven agents.
+| **Category** | **Feature** | **Description** |
+|---------------|-------------|-----------------|
+| **Core Intelligence** | **Model Agnostic** | Works with any model provider so you can use your favorite LLMs. |
+|  | **Type Safe** | Enforce structured I/O through `input_schema` and `output_schema` for predictable, composable behavior. |
+|  | **Dynamic Context Engineering** | Inject variables, state, and retrieved data on the fly to context. Perfect for dependency-driven agents. |
+| **Memory, Knowledge, and Persistence** | **Persistent Storage** | Give your Agents, Teams, and Workflows a database to persist session history, state, and messages. |
+|  | **User Memory** | Built-in memory system that allows Agents to recall user-specific context across sessions. |
+|  | **Agentic RAG** | Connect to any vector store (called **Knowledge** in Agno) with hybrid search + reranking out of the box. |
+|  | **Culture (Collective Memory)** | Shared knowledge that compounds across agents and time. |
+| **Execution & Control** | **Human-in-the-Loop** | Native support for confirmations, manual overrides, and external tool execution. |
+|  | **Guardrails** | Built-in safeguards for validation, security, and prompt protection. |
+|  | **Agent Lifecycle Hooks** | Pre- and post-hooks to validate or transform inputs and outputs. |
+|  | **MCP Integration** | First-class support for the Model Context Protocol (MCP) to connect Agents with external systems. |
+| **Runtime & Evaluation** | **Natively Multimodal** | Agents can process and generate text, images, audio, video, and files. |
+|  | **Async Runtime** | Built on FastAPI with fully async execution, ideal for scaling concurrent Agents. |
+|  | **Evals** | Measure your Agents' Accuracy, Performance, and Reliability. |
+|  | **Control Plane (UI)** | Integrated interface to visualize, monitor, and debug agent activity in real time. |
+| **Security & Privacy** | **Private by Design** | Runs entirely in your cloud. The UI connects directly to your AgentOS from your browser, no data is ever sent externally. |
+|  | **Data Governance** | Your data lives securely in your Agent database, no external data sharing or vendor lock-in. |
+|  | **Access Control** | Role-based access (RBAC) and per-agent permissions to protect sensitive contexts and tools. |
 
-### Memory, Knowledge, and Persistence
-- **Persistent Storage** — Give your Agents, Teams, and Workflows a database to persist session history, state, and messages.
-- **User Memory** — Built-in memory system that allows Agents to recall user-specific context across sessions.
-- **Agentic RAG** — Connect to any vector store (called **Knowledge** in Agno) with hybrid search + reranking out of the box.
-- **Culture (Collective Memory)** — Shared knowledge that compounds across agents and time.
-
-### Execution & Control
-- **Human-in-the-Loop** — Native support for confirmations, manual overrides, and external tool execution.
-- **Guardrails** — Built-in safeguards for validation, security, and prompt protection.
-- **Agent Lifecycle Hooks** — Pre- and post-hooks to validate or transform inputs and outputs.
-- **MCP Integration** — First-class support for the Model Context Protocol (MCP) to connect Agents with external systems.
-
-### Runtime & Evaluation
-- **Natively Multimodal** — Agents can process and generate text, images, audio, video, and files.
-- **Async Runtime** — Built on FastAPI with fully async execution, ideal for scaling concurrent Agents.
-- **Evals** — Measure your Agents' Accuracy, Performance, and Reliability.
-- **Observability (UI)** — Built-in interface to visualize, monitor, and debug agent activity in real time.
-
-Every part of Agno is built for real-world deployment, where developer experience meets production performance.
+Every part of Agno is built for real-world deployment — where developer experience meets production performance.
 
 ## AgentOS - Production Runtime for Multi-Agent Systems
 
