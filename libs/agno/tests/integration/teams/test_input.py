@@ -6,25 +6,52 @@ from agno.media import Image
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.session.summary import SessionSummaryManager
+from agno.team import Team
 
 
 def test_message_as_input():
-    agent = Agent(
+    researcher = Agent(
+        name="Researcher",
+        role="Research and provide information",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    writer = Agent(
+        name="Writer",
+        role="Write based on research",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        members=[researcher, writer],
         model=OpenAIChat(id="gpt-4o-mini"),
         markdown=True,
     )
 
-    response = agent.run(input=Message(role="user", content="Hello, how are you?"))
+    response = team.run(input=Message(role="user", content="Hello, how are you?"))
     assert response.content is not None
 
 
 def test_list_as_input():
-    agent = Agent(
+    researcher = Agent(
+        name="Researcher",
+        role="Research and provide information",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    writer = Agent(
+        name="Writer",
+        role="Write based on research",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        members=[researcher, writer],
         model=OpenAIChat(id="gpt-4o-mini"),
         markdown=True,
     )
 
-    response = agent.run(
+    response = team.run(
         input=[
             {"type": "text", "text": "What's in this image?"},
             {
@@ -39,12 +66,25 @@ def test_list_as_input():
 
 
 def test_dict_as_input():
-    agent = Agent(
+    researcher = Agent(
+        name="Researcher",
+        role="Research and provide information",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    writer = Agent(
+        name="Writer",
+        role="Write based on research",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        members=[researcher, writer],
         model=OpenAIChat(id="gpt-4o-mini"),
         markdown=True,
     )
 
-    response = agent.run(
+    response = team.run(
         input={
             "role": "user",
             "content": "Hello, how are you?",
@@ -54,7 +94,20 @@ def test_dict_as_input():
 
 
 def test_base_model_as_input():
-    agent = Agent(
+    researcher = Agent(
+        name="Researcher",
+        role="Research and provide information",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    writer = Agent(
+        name="Writer",
+        role="Write based on research",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        members=[researcher, writer],
         model=OpenAIChat(id="gpt-4o-mini"),
         markdown=True,
     )
@@ -63,19 +116,32 @@ def test_base_model_as_input():
         topic: str
         content: str
 
-    response = agent.run(input=InputMessage(topic="Greetings", content="Hello, how are you?"))
+    response = team.run(input=InputMessage(topic="Greetings", content="Hello, how are you?"))
     assert response.content is not None
 
 
 def test_empty_string_with_image():
-    """Test that agent handles empty string input with image media"""
-    agent = Agent(
+    """Test that team handles empty string input with image media"""
+    vision_agent = Agent(
+        name="Vision Analyst",
+        role="Analyze images",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    reporter = Agent(
+        name="Reporter",
+        role="Write reports",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        members=[vision_agent, reporter],
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="Describe the image provided",
         markdown=True,
     )
 
-    response = agent.run(
+    response = team.run(
         input="",
         images=[
             Image(
@@ -88,14 +154,27 @@ def test_empty_string_with_image():
 
 
 def test_none_input_with_image():
-    """Test that agent handles None input with image media"""
-    agent = Agent(
+    """Test that team handles None input with image media"""
+    vision_agent = Agent(
+        name="Vision Analyst",
+        role="Analyze images",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    reporter = Agent(
+        name="Reporter",
+        role="Write reports",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        members=[vision_agent, reporter],
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="Describe the image provided",
         markdown=True,
     )
 
-    response = agent.run(
+    response = team.run(
         input=None,
         images=[
             Image(
@@ -108,14 +187,27 @@ def test_none_input_with_image():
 
 
 def test_empty_string_with_multiple_media():
-    """Test that agent handles empty string with multiple media types"""
-    agent = Agent(
+    """Test that team handles empty string with multiple media types"""
+    media_analyst = Agent(
+        name="Media Analyst",
+        role="Analyze media",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    writer = Agent(
+        name="Content Writer",
+        role="Write content",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        members=[media_analyst, writer],
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="Analyze the provided media",
         markdown=True,
     )
 
-    response = agent.run(
+    response = team.run(
         input="",
         images=[
             Image(
@@ -128,11 +220,24 @@ def test_empty_string_with_multiple_media():
 
 
 def test_empty_string_with_image_and_user_memories():
-    """Test that agent with user memories handles empty string input with image"""
-    db = SqliteDb(db_file="tmp/test_empty_input_memories.db")
+    """Test that team with user memories handles empty string input with image"""
+    db = SqliteDb(db_file="tmp/test_team_empty_input_memories.db")
     session_summary_manager = SessionSummaryManager(model=OpenAIChat(id="gpt-4o-mini"))
 
-    agent = Agent(
+    vision_agent = Agent(
+        name="Vision Analyst",
+        role="Analyze images",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    reporter = Agent(
+        name="Reporter",
+        role="Write reports",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        members=[vision_agent, reporter],
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="Describe the image provided",
         db=db,
@@ -141,7 +246,7 @@ def test_empty_string_with_image_and_user_memories():
         markdown=True,
     )
 
-    response = agent.run(
+    response = team.run(
         input="",
         images=[
             Image(
@@ -154,11 +259,24 @@ def test_empty_string_with_image_and_user_memories():
 
 
 def test_none_input_with_image_and_user_memories():
-    """Test that agent with user memories handles None input with image"""
-    db = SqliteDb(db_file="tmp/test_none_input_memories.db")
+    """Test that team with user memories handles None input with image"""
+    db = SqliteDb(db_file="tmp/test_team_none_input_memories.db")
     session_summary_manager = SessionSummaryManager(model=OpenAIChat(id="gpt-4o-mini"))
 
-    agent = Agent(
+    vision_agent = Agent(
+        name="Vision Analyst",
+        role="Analyze images",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    reporter = Agent(
+        name="Reporter",
+        role="Write reports",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        members=[vision_agent, reporter],
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="Describe the image provided",
         db=db,
@@ -167,7 +285,7 @@ def test_none_input_with_image_and_user_memories():
         markdown=True,
     )
 
-    response = agent.run(
+    response = team.run(
         input=None,
         images=[
             Image(
@@ -180,11 +298,24 @@ def test_none_input_with_image_and_user_memories():
 
 
 def test_empty_string_with_image_and_session_summaries():
-    """Test that agent with session summaries handles empty string input with image"""
-    db = SqliteDb(db_file="tmp/test_empty_input_summaries.db")
+    """Test that team with session summaries handles empty string input with image"""
+    db = SqliteDb(db_file="tmp/test_team_empty_input_summaries.db")
     session_summary_manager = SessionSummaryManager(model=OpenAIChat(id="gpt-4o-mini"))
 
-    agent = Agent(
+    vision_agent = Agent(
+        name="Vision Analyst",
+        role="Analyze images",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    reporter = Agent(
+        name="Reporter",
+        role="Write reports",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        members=[vision_agent, reporter],
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="Describe the image provided",
         db=db,
@@ -193,7 +324,7 @@ def test_empty_string_with_image_and_session_summaries():
         markdown=True,
     )
 
-    response = agent.run(
+    response = team.run(
         input="",
         images=[
             Image(
@@ -206,11 +337,24 @@ def test_empty_string_with_image_and_session_summaries():
 
 
 def test_none_input_with_image_and_session_summaries():
-    """Test that agent with session summaries handles None input with image"""
-    db = SqliteDb(db_file="tmp/test_none_input_summaries.db")
+    """Test that team with session summaries handles None input with image"""
+    db = SqliteDb(db_file="tmp/test_team_none_input_summaries.db")
     session_summary_manager = SessionSummaryManager(model=OpenAIChat(id="gpt-4o-mini"))
 
-    agent = Agent(
+    vision_agent = Agent(
+        name="Vision Analyst",
+        role="Analyze images",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    reporter = Agent(
+        name="Reporter",
+        role="Write reports",
+        model=OpenAIChat(id="gpt-4o-mini"),
+    )
+
+    team = Team(
+        members=[vision_agent, reporter],
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="Describe the image provided",
         db=db,
@@ -219,7 +363,7 @@ def test_none_input_with_image_and_session_summaries():
         markdown=True,
     )
 
-    response = agent.run(
+    response = team.run(
         input=None,
         images=[
             Image(
