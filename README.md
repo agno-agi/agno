@@ -77,22 +77,32 @@ if __name__ == "__main__":
     agent_os.serve(app="agno_agent:app", reload=True)
 ```
 
-## Designed for Agent Engineering
+## Designed for Production Grade Agent Engineering
 
-Agno is a remarkably feature-rich framework, covering all aspects of Agent Engineering:
+Agno is a remarkably feature-rich framework, purpose-built for large scale multi-agent deployments:
 
-- **Model Agnostic**: Works with any model provider so you can use your favorite LLMs.
-- **Type Safe**: Agents, Teams, and Workflows can accept structured inputs and generate structured outputs, enforced through `input_schema` and `output_schema`.
-- **Persistent Storage**: Give your Agents, Teams and Workflows a database to persist session history and state.
-- **Agentic RAG**: Connect Agents to any vector store (called Knowledge in Agno) and enable hybrid-search + reranking out of the box.
-- **User Memory**: Built-in memory system that lets Agents store and recall information about users across sessions.
-- **Human-in-the-Loop**: Native support for user confirmation, manual input, external tool execution, and admin overrides.
-- **MCP**: Best-in-class support for the Model Context Protocol (MCP), enabling Agents to interact with external systems through a standardized interface.
-- **Guardrails**: Built-in safeguards for validating and protecting inputs sent to models.
-- **Agent Lifecycle Hooks**: Use pre-hooks and post-hooks to validate or modify inputs and outputs. Pre-hooks run before the Agent processes input — ideal for validation, security checks, and data preprocessing.
-- **Natively Multimodal**: Agno Agents support text, image, audio, video and files inputs and can generate text, image, audio, video and files as output.
-- **Dynamic Context Management**: Dynamically modify an Agent’s context by injecting variables, state, and function outputs. Use dependencies to add memories, skills, or retrieved documents before execution.
-- **Evals**: Evaluate your Agents across three key dimensions: Accuracy, Performance, and Reliability.
+### Core Intelligence
+- **Model Agnostic** — Works with any model provider so you can use your preferred LLMs.
+- **Type Safe** — Enforce structured I/O through `input_schema` and `output_schema` for predictable, composable behavior.
+- **Dynamic Context Management** — Inject variables, state, and retrieved data on the fly. Perfect for dependency-driven agents.
+
+### Memory, Knowledge, and Persistence
+- **Persistent Storage** — Give your Agents, Teams, and Workflows a database to persist session history, state, and messages.
+- **User Memory** — Built-in memory system that allows Agents to recall user-specific context across sessions.
+- **Agentic RAG** — Connect to any vector store (called **Knowledge** in Agno) with hybrid search + reranking out of the box.
+- **Culture (Collective Memory)** — Shared knowledge that compounds across agents and time.
+
+### Execution & Control
+- **Human-in-the-Loop** — Native support for confirmations, manual overrides, and external tool execution.
+- **Guardrails** — Built-in safeguards for validation, security, and prompt protection.
+- **Agent Lifecycle Hooks** — Pre- and post-hooks to validate or transform inputs and outputs.
+- **MCP Integration** — First-class support for the Model Context Protocol (MCP) to connect Agents with external systems.
+
+### Runtime & Evaluation
+- **Natively Multimodal** — Agents can process and generate text, images, audio, video, and files.
+- **Async Runtime** — Built on FastAPI with fully async execution, ideal for scaling concurrent Agents.
+- **Evals** — Measure your Agents' Accuracy, Performance, and Reliability.
+- **Observability (UI)** — Built-in interface to visualize, monitor, and debug agent activity in real time.
 
 Every part of Agno is built for real-world deployment, where developer experience meets production performance.
 
