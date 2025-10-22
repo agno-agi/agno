@@ -66,9 +66,11 @@ class PineconeDb(VectorDb):
 
     def __init__(
         self,
-        name: str,
         dimension: int,
         spec: Union[Dict, ServerlessSpec, PodSpec],
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         embedder: Optional[Embedder] = None,
         metric: Optional[str] = "cosine",
         additional_headers: Optional[Dict[str, str]] = None,
@@ -84,6 +86,23 @@ class PineconeDb(VectorDb):
         reranker: Optional[Reranker] = None,
         **kwargs,
     ):
+        # Validate required parameters
+        if dimension is None or dimension <= 0:
+            raise ValueError("Dimension must be provided and greater than 0.")
+        if spec is None:
+            raise ValueError("Spec must be provided for Pinecone index.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            index_name = name or "default_index"
+            seed = f"{host or 'pinecone'}#{index_name}#{dimension}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         self._client = None
         self._index = None
         self.api_key: Optional[str] = api_key
@@ -93,7 +112,6 @@ class PineconeDb(VectorDb):
         self.pool_threads: Optional[int] = pool_threads
         self.namespace: Optional[str] = namespace
         self.index_api: Optional[Any] = index_api
-        self.name: str = name
         self.dimension: Optional[int] = dimension
         self.spec: Union[Dict, ServerlessSpec, PodSpec] = spec
         self.metric: Optional[str] = metric
@@ -719,3 +737,7 @@ class PineconeDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # PineconeDb doesn't use SearchType enum

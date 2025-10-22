@@ -111,30 +111,14 @@ class Condition:
             audio=current_audio + all_audio,
         )
 
-    def _evaluate_condition(self, step_input: StepInput) -> bool:
+    def _evaluate_condition(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
         """Evaluate the condition and return boolean result"""
         if isinstance(self.evaluator, bool):
             return self.evaluator
 
         if callable(self.evaluator):
-            result = self.evaluator(step_input)
-
-            if isinstance(result, bool):
-                return result
-            else:
-                logger.warning(f"Condition evaluator returned unexpected type: {type(result)}, expected bool")
-                return False
-
-        return False
-
-    async def _aevaluate_condition(self, step_input: StepInput) -> bool:
-        """Async version of condition evaluation"""
-        if isinstance(self.evaluator, bool):
-            return self.evaluator
-
-        if callable(self.evaluator):
-            if inspect.iscoroutinefunction(self.evaluator):
-                result = await self.evaluator(step_input)
+            if session_state is not None and self._evaluator_has_session_state_param():
+                result = self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
             else:
                 result = self.evaluator(step_input)
 
@@ -145,6 +129,44 @@ class Condition:
                 return False
 
         return False
+
+    async def _aevaluate_condition(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+        """Async version of condition evaluation"""
+        if isinstance(self.evaluator, bool):
+            return self.evaluator
+
+        if callable(self.evaluator):
+            has_session_state = session_state is not None and self._evaluator_has_session_state_param()
+
+            if inspect.iscoroutinefunction(self.evaluator):
+                if has_session_state:
+                    result = await self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
+                else:
+                    result = await self.evaluator(step_input)
+            else:
+                if has_session_state:
+                    result = self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
+                else:
+                    result = self.evaluator(step_input)
+
+            if isinstance(result, bool):
+                return result
+            else:
+                logger.warning(f"Condition evaluator returned unexpected type: {type(result)}, expected bool")
+                return False
+
+        return False
+
+    def _evaluator_has_session_state_param(self) -> bool:
+        """Check if the evaluator function has a session_state parameter"""
+        if not callable(self.evaluator):
+            return False
+
+        try:
+            sig = inspect.signature(self.evaluator)
+            return "session_state" in sig.parameters
+        except Exception:
+            return False
 
     def execute(
         self,
@@ -166,7 +188,7 @@ class Condition:
         self._prepare_steps()
 
         # Evaluate the condition
-        condition_result = self._evaluate_condition(step_input)
+        condition_result = self._evaluate_condition(step_input, session_state)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
         if not condition_result:
@@ -257,6 +279,7 @@ class Condition:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -274,7 +297,7 @@ class Condition:
         self._prepare_steps()
 
         # Evaluate the condition
-        condition_result = self._evaluate_condition(step_input)
+        condition_result = self._evaluate_condition(step_input, session_state)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
         if stream_intermediate_steps and workflow_run_response:
@@ -332,6 +355,7 @@ class Condition:
                     session_id=session_id,
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
@@ -432,7 +456,7 @@ class Condition:
         self._prepare_steps()
 
         # Evaluate the condition
-        condition_result = await self._aevaluate_condition(step_input)
+        condition_result = await self._aevaluate_condition(step_input, session_state)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
         if not condition_result:
@@ -523,6 +547,7 @@ class Condition:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -540,7 +565,7 @@ class Condition:
         self._prepare_steps()
 
         # Evaluate the condition
-        condition_result = await self._aevaluate_condition(step_input)
+        condition_result = await self._aevaluate_condition(step_input, session_state)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
         if stream_intermediate_steps and workflow_run_response:
@@ -600,6 +625,7 @@ class Condition:
                     session_id=session_id,
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,

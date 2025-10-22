@@ -16,8 +16,7 @@ class ReaderFactory:
         from agno.knowledge.reader.pdf_reader import PDFReader
 
         config: Dict[str, Any] = {
-            "chunk": True,
-            "chunk_size": 100,
+            "name": "PDF Reader",
             "description": "Processes PDF documents with OCR support for images and text extraction",
         }
         config.update(kwargs)

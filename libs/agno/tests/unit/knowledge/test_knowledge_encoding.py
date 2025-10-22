@@ -76,6 +76,10 @@ class FakeVectorDb(VectorDb):
     ) -> List[Document]:
         return []
 
+    # Search types
+    def get_supported_search_types(self) -> List[str]:
+        return None
+
     # Deletes / updates (not used in these tests)
     def delete(self) -> bool:
         return True

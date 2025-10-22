@@ -1,11 +1,11 @@
 import logging
 from datetime import date, datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Union, cast
 
 from fastapi import Depends, HTTPException, Query
 from fastapi.routing import APIRouter
 
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
 from agno.os.schema import (
@@ -21,7 +21,9 @@ from agno.os.utils import get_db
 logger = logging.getLogger(__name__)
 
 
-def get_metrics_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs) -> APIRouter:
+def get_metrics_router(
+    dbs: dict[str, Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+) -> APIRouter:
     """Create metrics router with comprehensive OpenAPI documentation for system metrics and analytics endpoints."""
     router = APIRouter(
         dependencies=[Depends(get_authentication_dependency(settings))],
@@ -37,7 +39,7 @@ def get_metrics_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoA
     return attach_routes(router=router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]]) -> APIRouter:
     @router.get(
         "/metrics",
         response_model=MetricsResponse,
@@ -100,7 +102,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     ) -> MetricsResponse:
         try:
             db = get_db(dbs, db_id)
-            metrics, latest_updated_at = db.get_metrics(starting_date=starting_date, ending_date=ending_date)
+            if isinstance(db, AsyncBaseDb):
+                db = cast(AsyncBaseDb, db)
+                metrics, latest_updated_at = await db.get_metrics(starting_date=starting_date, ending_date=ending_date)
+            else:
+                metrics, latest_updated_at = db.get_metrics(starting_date=starting_date, ending_date=ending_date)
 
             return MetricsResponse(
                 metrics=[DayAggregatedMetrics.from_dict(metric) for metric in metrics],
@@ -166,7 +172,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     ) -> List[DayAggregatedMetrics]:
         try:
             db = get_db(dbs, db_id)
-            result = db.calculate_metrics()
+            if isinstance(db, AsyncBaseDb):
+                db = cast(AsyncBaseDb, db)
+                result = await db.calculate_metrics()
+            else:
+                result = db.calculate_metrics()
             if result is None:
                 return []
 

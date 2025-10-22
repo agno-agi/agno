@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import IO, Any, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from agno.knowledge.chunking.strategy import ChunkingStrategyType
+from agno.knowledge.chunking.document import DocumentChunking
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
@@ -183,6 +184,7 @@ class BasePDFReader(Reader):
         page_start_numbering_format: Optional[str] = None,
         page_end_numbering_format: Optional[str] = None,
         password: Optional[str] = None,
+        chunking_strategy: Optional[ChunkingStrategy] = DocumentChunking(chunk_size=5000),
         **kwargs,
     ):
         if page_start_numbering_format is None:
@@ -195,11 +197,7 @@ class BasePDFReader(Reader):
         self.page_end_numbering_format = page_end_numbering_format
         self.password = password
 
-        if self.chunking_strategy is None:
-            from agno.knowledge.chunking.document import DocumentChunking
-
-            self.chunking_strategy = DocumentChunking(chunk_size=5000)
-        super().__init__(**kwargs)
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:

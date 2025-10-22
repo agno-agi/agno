@@ -108,10 +108,13 @@ class Router:
             audio=current_audio + all_audio,
         )
 
-    def _route_steps(self, step_input: StepInput) -> List[Step]:  # type: ignore[return-value]
+    def _route_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
         """Route to the appropriate steps based on input"""
         if callable(self.selector):
-            result = self.selector(step_input)
+            if session_state is not None and self._selector_has_session_state_param():
+                result = self.selector(step_input, session_state)  # type: ignore[call-arg]
+            else:
+                result = self.selector(step_input)
 
             # Handle the result based on its type
             if isinstance(result, Step):
@@ -124,13 +127,21 @@ class Router:
 
         return []
 
-    async def _aroute_steps(self, step_input: StepInput) -> List[Step]:  # type: ignore[return-value]
+    async def _aroute_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
         """Async version of step routing"""
         if callable(self.selector):
+            has_session_state = session_state is not None and self._selector_has_session_state_param()
+
             if inspect.iscoroutinefunction(self.selector):
-                result = await self.selector(step_input)
+                if has_session_state:
+                    result = await self.selector(step_input, session_state)  # type: ignore[call-arg]
+                else:
+                    result = await self.selector(step_input)
             else:
-                result = self.selector(step_input)
+                if has_session_state:
+                    result = self.selector(step_input, session_state)  # type: ignore[call-arg]
+                else:
+                    result = self.selector(step_input)
 
             # Handle the result based on its type
             if isinstance(result, Step):
@@ -142,6 +153,17 @@ class Router:
                 return []
 
         return []
+
+    def _selector_has_session_state_param(self) -> bool:
+        """Check if the selector function has a session_state parameter"""
+        if not callable(self.selector):
+            return False
+
+        try:
+            sig = inspect.signature(self.selector)
+            return "session_state" in sig.parameters
+        except Exception:
+            return False
 
     def execute(
         self,
@@ -163,7 +185,7 @@ class Router:
         self._prepare_steps()
 
         # Route to appropriate steps
-        steps_to_execute = self._route_steps(step_input)
+        steps_to_execute = self._route_steps(step_input, session_state)
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
@@ -246,6 +268,7 @@ class Router:
         user_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -262,7 +285,7 @@ class Router:
         router_step_id = str(uuid4())
 
         # Route to appropriate steps
-        steps_to_execute = self._route_steps(step_input)
+        steps_to_execute = self._route_steps(step_input, session_state)
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
         if stream_intermediate_steps and workflow_run_response:
@@ -310,6 +333,7 @@ class Router:
                     session_id=session_id,
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
                     store_executor_outputs=store_executor_outputs,
@@ -411,7 +435,7 @@ class Router:
         self._prepare_steps()
 
         # Route to appropriate steps
-        steps_to_execute = await self._aroute_steps(step_input)
+        steps_to_execute = await self._aroute_steps(step_input, session_state)
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
@@ -497,6 +521,7 @@ class Router:
         user_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -513,7 +538,7 @@ class Router:
         router_step_id = str(uuid4())
 
         # Route to appropriate steps
-        steps_to_execute = await self._aroute_steps(step_input)
+        steps_to_execute = await self._aroute_steps(step_input, session_state)
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
         if stream_intermediate_steps and workflow_run_response:
@@ -563,6 +588,7 @@ class Router:
                     session_id=session_id,
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
                     store_executor_outputs=store_executor_outputs,
