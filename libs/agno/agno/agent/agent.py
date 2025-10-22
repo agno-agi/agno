@@ -5747,17 +5747,24 @@ class Agent:
 
         # Load and return the session from the database
         if self.db is not None:
-            loaded_session = cast(
-                AgentSession,
-                self._read_session(session_id=session_id_to_load, session_type=SessionType.AGENT),  # type: ignore
-            )
+            loaded_session = None
+            
+            # We have a standalone agent, so we are loading an AgentSession
+            if self.team_id is None and self.workflow_id is None:
+                loaded_session = cast(
+                    AgentSession,
+                    self._read_session(session_id=session_id_to_load, session_type=SessionType.AGENT),  # type: ignore
+                )
 
+            # We have a team member agent, so we are loading a TeamSession
             if loaded_session is None and self.team_id is not None:
                 # Load session for team member agents
                 loaded_session = cast(
                     TeamSession,
                     self._read_session(session_id=session_id_to_load, session_type=SessionType.TEAM),  # type: ignore
                 )
+
+            # We have a workflow member agent, so we are loading a WorkflowSession
             if loaded_session is None and self.workflow_id is not None:
                 # Load session for workflow memberagents
                 loaded_session = cast(

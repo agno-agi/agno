@@ -7504,23 +7504,20 @@ class Team:
 
         # Load and return the session from the database
         if self.db is not None:
-            loaded_session = cast(TeamSession, self._read_session(session_id=session_id_to_load))  # type: ignore
-
-            if loaded_session is None and self.workflow_id is not None:
-                loaded_session = cast(
-                    WorkflowSession,
-                    self._read_session(session_id=session_id_to_load, session_type=SessionType.WORKFLOW),
-                )
-
-            if loaded_session is not None:
-                return loaded_session
-
+            loaded_session = None
+            # We have a standalone team, so we are loading a TeamSession
+            if self.workflow_id is None:
+                loaded_session = cast(TeamSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+            # We have a workflow team, so we are loading a WorkflowSession
+            else:
+                loaded_session = cast(WorkflowSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+            
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
-                self._team_session = loaded_session
+                self._agent_session = loaded_session
 
             return loaded_session
-
+        
         log_debug(f"TeamSession {session_id_to_load} not found in db")
         return None
 
