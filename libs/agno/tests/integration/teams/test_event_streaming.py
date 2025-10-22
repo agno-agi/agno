@@ -23,7 +23,7 @@ def test_basic_events():
         telemetry=False,
     )
 
-    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=False)
+    response_generator = team.run("Hello, how are you?", stream=True, stream_events=False)
 
     event_counts = {}
     for run_response in response_generator:
@@ -42,7 +42,7 @@ async def test_async_basic_events():
         telemetry=False,
     )
     event_counts = {}
-    async for run_response in team.arun("Hello, how are you?", stream=True, stream_intermediate_steps=False):
+    async for run_response in team.arun("Hello, how are you?", stream=True, stream_events=False):
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
     assert event_counts.keys() == {TeamRunEvent.run_content}
@@ -59,7 +59,7 @@ def test_basic_intermediate_steps_events(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -120,9 +120,7 @@ def test_intermediate_steps_with_tools(shared_db):
     )
 
     events = {}
-    for run_response_delta in team.run(
-        "What is the stock price of Apple?", stream=True, stream_intermediate_steps=True
-    ):
+    for run_response_delta in team.run("What is the stock price of Apple?", stream=True, stream_events=True):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
@@ -176,7 +174,7 @@ def test_intermediate_steps_with_reasoning():
     response_generator = team.run(
         "What is the sum of the first 10 natural numbers?",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     events = {}
@@ -226,7 +224,7 @@ def test_intermediate_steps_with_user_confirmation():
         telemetry=False,
     )
 
-    response_generator = team.run("What is the weather in Tokyo?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("What is the weather in Tokyo?", stream=True, stream_events=True)
 
     # First until we hit a pause
     events = {}
@@ -251,9 +249,7 @@ def test_intermediate_steps_with_user_confirmation():
     updated_tools[0].confirmed = True
 
     # Then we continue the run
-    response_generator = team.continue_run(
-        run_id=run_id, updated_tools=updated_tools, stream=True, stream_intermediate_steps=True
-    )
+    response_generator = team.continue_run(run_id=run_id, updated_tools=updated_tools, stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -292,7 +288,7 @@ def test_intermediate_steps_with_memory(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -326,7 +322,7 @@ def test_intermediate_steps_with_session_summary(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -368,7 +364,7 @@ def test_pre_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -428,7 +424,7 @@ async def test_async_pre_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.arun("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.arun("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     async for run_response_delta in response_generator:
@@ -487,7 +483,7 @@ def test_post_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -543,7 +539,7 @@ async def test_async_post_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.arun("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.arun("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     async for run_response_delta in response_generator:
@@ -599,7 +595,7 @@ def test_pre_and_post_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("Hello", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Hello", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -652,7 +648,7 @@ def test_intermediate_steps_with_structured_output(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Describe Elon Musk", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -705,7 +701,7 @@ def test_intermediate_steps_with_parser_model(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Describe Elon Musk", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -787,7 +783,7 @@ def test_intermediate_steps_with_member_agents():
     )
 
     response_generator = team.run(
-        "Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_intermediate_steps=True
+        "Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_events=True
     )
 
     events = {}
@@ -867,7 +863,7 @@ def test_intermediate_steps_with_member_agents_nested_team():
         telemetry=False,
     )
 
-    response_generator = team.run("Do a stock market analysis for Apple.", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Do a stock market analysis for Apple.", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -915,7 +911,7 @@ def test_intermediate_steps_with_member_agents_streaming_off():
     )
 
     response_generator = team.run(
-        "Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_intermediate_steps=True
+        "Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_events=True
     )
 
     events = {}
@@ -961,14 +957,14 @@ def test_intermediate_steps_with_member_agents_delegate_to_all_members():
         model=OpenAIChat(id="o3-mini"),
         instructions="You are an expert web researcher with strong analytical skills! Use your tools to find answers to questions.",
         tools=[get_news_from_duckduckgo],
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
     agent_2 = Agent(
         name="Hackernews Researcher",
         model=OpenAIChat(id="o3-mini"),
         instructions="You are an expert hackernews researcher with strong analytical skills! Use your tools to find answers to questions.",
         tools=[get_news_from_hackernews],
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
     team = Team(
         model=OpenAIChat(id="o3-mini"),
@@ -981,7 +977,7 @@ def test_intermediate_steps_with_member_agents_delegate_to_all_members():
     response_generator = team.run(
         input="Start the discussion on the topic: 'What is the best way to learn to code?'",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     events = {}
@@ -1026,7 +1022,7 @@ def test_tool_parent_run_id():
         input="What is the meaning of life?",
         session_id="test_session",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     events = {}

@@ -174,7 +174,7 @@ def demo_smart_customer_service_cli():
         user="Customer",
         emoji="🎧",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
         show_step_details=True,
     )
 
