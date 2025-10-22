@@ -326,7 +326,7 @@ async def test_async_condition_streaming(shared_db):
     )
 
     events = []
-    async for event in await workflow.arun(input="AI technology", stream=True, stream_events=True):
+    async for event in workflow.arun(input="AI technology", stream=True, stream_events=True):
         events.append(event)
 
     condition_started = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
