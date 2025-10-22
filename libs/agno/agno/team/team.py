@@ -1576,9 +1576,11 @@ class Team:
 
             # 8. Wait for background memory creation
             yield from wait_for_background_tasks_stream(
+                run_response=run_response,
                 memory_future=memory_future,
                 stream_events=stream_events,
-                run_response=run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
             )
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2416,7 +2418,13 @@ class Team:
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
             # 11. Wait for background memory creation
-            async for event in await_for_background_tasks_stream(run_response=run_response, memory_task=memory_task):
+            async for event in await_for_background_tasks_stream(
+                run_response=run_response,
+                memory_task=memory_task,
+                stream_events=stream_events,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            ):
                 yield event
 
             raise_if_cancelled(run_response.run_id)  # type: ignore

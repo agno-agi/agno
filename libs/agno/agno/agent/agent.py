@@ -1259,6 +1259,8 @@ class Agent:
                     cultural_knowledge_future=cultural_knowledge_future,
                     stream_events=stream_events,
                     run_response=run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
                 )
 
                 # Handle the paused run
@@ -2168,6 +2170,8 @@ class Agent:
                 cultural_knowledge_task=cultural_knowledge_task,
                 stream_events=stream_events,
                 run_response=run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
             ):
                 yield item
 
