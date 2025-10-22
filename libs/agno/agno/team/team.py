@@ -183,7 +183,7 @@ class Team:
     add_team_history_to_members: bool = False
     # Number of historical runs to include in the messages sent to the members
     num_team_history_runs: int = 3
-    # If True, send all member interactions (request/response) DURING THE CURRENT RUN to members that are delegated to
+    # If True, send all member interactions (request/response) during the current run to members that have been delegated a task to
     share_member_interactions: bool = False
 
     # If True, adds a tool to allow searching through previous sessions
