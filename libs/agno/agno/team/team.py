@@ -61,6 +61,17 @@ from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutp
 from agno.session import SessionSummaryManager, TeamSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.utils.agent import (
+    wait_for_background_tasks,
+    wait_for_background_tasks_stream,
+    collect_joint_images,
+    collect_joint_files,
+    collect_joint_audios,
+    collect_joint_videos,
+    scrub_history_messages_from_run_output,
+    scrub_tool_results_from_run_output,
+    scrub_media_from_run_output,
+)
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_team_memory_update_completed_event,
@@ -119,6 +130,7 @@ from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import generate_id_from_name, parse_response_model_str
 from agno.utils.team import format_member_agent_task, get_member_id
 from agno.utils.timer import Timer
+
 
 
 @dataclass(init=False)
@@ -262,7 +274,7 @@ class Team:
     # If True, store media in run output
     store_media: bool = True
     # If True, store tool results in run output
-    store_tool_results: bool = True
+    store_tool_messages: bool = True
     # If True, store history messages in run output
     store_history_messages: bool = True
 
@@ -424,7 +436,7 @@ class Team:
         search_knowledge: bool = True,
         read_team_history: bool = False,
         store_media: bool = True,
-        store_tool_results: bool = True,
+        store_tool_messages: bool = True,
         store_history_messages: bool = True,
         send_media_to_model: bool = True,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
@@ -526,7 +538,7 @@ class Team:
         self.read_team_history = read_team_history
 
         self.store_media = store_media
-        self.store_tool_results = store_tool_results
+        self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
         self.send_media_to_model = send_media_to_model
 
@@ -864,6 +876,9 @@ class Team:
         run_response: TeamRunOutput,
         run_input: TeamRunInput,
         session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -878,6 +893,9 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
+            "metadata": metadata,
+            "session_state": session_state,
+            "dependencies": dependencies,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
@@ -920,6 +938,9 @@ class Team:
         run_response: TeamRunOutput,
         run_input: TeamRunInput,
         session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -934,6 +955,9 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
@@ -979,6 +1003,9 @@ class Team:
         hooks: Optional[List[Callable[..., Any]]],
         run_output: TeamRunOutput,
         session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -993,6 +1020,9 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
@@ -1016,6 +1046,9 @@ class Team:
         run_output: TeamRunOutput,
         session: TeamSession,
         user_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
@@ -1029,6 +1062,9 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
@@ -1096,6 +1132,9 @@ class Team:
                 run_response=run_response,
                 run_input=run_input,
                 session=session,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 user_id=user_id,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -1215,11 +1254,9 @@ class Team:
                 )
 
             # 11. Wait for background memory creation
-            if memory_future is not None:
-                try:
-                    memory_future.result()
-                except Exception as e:
-                    log_warning(f"Error in memory creation: {str(e)}")
+            wait_for_background_tasks(
+                memory_future=memory_future
+            )
 
             # 12. Create session summary
             if self.session_summary_manager is not None:
@@ -1256,6 +1293,8 @@ class Team:
             # Clean up the memory executor if it was created
             if memory_executor is not None:
                 memory_executor.shutdown(wait=False)
+
+            cleanup_run(run_response.run_id)  # type: ignore
 
     def _run_stream(
         self,
@@ -1302,6 +1341,9 @@ class Team:
                 run_response=run_response,
                 run_input=run_input,
                 session=session,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 user_id=user_id,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -1436,23 +1478,26 @@ class Team:
                 yield self._handle_event(
                     create_team_run_content_completed_event(from_run_response=run_response), run_response
                 )
-
-            # TODO: For now we don't run post-hooks during streaming
+            # Execute post-hooks after output is generated but before response is returned
+            if self.post_hooks is not None:
+                self._execute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                    session=session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    **kwargs,
+                )
 
             # 8. Wait for background memory creation
-            if memory_future is not None:
-                if self.stream_intermediate_steps:
-                    yield self._handle_event(
-                        create_team_memory_update_started_event(from_run_response=run_response), run_response
-                    )
-                try:
-                    memory_future.result()
-                except Exception as e:
-                    log_warning(f"Error in memory creation: {str(e)}")
-                if self.stream_intermediate_steps:
-                    yield self._handle_event(
-                        create_team_memory_update_completed_event(from_run_response=run_response), run_response
-                    )
+            yield from wait_for_background_tasks_stream(
+                memory_future=memory_future,
+                stream_intermediate_steps=stream_intermediate_steps,
+                run_response=run_response,
+            )
 
             # 9. Create session summary
             if self.session_summary_manager is not None:
@@ -1688,11 +1733,11 @@ class Team:
         )
         self.model = cast(Model, self.model)
 
-        if metadata is not None:
-            if self.metadata is not None:
-                merge_dictionaries(metadata, self.metadata)
-            else:
+        if self.metadata is not None:
+            if metadata is None:
                 metadata = self.metadata
+            else:
+                merge_dictionaries(metadata, self.metadata)
 
         # Create a new run_response for this attempt
         run_response = TeamRunOutput(
@@ -1805,11 +1850,9 @@ class Team:
 
     async def _arun(
         self,
-        input: Union[str, List, Dict, Message, BaseModel],
         run_response: TeamRunOutput,
         session_id: str,
         session_state: Optional[Dict[str, Any]] = None,
-        store_member_responses: Optional[bool] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1817,10 +1860,6 @@ class Team:
         add_history_to_context: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
         debug_mode: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -1848,6 +1887,9 @@ class Team:
 
         register_run(run_response.run_id)  # type: ignore
 
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=dependencies)
+
         # 1. Read or create session. Reads from the database if provided.
         if self._has_async_db():
             team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
@@ -1857,9 +1899,6 @@ class Team:
         # 2. Update metadata and session state
         self._update_metadata(session=team_session)
         session_state = self._load_session_state(session=team_session, session_state=session_state)  # type: ignore
-
-        if store_member_responses is None:
-            store_member_responses = False if self.store_member_responses is None else self.store_member_responses
 
         run_input = cast(TeamRunInput, run_response.input)
 
@@ -1872,6 +1911,9 @@ class Team:
                 session=team_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 **kwargs,
             )
 
@@ -1910,11 +1952,11 @@ class Team:
             session=team_session,  # type: ignore
             session_state=session_state,
             user_id=user_id,
-            input_message=input,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
+            input_message=run_input.input_content,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -2037,7 +2079,6 @@ class Team:
 
     async def _arun_stream(
         self,
-        input: Union[str, List, Dict, Message, BaseModel],
         run_response: TeamRunOutput,
         session_id: str,
         session_state: Optional[Dict[str, Any]] = None,
@@ -2050,10 +2091,6 @@ class Team:
         add_history_to_context: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
         debug_mode: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -2078,7 +2115,7 @@ class Team:
 
         # 1. Resolve dependencies
         if dependencies is not None:
-            self._resolve_run_dependencies(dependencies=dependencies)
+            await self._aresolve_run_dependencies(dependencies=dependencies)
 
         # 2. Read or create session. Reads from the database if provided.
         if self._has_async_db():
@@ -2101,6 +2138,9 @@ class Team:
                 session=team_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 **kwargs,
             )
             async for pre_hook_event in pre_hook_iterator:
@@ -2118,11 +2158,11 @@ class Team:
             user_id=user_id,
             async_mode=True,
             knowledge_filters=knowledge_filters,
-            input_message=input,
-            images=images,
-            videos=videos,
-            audio=audio,
-            files=files,
+            input_message=run_input.input_content,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -2135,11 +2175,11 @@ class Team:
             session=team_session,  # type: ignore
             session_state=session_state,
             user_id=user_id,
-            input_message=input,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
+            input_message=run_input.input_content,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -2228,6 +2268,20 @@ class Team:
             if stream_intermediate_steps:
                 yield self._handle_event(
                     create_team_run_content_completed_event(from_run_response=run_response), run_response
+                )
+
+            # Execute post-hooks after output is generated but before response is returned
+            if self.post_hooks is not None:
+                await self._aexecute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                    session=team_session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    **kwargs,
                 )
 
             # 11. Wait for background memory creation
@@ -2460,11 +2514,11 @@ class Team:
 
         self.model = cast(Model, self.model)
 
-        if metadata is not None:
-            if self.metadata is not None:
-                merge_dictionaries(metadata, self.metadata)
-            else:
+        if self.metadata is not None:
+            if metadata is None:
                 metadata = self.metadata
+            else:
+                merge_dictionaries(metadata, self.metadata)
 
         #  Get knowledge filters
         effective_filters = knowledge_filters
@@ -2525,10 +2579,6 @@ class Team:
                         session_id=session_id,
                         session_state=session_state,
                         user_id=user_id,
-                        audio=audio,
-                        images=images,
-                        videos=videos,
-                        files=files,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history,
                         add_dependencies_to_context=add_dependencies,
@@ -3710,74 +3760,6 @@ class Team:
                     return member.name or entity_id
         return entity_id
 
-    def _scrub_media_from_run_output(self, run_response: TeamRunOutput) -> None:
-        """
-        Completely remove all media from RunOutput when store_media=False.
-        This includes media in input, output artifacts, and all messages.
-        """
-        # 1. Scrub RunInput media
-        if run_response.input is not None:
-            run_response.input.images = []
-            run_response.input.videos = []
-            run_response.input.audios = []
-            run_response.input.files = []
-
-        # 2. RunOutput artifact media are skipped since we don't store them when store_media=False
-
-        # 3. Scrub media from all messages
-        if run_response.messages:
-            for message in run_response.messages:
-                self._scrub_media_from_message(message)
-
-        # 4. Scrub media from additional_input messages if any
-        if run_response.additional_input:
-            for message in run_response.additional_input:
-                self._scrub_media_from_message(message)
-
-        # 5. Scrub media from reasoning_messages if any
-        if run_response.reasoning_messages:
-            for message in run_response.reasoning_messages:
-                self._scrub_media_from_message(message)
-
-    def _scrub_media_from_message(self, message: Message) -> None:
-        """Remove all media from a Message object."""
-        # Input media
-        message.images = None
-        message.videos = None
-        message.audio = None
-        message.files = None
-
-        # Output media
-        message.audio_output = None
-        message.image_output = None
-        message.video_output = None
-
-    def _scrub_tool_results_from_run_output(self, run_response: TeamRunOutput) -> None:
-        """
-        Remove all tool-related data from TeamRunOutput when store_tool_results=False.
-        This includes tool calls, tool results, and tool-related message fields.
-        """
-        # Remove tool results (messages with role="tool")
-        if run_response.messages:
-            run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
-            # Also scrub tool-related fields from remaining messages
-            for message in run_response.messages:
-                self._scrub_tool_data_from_message(message)
-
-    def _scrub_tool_data_from_message(self, message: Message) -> None:
-        """Remove tool-related data from a Message object."""
-        message.tool_calls = None
-        message.tool_call_id = None
-
-    def _scrub_history_messages_from_run_output(self, run_response: TeamRunOutput) -> None:
-        """
-        Remove all history messages from TeamRunOutput when store_history_messages=False.
-        This removes messages that were loaded from the team's memory.
-        """
-        # Remove messages with from_history=True
-        if run_response.messages:
-            run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
-
     def _scrub_run_output_for_storage(self, run_response: TeamRunOutput) -> bool:
         """
         Scrub run output based on storage flags before persisting to database.
@@ -3786,18 +3768,49 @@ class Team:
         scrubbed = False
 
         if not self.store_media:
-            self._scrub_media_from_run_output(run_response)
+            scrub_media_from_run_output(run_response)
             scrubbed = True
 
-        if not self.store_tool_results:
-            self._scrub_tool_results_from_run_output(run_response)
+        if not self.store_tool_messages:
+            scrub_tool_results_from_run_output(run_response)
             scrubbed = True
 
         if not self.store_history_messages:
-            self._scrub_history_messages_from_run_output(run_response)
+            scrub_history_messages_from_run_output(run_response)
             scrubbed = True
 
         return scrubbed
+
+    def _scrub_member_responses(self, member_responses: List[Union[TeamRunOutput, RunOutput]]) -> None:
+        """
+        Scrub member responses based on each member's storage flags.
+        This is called when saving the team session to ensure member data is scrubbed per member settings.
+        Recursively handles nested team's member responses.
+        """
+        for member_response in member_responses:
+            member_id = None
+            if isinstance(member_response, RunOutput):
+                member_id = member_response.agent_id
+            elif isinstance(member_response, TeamRunOutput):
+                member_id = member_response.team_id
+
+            if not member_id:
+                log_info("Skipping member response with no ID")
+                continue
+
+            member_result = self._find_member_by_id(member_id)
+            if not member_result:
+                log_debug(f"Could not find member with ID: {member_id}")
+                continue
+
+            _, member = member_result
+
+            if not member.store_media or not member.store_tool_messages or not member.store_history_messages:
+                member._scrub_run_output_for_storage(member_response)  # type: ignore
+
+            # If this is a nested team, recursively scrub its member responses
+            if isinstance(member_response, TeamRunOutput) and member_response.member_responses:
+                member._scrub_member_responses(member_response.member_responses)  # type: ignore
 
     def _validate_media_object_id(
         self,
@@ -4602,137 +4615,6 @@ class Team:
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
-    def _collect_joint_images(
-        self,
-        run_input: Optional[TeamRunInput] = None,
-        session: Optional[TeamSession] = None,
-    ) -> Optional[Sequence[Image]]:
-        """Collect images from input, session history, and current run response."""
-        joint_images: List[Image] = []
-
-        # 1. Add images from current input
-        if run_input and run_input.images:
-            joint_images.extend(run_input.images)
-            log_debug(f"Added {len(run_input.images)} input images to joint list")
-
-        # 2. Add images from session history (from both input and generated sources)
-        try:
-            if session and session.runs:
-                for historical_run in session.runs:
-                    # Add generated images from previous runs
-                    if historical_run.images:
-                        joint_images.extend(historical_run.images)
-                        log_debug(
-                            f"Added {len(historical_run.images)} generated images from historical run {historical_run.run_id}"
-                        )
-
-                    # Add input images from previous runs
-                    if historical_run.input and historical_run.input.images:
-                        joint_images.extend(historical_run.input.images)
-                        log_debug(
-                            f"Added {len(historical_run.input.images)} input images from historical run {historical_run.run_id}"
-                        )
-        except Exception as e:
-            log_debug(f"Could not access session history for images: {e}")
-
-        if joint_images:
-            log_debug(f"Images Available to Model: {len(joint_images)} images")
-        return joint_images if joint_images else None
-
-    def _collect_joint_videos(
-        self,
-        run_input: Optional[TeamRunInput] = None,
-        session: Optional[TeamSession] = None,
-    ) -> Optional[Sequence[Video]]:
-        """Collect videos from input, session history, and current run response."""
-        joint_videos: List[Video] = []
-
-        # 1. Add videos from current input
-        if run_input and run_input.videos:
-            joint_videos.extend(run_input.videos)
-            log_debug(f"Added {len(run_input.videos)} input videos to joint list")
-
-        # 2. Add videos from session history (from both input and generated sources)
-        try:
-            if session and session.runs:
-                for historical_run in session.runs:
-                    # Add generated videos from previous runs
-                    if historical_run.videos:
-                        joint_videos.extend(historical_run.videos)
-                        log_debug(
-                            f"Added {len(historical_run.videos)} generated videos from historical run {historical_run.run_id}"
-                        )
-
-                    # Add input videos from previous runs
-                    if historical_run.input and historical_run.input.videos:
-                        joint_videos.extend(historical_run.input.videos)
-                        log_debug(
-                            f"Added {len(historical_run.input.videos)} input videos from historical run {historical_run.run_id}"
-                        )
-        except Exception as e:
-            log_debug(f"Could not access session history for videos: {e}")
-
-        if joint_videos:
-            log_debug(f"Videos Available to Model: {len(joint_videos)} videos")
-        return joint_videos if joint_videos else None
-
-    def _collect_joint_audios(
-        self,
-        run_input: Optional[TeamRunInput] = None,
-        session: Optional[TeamSession] = None,
-    ) -> Optional[Sequence[Audio]]:
-        """Collect audios from input, session history, and current run response."""
-        joint_audios: List[Audio] = []
-
-        # 1. Add audios from current input
-        if run_input and run_input.audios:
-            joint_audios.extend(run_input.audios)
-            log_debug(f"Added {len(run_input.audios)} input audios to joint list")
-
-        # 2. Add audios from session history (from both input and generated sources)
-        try:
-            if session and session.runs:
-                for historical_run in session.runs:
-                    # Add generated audios from previous runs
-                    if historical_run.audio:
-                        joint_audios.extend(historical_run.audio)
-                        log_debug(
-                            f"Added {len(historical_run.audio)} generated audios from historical run {historical_run.run_id}"
-                        )
-
-                    # Add input audios from previous runs
-                    if historical_run.input and historical_run.input.audios:
-                        joint_audios.extend(historical_run.input.audios)
-                        log_debug(
-                            f"Added {len(historical_run.input.audios)} input audios from historical run {historical_run.run_id}"
-                        )
-        except Exception as e:
-            log_debug(f"Could not access session history for audios: {e}")
-
-        if joint_audios:
-            log_debug(f"Audios Available to Model: {len(joint_audios)} audios")
-        return joint_audios if joint_audios else None
-
-    def _collect_joint_files(
-        self,
-        run_input: Optional[TeamRunInput] = None,
-    ) -> Optional[Sequence[File]]:
-        """Collect files from input and session history."""
-        from agno.utils.log import log_debug
-
-        joint_files: List[File] = []
-
-        # 1. Add files from current input
-        if run_input and run_input.files:
-            joint_files.extend(run_input.files)
-
-        # TODO: Files aren't stored in session history yet and dont have a FileArtifact
-
-        if joint_files:
-            log_debug(f"Files Available to Model: {len(joint_files)} files")
-
-        return joint_files if joint_files else None
-
     def determine_tools_for_model(
         self,
         model: Model,
@@ -4944,10 +4826,10 @@ class Team:
 
             if needs_media:
                 # Only collect media if functions actually need them
-                joint_images = self._collect_joint_images(run_response.input, session)
-                joint_files = self._collect_joint_files(run_response.input)
-                joint_audios = self._collect_joint_audios(run_response.input, session)
-                joint_videos = self._collect_joint_videos(run_response.input, session)
+                joint_images = collect_joint_images(run_response.input, session)
+                joint_files = collect_joint_files(run_response.input)
+                joint_audios = collect_joint_audios(run_response.input, session)
+                joint_videos = collect_joint_videos(run_response.input, session)
 
                 for func in self._functions_for_model.values():
                     func._images = joint_images
@@ -5179,9 +5061,7 @@ class Team:
                 _memory_manager_not_set = True
             user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
             if user_memories and len(user_memories) > 0:
-                system_message_content += (
-                    "You have access to memories from previous interactions with the user that you can use:\n\n"
-                )
+                system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
                 system_message_content += "<memories_from_previous_interactions>"
                 for _memory in user_memories:  # type: ignore
                     system_message_content += f"\n- {_memory.memory}"
@@ -5480,9 +5360,7 @@ class Team:
                 user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
             if user_memories and len(user_memories) > 0:
-                system_message_content += (
-                    "You have access to memories from previous interactions with the user that you can use:\n\n"
-                )
+                system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
                 system_message_content += "<memories_from_previous_interactions>"
                 for _memory in user_memories:  # type: ignore
                     system_message_content += f"\n- {_memory.memory}"
@@ -5698,7 +5576,6 @@ class Team:
                 run_messages.messages += history_copy
 
         # 5. Add user message to run_messages (message second as per Dirk's requirement)
-        user_message: Optional[Message] = None
         # 5.1 Build user message if message is None, str or list
         user_message = self._get_user_message(
             run_response=run_response,
@@ -5826,7 +5703,6 @@ class Team:
                 run_messages.messages += history_copy
 
         # 5. Add user message to run_messages (message second as per Dirk's requirement)
-        user_message: Optional[Message] = None
         # 5.1 Build user message if message is None, str or list
         user_message = self._get_user_message(
             run_response=run_response,
@@ -6637,8 +6513,16 @@ class Team:
             if run_response and member_agent_run_response:
                 run_response.add_member_run(member_agent_run_response)
 
-            # Add the member run to the team session
+            # Scrub the member run based on that member's storage flags before storing
             if member_agent_run_response:
+                if (
+                    not member_agent.store_media
+                    or not member_agent.store_tool_messages
+                    or not member_agent.store_history_messages
+                ):
+                    member_agent._scrub_run_output_for_storage(member_agent_run_response)  # type: ignore
+
+                # Add the member run to the team session
                 session.upsert_run(member_agent_run_response)
 
             # Update team session state
@@ -6664,7 +6548,6 @@ class Team:
 
             # Find the member agent using the helper function
             result = self._find_member_by_id(member_id)
-            history = None
             if result is None:
                 yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{self.get_members_system_message_content(indent=0)}"
                 return
@@ -6790,7 +6673,6 @@ class Team:
 
             # Find the member agent using the helper function
             result = self._find_member_by_id(member_id)
-            history = None
             if result is None:
                 yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{self.get_members_system_message_content(indent=0)}"
                 return
@@ -7030,7 +6912,7 @@ class Team:
                 done_marker = object()
                 queue: "asyncio.Queue[Union[RunOutputEvent, TeamRunOutputEvent, str, object]]" = asyncio.Queue()
 
-                async def stream_member(agent: Union[Agent, "Team"], idx: int) -> None:
+                async def stream_member(agent: Union[Agent, "Team"]) -> None:
                     member_agent_task, history = _setup_delegate_task_to_member(
                         agent, task_description, expected_output
                     )
@@ -7078,11 +6960,10 @@ class Team:
 
                 # Initialize and launch all members
                 tasks: List[asyncio.Task[None]] = []
-                for member_agent_index, member_agent in enumerate(self.members):
+                for member_agent in self.members:
                     current_agent = member_agent
-                    current_index = member_agent_index
                     self._initialize_member(current_agent)
-                    tasks.append(asyncio.create_task(stream_member(current_agent, current_index)))
+                    tasks.append(asyncio.create_task(stream_member(current_agent)))
 
                 # Drain queue until all members reported done
                 completed = 0
@@ -7107,7 +6988,6 @@ class Team:
                 tasks = []
                 for member_agent_index, member_agent in enumerate(self.members):
                     current_agent = member_agent
-                    current_index = member_agent_index
                     member_agent_task, history = _setup_delegate_task_to_member(
                         current_agent, task_description, expected_output
                     )
@@ -7417,11 +7297,16 @@ class Team:
                 session.session_data["session_state"].pop("current_user_id", None)  # type: ignore
                 session.session_data["session_state"].pop("current_run_id", None)  # type: ignore
 
-            # scrub the member responses if not storing them
-            if not self.store_member_responses and session.runs is not None:
+            # scrub the member responses based on storage settings
+            if session.runs is not None:
                 for run in session.runs:
                     if hasattr(run, "member_responses"):
-                        run.member_responses = []
+                        if not self.store_member_responses:
+                            # Remove all member responses
+                            run.member_responses = []
+                        else:
+                            # Scrub individual member responses based on their storage flags
+                            self._scrub_member_responses(run.member_responses)
             self._upsert_session(session=session)
             log_debug(f"Created or updated TeamSession record: {session.session_id}")
 

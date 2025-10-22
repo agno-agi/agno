@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from agno.media import Audio, Image
 from agno.models.message import Citations
@@ -30,6 +30,8 @@ from agno.run.agent import (
     SessionSummaryStartedEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
+    RunOutputEvent,
+    RunEvent,
 )
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
@@ -53,6 +55,7 @@ from agno.run.team import SessionSummaryStartedEvent as TeamSessionSummaryStarte
 from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
+from agno.run.team import TeamRunOutputEvent
 from agno.session.summary import SessionSummary
 
 
@@ -623,3 +626,13 @@ def create_team_output_model_response_completed_event(
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
     )
+
+
+def handle_event(event: Union[RunOutputEvent, TeamRunOutputEvent], run_response: Union[RunOutput, TeamRunOutput], events_to_skip: Optional[List[RunEvent]] = None, store_events: bool = False) -> Union[RunOutputEvent, TeamRunOutputEvent]:
+    # We only store events that are not run_response_content events
+    events_to_skip = [event.value for event in events_to_skip] if events_to_skip else []
+    if store_events and event.event not in events_to_skip:
+        if run_response.events is None:
+            run_response.events = []
+        run_response.events.append(event)
+    return event

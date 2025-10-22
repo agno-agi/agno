@@ -28,12 +28,13 @@ agent = Agent(
     enable_user_memories=True,
 )
 
-agent.print_response(
+import asyncio
+asyncio.run(agent.aprint_response(
     "My name is John Doe and I like to hike in the mountains on weekends.",
     stream=True,
     user_id=john_doe_id,
     session_id=session_id,
-)
+))
 
 agent.print_response(
     "What are my hobbies?", stream=True, user_id=john_doe_id, session_id=session_id

@@ -1,4 +1,4 @@
-"""Example showing how to use AgentOS with Postgres as database"""
+"""Example showing how to use AgentOS with SurrealDB as database"""
 
 from agno.agent import Agent
 from agno.db.surrealdb import SurrealDb
@@ -20,6 +20,7 @@ db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABA
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 vector_db = PgVector(table_name="agent_os_knowledge", db_url=db_url)
+
 knowledge = Knowledge(
     contents_db=db,
     vector_db=vector_db,
