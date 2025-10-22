@@ -7511,13 +7511,13 @@ class Team:
             # We have a workflow team, so we are loading a WorkflowSession
             else:
                 loaded_session = cast(WorkflowSession, self._read_session(session_id=session_id_to_load))  # type: ignore
-            
+
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
                 self._agent_session = loaded_session
 
             return loaded_session
-        
+
         log_debug(f"TeamSession {session_id_to_load} not found in db")
         return None
 

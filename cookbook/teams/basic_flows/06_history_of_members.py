@@ -6,6 +6,7 @@ Note: In this example the team leader has no access to the history of the team o
 """
 
 from uuid import uuid4
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat

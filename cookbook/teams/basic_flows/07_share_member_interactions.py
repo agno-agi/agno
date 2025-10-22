@@ -5,6 +5,7 @@ In addition each team member has access to the shared history of the team.
 """
 
 from uuid import uuid4
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat

@@ -5748,7 +5748,7 @@ class Agent:
         # Load and return the session from the database
         if self.db is not None:
             loaded_session = None
-            
+
             # We have a standalone agent, so we are loading an AgentSession
             if self.team_id is None and self.workflow_id is None:
                 loaded_session = cast(
