@@ -309,8 +309,8 @@ def test_get_session_runs_empty_result_with_filters(session_with_runs, shared_db
         f"/sessions/{session_with_runs.session_id}/runs",
         params={"created_after": future_timestamp},
     )
-    assert response.status_code == 404
-    assert "no runs found" in response.json()["detail"].lower()
+    assert response.status_code == 200
+    assert len(response.json()) == 0
 
 
 def test_endpoints_with_multiple_sessions(shared_db, test_agent: Agent):
@@ -819,7 +819,7 @@ def test_create_empty_team_session(shared_db, test_agent: Agent):
         "/sessions",
         params={"type": "team"},
         json={
-            "component_id": test_team.id,
+            "team_id": test_team.id,
             "session_state": {"team_context": "planning"},
         },
     )
@@ -856,7 +856,7 @@ def test_create_empty_workflow_session(shared_db, test_agent: Agent):
         "/sessions",
         params={"type": "workflow"},
         json={
-            "component_id": test_workflow.id,
+            "workflow_id": test_workflow.id,
             "session_state": {"workflow_step": 1},
         },
     )

@@ -1388,7 +1388,6 @@ class Agent:
         )
         # Update session state from DB
         session_state = self._load_session_state(session=agent_session, session_state=session_state)
-        print(f"Session state after load: {session_state}")
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
@@ -5989,6 +5988,7 @@ class Agent:
         if session.session_data is not None and "session_state" not in session.session_data:
             session.session_data["session_state"] = {}
 
+        # Overwrite the loaded DB session state with the new session state
         for key, value in session_state_updates.items():
             session.session_data["session_state"][key] = value
 

@@ -552,9 +552,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
 
         runs = session.get("runs")  # type: ignore
         if not runs:
-            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
+            return []
 
         # Filter runs by timestamp if specified
+        # TODO: Move this filtering into the DB layer
         filtered_runs = []
         for run in runs:
             if start_timestamp or end_timestamp:
@@ -569,7 +570,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
             filtered_runs.append(run)
 
         if not filtered_runs:
-            raise HTTPException(status_code=404, detail="No runs found matching the specified filters")
+            return []
 
         run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
 
@@ -667,6 +668,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 
         # Find the specific run
+        # TODO: Move this filtering into the DB layer
         target_run = None
         for run in runs:
             if run.get("run_id") == run_id:
