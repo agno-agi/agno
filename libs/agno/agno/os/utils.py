@@ -151,6 +151,10 @@ def get_session_name(session: Dict[str, Any]) -> str:
 
 
 def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
+    input = run_dict.get("input")
+    if input is None:
+        return {}
+
     input_media: Dict[str, List[Any]] = {
         "images": [],
         "videos": [],
@@ -158,7 +162,6 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
         "files": [],
     }
 
-    input = run_dict.get("input", [])
     input_media["images"].extend(input.get("images", []))
     input_media["videos"].extend(input.get("videos", []))
     input_media["audios"].extend(input.get("audios", []))
