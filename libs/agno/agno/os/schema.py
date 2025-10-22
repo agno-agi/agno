@@ -74,9 +74,10 @@ class InternalServerErrorResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    instantiated_at: str
 
     class Config:
-        json_schema_extra = {"example": {"status": "ok"}}
+        json_schema_extra = {"example": {"status": "ok", "instantiated_at": "1760169236.778903"}}
 
 
 class InterfaceResponse(BaseModel):
@@ -240,6 +241,7 @@ class AgentResponse(BaseModel):
             "parse_response": True,
             "use_json_mode": False,
             # Streaming defaults
+            "stream_events": False,
             "stream_intermediate_steps": False,
         }
 
@@ -372,6 +374,7 @@ class AgentResponse(BaseModel):
 
         streaming_info = {
             "stream": agent.stream,
+            "stream_events": agent.stream_events,
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
         return AgentResponse(
@@ -458,6 +461,7 @@ class TeamResponse(BaseModel):
             "parse_response": True,
             "use_json_mode": False,
             # Streaming defaults
+            "stream_events": False,
             "stream_intermediate_steps": False,
             "stream_member_events": False,
         }
@@ -577,6 +581,7 @@ class TeamResponse(BaseModel):
 
         streaming_info = {
             "stream": team.stream,
+            "stream_events": team.stream_events,
             "stream_intermediate_steps": team.stream_intermediate_steps,
             "stream_member_events": team.stream_member_events,
         }
@@ -715,6 +720,24 @@ class DeleteSessionRequest(BaseModel):
     session_types: List[SessionType]
 
 
+class CreateSessionRequest(BaseModel):
+    session_id: Optional[str] = None
+    session_name: Optional[str] = None
+    session_state: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    user_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+    workflow_id: Optional[str] = None
+
+
+class UpdateSessionRequest(BaseModel):
+    session_name: Optional[str] = None
+    session_state: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    summary: Optional[Dict[str, Any]] = None
+
+
 class AgentSessionDetailSchema(BaseModel):
     user_id: Optional[str]
     agent_session_id: str
@@ -726,6 +749,7 @@ class AgentSessionDetailSchema(BaseModel):
     total_tokens: Optional[int]
     agent_data: Optional[dict]
     metrics: Optional[dict]
+    metadata: Optional[dict]
     chat_history: Optional[List[dict]]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
@@ -746,6 +770,7 @@ class AgentSessionDetailSchema(BaseModel):
             if session.session_data
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
+            metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
@@ -761,6 +786,7 @@ class TeamSessionDetailSchema(BaseModel):
     session_state: Optional[dict]
     metrics: Optional[dict]
     team_data: Optional[dict]
+    metadata: Optional[dict]
     chat_history: Optional[List[dict]]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
@@ -783,6 +809,7 @@ class TeamSessionDetailSchema(BaseModel):
             if session.session_data
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
+            metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
@@ -793,7 +820,6 @@ class WorkflowSessionDetailSchema(BaseModel):
     user_id: Optional[str]
     workflow_id: Optional[str]
     workflow_name: Optional[str]
-
     session_id: str
     session_name: str
 

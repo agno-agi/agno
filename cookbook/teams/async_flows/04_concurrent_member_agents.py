@@ -17,7 +17,7 @@ hackernews_agent = Agent(
     tools=[HackerNewsTools()],
     instructions="Always include sources",
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 
 news_agent = Agent(
@@ -31,7 +31,7 @@ news_agent = Agent(
         "Focus on delivering current and relevant news insights.",
     ],
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 
 research_team = Team(
@@ -61,7 +61,7 @@ async def test():
         2. Compare and contrast the news from all your sources
         3. Provide a summary of the news from all your sources""",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     async for event in generator:

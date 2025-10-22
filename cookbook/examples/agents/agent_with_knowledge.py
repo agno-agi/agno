@@ -44,5 +44,5 @@ if __name__ == "__main__":
         "What are Agents?",
         stream=True,
         show_full_reasoning=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
