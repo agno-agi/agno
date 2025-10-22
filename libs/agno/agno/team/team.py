@@ -62,20 +62,20 @@ from agno.session import SessionSummaryManager, TeamSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
-    wait_for_background_tasks,
-    wait_for_background_tasks_stream,
-    collect_joint_images,
-    collect_joint_files,
+    await_for_background_tasks,
+    await_for_background_tasks_stream,
     collect_joint_audios,
+    collect_joint_files,
+    collect_joint_images,
     collect_joint_videos,
     scrub_history_messages_from_run_output,
-    scrub_tool_results_from_run_output,
     scrub_media_from_run_output,
+    scrub_tool_results_from_run_output,
+    wait_for_background_tasks,
+    wait_for_background_tasks_stream,
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
-    create_team_memory_update_completed_event,
-    create_team_memory_update_started_event,
     create_team_parser_model_response_completed_event,
     create_team_parser_model_response_started_event,
     create_team_pre_hook_completed_event,
@@ -93,6 +93,7 @@ from agno.utils.events import (
     create_team_session_summary_started_event,
     create_team_tool_call_completed_event,
     create_team_tool_call_started_event,
+    handle_event,
 )
 from agno.utils.hooks import filter_hook_args, normalize_hooks
 from agno.utils.knowledge import get_agentic_or_user_search_filters
@@ -130,7 +131,6 @@ from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import generate_id_from_name, parse_response_model_str
 from agno.utils.team import format_member_agent_task, get_member_id
 from agno.utils.timer import Timer
-
 
 
 @dataclass(init=False)
@@ -634,6 +634,22 @@ class Team:
 
         self._hooks_normalised = False
 
+        # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
+        self._background_executor: Optional[Any] = None
+
+    @property
+    def background_executor(self) -> Any:
+        """Lazy initialization of shared thread pool executor for background tasks.
+
+        Handles both memory creation and cultural knowledge updates concurrently.
+        Initialized only on first use (runtime, not instantiation) and reused across runs.
+        """
+        if self._background_executor is None:
+            from concurrent.futures import ThreadPoolExecutor
+
+            self._background_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="agno-bg")
+        return self._background_executor
+
     @property
     def should_parse_structured_output(self) -> bool:
         return self.output_schema is not None and self.parse_response and self.parser_model is None
@@ -901,11 +917,13 @@ class Team:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield self._handle_event(
+            yield handle_event(  # type: ignore
                 run_response=run_response,
                 event=create_team_pre_hook_started_event(
                     from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
                 ),
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
             )
             try:
                 # Filter arguments to only include those that the hook accepts
@@ -913,11 +931,13 @@ class Team:
 
                 hook(**filtered_args)
 
-                yield self._handle_event(
+                yield handle_event(  # type: ignore
                     run_response=run_response,
                     event=create_team_pre_hook_completed_event(
                         from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
                     ),
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
                 )
 
             except (InputCheckError, OutputCheckError) as e:
@@ -963,11 +983,13 @@ class Team:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield self._handle_event(
+            yield handle_event(  # type: ignore
                 run_response=run_response,
                 event=create_team_pre_hook_started_event(
                     from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
                 ),
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
             )
             try:
                 # Filter arguments to only include those that the hook accepts
@@ -979,11 +1001,13 @@ class Team:
                     # Synchronous function
                     hook(**filtered_args)
 
-                yield self._handle_event(
+                yield handle_event(  # type: ignore
                     run_response=run_response,
                     event=create_team_pre_hook_completed_event(
                         from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
                     ),
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
                 )
 
             except (InputCheckError, OutputCheckError) as e:
@@ -1193,16 +1217,16 @@ class Team:
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 4. Start memory creation in background thread
-        from concurrent.futures import ThreadPoolExecutor
-
         memory_future = None
-        memory_executor = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background thread.")
-            memory_executor = ThreadPoolExecutor(max_workers=1)
-            memory_future = memory_executor.submit(self._make_memories, run_messages=run_messages, user_id=user_id)
+            memory_future = self.background_executor.submit(
+                self._make_memories, run_messages=run_messages, user_id=user_id
+            )
 
         try:
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
             # 5. Reason about the task if reasoning is enabled
             self._handle_reasoning(run_response=run_response, run_messages=run_messages)
 
@@ -1252,11 +1276,12 @@ class Team:
                     debug_mode=debug_mode,
                     **kwargs,
                 )
+            raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 11. Wait for background memory creation
-            wait_for_background_tasks(
-                memory_future=memory_future
-            )
+            wait_for_background_tasks(memory_future=memory_future)
+
+            raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 12. Create session summary
             if self.session_summary_manager is not None:
@@ -1266,6 +1291,8 @@ class Team:
                     self.session_summary_manager.create_session_summary(session=session)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
+
+            raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # Set the run status to completed
             run_response.status = RunStatus.completed
@@ -1290,10 +1317,6 @@ class Team:
             self._cleanup_and_store(run_response=run_response, session=session)
             return run_response
         finally:
-            # Clean up the memory executor if it was created
-            if memory_executor is not None:
-                memory_executor.shutdown(wait=False)
-
             cleanup_run(run_response.run_id)  # type: ignore
 
     def _run_stream(
@@ -1402,24 +1425,30 @@ class Team:
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 4. Start memory creation in background thread
-        from concurrent.futures import ThreadPoolExecutor
-
         memory_future = None
-        memory_executor = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background thread.")
-            memory_executor = ThreadPoolExecutor(max_workers=1)
-            memory_future = memory_executor.submit(self._make_memories, run_messages=run_messages, user_id=user_id)
+            memory_future = self.background_executor.submit(
+                self._make_memories, run_messages=run_messages, user_id=user_id
+            )
 
         try:
             # Start the Run by yielding a RunStarted event
             if stream_intermediate_steps:
-                yield self._handle_event(create_team_run_started_event(run_response), run_response)
+                yield handle_event(  # type: ignore
+                    create_team_run_started_event(run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
+
+            raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 5. Reason about the task if reasoning is enabled
             yield from self._handle_reasoning_stream(
                 run_response=run_response,
                 run_messages=run_messages,
+                stream_intermediate_steps=stream_intermediate_steps,
             )
 
             # Check for cancellation before model processing
@@ -1475,8 +1504,11 @@ class Team:
 
             # Yield RunContentCompletedEvent
             if stream_intermediate_steps:
-                yield self._handle_event(
-                    create_team_run_content_completed_event(from_run_response=run_response), run_response
+                yield handle_event(  # type: ignore
+                    create_team_run_content_completed_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
                 )
             # Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
@@ -1491,6 +1523,7 @@ class Team:
                     debug_mode=debug_mode,
                     **kwargs,
                 )
+            raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 8. Wait for background memory creation
             yield from wait_for_background_tasks_stream(
@@ -1499,33 +1532,42 @@ class Team:
                 run_response=run_response,
             )
 
+            raise_if_cancelled(run_response.run_id)  # type: ignore
             # 9. Create session summary
             if self.session_summary_manager is not None:
                 # Upsert the RunOutput to Team Session before creating the session summary
                 session.upsert_run(run_response=run_response)
 
-                if self.stream_intermediate_steps:
-                    yield self._handle_event(
-                        create_team_session_summary_started_event(from_run_response=run_response), run_response
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
+                        create_team_session_summary_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
                     )
                 try:
                     self.session_summary_manager.create_session_summary(session=session)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
-                if self.stream_intermediate_steps:
-                    yield self._handle_event(
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
                         create_team_session_summary_completed_event(
                             from_run_response=run_response, session_summary=session.summary
                         ),
                         run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
                     )
 
+            raise_if_cancelled(run_response.run_id)  # type: ignore
             # Create the run completed event
-            completed_event = self._handle_event(
+            completed_event = handle_event(
                 create_team_run_completed_event(
                     from_run_response=run_response,
                 ),
                 run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
             )
 
             # Set the run status to completed
@@ -1552,17 +1594,16 @@ class Team:
             run_response.content = str(e)
 
             # Yield the cancellation event
-            yield self._handle_event(
+            yield handle_event(  # type: ignore
                 create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                 run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
             )
 
             # Add the RunOutput to Team Session even when cancelled
             self._cleanup_and_store(run_response=run_response, session=session)
         finally:
-            # Clean up the memory executor if it was created
-            if memory_executor is not None:
-                memory_executor.shutdown(wait=False)
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1980,6 +2021,7 @@ class Team:
         register_run(run_response.run_id)  # type: ignore
 
         try:
+            raise_if_cancelled(run_response.run_id)  # type: ignore
             # 7. Reason about the task if reasoning is enabled
             await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
@@ -2028,14 +2070,12 @@ class Team:
                     debug_mode=debug_mode,
                     **kwargs,
                 )
+            raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 13. Wait for background memory creation
-            if memory_task is not None:
-                try:
-                    await memory_task
-                except Exception as e:
-                    log_warning(f"Error in memory creation: {str(e)}")
+            await await_for_background_tasks(memory_task=memory_task)
 
+            raise_if_cancelled(run_response.run_id)  # type: ignore
             # 14. Create session summary
             if self.session_summary_manager is not None:
                 # Upsert the RunOutput to Team Session before creating the session summary
@@ -2045,6 +2085,7 @@ class Team:
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
 
+            raise_if_cancelled(run_response.run_id)  # type: ignore
             run_response.status = RunStatus.completed
 
             # 15. Cleanup and store the run response and session
@@ -2205,10 +2246,19 @@ class Team:
         try:
             # Yield the run started event
             if stream_intermediate_steps:
-                yield self._handle_event(create_team_run_started_event(from_run_response=run_response), run_response)
+                yield handle_event(  # type: ignore
+                    create_team_run_started_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
 
             # 8. Reason about the task if reasoning is enabled
-            async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
+            async for item in self._ahandle_reasoning_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                stream_intermediate_steps=stream_intermediate_steps,
+            ):
                 raise_if_cancelled(run_response.run_id)  # type: ignore
                 yield item
 
@@ -2266,8 +2316,11 @@ class Team:
 
             # Yield RunContentCompletedEvent
             if stream_intermediate_steps:
-                yield self._handle_event(
-                    create_team_run_content_completed_event(from_run_response=run_response), run_response
+                yield handle_event(  # type: ignore
+                    create_team_run_content_completed_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
                 )
 
             # Execute post-hooks after output is generated but before response is returned
@@ -2284,45 +2337,47 @@ class Team:
                     **kwargs,
                 )
 
+            raise_if_cancelled(run_response.run_id)  # type: ignore
             # 11. Wait for background memory creation
-            if memory_task is not None:
-                if self.stream_intermediate_steps:
-                    yield self._handle_event(
-                        create_team_memory_update_started_event(from_run_response=run_response), run_response
-                    )
-                try:
-                    await memory_task
-                except Exception as e:
-                    log_warning(f"Error in memory creation: {str(e)}")
-                if self.stream_intermediate_steps:
-                    yield self._handle_event(
-                        create_team_memory_update_completed_event(from_run_response=run_response), run_response
-                    )
+            async for event in await_for_background_tasks_stream(run_response=run_response, memory_task=memory_task):
+                yield event
+
+            raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 12. Create session summary
             if self.session_summary_manager is not None:
                 # Upsert the RunOutput to Team Session before creating the session summary
                 team_session.upsert_run(run_response=run_response)
 
-                if self.stream_intermediate_steps:
-                    yield self._handle_event(
-                        create_team_session_summary_started_event(from_run_response=run_response), run_response
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
+                        create_team_session_summary_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
                     )
                 try:
                     await self.session_summary_manager.acreate_session_summary(session=team_session)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
-                if self.stream_intermediate_steps:
-                    yield self._handle_event(
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
                         create_team_session_summary_completed_event(
                             from_run_response=run_response, session_summary=team_session.summary
                         ),
                         run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
                     )
 
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
             # Create the run completed event
-            completed_event = self._handle_event(
-                create_team_run_completed_event(from_run_response=run_response), run_response
+            completed_event = handle_event(
+                create_team_run_completed_event(from_run_response=run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
             )
 
             # Set the run status to completed
@@ -2349,9 +2404,11 @@ class Team:
             run_response.content = str(e)
 
             # Yield the cancellation event
-            yield self._handle_event(
+            yield handle_event(  # type: ignore
                 create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                 run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
             )
 
             # Cleanup and store the run response and session
@@ -2767,13 +2824,15 @@ class Team:
 
             if all_reasoning_steps:
                 add_reasoning_metrics_to_metadata(run_response, reasoning_state["reasoning_time_taken"])
-                yield self._handle_event(
+                yield handle_event(  # type: ignore
                     create_team_reasoning_completed_event(
                         from_run_response=run_response,
                         content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                         content_type=ReasoningSteps.__name__,
                     ),
                     run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
                 )
 
         # Build a list of messages that should be added to the RunOutput
@@ -2861,13 +2920,15 @@ class Team:
 
             if all_reasoning_steps:
                 add_reasoning_metrics_to_metadata(run_response, reasoning_state["reasoning_time_taken"])
-                yield self._handle_event(
+                yield handle_event(  # type: ignore
                     create_team_reasoning_completed_event(
                         from_run_response=run_response,
                         content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                         content_type=ReasoningSteps.__name__,
                     ),
                     run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
                 )
 
     def _handle_model_response_chunk(
@@ -2894,7 +2955,12 @@ class Team:
                     if not model_response_event.run_id:  # type: ignore
                         model_response_event.run_id = run_response.run_id  # type: ignore
                 # We just bubble the event up
-                yield self._handle_event(model_response_event, run_response)  # type: ignore
+                yield handle_event(  # type: ignore
+                    model_response_event,  # type: ignore
+                    run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )  # type: ignore
             else:
                 # Don't yield anything
                 return
@@ -3000,7 +3066,7 @@ class Team:
                 # Only yield the chunk
                 if should_yield:
                     if content_type == "str":
-                        yield self._handle_event(
+                        yield handle_event(  # type: ignore
                             create_team_run_output_content_event(
                                 from_run_response=run_response,
                                 content=model_response_event.content,
@@ -3012,15 +3078,19 @@ class Team:
                                 image=model_response_event.images[-1] if model_response_event.images else None,
                             ),
                             run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
                         )
                     else:
-                        yield self._handle_event(
+                        yield handle_event(  # type: ignore
                             create_team_run_output_content_event(
                                 from_run_response=run_response,
                                 content=full_model_response.content,
                                 content_type=content_type,
                             ),
                             run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
                         )
 
             # If the model response is a tool_call_started, add the tool call to the run_response
@@ -3035,12 +3105,14 @@ class Team:
                         run_response.tools.extend(tool_executions_list)
 
                     for tool in tool_executions_list:
-                        yield self._handle_event(
+                        yield handle_event(  # type: ignore
                             create_team_tool_call_started_event(
                                 from_run_response=run_response,
                                 tool=tool,
                             ),
                             run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
                         )
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
@@ -3098,33 +3170,39 @@ class Team:
                                     "reasoning_time_taken"
                                 ] + float(metrics.duration)
 
-                        yield self._handle_event(
+                        yield handle_event(  # type: ignore
                             create_team_tool_call_completed_event(
                                 from_run_response=run_response,
                                 tool=tool_call,
                                 content=model_response_event.content,
                             ),
                             run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
                         )
 
                 if stream_intermediate_steps:
                     if reasoning_step is not None:
                         if reasoning_state is not None and not reasoning_state["reasoning_started"]:
-                            yield self._handle_event(
+                            yield handle_event(  # type: ignore
                                 create_team_reasoning_started_event(
                                     from_run_response=run_response,
                                 ),
                                 run_response,
+                                events_to_skip=self.events_to_skip,
+                                store_events=self.store_events,
                             )
                             reasoning_state["reasoning_started"] = True
 
-                        yield self._handle_event(
+                        yield handle_event(  # type: ignore
                             create_team_reasoning_step_event(
                                 from_run_response=run_response,
                                 reasoning_step=reasoning_step,
                                 reasoning_content=run_response.reasoning_content or "",
                             ),
                             run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
                         )
 
     def _convert_response_to_structured_format(self, run_response: Union[TeamRunOutput, RunOutput, ModelResponse]):
@@ -3331,8 +3409,11 @@ class Team:
         if self.parser_model is not None:
             if self.output_schema is not None:
                 if stream_intermediate_steps:
-                    yield self._handle_event(
-                        create_team_parser_model_response_started_event(run_response), run_response
+                    yield handle_event(  # type: ignore
+                        create_team_parser_model_response_started_event(run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
                     )
 
                 parser_model_response = ModelResponse(content="")
@@ -3368,8 +3449,11 @@ class Team:
                     log_warning("Unable to parse response with parser model")
 
                 if stream_intermediate_steps:
-                    yield self._handle_event(
-                        create_team_parser_model_response_completed_event(run_response), run_response
+                    yield handle_event(  # type: ignore
+                        create_team_parser_model_response_completed_event(run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
                     )
 
             else:
@@ -3382,8 +3466,11 @@ class Team:
         if self.parser_model is not None:
             if self.output_schema is not None:
                 if stream_intermediate_steps:
-                    yield self._handle_event(
-                        create_team_parser_model_response_started_event(run_response), run_response
+                    yield handle_event(  # type: ignore
+                        create_team_parser_model_response_started_event(run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
                     )
 
                 parser_model_response = ModelResponse(content="")
@@ -3421,8 +3508,11 @@ class Team:
                     log_warning("Unable to parse response with parser model")
 
                 if stream_intermediate_steps:
-                    yield self._handle_event(
-                        create_team_parser_model_response_completed_event(run_response), run_response
+                    yield handle_event(  # type: ignore
+                        create_team_parser_model_response_completed_event(run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
                     )
             else:
                 log_warning("A response model is required to parse the response with a parser model")
@@ -3453,7 +3543,12 @@ class Team:
             return
 
         if stream_intermediate_steps:
-            yield self._handle_event(create_team_output_model_response_started_event(run_response), run_response)
+            yield handle_event(  # type: ignore
+                create_team_output_model_response_started_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
         model_response = ModelResponse(content="")
@@ -3470,7 +3565,12 @@ class Team:
         run_response.content = model_response.content
 
         if stream_intermediate_steps:
-            yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
+            yield handle_event(  # type: ignore
+                create_team_output_model_response_completed_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
 
         # Build a list of messages that should be added to the RunResponse
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
@@ -3507,7 +3607,12 @@ class Team:
             return
 
         if stream_intermediate_steps:
-            yield self._handle_event(create_team_output_model_response_started_event(run_response), run_response)
+            yield handle_event(  # type: ignore
+                create_team_output_model_response_started_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
         model_response = ModelResponse(content="")
@@ -3525,7 +3630,12 @@ class Team:
         run_response.content = model_response.content
 
         if stream_intermediate_steps:
-            yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
+            yield handle_event(  # type: ignore
+                create_team_output_model_response_completed_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
 
         # Build a list of messages that should be added to the RunResponse
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
@@ -3933,32 +4043,44 @@ class Team:
     # Helpers
     ###########################################################################
 
-    def _handle_reasoning(self, run_response: TeamRunOutput, run_messages: RunMessages) -> None:
+    def _handle_reasoning(self, run_response: TeamRunOutput, run_messages: RunMessages):
         if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self._reason(run_response=run_response, run_messages=run_messages)
+            reasoning_generator = self._reason(
+                run_response=run_response, run_messages=run_messages, stream_intermediate_steps=False
+            )
 
             # Consume the generator without yielding
             deque(reasoning_generator, maxlen=0)
 
     def _handle_reasoning_stream(
-        self, run_response: TeamRunOutput, run_messages: RunMessages
+        self, run_response: TeamRunOutput, run_messages: RunMessages, stream_intermediate_steps: bool
     ) -> Iterator[TeamRunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self._reason(run_response=run_response, run_messages=run_messages)
+            reasoning_generator = self._reason(
+                run_response=run_response,
+                run_messages=run_messages,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
             yield from reasoning_generator
 
     async def _ahandle_reasoning(self, run_response: TeamRunOutput, run_messages: RunMessages) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self._areason(run_response=run_response, run_messages=run_messages)
+            reason_generator = self._areason(
+                run_response=run_response, run_messages=run_messages, stream_intermediate_steps=False
+            )
             # Consume the generator without yielding
             async for _ in reason_generator:
                 pass
 
     async def _ahandle_reasoning_stream(
-        self, run_response: TeamRunOutput, run_messages: RunMessages
+        self, run_response: TeamRunOutput, run_messages: RunMessages, stream_intermediate_steps: bool
     ) -> AsyncIterator[TeamRunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self._areason(run_response=run_response, run_messages=run_messages)
+            reason_generator = self._areason(
+                run_response=run_response,
+                run_messages=run_messages,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
             async for item in reason_generator:
                 yield item
 
@@ -4036,9 +4158,15 @@ class Team:
         self,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
+        stream_intermediate_steps: bool,
     ) -> Iterator[TeamRunOutputEvent]:
-        if self.stream_intermediate_steps:
-            yield self._handle_event(create_team_reasoning_started_event(from_run_response=run_response), run_response)
+        if stream_intermediate_steps:
+            yield handle_event(  # type: ignore
+                create_team_reasoning_started_event(from_run_response=run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
 
         use_default_reasoning = False
 
@@ -4159,14 +4287,16 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-                if self.stream_intermediate_steps:
-                    yield self._handle_event(
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
                         create_team_reasoning_completed_event(
                             from_run_response=run_response,
                             content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
                             content_type=ReasoningSteps.__name__,
                         ),
                         run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
                     )
             else:
                 log_warning(
@@ -4244,19 +4374,21 @@ class Team:
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
-                    if self.stream_intermediate_steps:
+                    if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
                                 run_response, reasoning_step
                             )
 
-                            yield self._handle_event(
+                            yield handle_event(  # type: ignore
                                 create_team_reasoning_step_event(
                                     from_run_response=run_response,
                                     reasoning_step=reasoning_step,
                                     reasoning_content=updated_reasoning_content,
                                 ),
                                 run_response,
+                                events_to_skip=self.events_to_skip,
+                                store_events=self.store_events,
                             )
 
                     # Find the index of the first assistant message
@@ -4292,23 +4424,31 @@ class Team:
             )
 
             # Yield the final reasoning completed event
-            if self.stream_intermediate_steps:
-                yield self._handle_event(
+            if stream_intermediate_steps:
+                yield handle_event(  # type: ignore
                     create_team_reasoning_completed_event(
                         from_run_response=run_response,
                         content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                         content_type=ReasoningSteps.__name__,
                     ),
                     run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
                 )
 
     async def _areason(
         self,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
+        stream_intermediate_steps: bool,
     ) -> AsyncIterator[TeamRunOutputEvent]:
-        if self.stream_intermediate_steps:
-            yield self._handle_event(create_team_reasoning_started_event(from_run_response=run_response), run_response)
+        if stream_intermediate_steps:
+            yield handle_event(  # type: ignore
+                create_team_reasoning_started_event(from_run_response=run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
 
         use_default_reasoning = False
 
@@ -4428,14 +4568,16 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-                if self.stream_intermediate_steps:
-                    yield self._handle_event(
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
                         create_team_reasoning_completed_event(
                             from_run_response=run_response,
                             content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
                             content_type=ReasoningSteps.__name__,
                         ),
                         run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
                     )
             else:
                 log_warning(
@@ -4512,19 +4654,21 @@ class Team:
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
-                    if self.stream_intermediate_steps:
+                    if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
                                 run_response, reasoning_step
                             )
 
-                            yield self._handle_event(
+                            yield handle_event(  # type: ignore
                                 create_team_reasoning_step_event(
                                     from_run_response=run_response,
                                     reasoning_step=reasoning_step,
                                     reasoning_content=updated_reasoning_content,
                                 ),
                                 run_response,
+                                events_to_skip=self.events_to_skip,
+                                store_events=self.store_events,
                             )
 
                     # Find the index of the first assistant message
@@ -4560,14 +4704,16 @@ class Team:
             )
 
             # Yield the final reasoning completed event
-            if self.stream_intermediate_steps:
-                yield self._handle_event(
+            if stream_intermediate_steps:
+                yield handle_event(  # type: ignore  # type: ignore
                     create_team_reasoning_completed_event(
                         from_run_response=run_response,
                         content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                         content_type=ReasoningSteps.__name__,
                     ),
                     run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
                 )
 
     def _resolve_run_dependencies(self, dependencies: Optional[Dict[str, Any]] = None) -> None:
@@ -4826,10 +4972,10 @@ class Team:
 
             if needs_media:
                 # Only collect media if functions actually need them
-                joint_images = collect_joint_images(run_response.input, session)
-                joint_files = collect_joint_files(run_response.input)
-                joint_audios = collect_joint_audios(run_response.input, session)
-                joint_videos = collect_joint_videos(run_response.input, session)
+                joint_images = collect_joint_images(run_response.input, session)  # type: ignore
+                joint_files = collect_joint_files(run_response.input)  # type: ignore
+                joint_audios = collect_joint_audios(run_response.input, session)  # type: ignore
+                joint_videos = collect_joint_videos(run_response.input, session)  # type: ignore
 
                 for func in self._functions_for_model.values():
                     func._images = joint_images

@@ -68,17 +68,17 @@ from agno.session import AgentSession, SessionSummaryManager
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
-    wait_for_background_tasks,
-    wait_for_background_tasks_stream,
-    await_for_background_tasks_stream,
     await_for_background_tasks,
-    collect_joint_images,
-    collect_joint_files,
+    await_for_background_tasks_stream,
     collect_joint_audios,
+    collect_joint_files,
+    collect_joint_images,
     collect_joint_videos,
+    scrub_history_messages_from_run_output,
     scrub_media_from_run_output,
     scrub_tool_results_from_run_output,
-    scrub_history_messages_from_run_output,
+    wait_for_background_tasks,
+    wait_for_background_tasks_stream,
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
@@ -622,6 +622,22 @@ class Agent:
 
         self._hooks_normalised = False
 
+        # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
+        self._background_executor: Optional[Any] = None
+
+    @property
+    def background_executor(self) -> Any:
+        """Lazy initialization of shared thread pool executor for background tasks.
+
+        Handles both memory creation and cultural knowledge updates concurrently.
+        Initialized only on first use (runtime, not instantiation) and reused across runs.
+        """
+        if self._background_executor is None:
+            from concurrent.futures import ThreadPoolExecutor
+
+            self._background_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="agno-bg")
+        return self._background_executor
+
     def set_id(self) -> None:
         if self.id is None:
             self.id = generate_id_from_name(self.name)
@@ -930,31 +946,29 @@ class Agent:
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # Start memory creation on a separate thread (runs concurrently with the main execution loop)
-        from concurrent.futures import ThreadPoolExecutor
-
         memory_future = None
-        memory_executor = None
         # 4. Start memory creation in background thread if memory manager is enabled and agentic memory is disabled
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background thread.")
-            memory_executor = ThreadPoolExecutor(max_workers=2)
-            memory_future = memory_executor.submit(self._make_memories, run_messages=run_messages, user_id=user_id)
+            memory_future = self.background_executor.submit(
+                self._make_memories, run_messages=run_messages, user_id=user_id
+            )
 
         # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
         cultural_knowledge_future = None
-        cultural_knowledge_executor = None
         if (
             run_messages.user_message is not None
             and self.culture_manager is not None
             and self.update_cultural_knowledge
         ):
             log_debug("Starting cultural knowledge creation in background thread.")
-            cultural_knowledge_executor = ThreadPoolExecutor(max_workers=1)
-            cultural_knowledge_future = cultural_knowledge_executor.submit(
+            cultural_knowledge_future = self.background_executor.submit(
                 self._make_cultural_knowledge, run_messages=run_messages
             )
 
         try:
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
             # 5. Reason about the task
             self._handle_reasoning(run_response=run_response, run_messages=run_messages)
 
@@ -977,8 +991,7 @@ class Agent:
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 wait_for_background_tasks(
-                    memory_future=memory_future,
-                    cultural_knowledge_future=cultural_knowledge_future
+                    memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future
                 )
 
                 return self._handle_agent_run_paused(run_response=run_response, session=session, user_id=user_id)
@@ -1022,9 +1035,7 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 11. Wait for background memory creation and cultural knowledge creation
-            wait_for_background_tasks(
-                memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future
-            )
+            wait_for_background_tasks(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
 
             # 12. Create session summary
             if self.session_summary_manager is not None:
@@ -1057,13 +1068,6 @@ class Agent:
 
             return run_response
         finally:
-            # Clean up the memory executor if it was created
-            if memory_executor is not None:
-                memory_executor.shutdown(wait=False)
-
-            if cultural_knowledge_executor is not None:
-                cultural_knowledge_executor.shutdown(wait=False)
-
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1160,18 +1164,15 @@ class Agent:
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # Start memory creation on a separate thread (runs concurrently with the main execution loop)
-        from concurrent.futures import ThreadPoolExecutor
-
         memory_future = None
-        memory_executor = None
         # 4. Start memory creation in background thread if memory manager is enabled and agentic memory is disabled
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background thread.")
-            memory_executor = ThreadPoolExecutor(max_workers=1)
-            memory_future = memory_executor.submit(self._make_memories, run_messages=run_messages, user_id=user_id)
+            memory_future = self.background_executor.submit(
+                self._make_memories, run_messages=run_messages, user_id=user_id
+            )
 
         # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
-        cultural_knowledge_executor = None
         cultural_knowledge_future = None
         if (
             run_messages.user_message is not None
@@ -1179,18 +1180,26 @@ class Agent:
             and self.update_cultural_knowledge
         ):
             log_debug("Starting cultural knowledge creation in background thread.")
-            cultural_knowledge_executor = ThreadPoolExecutor(max_workers=1)
-            cultural_knowledge_future = cultural_knowledge_executor.submit(
+            cultural_knowledge_future = self.background_executor.submit(
                 self._make_cultural_knowledge, run_messages=run_messages
             )
 
         try:
             # Start the Run by yielding a RunStarted event
             if stream_intermediate_steps:
-                yield handle_event(create_run_started_event(run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events)
+                yield handle_event(  # type: ignore
+                    create_run_started_event(run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
 
             # 5. Reason about the task if reasoning is enabled
-            yield from self._handle_reasoning_stream(run_response=run_response, run_messages=run_messages)
+            yield from self._handle_reasoning_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
 
             # Check for cancellation before model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1266,8 +1275,11 @@ class Agent:
 
             # Yield RunContentCompletedEvent
             if stream_intermediate_steps:
-                yield handle_event(
-                    create_run_content_completed_event(from_run_response=run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                yield handle_event(  # type: ignore
+                    create_run_content_completed_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
                 )
 
             # Execute post-hooks after output is generated but before response is returned
@@ -1297,25 +1309,33 @@ class Agent:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 session.upsert_run(run=run_response)
 
-                if self.stream_intermediate_steps:
-                    yield handle_event(
-                        create_session_summary_started_event(from_run_response=run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
+                        create_session_summary_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
                 try:
                     self.session_summary_manager.create_session_summary(session=session)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
-                if self.stream_intermediate_steps:
-                    yield handle_event(
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
                         create_session_summary_completed_event(
                             from_run_response=run_response, session_summary=session.summary
                         ),
-                        run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
 
             # Create the run completed event
-            completed_event = handle_event(
-                create_run_completed_event(from_run_response=run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+            completed_event = handle_event(  # type: ignore
+                create_run_completed_event(from_run_response=run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
             )
 
             # Set the run status to completed
@@ -1325,7 +1345,7 @@ class Agent:
             self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
 
             if stream_intermediate_steps:
-                yield completed_event
+                yield completed_event  # type: ignore
 
             if yield_run_response:
                 yield run_response
@@ -1342,21 +1362,16 @@ class Agent:
             run_response.content = str(e)
 
             # Yield the cancellation event
-            yield handle_event(
+            yield handle_event(  # type: ignore
                 create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
-                run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
             )
 
             # Cleanup and store the run response and session
             self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
         finally:
-            # Clean up the memory executor if it was created
-            if memory_executor is not None:
-                memory_executor.shutdown(wait=False)
-
-            if cultural_knowledge_executor is not None:
-                cultural_knowledge_executor.shutdown(wait=False)
-
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1752,10 +1767,10 @@ class Agent:
             log_error("No messages to be sent to the model.")
 
         # 7. Start memory creation as a background task (runs concurrently with the main execution)
-        import asyncio
-
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+            import asyncio
+
             log_debug("Starting memory creation in background task.")
             memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
@@ -1766,10 +1781,15 @@ class Agent:
             and self.culture_manager is not None
             and self.update_cultural_knowledge
         ):
+            import asyncio
+
             log_debug("Starting cultural knowledge creation in background thread.")
             cultural_knowledge_task = asyncio.create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
 
         try:
+            # Check for cancellation before model call
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
             # 8. Reason about the task if reasoning is enabled
             await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
@@ -1837,9 +1857,7 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 14. Wait for background memory creation
-            await await_for_background_tasks(
-                memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task
-            )
+            await await_for_background_tasks(memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task)
 
             # 15. Create session summary
             if self.session_summary_manager is not None:
@@ -1930,7 +1948,12 @@ class Agent:
 
         # Start the Run by yielding a RunStarted event
         if stream_intermediate_steps:
-            yield handle_event(create_run_started_event(run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events)
+            yield handle_event(  # type: ignore
+                create_run_started_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
 
         # 1. Read or create session. Reads from the database if provided.
         agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
@@ -1997,10 +2020,10 @@ class Agent:
             log_error("No messages to be sent to the model.")
 
         # 7. Start memory creation as a background task (runs concurrently with the main execution)
-        import asyncio
-
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+            import asyncio
+
             log_debug("Starting memory creation in background task.")
             memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
@@ -2011,6 +2034,8 @@ class Agent:
             and self.culture_manager is not None
             and self.update_cultural_knowledge
         ):
+            import asyncio
+
             log_debug("Starting cultural knowledge creation in background task.")
             cultural_knowledge_task = asyncio.create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
 
@@ -2019,7 +2044,11 @@ class Agent:
 
         try:
             # 8. Reason about the task if reasoning is enabled
-            async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
+            async for item in self._ahandle_reasoning_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                stream_intermediate_steps=stream_intermediate_steps,
+            ):
                 raise_if_cancelled(run_response.run_id)  # type: ignore
                 yield item
 
@@ -2097,8 +2126,11 @@ class Agent:
                 yield event
 
             if stream_intermediate_steps:
-                yield handle_event(
-                    create_run_content_completed_event(from_run_response=run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                yield handle_event(  # type: ignore
+                    create_run_content_completed_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
                 )
 
             # Execute post-hooks (after output is generated but before response is returned)
@@ -2129,25 +2161,33 @@ class Agent:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 agent_session.upsert_run(run=run_response)
 
-                if self.stream_intermediate_steps:
-                    yield handle_event(
-                        create_session_summary_started_event(from_run_response=run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
+                        create_session_summary_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
                 try:
                     await self.session_summary_manager.acreate_session_summary(session=agent_session)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
-                if self.stream_intermediate_steps:
-                    yield handle_event(
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
                         create_session_summary_completed_event(
                             from_run_response=run_response, session_summary=agent_session.summary
                         ),
-                        run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
 
             # Create the run completed event
             completed_event = handle_event(
-                create_run_completed_event(from_run_response=run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                create_run_completed_event(from_run_response=run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
             )
 
             # Set the run status to completed
@@ -2157,7 +2197,7 @@ class Agent:
             await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
 
             if stream_intermediate_steps:
-                yield completed_event
+                yield completed_event  # type: ignore
 
             if yield_run_response:
                 yield run_response
@@ -2174,9 +2214,11 @@ class Agent:
             run_response.content = str(e)
 
             # Yield the cancellation event
-            yield handle_event(
+            yield handle_event(  # type: ignore
                 create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
-                run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
             )
 
             # Cleanup and store the run response and session
@@ -2747,6 +2789,9 @@ class Agent:
         self._handle_tool_call_updates(run_response=run_response, run_messages=run_messages)
 
         try:
+            # Check for cancellation before model call
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
             # 2. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
             model_response: ModelResponse = self.model.response(
@@ -2859,7 +2904,12 @@ class Agent:
 
         # Start the Run by yielding a RunContinued event
         if stream_intermediate_steps:
-            yield handle_event(create_run_continued_event(run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events)
+            yield handle_event(  # type: ignore
+                create_run_continued_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
 
         # 2. Handle the updated tools
         yield from self._handle_tool_call_updates_stream(
@@ -2891,8 +2941,11 @@ class Agent:
 
             # Yield RunContentCompletedEvent
             if stream_intermediate_steps:
-                yield handle_event(
-                    create_run_content_completed_event(from_run_response=run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                yield handle_event(  # type: ignore
+                    create_run_content_completed_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
                 )
             if self.post_hooks is not None:
                 self._execute_post_hooks(
@@ -2907,29 +2960,43 @@ class Agent:
                     **kwargs,
                 )
 
+            # Check for cancellation before model call
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
             # 4. Create session summary
             if self.session_summary_manager is not None:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 session.upsert_run(run=run_response)
 
-                if self.stream_intermediate_steps:
-                    yield handle_event(
-                        create_session_summary_started_event(from_run_response=run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
+                        create_session_summary_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
                 try:
                     self.session_summary_manager.create_session_summary(session=session)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
-                if self.stream_intermediate_steps:
-                    yield handle_event(
+
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
                         create_session_summary_completed_event(
                             from_run_response=run_response, session_summary=session.summary
                         ),
-                        run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
 
             # Create the run completed event
-            completed_event = handle_event(create_run_completed_event(run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events)
+            completed_event = handle_event(
+                create_run_completed_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
 
             # Set the run status to completed
             run_response.status = RunStatus.completed
@@ -2938,7 +3005,7 @@ class Agent:
             self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
 
             if stream_intermediate_steps:
-                yield completed_event
+                yield completed_event  # type: ignore
 
             # Log Agent Telemetry
             self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
@@ -2952,9 +3019,11 @@ class Agent:
             run_response.content = str(e)
 
             # Yield the cancellation event
-            yield handle_event(
+            yield handle_event(  # type: ignore
                 create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
-                run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
             )
 
             # Cleanup and store the run response and session
@@ -3437,7 +3506,12 @@ class Agent:
         try:
             # Start the Run by yielding a RunContinued event
             if stream_intermediate_steps:
-                yield handle_event(create_run_continued_event(run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events)
+                yield handle_event(  # type: ignore
+                    create_run_continued_event(run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
 
             # 7. Handle the updated tools
             async for event in self._ahandle_tool_call_updates_stream(
@@ -3509,35 +3583,14 @@ class Agent:
 
             # Yield RunContentCompletedEvent
             if stream_intermediate_steps:
-                yield handle_event(
-                    create_run_content_completed_event(from_run_response=run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                yield handle_event(  # type: ignore
+                    create_run_content_completed_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
                 )
 
-            # 9. Create session summary
-            if self.session_summary_manager is not None:
-                # Upsert the RunOutput to Agent Session before creating the session summary
-                agent_session.upsert_run(run=run_response)
-
-                if self.stream_intermediate_steps:
-                    yield handle_event(
-                        create_session_summary_started_event(from_run_response=run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
-                    )
-                try:
-                    await self.session_summary_manager.acreate_session_summary(session=agent_session)
-                except Exception as e:
-                    log_warning(f"Error in session summary creation: {str(e)}")
-                if self.stream_intermediate_steps:
-                    yield handle_event(
-                        create_session_summary_completed_event(
-                            from_run_response=run_response, session_summary=agent_session.summary
-                        ),
-                        run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
-                    )
-
-            # Create the run completed event
-            completed_event = handle_event(create_run_completed_event(run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events)
-
-            # 6. Execute post-hooks
+            # 8. Execute post-hooks
             if self.post_hooks is not None:
                 self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
@@ -3550,6 +3603,42 @@ class Agent:
                     debug_mode=debug_mode,
                     **kwargs,
                 )
+            # Check for cancellation before model call
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # 9. Create session summary
+            if self.session_summary_manager is not None:
+                # Upsert the RunOutput to Agent Session before creating the session summary
+                agent_session.upsert_run(run=run_response)
+
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
+                        create_session_summary_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+                try:
+                    await self.session_summary_manager.acreate_session_summary(session=agent_session)
+                except Exception as e:
+                    log_warning(f"Error in session summary creation: {str(e)}")
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
+                        create_session_summary_completed_event(
+                            from_run_response=run_response, session_summary=agent_session.summary
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+
+            # Create the run completed event
+            completed_event = handle_event(
+                create_run_completed_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
 
             # Set the run status to completed
             run_response.status = RunStatus.completed
@@ -3558,7 +3647,7 @@ class Agent:
             await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
 
             if stream_intermediate_steps:
-                yield completed_event
+                yield completed_event  # type: ignore
 
             if yield_run_response:
                 yield run_response
@@ -3574,9 +3663,11 @@ class Agent:
             run_response.content = str(e)
 
             # Yield the cancellation event
-            yield handle_event(
+            yield handle_event(  # type: ignore
                 create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
-                run_response, events_to_skip=self.events_to_skip, store_events=self.store_events
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
             )
 
             # Cleanup and store the run response and session
@@ -3616,15 +3707,15 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(
+            yield handle_event(  # type: ignore
                 run_response=run_response,
                 event=create_pre_hook_started_event(
                     from_run_response=run_response,
                     run_input=run_input,
                     pre_hook_name=hook.__name__,
                 ),
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
             )
             try:
                 # Filter arguments to only include those that the hook accepts
@@ -3632,15 +3723,15 @@ class Agent:
 
                 hook(**filtered_args)
 
-                yield handle_event(
+                yield handle_event(  # type: ignore
                     run_response=run_response,
                     event=create_pre_hook_completed_event(
                         from_run_response=run_response,
                         run_input=run_input,
                         pre_hook_name=hook.__name__,
                     ),
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
                 )
 
             except (InputCheckError, OutputCheckError) as e:
@@ -3686,15 +3777,15 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(
+            yield handle_event(  # type: ignore
                 run_response=run_response,
                 event=create_pre_hook_started_event(
                     from_run_response=run_response,
                     run_input=run_input,
                     pre_hook_name=hook.__name__,
                 ),
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
             )
             try:
                 # Filter arguments to only include those that the hook accepts
@@ -3706,15 +3797,15 @@ class Agent:
                     # Synchronous function
                     hook(**filtered_args)
 
-                yield handle_event(
+                yield handle_event(  # type: ignore
                     run_response=run_response,
                     event=create_pre_hook_completed_event(
                         from_run_response=run_response,
                         run_input=run_input,
                         pre_hook_name=hook.__name__,
                     ),
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
                 )
 
             except (InputCheckError, OutputCheckError) as e:
@@ -3859,13 +3950,13 @@ class Agent:
                 tools=run_response.tools,
             ),
             run_response,
-            events_to_skip=self.events_to_skip,
-            store_events=self.store_events
+            events_to_skip=self.events_to_skip,  # type: ignore
+            store_events=self.store_events,
         )
 
         self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
 
-        yield pause_event
+        yield pause_event  # type: ignore
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -3907,13 +3998,13 @@ class Agent:
                 tools=run_response.tools,
             ),
             run_response,
-            events_to_skip=self.events_to_skip,
-            store_events=self.store_events
+            events_to_skip=self.events_to_skip,  # type: ignore
+            store_events=self.store_events,
         )
 
         await self._acleanup_and_store(run_response=run_response, session=session, user_id=user_id)
 
-        yield pause_event
+        yield pause_event  # type: ignore
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -4008,11 +4099,11 @@ class Agent:
             if isinstance(call_result, ModelResponse):
                 if call_result.event == ModelResponseEvent.tool_call_started.value:
                     if stream_intermediate_steps:
-                        yield handle_event(
+                        yield handle_event(  # type: ignore
                             create_tool_call_started_event(from_run_response=run_response, tool=tool),
                             run_response,
-                            events_to_skip=self.events_to_skip,
-                            store_events=self.store_events
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
                         )
 
                 if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
@@ -4020,13 +4111,13 @@ class Agent:
                     tool.result = tool_execution.result
                     tool.tool_call_error = tool_execution.tool_call_error
                     if stream_intermediate_steps:
-                        yield handle_event(
+                        yield handle_event(  # type: ignore
                             create_tool_call_completed_event(
                                 from_run_response=run_response, tool=tool, content=call_result.content
                             ),
                             run_response,
-                            events_to_skip=self.events_to_skip,
-                            store_events=self.store_events
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
                         )
 
         if len(function_call_results) > 0:
@@ -4063,24 +4154,24 @@ class Agent:
             if isinstance(call_result, ModelResponse):
                 if call_result.event == ModelResponseEvent.tool_call_started.value:
                     if stream_intermediate_steps:
-                        yield handle_event(
+                        yield handle_event(  # type: ignore
                             create_tool_call_started_event(from_run_response=run_response, tool=tool),
                             run_response,
-                            events_to_skip=self.events_to_skip,
-                            store_events=self.store_events
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
                         )
                 if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
                     tool_execution = call_result.tool_executions[0]
                     tool.result = tool_execution.result
                     tool.tool_call_error = tool_execution.tool_call_error
                     if stream_intermediate_steps:
-                        yield handle_event(
+                        yield handle_event(  # type: ignore
                             create_tool_call_completed_event(
                                 from_run_response=run_response, tool=tool, content=call_result.content
                             ),
                             run_response,
-                            events_to_skip=self.events_to_skip,
-                            store_events=self.store_events
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
                         )
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
@@ -4391,15 +4482,15 @@ class Agent:
                     run_response=run_response,
                     reasoning_time_taken=reasoning_state["reasoning_time_taken"],
                 )
-                yield handle_event(
+                yield handle_event(  # type: ignore
                     create_reasoning_completed_event(
                         from_run_response=run_response,
                         content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                         content_type=ReasoningSteps.__name__,
                     ),
                     run_response,
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
                 )
 
         # Update RunOutput
@@ -4471,15 +4562,15 @@ class Agent:
                     run_response=run_response,
                     reasoning_time_taken=reasoning_state["reasoning_time_taken"],
                 )
-                yield handle_event(
+                yield handle_event(  # type: ignore
                     create_reasoning_completed_event(
                         from_run_response=run_response,
                         content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                         content_type=ReasoningSteps.__name__,
                     ),
                     run_response,
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
                 )
 
         # Update RunOutput
@@ -4516,7 +4607,12 @@ class Agent:
                 model_response_event.run_id = run_response.run_id  # type: ignore
 
             # We just bubble the event up
-            yield handle_event(model_response_event, run_response, events_to_skip=self.events_to_skip, store_events=self.store_events)  # type: ignore
+            yield handle_event(  # type: ignore
+                model_response_event,  # type: ignore
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
         else:
             model_response_event = cast(ModelResponse, model_response_event)
             # If the model response is an assistant_response, yield a RunOutput
@@ -4561,15 +4657,15 @@ class Agent:
 
                 # Only yield if we have content to show
                 if content_type != "str":
-                    yield handle_event(
+                    yield handle_event(  # type: ignore
                         create_run_output_content_event(
                             from_run_response=run_response,
                             content=model_response.content,
                             content_type=content_type,
                         ),
                         run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
                 elif (
                     model_response_event.content is not None
@@ -4578,7 +4674,7 @@ class Agent:
                     or model_response_event.citations is not None
                     or model_response_event.provider_data is not None
                 ):
-                    yield handle_event(
+                    yield handle_event(  # type: ignore
                         create_run_output_content_event(
                             from_run_response=run_response,
                             content=model_response_event.content,
@@ -4588,8 +4684,8 @@ class Agent:
                             model_provider_data=model_response_event.provider_data,
                         ),
                         run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
 
                 # Process audio
@@ -4644,25 +4740,25 @@ class Agent:
                     )
                     run_response.created_at = model_response_event.created_at
 
-                    yield handle_event(
+                    yield handle_event(  # type: ignore
                         create_run_output_content_event(
                             from_run_response=run_response,
                             response_audio=run_response.response_audio,
                         ),
                         run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
 
                 if model_response_event.images is not None:
-                    yield handle_event(
+                    yield handle_event(  # type: ignore
                         create_run_output_content_event(
                             from_run_response=run_response,
                             image=model_response_event.images[-1],
                         ),
                         run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
 
                     if model_response.images is None:
@@ -4699,11 +4795,11 @@ class Agent:
                     # Yield each tool call started event
                     if stream_intermediate_steps:
                         for tool in tool_executions_list:
-                            yield handle_event(
+                            yield handle_event(  # type: ignore
                                 create_tool_call_started_event(from_run_response=run_response, tool=tool),
                                 run_response,
-                                events_to_skip=self.events_to_skip,
-                                store_events=self.store_events
+                                events_to_skip=self.events_to_skip,  # type: ignore
+                                store_events=self.store_events,
                             )
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
@@ -4769,35 +4865,35 @@ class Agent:
                                 ] + float(tool_call_metrics.duration)
 
                         if stream_intermediate_steps:
-                            yield handle_event(
+                            yield handle_event(  # type: ignore
                                 create_tool_call_completed_event(
                                     from_run_response=run_response, tool=tool_call, content=model_response_event.content
                                 ),
                                 run_response,
-                                events_to_skip=self.events_to_skip,
-                                store_events=self.store_events
+                                events_to_skip=self.events_to_skip,  # type: ignore
+                                store_events=self.store_events,
                             )
 
                 if stream_intermediate_steps:
                     if reasoning_step is not None:
                         if reasoning_state and not reasoning_state["reasoning_started"]:
-                            yield handle_event(
+                            yield handle_event(  # type: ignore
                                 create_reasoning_started_event(from_run_response=run_response),
                                 run_response,
-                                events_to_skip=self.events_to_skip,
-                                store_events=self.store_events
+                                events_to_skip=self.events_to_skip,  # type: ignore
+                                store_events=self.store_events,
                             )
                             reasoning_state["reasoning_started"] = True
 
-                        yield handle_event(
+                        yield handle_event(  # type: ignore
                             create_reasoning_step_event(
                                 from_run_response=run_response,
                                 reasoning_step=reasoning_step,
                                 reasoning_content=run_response.reasoning_content or "",
                             ),
                             run_response,
-                            events_to_skip=self.events_to_skip,
-                            store_events=self.store_events
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
                         )
 
     def _make_cultural_knowledge(
@@ -7740,28 +7836,42 @@ class Agent:
 
     def _handle_reasoning(self, run_response: RunOutput, run_messages: RunMessages) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self._reason(run_response=run_response, run_messages=run_messages)
+            reasoning_generator = self._reason(
+                run_response=run_response, run_messages=run_messages, stream_intermediate_steps=False
+            )
 
             # Consume the generator without yielding
             deque(reasoning_generator, maxlen=0)
 
-    def _handle_reasoning_stream(self, run_response: RunOutput, run_messages: RunMessages) -> Iterator[RunOutputEvent]:
+    def _handle_reasoning_stream(
+        self, run_response: RunOutput, run_messages: RunMessages, stream_intermediate_steps: Optional[bool] = None
+    ) -> Iterator[RunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self._reason(run_response=run_response, run_messages=run_messages)
+            reasoning_generator = self._reason(
+                run_response=run_response,
+                run_messages=run_messages,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
             yield from reasoning_generator
 
     async def _ahandle_reasoning(self, run_response: RunOutput, run_messages: RunMessages) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self._areason(run_response=run_response, run_messages=run_messages)
+            reason_generator = self._areason(
+                run_response=run_response, run_messages=run_messages, stream_intermediate_steps=False
+            )
             # Consume the generator without yielding
             async for _ in reason_generator:
                 pass
 
     async def _ahandle_reasoning_stream(
-        self, run_response: RunOutput, run_messages: RunMessages
+        self, run_response: RunOutput, run_messages: RunMessages, stream_intermediate_steps: Optional[bool] = None
     ) -> AsyncIterator[RunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self._areason(run_response=run_response, run_messages=run_messages)
+            reason_generator = self._areason(
+                run_response=run_response,
+                run_messages=run_messages,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
             async for item in reason_generator:
                 yield item
 
@@ -7788,14 +7898,16 @@ class Agent:
 
         return updated_reasoning_content
 
-    def _reason(self, run_response: RunOutput, run_messages: RunMessages) -> Iterator[RunOutputEvent]:
+    def _reason(
+        self, run_response: RunOutput, run_messages: RunMessages, stream_intermediate_steps: Optional[bool] = None
+    ) -> Iterator[RunOutputEvent]:
         # Yield a reasoning started event
-        if self.stream_intermediate_steps:
-            yield handle_event(
+        if stream_intermediate_steps:
+            yield handle_event(  # type: ignore
                 create_reasoning_started_event(from_run_response=run_response),
                 run_response,
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
             )
 
         use_default_reasoning = False
@@ -7927,16 +8039,16 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-                if self.stream_intermediate_steps:
-                    yield handle_event(
+                if stream_intermediate_steps:
+                    yield handle_event(  # type: ignore
                         create_reasoning_completed_event(
                             from_run_response=run_response,
                             content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
                             content_type=ReasoningSteps.__name__,
                         ),
                         run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
             else:
                 log_warning(
@@ -8015,22 +8127,22 @@ class Agent:
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
-                    if self.stream_intermediate_steps:
+                    if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
                                 run_response=run_response,
                                 reasoning_step=reasoning_step,
                             )
 
-                            yield handle_event(
+                            yield handle_event(  # type: ignore
                                 create_reasoning_step_event(
                                     from_run_response=run_response,
                                     reasoning_step=reasoning_step,
                                     reasoning_content=updated_reasoning_content,
                                 ),
                                 run_response,
-                                events_to_skip=self.events_to_skip,
-                                store_events=self.store_events
+                                events_to_skip=self.events_to_skip,  # type: ignore
+                                store_events=self.store_events,
                             )
 
                     # Find the index of the first assistant message
@@ -8067,26 +8179,28 @@ class Agent:
             )
 
             # Yield the final reasoning completed event
-            if self.stream_intermediate_steps:
-                yield handle_event(
+            if stream_intermediate_steps:
+                yield handle_event(  # type: ignore
                     create_reasoning_completed_event(
                         from_run_response=run_response,
                         content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                         content_type=ReasoningSteps.__name__,
                     ),
                     run_response,
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
                 )
 
-    async def _areason(self, run_response: RunOutput, run_messages: RunMessages) -> Any:
+    async def _areason(
+        self, run_response: RunOutput, run_messages: RunMessages, stream_intermediate_steps: Optional[bool] = None
+    ) -> Any:
         # Yield a reasoning started event
-        if self.stream_intermediate_steps:
-            yield handle_event(
+        if stream_intermediate_steps:
+            yield handle_event(  # type: ignore
                 create_reasoning_started_event(from_run_response=run_response),
                 run_response,
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
             )
 
         use_default_reasoning = False
@@ -8218,7 +8332,7 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-                if self.stream_intermediate_steps:
+                if stream_intermediate_steps:
                     yield handle_event(
                         create_reasoning_completed_event(
                             from_run_response=run_response,
@@ -8226,8 +8340,8 @@ class Agent:
                             content_type=ReasoningSteps.__name__,
                         ),
                         run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
             else:
                 log_warning(
@@ -8306,7 +8420,7 @@ class Agent:
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
-                    if self.stream_intermediate_steps:
+                    if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
                                 run_response=run_response,
@@ -8321,8 +8435,8 @@ class Agent:
                                     reasoning_content=updated_reasoning_content,
                                 ),
                                 run_response,
-                                events_to_skip=self.events_to_skip,
-                                store_events=self.store_events
+                                events_to_skip=self.events_to_skip,  # type: ignore
+                                store_events=self.store_events,
                             )
 
                     # Find the index of the first assistant message
@@ -8358,7 +8472,7 @@ class Agent:
             )
 
             # Yield the final reasoning completed event
-            if self.stream_intermediate_steps:
+            if stream_intermediate_steps:
                 yield handle_event(
                     create_reasoning_completed_event(
                         from_run_response=run_response,
@@ -8366,8 +8480,8 @@ class Agent:
                         content_type=ReasoningSteps.__name__,
                     ),
                     run_response,
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
                 )
 
     def _process_parser_response(
@@ -8448,8 +8562,8 @@ class Agent:
                     yield handle_event(
                         create_parser_model_response_started_event(run_response),
                         run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
 
                 parser_model_response = ModelResponse(content="")
@@ -8486,8 +8600,8 @@ class Agent:
                     yield handle_event(
                         create_parser_model_response_completed_event(run_response),
                         run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
 
             else:
@@ -8506,8 +8620,8 @@ class Agent:
                     yield handle_event(
                         create_parser_model_response_started_event(run_response),
                         run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
 
                 parser_model_response = ModelResponse(content="")
@@ -8546,8 +8660,8 @@ class Agent:
                     yield handle_event(
                         create_parser_model_response_completed_event(run_response),
                         run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
                     )
             else:
                 log_warning("A response model is required to parse the response with a parser model")
@@ -8578,7 +8692,12 @@ class Agent:
             return
 
         if stream_intermediate_steps:
-            yield handle_event(create_output_model_response_started_event(run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events)
+            yield handle_event(
+                create_output_model_response_started_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
 
@@ -8594,7 +8713,12 @@ class Agent:
             )
 
         if stream_intermediate_steps:
-            yield handle_event(create_output_model_response_completed_event(run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events)
+            yield handle_event(
+                create_output_model_response_completed_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
 
         # Build a list of messages that should be added to the RunResponse
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
@@ -8629,7 +8753,12 @@ class Agent:
             return
 
         if stream_intermediate_steps:
-            yield handle_event(create_output_model_response_started_event(run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events)
+            yield handle_event(
+                create_output_model_response_started_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
 
@@ -8648,7 +8777,12 @@ class Agent:
                 yield event
 
         if stream_intermediate_steps:
-            yield handle_event(create_output_model_response_completed_event(run_response), run_response, events_to_skip=self.events_to_skip, store_events=self.store_events)
+            yield handle_event(
+                create_output_model_response_completed_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
 
         # Build a list of messages that should be added to the RunResponse
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
@@ -8656,7 +8790,6 @@ class Agent:
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
         run_response.metrics = self._calculate_run_metrics(messages_for_run_response)
-
 
     ###########################################################################
     # Default Tools

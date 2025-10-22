@@ -1,19 +1,20 @@
-from asyncio import Task, Future
-from typing import List, Optional, AsyncIterator, Iterator, Sequence, Union
+from asyncio import Future, Task
+from typing import AsyncIterator, Iterator, List, Optional, Sequence, Union
 
-from agno.media import Image, Video, Audio, File
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
-from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, RunInput
-from agno.run.team import TeamRunOutput, RunOutputEvent as TeamRunOutputEvent
+from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
+from agno.run.team import RunOutputEvent as TeamRunOutputEvent
+from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession
 from agno.utils.events import (
-    handle_event,
-    create_memory_update_started_event,
     create_memory_update_completed_event,
-    create_team_memory_update_started_event,
+    create_memory_update_started_event,
     create_team_memory_update_completed_event,
+    create_team_memory_update_started_event,
+    handle_event,
 )
-from agno.utils.log import log_warning, log_debug
+from agno.utils.log import log_debug, log_warning
 
 
 async def await_for_background_tasks(
@@ -51,25 +52,28 @@ def wait_for_background_tasks(
 
 
 async def await_for_background_tasks_stream(
+    run_response: Union[RunOutput, TeamRunOutput],
     memory_task: Optional[Task] = None,
     cultural_knowledge_task: Optional[Task] = None,
     stream_intermediate_steps: bool = False,
-    run_response: Optional[RunOutput] = None,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
 ) -> AsyncIterator[RunOutputEvent]:
     if memory_task is not None:
         if stream_intermediate_steps:
             if isinstance(run_response, TeamRunOutput):
-                yield handle_event(
+                yield handle_event(  # type: ignore
                     create_team_memory_update_started_event(from_run_response=run_response),
                     run_response,
-                    events_to_skip=events_to_skip,
+                    events_to_skip=events_to_skip,  # type: ignore
                     store_events=store_events,
                 )
             else:
-                yield handle_event(
-                    create_memory_update_started_event(from_run_response=run_response), run_response, events_to_skip=events_to_skip, store_events=store_events
+                yield handle_event(  # type: ignore
+                    create_memory_update_started_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=events_to_skip,  # type: ignore
+                    store_events=store_events,
                 )
         try:
             await memory_task
@@ -77,15 +81,18 @@ async def await_for_background_tasks_stream(
             log_warning(f"Error in memory creation: {str(e)}")
         if stream_intermediate_steps:
             if isinstance(run_response, TeamRunOutput):
-                yield handle_event(
+                yield handle_event(  # type: ignore
                     create_team_memory_update_completed_event(from_run_response=run_response),
                     run_response,
-                    events_to_skip=events_to_skip,
+                    events_to_skip=events_to_skip,  # type: ignore
                     store_events=store_events,
                 )
             else:
-                yield handle_event(
-                    create_memory_update_completed_event(from_run_response=run_response), run_response, events_to_skip=events_to_skip, store_events=store_events
+                yield handle_event(  # type: ignore
+                    create_memory_update_completed_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=events_to_skip,  # type: ignore
+                    store_events=store_events,
                 )
 
     if cultural_knowledge_task is not None:
@@ -96,25 +103,28 @@ async def await_for_background_tasks_stream(
 
 
 def wait_for_background_tasks_stream(
+    run_response: Union[TeamRunOutput, RunOutput],
     memory_future: Optional[Future] = None,
     cultural_knowledge_future: Optional[Future] = None,
     stream_intermediate_steps: bool = False,
-    run_response: Optional[Union[TeamRunOutput, RunOutput]] = None,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
 ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]:
     if memory_future is not None:
         if stream_intermediate_steps:
             if isinstance(run_response, TeamRunOutput):
-                yield handle_event(
+                yield handle_event(  # type: ignore
                     create_team_memory_update_started_event(from_run_response=run_response),
                     run_response,
-                    events_to_skip=events_to_skip,
+                    events_to_skip=events_to_skip,  # type: ignore
                     store_events=store_events,
                 )
             else:
-                yield handle_event(
-                    create_memory_update_started_event(from_run_response=run_response), run_response, events_to_skip=events_to_skip, store_events=store_events
+                yield handle_event(  # type: ignore
+                    create_memory_update_started_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=events_to_skip,  # type: ignore
+                    store_events=store_events,
                 )
         try:
             memory_future.result()
@@ -122,15 +132,18 @@ def wait_for_background_tasks_stream(
             log_warning(f"Error in memory creation: {str(e)}")
         if stream_intermediate_steps:
             if isinstance(run_response, TeamRunOutput):
-                yield handle_event(
+                yield handle_event(  # type: ignore
                     create_team_memory_update_completed_event(from_run_response=run_response),
                     run_response,
-                    events_to_skip=events_to_skip,
+                    events_to_skip=events_to_skip,  # type: ignore
                     store_events=store_events,
                 )
             else:
-                yield handle_event(
-                    create_memory_update_completed_event(from_run_response=run_response), run_response, events_to_skip=events_to_skip, store_events=store_events
+                yield handle_event(  # type: ignore
+                    create_memory_update_completed_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=events_to_skip,  # type: ignore
+                    store_events=store_events,
                 )
 
     # Wait for cultural knowledge creation
@@ -178,6 +191,7 @@ def collect_joint_images(
         log_debug(f"Images Available to Model: {len(joint_images)} images")
     return joint_images if joint_images else None
 
+
 def collect_joint_videos(
     run_input: Optional[RunInput] = None,
     session: Optional[Union[AgentSession, TeamSession]] = None,
@@ -214,6 +228,7 @@ def collect_joint_videos(
         log_debug(f"Videos Available to Model: {len(joint_videos)} videos")
     return joint_videos if joint_videos else None
 
+
 def collect_joint_audios(
     run_input: Optional[RunInput] = None,
     session: Optional[Union[AgentSession, TeamSession]] = None,
@@ -249,6 +264,7 @@ def collect_joint_audios(
     if joint_audios:
         log_debug(f"Audios Available to Model: {len(joint_audios)} audios")
     return joint_audios if joint_audios else None
+
 
 def collect_joint_files(
     run_input: Optional[RunInput] = None,
@@ -297,6 +313,7 @@ def scrub_media_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -
         for message in run_response.reasoning_messages:
             scrub_media_from_message(message)
 
+
 def scrub_media_from_message(message: Message) -> None:
     """Remove all media from a Message object."""
     # Input media
@@ -309,6 +326,7 @@ def scrub_media_from_message(message: Message) -> None:
     message.audio_output = None
     message.image_output = None
     message.video_output = None
+
 
 def scrub_tool_results_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -> None:
     """
@@ -342,6 +360,7 @@ def scrub_tool_results_from_run_output(run_response: Union[RunOutput, TeamRunOut
             filtered_messages.append(message)
 
     run_response.messages = filtered_messages
+
 
 def scrub_history_messages_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -> None:
     """

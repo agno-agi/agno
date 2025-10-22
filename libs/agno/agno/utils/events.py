@@ -22,16 +22,16 @@ from agno.run.agent import (
     RunContentEvent,
     RunContinuedEvent,
     RunErrorEvent,
+    RunEvent,
     RunInput,
     RunOutput,
+    RunOutputEvent,
     RunPausedEvent,
     RunStartedEvent,
     SessionSummaryCompletedEvent,
     SessionSummaryStartedEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
-    RunOutputEvent,
-    RunEvent,
 )
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
@@ -52,10 +52,9 @@ from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import SessionSummaryCompletedEvent as TeamSessionSummaryCompletedEvent
 from agno.run.team import SessionSummaryStartedEvent as TeamSessionSummaryStartedEvent
-from agno.run.team import TeamRunInput, TeamRunOutput
+from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
-from agno.run.team import TeamRunOutputEvent
 from agno.session.summary import SessionSummary
 
 
@@ -628,11 +627,16 @@ def create_team_output_model_response_completed_event(
     )
 
 
-def handle_event(event: Union[RunOutputEvent, TeamRunOutputEvent], run_response: Union[RunOutput, TeamRunOutput], events_to_skip: Optional[List[RunEvent]] = None, store_events: bool = False) -> Union[RunOutputEvent, TeamRunOutputEvent]:
+def handle_event(
+    event: Union[RunOutputEvent, TeamRunOutputEvent],
+    run_response: Union[RunOutput, TeamRunOutput],
+    events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
+    store_events: bool = False,
+) -> Union[RunOutputEvent, TeamRunOutputEvent]:
     # We only store events that are not run_response_content events
     events_to_skip = [event.value for event in events_to_skip] if events_to_skip else []
     if store_events and event.event not in events_to_skip:
         if run_response.events is None:
             run_response.events = []
-        run_response.events.append(event)
+        run_response.events.append(event)  # type: ignore
     return event
