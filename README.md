@@ -85,7 +85,7 @@ Agno is a remarkably feature-rich framework, purpose-built for large-scale multi
 |---------------|-------------|-----------------|
 | **Core Intelligence** | **Model Agnostic** | Works with any model provider so you can use your favorite LLMs. |
 |  | **Type Safe** | Enforce structured I/O through `input_schema` and `output_schema` for predictable, composable behavior. |
-|  | **Dynamic Context Engineering** | Inject variables, state, and retrieved data on the fly to context. Perfect for dependency-driven agents. |
+|  | **Dynamic Context Engineering** | Inject variables, state, and retrieved data on the fly into context. Perfect for dependency-driven agents. |
 | **Memory, Knowledge, and Persistence** | **Persistent Storage** | Give your Agents, Teams, and Workflows a database to persist session history, state, and messages. |
 |  | **User Memory** | Built-in memory system that allows Agents to recall user-specific context across sessions. |
 |  | **Agentic RAG** | Connect to 20+ vector stores (called **Knowledge** in Agno) with hybrid search + reranking out of the box. |
