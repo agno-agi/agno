@@ -6,6 +6,7 @@ After each run, user memories are created/updated.
 To enable this, set `enable_user_memories=True` in the Agent config.
 """
 
+import asyncio
 from uuid import uuid4
 
 from agno.agent.agent import Agent
@@ -28,11 +29,13 @@ agent = Agent(
     enable_user_memories=True,
 )
 
-agent.print_response(
-    "My name is John Doe and I like to hike in the mountains on weekends.",
-    stream=True,
-    user_id=john_doe_id,
-    session_id=session_id,
+asyncio.run(
+    agent.aprint_response(
+        "My name is John Doe and I like to hike in the mountains on weekends.",
+        stream=True,
+        user_id=john_doe_id,
+        session_id=session_id,
+    )
 )
 
 agent.print_response(

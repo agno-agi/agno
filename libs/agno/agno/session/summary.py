@@ -102,7 +102,23 @@ class SessionSummaryManager:
         system_prompt += "<conversation>"
         for message in conversation:
             if message.role == "user":
-                conversation_messages.append(f"User: {message.content}")
+                # Handle empty user messages with media - note what media was provided
+                if not message.content or (isinstance(message.content, str) and message.content.strip() == ""):
+                    media_types = []
+                    if hasattr(message, "images") and message.images:
+                        media_types.append(f"{len(message.images)} image(s)")
+                    if hasattr(message, "videos") and message.videos:
+                        media_types.append(f"{len(message.videos)} video(s)")
+                    if hasattr(message, "audio") and message.audio:
+                        media_types.append(f"{len(message.audio)} audio file(s)")
+                    if hasattr(message, "files") and message.files:
+                        media_types.append(f"{len(message.files)} file(s)")
+
+                    if media_types:
+                        conversation_messages.append(f"User: [Provided {', '.join(media_types)}]")
+                    # Skip empty messages with no media
+                else:
+                    conversation_messages.append(f"User: {message.content}")
             elif message.role in ["assistant", "model"]:
                 conversation_messages.append(f"Assistant: {message.content}\n")
         system_prompt += "\n".join(conversation_messages)
@@ -118,22 +134,26 @@ class SessionSummaryManager:
     def _prepare_summary_messages(
         self,
         session: Optional["Session"] = None,
-    ) -> List[Message]:
-        """Prepare messages for session summary generation"""
+    ) -> Optional[List[Message]]:
+        """Prepare messages for session summary generation. Returns None if no meaningful messages to summarize."""
+        if not session:
+            return None
+
         self.model = cast(Model, self.model)
         response_format = self.get_response_format(self.model)
 
-        return (
-            [
-                self.get_system_message(
-                    conversation=session.get_messages_for_session(),  # type: ignore
-                    response_format=response_format,
-                ),
-                Message(role="user", content="Provide the summary of the conversation."),
-            ]
-            if session
-            else []
+        system_message = self.get_system_message(
+            conversation=session.get_messages_for_session(),  # type: ignore
+            response_format=response_format,
         )
+
+        if system_message is None:
+            return None
+
+        return [
+            system_message,
+            Message(role="user", content="Provide the summary of the conversation."),
+        ]
 
     def _process_summary_response(self, summary_response, session_summary_model: "Model") -> Optional[SessionSummary]:  # type: ignore
         """Process the model response into a SessionSummary"""
@@ -191,6 +211,12 @@ class SessionSummaryManager:
             return None
 
         messages = self._prepare_summary_messages(session)
+
+        # Skip summary generation if there are no meaningful messages
+        if messages is None:
+            log_debug("No meaningful messages to summarize, skipping session summary")
+            return None
+
         response_format = self.get_response_format(self.model)
 
         summary_response = self.model.response(messages=messages, response_format=response_format)
@@ -212,6 +238,12 @@ class SessionSummaryManager:
             return None
 
         messages = self._prepare_summary_messages(session)
+
+        # Skip summary generation if there are no meaningful messages
+        if messages is None:
+            log_debug("No meaningful messages to summarize, skipping session summary")
+            return None
+
         response_format = self.get_response_format(self.model)
 
         summary_response = await self.model.aresponse(messages=messages, response_format=response_format)

@@ -145,3 +145,26 @@ def test_create_workflow_run_with_kwargs(test_workflow: Workflow, test_os_client
         call_args = mock_arun.call_args
         assert call_args.kwargs["extra_field"] == "foo"
         assert call_args.kwargs["extra_field_two"] == "bar"
+
+
+def test_health_endpoint_instantiated_at(test_os_client: TestClient):
+    """Test that the health endpoint returns instantiation time."""
+    response = test_os_client.get("/health")
+
+    assert response.status_code == 200, response.text
+
+    response_data = response.json()
+    assert response_data["status"] == "ok"
+    assert "instantiated_at" in response_data
+
+    # Verify instantiated_at is a valid timestamp (can be converted to float)
+    instantiated_at = float(response_data["instantiated_at"])
+    assert instantiated_at > 0
+
+    # Make a second request to verify the instantiation time remains the same
+    response2 = test_os_client.get("/health")
+    assert response2.status_code == 200
+    response2_data = response2.json()
+
+    # The instantiation time should be the same across multiple calls
+    assert response_data["instantiated_at"] == response2_data["instantiated_at"]

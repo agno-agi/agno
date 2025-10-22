@@ -7,6 +7,7 @@ from agno.db.postgres.utils import (
     get_dates_to_calculate_metrics_for,
 )
 from agno.db.schemas import UserMemory
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.surrealdb import utils
@@ -19,6 +20,7 @@ from agno.db.surrealdb.metrics import (
 )
 from agno.db.surrealdb.models import (
     TableType,
+    deserialize_cultural_knowledge,
     deserialize_eval_run_record,
     deserialize_knowledge_row,
     deserialize_session,
@@ -30,6 +32,7 @@ from agno.db.surrealdb.models import (
     desurrealize_user_memory,
     get_schema,
     get_session_type,
+    serialize_cultural_knowledge,
     serialize_eval_run_record,
     serialize_knowledge_row,
     serialize_session,
@@ -60,6 +63,7 @@ class SurrealDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -80,6 +84,7 @@ class SurrealDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            culture_table=culture_table,
         )
         self._client = client
         self._db_url = db_url
@@ -101,6 +106,7 @@ class SurrealDb(BaseDb):
     def table_names(self) -> dict[TableType, str]:
         return {
             "agents": self._agents_table_name,
+            "culture": self.culture_table_name,
             "evals": self.eval_table_name,
             "knowledge": self.knowledge_table_name,
             "memories": self.memory_table_name,
@@ -127,6 +133,8 @@ class SurrealDb(BaseDb):
             table_name = self.memory_table_name
         elif table_type == "knowledge":
             table_name = self.knowledge_table_name
+        elif table_type == "culture":
+            table_name = self.culture_table_name
         elif table_type == "users":
             table_name = self._users_table_name
         elif table_type == "agents":
@@ -462,6 +470,152 @@ class SurrealDb(BaseDb):
         """
         table = self._get_table("memories")
         _ = self.client.delete(table)
+
+    # -- Cultural Knowledge methods --
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        table = self._get_table("culture")
+        _ = self.client.delete(table)
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        table = self._get_table("culture")
+        rec_id = RecordID(table, id)
+        self.client.delete(rec_id)
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        table = self._get_table("culture")
+        rec_id = RecordID(table, id)
+        result = self.client.select(rec_id)
+
+        if result is None:
+            return None
+
+        if not deserialize:
+            return result  # type: ignore
+
+        return deserialize_cultural_knowledge(result)  # type: ignore
+
+    def get_all_cultural_knowledge(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge with filtering and pagination.
+
+        Args:
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        table = self._get_table("culture")
+
+        # Build where clauses
+        where_clauses: List[WhereClause] = []
+        if agent_id is not None:
+            agent_rec_id = RecordID(self._get_table("agents"), agent_id)
+            where_clauses.append(("agent", "=", agent_rec_id))  # type: ignore
+        if team_id is not None:
+            team_rec_id = RecordID(self._get_table("teams"), team_id)
+            where_clauses.append(("team", "=", team_rec_id))  # type: ignore
+        if name is not None:
+            where_clauses.append(("string::lowercase(name)", "CONTAINS", name.lower()))  # type: ignore
+
+        # Build query for total count
+        count_query = COUNT_QUERY.format(
+            table=table,
+            where=""
+            if not where_clauses
+            else f"WHERE {' AND '.join(f'{w[0]} {w[1]} ${chr(97 + i)}' for i, w in enumerate(where_clauses))}",  # type: ignore
+        )
+        params = {chr(97 + i): w[2] for i, w in enumerate(where_clauses)}  # type: ignore
+        total_count = self._query_one(count_query, params, int) or 0
+
+        # Build main query
+        order_limit = order_limit_start(sort_by, sort_order, limit, page)
+        query = f"SELECT * FROM {table}"
+        if where_clauses:
+            query += f" WHERE {' AND '.join(f'{w[0]} {w[1]} ${chr(97 + i)}' for i, w in enumerate(where_clauses))}"  # type: ignore
+        query += order_limit
+
+        results = self._query(query, params, list) or []
+
+        if not deserialize:
+            return results, total_count  # type: ignore
+
+        return [deserialize_cultural_knowledge(r) for r in results]  # type: ignore
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert cultural knowledge in SurrealDB.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        table = self._get_table("culture", create_table_if_not_found=True)
+        serialized = serialize_cultural_knowledge(cultural_knowledge, table)
+
+        result = self.client.upsert(serialized["id"], serialized)
+
+        if result is None:
+            return None
+
+        if not deserialize:
+            return result  # type: ignore
+
+        return deserialize_cultural_knowledge(result)  # type: ignore
 
     def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         """Delete a user memory from the database.

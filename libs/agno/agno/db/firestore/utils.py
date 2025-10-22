@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.db.firestore.schemas import get_collection_indexes
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -120,6 +121,42 @@ def apply_pagination(query, limit: Optional[int] = None, page: Optional[int] = N
             offset = (page - 1) * limit
             query = query.offset(offset)
     return query
+
+
+def apply_sorting_to_records(
+    records: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Apply sorting to in-memory records (for cases where Firestore query sorting isn't possible)."""
+    if sort_by is None:
+        return records
+
+    def get_sort_key(record):
+        value = record.get(sort_by, 0)
+        if value is None:
+            return 0 if records and isinstance(records[0].get(sort_by, 0), (int, float)) else ""
+        return value
+
+    try:
+        is_reverse = sort_order == "desc"
+        return sorted(records, key=get_sort_key, reverse=is_reverse)
+    except Exception as e:
+        log_warning(f"Error sorting Firestore records: {e}")
+        return records
+
+
+def apply_pagination_to_records(
+    records: List[Dict[str, Any]], limit: Optional[int] = None, page: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Apply pagination to in-memory records (for cases where Firestore query pagination isn't possible)."""
+    if limit is None:
+        return records
+
+    if page is not None and page > 0:
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        return records[start_idx:end_idx]
+    else:
+        return records[:limit]
 
 
 # -- Metrics util methods --
@@ -278,3 +315,62 @@ def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -
             log_error(f"Error committing metrics batch: {e}")
 
     return results
+
+
+# -- Cultural Knowledge util methods --
+
+
+def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
+    """Serialize a CulturalKnowledge object for database storage.
+
+    Converts the model's separate content, categories, and notes fields
+    into a single dict for the database content field.
+
+    Args:
+        cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
+
+    Returns:
+        Dict[str, Any]: A dictionary with content, categories, and notes.
+    """
+    content_dict: Dict[str, Any] = {}
+    if cultural_knowledge.content is not None:
+        content_dict["content"] = cultural_knowledge.content
+    if cultural_knowledge.categories is not None:
+        content_dict["categories"] = cultural_knowledge.categories
+    if cultural_knowledge.notes is not None:
+        content_dict["notes"] = cultural_knowledge.notes
+
+    return content_dict if content_dict else {}
+
+
+def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
+    """Deserialize a database row to a CulturalKnowledge object.
+
+    The database stores content as a dict containing content, categories, and notes.
+    This method extracts those fields and converts them back to the model format.
+
+    Args:
+        db_row (Dict[str, Any]): The database row as a dictionary.
+
+    Returns:
+        CulturalKnowledge: The cultural knowledge object.
+    """
+    # Extract content, categories, and notes from the content field
+    content_json = db_row.get("content", {}) or {}
+
+    return CulturalKnowledge.from_dict(
+        {
+            "id": db_row.get("id"),
+            "name": db_row.get("name"),
+            "summary": db_row.get("summary"),
+            "content": content_json.get("content"),
+            "categories": content_json.get("categories"),
+            "notes": content_json.get("notes"),
+            "metadata": db_row.get("metadata"),
+            "input": db_row.get("input"),
+            "created_at": db_row.get("created_at"),
+            "updated_at": db_row.get("updated_at"),
+            "agent_id": db_row.get("agent_id"),
+            "team_id": db_row.get("team_id"),
+        }
+    )

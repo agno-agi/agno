@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter
 
 from agno.os.schema import HealthResponse
@@ -5,6 +7,8 @@ from agno.os.schema import HealthResponse
 
 def get_health_router() -> APIRouter:
     router = APIRouter(tags=["Health"])
+
+    started_time_stamp = datetime.now(timezone.utc).timestamp()
 
     @router.get(
         "/health",
@@ -15,11 +19,11 @@ def get_health_router() -> APIRouter:
         responses={
             200: {
                 "description": "API is healthy and operational",
-                "content": {"application/json": {"example": {"status": "ok"}}},
+                "content": {"application/json": {"example": {"status": "ok", "instantiated_at": "1760169236.778903"}}},
             }
         },
     )
     async def health_check() -> HealthResponse:
-        return HealthResponse(status="ok")
+        return HealthResponse(status="ok", instantiated_at=str(started_time_stamp))
 
     return router

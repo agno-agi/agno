@@ -23,12 +23,18 @@ read_only_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         GmailTools(
-            include_tools=["search_emails", "get_emails_by_thread", "get_email_body"]
+            include_tools=[
+                "search_emails",
+                "get_emails_by_thread",
+                "mark_email_as_read",
+                "mark_email_as_unread",
+            ]
         )
     ],
     description="You are a Gmail reading specialist that can search and read emails.",
     instructions=[
         "You can search and read Gmail messages but cannot send or draft emails.",
+        "You can mark emails as read or unread for processing workflows.",
         "Summarize email contents and extract key details and dates.",
         "Show the email contents in a structured markdown format.",
     ],
@@ -40,7 +46,7 @@ read_only_agent = Agent(
 safe_gmail_agent = Agent(
     name="Safe Gmail Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GmailTools(exclude_tools=["send_email", "reply_to_email"])],
+    tools=[GmailTools(exclude_tools=["send_email", "send_email_reply"])],
     description="You are a Gmail agent with safe operations only.",
     instructions=[
         "You can read and draft emails but cannot send them.",
@@ -61,6 +67,7 @@ agent = Agent(
         "While showing email contents, you can summarize the email contents, extract key details and dates.",
         "Show the email contents in a structured markdown format.",
         "Attachments can be added to the email",
+        "When you need to modify an email, make sure to find its message_id and thread_id in order to do modificaiton operations.",
     ],
     markdown=True,
     output_schema=FindEmailOutput,
@@ -68,23 +75,26 @@ agent = Agent(
 
 # Example 1: Find the last email from a specific sender
 email = "<replace_with_email_address>"
-response = agent.run(
+response = agent.print_response(
     f"Find the last email from {email} along with the message id, references and in-reply-to",
     markdown=True,
     stream=True,
+    output_schema=FindEmailOutput,
 )
-response_content: FindEmailOutput = response.content  # type: ignore
 
+# Example 2: Mark an email as read/unread (useful for processing workflows)
+# Note: You would typically get the message_id from a search operation first
+
+# Mark as read (removes UNREAD label)
 agent.print_response(
-    f"""Send an email in order to reply to the last email from {email}.
-    Use the thread_id {response_content.thread_id} and message_id {response_content.in_reply_to}. The subject should be 'Re: {response_content.subject}' and the body should be 'Hello'""",
+    f"""Mark the last email received from {email} as unread.""",
     markdown=True,
     stream=True,
 )
 
-# Example 2: Send a new email with attachments
+# Example 3: Send a new email with attachments
 # agent.print_response(
-#     """Send an email to user@example.com with subject 'Subject'
+#     f"""Send an email to {email} with subject 'Subject'
 #     and body 'Body' and Attach the file 'tmp/attachment.pdf'""",
 #     markdown=True,
 #     stream=True,
