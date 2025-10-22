@@ -7,7 +7,7 @@ from agno.agent import RunEvent
 from agno.agent.agent import Agent
 from agno.db.in_memory.in_memory_db import InMemoryDb
 from agno.models.openai.chat import OpenAIChat
-from agno.run.team import TeamRunInput
+from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.team import Team, TeamRunEvent
 from agno.tools.calculator import CalculatorTools
 from agno.tools.decorator import tool
@@ -468,6 +468,171 @@ async def test_async_pre_hook_events_are_emitted(shared_db):
         events[TeamRunEvent.pre_hook_completed][1].run_input.input_content
         == "Hello, how are you? (Modified by pre-hook 1) (Modified by pre-hook 2)"
     )
+
+
+def test_post_hook_events_are_emitted(shared_db):
+    """Test that post hook events are emitted correctly during streaming."""
+
+    def post_hook_1(run_output: TeamRunOutput) -> None:
+        run_output.content = str(run_output.content) + " (Modified by post-hook 1)"
+
+    def post_hook_2(run_output: TeamRunOutput) -> None:
+        run_output.content = str(run_output.content) + " (Modified by post-hook 2)"
+
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        post_hooks=[post_hook_1, post_hook_2],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
+        TeamRunEvent.post_hook_started,
+        TeamRunEvent.post_hook_completed,
+        TeamRunEvent.run_completed,
+    }
+
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert len(events[TeamRunEvent.run_content]) > 1
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+    assert len(events[TeamRunEvent.post_hook_started]) == 2
+    assert len(events[TeamRunEvent.post_hook_completed]) == 2
+
+    # Verify first post hook
+    assert events[TeamRunEvent.post_hook_started][0].post_hook_name == "post_hook_1"
+    assert events[TeamRunEvent.post_hook_completed][0].post_hook_name == "post_hook_1"
+
+    # Verify second post hook
+    assert events[TeamRunEvent.post_hook_started][1].post_hook_name == "post_hook_2"
+    assert events[TeamRunEvent.post_hook_completed][1].post_hook_name == "post_hook_2"
+
+    # Verify final output includes modifications from both hooks
+    final_event = events[TeamRunEvent.run_completed][0]
+    assert "(Modified by post-hook 1)" in str(final_event.content)
+    assert "(Modified by post-hook 2)" in str(final_event.content)
+
+
+@pytest.mark.asyncio
+async def test_async_post_hook_events_are_emitted(shared_db):
+    """Test that async post hook events are emitted correctly during streaming."""
+
+    async def post_hook_1(run_output: TeamRunOutput) -> None:
+        run_output.content = str(run_output.content) + " (Modified by async post-hook 1)"
+
+    async def post_hook_2(run_output: TeamRunOutput) -> None:
+        run_output.content = str(run_output.content) + " (Modified by async post-hook 2)"
+
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        post_hooks=[post_hook_1, post_hook_2],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    response_generator = team.arun("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    async for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
+        TeamRunEvent.post_hook_started,
+        TeamRunEvent.post_hook_completed,
+        TeamRunEvent.run_completed,
+    }
+
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert len(events[TeamRunEvent.run_content]) > 1
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+    assert len(events[TeamRunEvent.post_hook_started]) == 2
+    assert len(events[TeamRunEvent.post_hook_completed]) == 2
+
+    # Verify first post hook
+    assert events[TeamRunEvent.post_hook_started][0].post_hook_name == "post_hook_1"
+    assert events[TeamRunEvent.post_hook_completed][0].post_hook_name == "post_hook_1"
+
+    # Verify second post hook
+    assert events[TeamRunEvent.post_hook_started][1].post_hook_name == "post_hook_2"
+    assert events[TeamRunEvent.post_hook_completed][1].post_hook_name == "post_hook_2"
+
+    # Verify final output includes modifications from both hooks
+    final_event = events[TeamRunEvent.run_completed][0]
+    assert "(Modified by async post-hook 1)" in str(final_event.content)
+    assert "(Modified by async post-hook 2)" in str(final_event.content)
+
+
+def test_pre_and_post_hook_events_are_emitted(shared_db):
+    """Test that both pre and post hook events are emitted correctly during streaming."""
+
+    def pre_hook(run_input: TeamRunInput) -> None:
+        run_input.input_content += " (Modified by pre-hook)"
+
+    def post_hook(run_output: TeamRunOutput) -> None:
+        run_output.content = str(run_output.content) + " (Modified by post-hook)"
+
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        pre_hooks=[pre_hook],
+        post_hooks=[post_hook],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    response_generator = team.run("Hello", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.pre_hook_started,
+        TeamRunEvent.pre_hook_completed,
+        TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
+        TeamRunEvent.post_hook_started,
+        TeamRunEvent.post_hook_completed,
+        TeamRunEvent.run_completed,
+    }
+
+    # Verify pre hook events
+    assert len(events[TeamRunEvent.pre_hook_started]) == 1
+    assert len(events[TeamRunEvent.pre_hook_completed]) == 1
+    assert events[TeamRunEvent.pre_hook_started][0].pre_hook_name == "pre_hook"
+    assert events[TeamRunEvent.pre_hook_completed][0].pre_hook_name == "pre_hook"
+
+    # Verify post hook events
+    assert len(events[TeamRunEvent.post_hook_started]) == 1
+    assert len(events[TeamRunEvent.post_hook_completed]) == 1
+    assert events[TeamRunEvent.post_hook_started][0].post_hook_name == "post_hook"
+    assert events[TeamRunEvent.post_hook_completed][0].post_hook_name == "post_hook"
+
+    # Verify final output includes modifications
+    final_event = events[TeamRunEvent.run_completed][0]
+    assert "(Modified by post-hook)" in str(final_event.content)
 
 
 def test_intermediate_steps_with_structured_output(shared_db):

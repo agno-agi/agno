@@ -1056,7 +1056,7 @@ class Team:
         for i, hook in enumerate(hooks):
             yield handle_event(  # type: ignore
                 run_response=run_output,
-                event=create_team_post_hook_started_event( # type: ignore
+                event=create_team_post_hook_started_event(  # type: ignore
                     from_run_response=run_output,
                     post_hook_name=hook.__name__,
                 ),
@@ -1071,7 +1071,7 @@ class Team:
 
                 yield handle_event(  # type: ignore
                     run_response=run_output,
-                    event=create_team_post_hook_completed_event( # type: ignore
+                    event=create_team_post_hook_completed_event(  # type: ignore
                         from_run_response=run_output,
                         post_hook_name=hook.__name__,
                     ),
@@ -1117,7 +1117,7 @@ class Team:
         for i, hook in enumerate(hooks):
             yield handle_event(  # type: ignore
                 run_response=run_output,
-                event=create_team_post_hook_started_event( # type: ignore
+                event=create_team_post_hook_started_event(  # type: ignore
                     from_run_response=run_output,
                     post_hook_name=hook.__name__,
                 ),
@@ -1135,7 +1135,7 @@ class Team:
 
                 yield handle_event(  # type: ignore
                     run_response=run_output,
-                    event=create_team_post_hook_completed_event( # type: ignore
+                    event=create_team_post_hook_completed_event(  # type: ignore
                         from_run_response=run_output,
                         post_hook_name=hook.__name__,
                     ),
