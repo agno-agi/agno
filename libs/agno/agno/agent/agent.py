@@ -64,7 +64,7 @@ from agno.run.cancel import (
 )
 from agno.run.messages import RunMessages
 from agno.run.team import TeamRunOutputEvent
-from agno.session import AgentSession, SessionSummaryManager
+from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -520,11 +520,6 @@ class Agent:
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
-
-        if add_history_to_context and not db:
-            log_warning(
-                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
-            )
 
         self.store_media = store_media
         self.store_tool_messages = store_tool_messages
@@ -1463,6 +1458,11 @@ class Agent:
                 "`run` method is not supported with an async database. Please use `arun` method instead."
             )
 
+        if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
+            log_warning(
+                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+            )
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -2332,6 +2332,11 @@ class Agent:
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
+
+        if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
+            log_warning(
+                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+            )
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
@@ -5648,17 +5653,21 @@ class Agent:
         return agent_data
 
     # -*- Session Database Functions
-    def _read_session(self, session_id: str) -> Optional[AgentSession]:
+    def _read_session(
+        self, session_id: str, session_type: SessionType = SessionType.AGENT
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)  # type: ignore
+            return self.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
             return None
 
-    async def _aread_session(self, session_id: str) -> Optional[AgentSession]:
+    async def _aread_session(
+        self, session_id: str, session_type: SessionType = SessionType.AGENT
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Get a Session from the database."""
         try:
             if not self.db:
@@ -5828,13 +5837,13 @@ class Agent:
                 log_warning(f"RunOutput {run_id} not found in AgentSession {self._agent_session.session_id}")
                 return None
         else:
-            agent_session = self.get_session(session_id=session_id)
-            if agent_session is not None:
-                run_response = agent_session.get_run(run_id=run_id)
+            session = self.get_session(session_id=session_id)
+            if session is not None:
+                run_response = session.get_run(run_id=run_id)
                 if run_response is not None:
                     return run_response
                 else:
-                    log_warning(f"RunOutput {run_id} not found in AgentSession {session_id}")
+                    log_warning(f"RunOutput {run_id} not found in Session {session_id}")
         return None
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
@@ -5852,17 +5861,17 @@ class Agent:
             and self._agent_session.runs is not None
             and len(self._agent_session.runs) > 0
         ):
-            run_response = self._agent_session.runs[-1]
-            if run_response is not None:
-                return run_response
+            for run_output in reversed(self._agent_session.runs):
+                if hasattr(run_output, "agent_id") and run_output.agent_id == self.id:
+                    return run_output
         else:
-            agent_session = self.get_session(session_id=session_id)
-            if agent_session is not None and agent_session.runs is not None and len(agent_session.runs) > 0:
-                run_response = agent_session.runs[-1]
-                if run_response is not None:
-                    return run_response
+            session = self.get_session(session_id=session_id)
+            if session is not None and session.runs is not None and len(session.runs) > 0:
+                for run_output in reversed(session.runs):
+                    if hasattr(run_output, "agent_id") and run_output.agent_id == self.id:
+                        return run_output
             else:
-                log_warning(f"No run responses found in AgentSession {session_id}")
+                log_warning(f"No run responses found in Session {session_id}")
         return None
 
     def cancel_run(self, run_id: str) -> bool:
@@ -5900,15 +5909,38 @@ class Agent:
 
         # Load and return the session from the database
         if self.db is not None:
-            agent_session = cast(AgentSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+            loaded_session = None
+
+            # We have a standalone agent, so we are loading an AgentSession
+            if self.team_id is None and self.workflow_id is None:
+                loaded_session = cast(
+                    AgentSession,
+                    self._read_session(session_id=session_id_to_load, session_type=SessionType.AGENT),  # type: ignore
+                )
+
+            # We have a team member agent, so we are loading a TeamSession
+            if loaded_session is None and self.team_id is not None:
+                # Load session for team member agents
+                loaded_session = cast(
+                    TeamSession,
+                    self._read_session(session_id=session_id_to_load, session_type=SessionType.TEAM),  # type: ignore
+                )
+
+            # We have a workflow member agent, so we are loading a WorkflowSession
+            if loaded_session is None and self.workflow_id is not None:
+                # Load session for workflow memberagents
+                loaded_session = cast(
+                    WorkflowSession,
+                    self._read_session(session_id=session_id_to_load, session_type=SessionType.WORKFLOW),  # type: ignore
+                )
 
             # Cache the session if relevant
-            if agent_session is not None and self.cache_session:
-                self._agent_session = agent_session
+            if loaded_session is not None and self.cache_session:
+                self._agent_session = loaded_session
 
-            return agent_session
+            return loaded_session
 
-        log_debug(f"AgentSession {session_id_to_load} not found in db")
+        log_debug(f"Session {session_id_to_load} not found in db")
         return None
 
     def save_session(self, session: AgentSession) -> None:
