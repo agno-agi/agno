@@ -154,6 +154,7 @@ class WorkflowSession:
                     runs_data.append(run.to_dict())
                 except Exception as e:
                     raise ValueError(f"Serialization failed: {str(e)}")
+
         return {
             "session_id": self.session_id,
             "user_id": self.user_id,

@@ -475,6 +475,10 @@ class WorkflowRunOutput:
     # Store agent/team responses separately with parent_run_id references
     step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
 
+    # Workflow agent run - stores the full agent RunOutput when workflow agent is used
+    # The agent's parent_run_id will point to this workflow run's run_id to establish the relationship
+    workflow_agent_run: Optional[RunOutput] = None
+
     # Store events from workflow execution
     events: Optional[List[WorkflowRunOutputEvent]] = None
 
@@ -506,6 +510,7 @@ class WorkflowRunOutput:
                 "step_executor_runs",
                 "events",
                 "metrics",
+                "workflow_agent_run",
             ]
         }
 
@@ -540,6 +545,9 @@ class WorkflowRunOutput:
 
         if self.step_executor_runs:
             _dict["step_executor_runs"] = [run.to_dict() for run in self.step_executor_runs]
+
+        if self.workflow_agent_run is not None:
+            _dict["workflow_agent_run"] = self.workflow_agent_run.to_dict()
 
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
@@ -588,6 +596,17 @@ class WorkflowRunOutput:
                 else:
                     step_executor_runs.append(RunOutput.from_dict(run_data))
 
+        workflow_agent_run_data = data.pop("workflow_agent_run", None)
+        workflow_agent_run = None
+        if workflow_agent_run_data:
+            if isinstance(workflow_agent_run_data, dict):
+                if "agent_id" in workflow_agent_run_data or "messages" in workflow_agent_run_data:
+                    workflow_agent_run = RunOutput.from_dict(workflow_agent_run_data)
+                else:
+                    workflow_agent_run = None
+            elif isinstance(workflow_agent_run_data, RunOutput):
+                workflow_agent_run = workflow_agent_run_data
+
         metadata = data.pop("metadata", None)
 
         images = data.pop("images", [])
@@ -625,6 +644,7 @@ class WorkflowRunOutput:
 
         return cls(
             step_results=parsed_step_results,
+            workflow_agent_run=workflow_agent_run,
             metadata=metadata,
             images=images,
             videos=videos,
