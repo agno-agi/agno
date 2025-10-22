@@ -1588,9 +1588,31 @@ class Workflow:
                 # For regular async functions, use the same signature inspection logic in fallback
                 return await func(**call_kwargs)  # type: ignore
 
+    async def _aload_or_create_session(
+        self, session_id: str, user_id: Optional[str], session_state: Optional[Dict[str, Any]]
+    ) -> Tuple[WorkflowSession, Dict[str, Any]]:
+        """Load or create session from database, update metadata, and prepare session state.
+
+        Returns:
+            Tuple of (workflow_session, prepared_session_state)
+        """
+        # Read existing session from database
+        if self._has_async_db():
+            workflow_session = await self.aread_or_create_session(session_id=session_id, user_id=user_id)
+        else:
+            workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+        self._update_metadata(session=workflow_session)
+
+        # Update session state from DB
+        _session_state = session_state or {}
+        _session_state = self._load_session_state(session=workflow_session, session_state=_session_state)
+
+        return workflow_session, _session_state
+
     async def _aexecute(
         self,
-        session: WorkflowSession,
+        session_id: str,
+        user_id: Optional[str],
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1598,6 +1620,11 @@ class Workflow:
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name asynchronously"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
+
+        # Read existing session from database
+        workflow_session, session_state = await self._aload_or_create_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
 
         workflow_run_response.status = RunStatus.running
 
@@ -1667,12 +1694,12 @@ class Workflow:
 
                     step_output = await step.aexecute(  # type: ignore[union-attr]
                         step_input,
-                        session_id=session.session_id,
+                        session_id=session_id,
                         user_id=self.user_id,
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session,
+                        workflow_session=workflow_session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
                         if self.add_workflow_history_to_steps
                         else None,
@@ -1742,24 +1769,25 @@ class Workflow:
                 workflow_run_response.content = f"Workflow execution failed: {e}"
                 raise e
 
-        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-        session.upsert_run(run=workflow_run_response)
+        self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+        workflow_session.upsert_run(run=workflow_run_response)
         if self._has_async_db():
-            await self.asave_session(session=session)
+            await self.asave_session(session=workflow_session)
         else:
-            self.save_session(session=session)
+            self.save_session(session=workflow_session)
         # Always clean up the run tracking
         cleanup_run(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
-            await self._alog_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+            await self._alog_workflow_telemetry(session_id=session_id, run_id=workflow_run_response.run_id)
 
         return workflow_run_response
 
     async def _aexecute_stream(
         self,
-        session: WorkflowSession,
+        session_id: str,
+        user_id: Optional[str],
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1769,6 +1797,11 @@ class Workflow:
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
+
+        # Read existing session from database
+        workflow_session, session_state = await self._aload_or_create_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
 
         workflow_run_response.status = RunStatus.running
 
@@ -1847,7 +1880,7 @@ class Workflow:
                     # Execute step with streaming and yield all events
                     async for event in step.aexecute_stream(  # type: ignore[union-attr]
                         step_input,
-                        session_id=session.session_id,
+                        session_id=session_id,
                         user_id=self.user_id,
                         stream_intermediate_steps=stream_intermediate_steps,
                         stream_executor_events=self.stream_executor_events,
@@ -1855,7 +1888,7 @@ class Workflow:
                         session_state=session_state,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
-                        workflow_session=session,
+                        workflow_session=workflow_session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
                         if self.add_workflow_history_to_steps
                         else None,
@@ -1965,7 +1998,7 @@ class Workflow:
                     run_id=workflow_run_response.run_id or "",
                     workflow_id=self.id,
                     workflow_name=self.name,
-                    session_id=session.session_id,
+                    session_id=session_id,
                     error=str(e),
                 )
 
@@ -1983,7 +2016,7 @@ class Workflow:
                     run_id=workflow_run_response.run_id or "",
                     workflow_id=self.id,
                     workflow_name=self.name,
-                    session_id=session.session_id,
+                    session_id=session_id,
                     reason=str(e),
                 )
                 yield self._handle_event(
@@ -2000,7 +2033,7 @@ class Workflow:
                     run_id=workflow_run_response.run_id or "",
                     workflow_id=self.id,
                     workflow_name=self.name,
-                    session_id=session.session_id,
+                    session_id=session_id,
                     error=str(e),
                 )
 
@@ -2024,16 +2057,16 @@ class Workflow:
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
         # Store the completed workflow response
-        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-        session.upsert_run(run=workflow_run_response)
+        self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+        workflow_session.upsert_run(run=workflow_run_response)
         if self._has_async_db():
-            await self.asave_session(session=session)
+            await self.asave_session(session=workflow_session)
         else:
-            self.save_session(session=session)
+            self.save_session(session=workflow_session)
 
         # Log Workflow Telemetry
         if self.telemetry:
-            await self._alog_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+            await self._alog_workflow_telemetry(session_id=session_id, run_id=workflow_run_response.run_id)
 
         # Always clean up the run tracking
         cleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -2062,14 +2095,9 @@ class Workflow:
         )
 
         # Read existing session from database
-        if self._has_async_db():
-            workflow_session = await self.aread_or_create_session(session_id=session_id, user_id=user_id)
-        else:
-            workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
-        self._update_metadata(session=workflow_session)
-
-        # Update session state from DB
-        session_state = self._load_session_state(session=workflow_session, session_state=session_state)
+        workflow_session, session_state = await self._aload_or_create_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
 
         self._prepare_steps()
 
@@ -2114,7 +2142,8 @@ class Workflow:
                     self.save_session(session=workflow_session)
 
                 await self._aexecute(
-                    session=workflow_session,
+                    session_id=session_id,
+                    user_id=user_id,
                     execution_input=inputs,
                     workflow_run_response=workflow_run_response,
                     session_state=session_state,
@@ -2165,14 +2194,9 @@ class Workflow:
         )
 
         # Read existing session from database
-        if self._has_async_db():
-            workflow_session = await self.aread_or_create_session(session_id=session_id, user_id=user_id)
-        else:
-            workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
-        self._update_metadata(session=workflow_session)
-
-        # Update session state from DB
-        session_state = self._load_session_state(session=workflow_session, session_state=session_state)
+        workflow_session, session_state = await self._aload_or_create_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
 
         self._prepare_steps()
 
@@ -2218,8 +2242,9 @@ class Workflow:
 
                 # Execute with streaming - consume all events (they're auto-broadcast via _handle_event)
                 async for event in self._aexecute_stream(
+                    session_id=session_id,
+                    user_id=user_id,
                     execution_input=inputs,
-                    session=workflow_session,
                     workflow_run_response=workflow_run_response,
                     stream_intermediate_steps=stream_intermediate_steps,
                     session_state=session_state,
@@ -2434,7 +2459,7 @@ class Workflow:
     ) -> WorkflowRunOutput: ...
 
     @overload
-    async def arun(
+    def arun(
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
@@ -2451,7 +2476,7 @@ class Workflow:
         websocket: Optional[WebSocket] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
-    async def arun(
+    def arun(  # type: ignore
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
@@ -2481,7 +2506,7 @@ class Workflow:
         if background:
             if stream and websocket:
                 # Background + Streaming + WebSocket = Real-time events
-                return await self._arun_background_stream(
+                return self._arun_background_stream(  # type: ignore
                     input=input,
                     additional_data=additional_data,
                     user_id=user_id,
@@ -2500,7 +2525,7 @@ class Workflow:
                 raise ValueError("Background streaming execution requires a WebSocket for real-time events")
             else:
                 # Background + Non-streaming = Polling (existing)
-                return await self._arun_background(
+                return self._arun_background(  # type: ignore
                     input=input,
                     additional_data=additional_data,
                     user_id=user_id,
@@ -2521,16 +2546,6 @@ class Workflow:
         session_id, user_id, session_state = self._initialize_session(
             session_id=session_id, user_id=user_id, session_state=session_state, run_id=run_id
         )
-
-        # Read existing session from database
-        if self._has_async_db():
-            workflow_session = await self.aread_or_create_session(session_id=session_id, user_id=user_id)
-        else:
-            workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
-        self._update_metadata(session=workflow_session)
-
-        # Update session state from DB
-        session_state = self._load_session_state(session=workflow_session, session_state=session_state)
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
 
@@ -2572,10 +2587,11 @@ class Workflow:
         self.update_agents_and_teams_session_info()
 
         if stream:
-            return self._aexecute_stream(
+            return self._aexecute_stream(  # type: ignore
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
-                session=workflow_session,
+                session_id=session_id,
+                user_id=user_id,
                 stream_intermediate_steps=stream_intermediate_steps,
                 websocket=websocket,
                 files=files,
@@ -2583,10 +2599,11 @@ class Workflow:
                 **kwargs,
             )
         else:
-            return await self._aexecute(
+            return self._aexecute(  # type: ignore
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
-                session=workflow_session,
+                session_id=session_id,
+                user_id=user_id,
                 websocket=websocket,
                 files=files,
                 session_state=session_state,

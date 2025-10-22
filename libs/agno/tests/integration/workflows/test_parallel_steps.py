@@ -232,7 +232,7 @@ async def test_async_parallel_streaming(shared_db):
     )
 
     events = []
-    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
