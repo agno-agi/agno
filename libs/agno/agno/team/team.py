@@ -78,6 +78,8 @@ from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_team_parser_model_response_completed_event,
     create_team_parser_model_response_started_event,
+    create_team_post_hook_completed_event,
+    create_team_post_hook_started_event,
     create_team_pre_hook_completed_event,
     create_team_pre_hook_started_event,
     create_team_reasoning_completed_event,
@@ -1033,7 +1035,7 @@ class Team:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> Iterator[TeamRunOutputEvent]:
         """Execute multiple post-hook functions in succession."""
         if hooks is None:
             return
@@ -1052,11 +1054,30 @@ class Team:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            yield handle_event(  # type: ignore
+                run_response=run_output,
+                event=create_team_post_hook_started_event( # type: ignore
+                    from_run_response=run_output,
+                    post_hook_name=hook.__name__,
+                ),
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
                 hook(**filtered_args)
+
+                yield handle_event(  # type: ignore
+                    run_response=run_output,
+                    event=create_team_post_hook_completed_event( # type: ignore
+                        from_run_response=run_output,
+                        post_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -1075,7 +1096,7 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> AsyncIterator[TeamRunOutputEvent]:
         """Execute multiple post-hook functions in succession (async version)."""
         if hooks is None:
             return
@@ -1094,6 +1115,15 @@ class Team:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            yield handle_event(  # type: ignore
+                run_response=run_output,
+                event=create_team_post_hook_started_event( # type: ignore
+                    from_run_response=run_output,
+                    post_hook_name=hook.__name__,
+                ),
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -1103,6 +1133,15 @@ class Team:
                 else:
                     hook(**filtered_args)
 
+                yield handle_event(  # type: ignore
+                    run_response=run_output,
+                    event=create_team_post_hook_completed_event( # type: ignore
+                        from_run_response=run_output,
+                        post_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
             except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
@@ -1268,7 +1307,7 @@ class Team:
 
             # 10. Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
-                self._execute_post_hooks(
+                iterator = self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session=session,
@@ -1276,6 +1315,7 @@ class Team:
                     debug_mode=debug_mode,
                     **kwargs,
                 )
+                deque(iterator, maxlen=0)
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 11. Wait for background memory creation
@@ -1512,7 +1552,7 @@ class Team:
                 )
             # Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
-                self._execute_post_hooks(
+                yield from self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session_state=session_state,
@@ -2062,14 +2102,16 @@ class Team:
 
             # 12. Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
-                await self._aexecute_post_hooks(
+                async for _ in self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session=team_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
                     **kwargs,
-                )
+                ):
+                    pass
+
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 13. Wait for background memory creation
@@ -2325,7 +2367,7 @@ class Team:
 
             # Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
-                await self._aexecute_post_hooks(
+                async for event in self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session_state=session_state,
@@ -2335,7 +2377,8 @@ class Team:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     **kwargs,
-                )
+                ):
+                    yield event
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
             # 11. Wait for background memory creation

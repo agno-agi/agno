@@ -11,6 +11,8 @@ from agno.run.agent import (
     OutputModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     ParserModelResponseStartedEvent,
+    PostHookCompletedEvent,
+    PostHookStartedEvent,
     PreHookCompletedEvent,
     PreHookStartedEvent,
     ReasoningCompletedEvent,
@@ -39,6 +41,8 @@ from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelRe
 from agno.run.team import OutputModelResponseStartedEvent as TeamOutputModelResponseStartedEvent
 from agno.run.team import ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent
 from agno.run.team import ParserModelResponseStartedEvent as TeamParserModelResponseStartedEvent
+from agno.run.team import PostHookCompletedEvent as TeamPostHookCompletedEvent
+from agno.run.team import PostHookStartedEvent as TeamPostHookStartedEvent
 from agno.run.team import PreHookCompletedEvent as TeamPreHookCompletedEvent
 from agno.run.team import PreHookStartedEvent as TeamPreHookStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
@@ -248,6 +252,54 @@ def create_team_pre_hook_completed_event(
         run_id=from_run_response.run_id,
         pre_hook_name=pre_hook_name,
         run_input=deepcopy(run_input),
+    )
+
+
+def create_post_hook_started_event(
+    from_run_response: RunOutput, post_hook_name: Optional[str] = None
+) -> PostHookStartedEvent:
+    return PostHookStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        post_hook_name=post_hook_name,
+    )
+
+
+def create_team_post_hook_started_event(
+    from_run_response: TeamRunOutput, post_hook_name: Optional[str] = None
+) -> TeamPostHookStartedEvent:
+    return TeamPostHookStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        post_hook_name=post_hook_name,
+    )
+
+
+def create_post_hook_completed_event(
+    from_run_response: RunOutput, post_hook_name: Optional[str] = None
+) -> PostHookCompletedEvent:
+    return PostHookCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        post_hook_name=post_hook_name,
+    )
+
+
+def create_team_post_hook_completed_event(
+    from_run_response: TeamRunOutput, post_hook_name: Optional[str] = None
+) -> TeamPostHookCompletedEvent:
+    return TeamPostHookCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        post_hook_name=post_hook_name,
     )
 
 

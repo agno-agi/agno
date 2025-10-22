@@ -124,6 +124,9 @@ class RunEvent(str, Enum):
     pre_hook_started = "PreHookStarted"
     pre_hook_completed = "PreHookCompleted"
 
+    post_hook_started = "PostHookStarted"
+    post_hook_completed = "PostHookCompleted"
+
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
 
@@ -290,6 +293,18 @@ class PreHookCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class PostHookStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.post_hook_started.value
+    post_hook_name: Optional[str] = None
+
+
+@dataclass
+class PostHookCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.post_hook_completed.value
+    post_hook_name: Optional[str] = None
+
+
+@dataclass
 class MemoryUpdateStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.memory_update_started.value
 
@@ -383,6 +398,8 @@ RunOutputEvent = Union[
     RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
+    PostHookStartedEvent,
+    PostHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningCompletedEvent,
@@ -413,6 +430,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.run_continued.value: RunContinuedEvent,
     RunEvent.pre_hook_started.value: PreHookStartedEvent,
     RunEvent.pre_hook_completed.value: PreHookCompletedEvent,
+    RunEvent.post_hook_started.value: PostHookStartedEvent,
+    RunEvent.post_hook_completed.value: PostHookCompletedEvent,
     RunEvent.reasoning_started.value: ReasoningStartedEvent,
     RunEvent.reasoning_step.value: ReasoningStepEvent,
     RunEvent.reasoning_completed.value: ReasoningCompletedEvent,

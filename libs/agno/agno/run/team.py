@@ -117,6 +117,9 @@ class TeamRunEvent(str, Enum):
     pre_hook_started = "TeamPreHookStarted"
     pre_hook_completed = "TeamPreHookCompleted"
 
+    post_hook_started = "TeamPostHookStarted"
+    post_hook_completed = "TeamPostHookCompleted"
+
     tool_call_started = "TeamToolCallStarted"
     tool_call_completed = "TeamToolCallCompleted"
 
@@ -273,6 +276,18 @@ class PreHookCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class PostHookStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.post_hook_started.value
+    post_hook_name: Optional[str] = None
+
+
+@dataclass
+class PostHookCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.post_hook_completed.value
+    post_hook_name: Optional[str] = None
+
+
+@dataclass
 class MemoryUpdateStartedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.memory_update_started.value
 
@@ -391,6 +406,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_cancelled.value: RunCancelledEvent,
     TeamRunEvent.pre_hook_started.value: PreHookStartedEvent,
     TeamRunEvent.pre_hook_completed.value: PreHookCompletedEvent,
+    TeamRunEvent.post_hook_started.value: PostHookStartedEvent,
+    TeamRunEvent.post_hook_completed.value: PostHookCompletedEvent,
     TeamRunEvent.reasoning_started.value: ReasoningStartedEvent,
     TeamRunEvent.reasoning_step.value: ReasoningStepEvent,
     TeamRunEvent.reasoning_completed.value: ReasoningCompletedEvent,

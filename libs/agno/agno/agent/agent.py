@@ -84,6 +84,8 @@ from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_parser_model_response_completed_event,
     create_parser_model_response_started_event,
+    create_post_hook_completed_event,
+    create_post_hook_started_event,
     create_pre_hook_completed_event,
     create_pre_hook_started_event,
     create_reasoning_completed_event,
@@ -1019,7 +1021,7 @@ class Agent:
 
             # 10. Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
-                self._execute_post_hooks(
+                post_hook_iterator = self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session=session,
@@ -1030,6 +1032,7 @@ class Agent:
                     debug_mode=debug_mode,
                     **kwargs,
                 )
+                deque(post_hook_iterator, maxlen=0)
 
             # Check for cancellation
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1284,7 +1287,7 @@ class Agent:
 
             # Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
-                self._execute_post_hooks(
+                yield from self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session_state=session_state,
@@ -1841,7 +1844,7 @@ class Agent:
 
             # 13. Execute post-hooks (after output is generated but before response is returned)
             if self.post_hooks is not None:
-                await self._aexecute_post_hooks(
+                async for _ in self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session_state=session_state,
@@ -1851,7 +1854,8 @@ class Agent:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     **kwargs,
-                )
+                ):
+                    pass
 
             # Check for cancellation
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1894,6 +1898,8 @@ class Agent:
         finally:
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
+                import asyncio
+
                 memory_task.cancel()
                 try:
                     await memory_task
@@ -1901,6 +1907,8 @@ class Agent:
                     pass
             # Cancel the cultural knowledge task if it's still running
             if cultural_knowledge_task is not None and not cultural_knowledge_task.done():
+                import asyncio
+
                 cultural_knowledge_task.cancel()
                 try:
                     await cultural_knowledge_task
@@ -2135,7 +2143,7 @@ class Agent:
 
             # Execute post-hooks (after output is generated but before response is returned)
             if self.post_hooks is not None:
-                await self._aexecute_post_hooks(
+                async for event in self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session_state=session_state,
@@ -2145,7 +2153,8 @@ class Agent:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     **kwargs,
-                )
+                ):
+                    yield event
 
             # 11. Wait for background memory creation
             async for item in await_for_background_tasks_stream(
@@ -2824,7 +2833,7 @@ class Agent:
 
             # 6. Execute post-hooks
             if self.post_hooks is not None:
-                self._execute_post_hooks(
+                post_hook_iterator = self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session=session,
@@ -2835,7 +2844,7 @@ class Agent:
                     debug_mode=debug_mode,
                     **kwargs,
                 )
-
+                deque(post_hook_iterator, maxlen=0)
             # Check for cancellation
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2948,7 +2957,7 @@ class Agent:
                     store_events=self.store_events,
                 )
             if self.post_hooks is not None:
-                self._execute_post_hooks(
+                yield from self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session=session,
@@ -3363,7 +3372,7 @@ class Agent:
 
             # 12. Execute post-hooks
             if self.post_hooks is not None:
-                await self._aexecute_post_hooks(
+                async for _ in self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session=agent_session,
@@ -3373,7 +3382,8 @@ class Agent:
                     dependencies=dependencies,
                     metadata=metadata,
                     **kwargs,
-                )
+                ):
+                    pass
 
             # Check for cancellation
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3592,7 +3602,7 @@ class Agent:
 
             # 8. Execute post-hooks
             if self.post_hooks is not None:
-                self._execute_post_hooks(
+                async for event in self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session=agent_session,
@@ -3602,7 +3612,8 @@ class Agent:
                     metadata=metadata,
                     debug_mode=debug_mode,
                     **kwargs,
-                )
+                ):
+                    yield event
             # Check for cancellation before model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3831,7 +3842,7 @@ class Agent:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> Iterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession."""
         if hooks is None:
             return
@@ -3850,11 +3861,30 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            yield handle_event(  # type: ignore
+                run_response=run_output,
+                event=create_post_hook_started_event(
+                    from_run_response=run_output,
+                    post_hook_name=hook.__name__,
+                ),
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
                 hook(**filtered_args)
+
+                yield handle_event(  # type: ignore
+                    run_response=run_output,
+                    event=create_post_hook_completed_event(
+                        from_run_response=run_output,
+                        post_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
             except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
@@ -3875,7 +3905,7 @@ class Agent:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession (async version)."""
         if hooks is None:
             return
@@ -3894,6 +3924,15 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            yield handle_event(  # type: ignore
+                run_response=run_output,
+                event=create_post_hook_started_event(
+                    from_run_response=run_output,
+                    post_hook_name=hook.__name__,
+                ),
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -3902,6 +3941,16 @@ class Agent:
                     await hook(**filtered_args)
                 else:
                     hook(**filtered_args)
+
+                yield handle_event(  # type: ignore
+                    run_response=run_output,
+                    event=create_post_hook_completed_event(
+                        from_run_response=run_output,
+                        post_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
