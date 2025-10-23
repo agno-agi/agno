@@ -312,7 +312,7 @@ class AgentOS:
                             async with self._mcp_app.lifespan(app):  # type: ignore
                                 yield
 
-                    final_lifespan = combined_lifespan
+                    final_lifespan = combined_lifespan  # type: ignore
 
                 fastapi_app = self._make_app(lifespan=final_lifespan)
             else:

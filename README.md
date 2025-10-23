@@ -19,9 +19,30 @@
 
 ## What is Agno?
 
-Agno is the multi-agent framework, runtime and UI built for speed.
+Agno is a multi-agent framework, runtime and control plane. Built for speed, privacy, and scale.
 
-Use it to build multi-agent systems with memory, knowledge, human in the loop and MCP support. You can orchestrate agents as multi-agent teams (more autonomy) or step-based agentic workflows (more control).
+It provides a rich set of primitives for building:
+
+- **Agents** with persistent state, knowledge retrieval, memory, and advanced features like human-in-the-loop, guardrails, dynamic context management and best-in-class MCP support.
+- **Multi-Agent Teams** that operate autonomously under a team leader that maintains shared state and context.
+- **Step-based Workflows** for controlled, deterministic execution. Steps can be Agents, Teams, or a regular python functions and can run sequentially, in parallel, in loops, branches, or conditionally.
+
+Agno also provides a FastAPI-powered runtime for serving multi-agent systems in production, covering the entire {build → run → deploy} lifecycle. Building Agents is easy, running them is hard, and that's where Agno shines.
+
+## Getting started
+
+If you're new to Agno, follow our [quickstart](https://docs.agno.com/introduction/quickstart) to build your first Agent and chat with it using the AgentOS UI.
+
+After that, checkout the [examples gallery](https://docs.agno.com/examples/introduction) and build real-world applications with Agno.
+
+## Documentation, Community & More Examples
+
+- Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
+- Cookbook: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
+- Community forum: <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">community.agno.com</a>
+- Discord: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
+
+## Example
 
 Here’s an example of an Agent that connects to an MCP server, manages conversation state in a database, and is served using a FastAPI application that you can interact with using the [AgentOS UI](https://os.agno.com).
 
@@ -56,42 +77,57 @@ if __name__ == "__main__":
     agent_os.serve(app="agno_agent:app", reload=True)
 ```
 
-## What is the AgentOS?
+## Designed for Agent Engineering
 
-AgentOS is a high-performance runtime for multi-agent systems. Key features include:
+Agno is a remarkably feature-rich framework, purpose-built for large-scale multi-agent deployments.
 
-1. **Pre-built FastAPI runtime**: AgentOS ships with a ready-to-use FastAPI app for running your agents, teams, and workflows. This gives you a major head start in building your AI product.
+| **Category** | **Feature** | **Description** |
+|---------------|-------------|-----------------|
+| **Core Intelligence** | **Model Agnostic** | Works with any model provider so you can use your favorite LLMs. |
+|  | **Type Safe** | Enforce structured I/O through `input_schema` and `output_schema` for predictable, composable behavior. |
+|  | **Dynamic Context Engineering** | Inject variables, state, and retrieved data on the fly into context. Perfect for dependency-driven agents. |
+| **Memory, Knowledge, and Persistence** | **Persistent Storage** | Give your Agents, Teams, and Workflows a database to persist session history, state, and messages. |
+|  | **User Memory** | Built-in memory system that allows Agents to recall user-specific context across sessions. |
+|  | **Agentic RAG** | Connect to 20+ vector stores (called **Knowledge** in Agno) with hybrid search + reranking out of the box. |
+|  | **Culture (Collective Memory)** | Shared knowledge that compounds across agents and time. |
+| **Execution & Control** | **Human-in-the-Loop** | Native support for confirmations, manual overrides, and external tool execution. |
+|  | **Guardrails** | Built-in safeguards for validation, security, and prompt protection. |
+|  | **Agent Lifecycle Hooks** | Pre- and post-hooks to validate or transform inputs and outputs. |
+|  | **MCP Integration** | First-class support for the Model Context Protocol (MCP) to connect Agents with external systems. |
+|  | **Toolkits** | 100+ built-in toolkits with thousands of tools, ready for use across data, code, web, and enterprise APIs. |
+| **Runtime & Evaluation** | **Runtime** | Pre-built FastAPI based runtime with SSE compatible endpoints, ready for production on day 1. |
+|  | **Control Plane (UI)** | Integrated interface to visualize, monitor, and debug agent activity in real time. |
+|  | **Natively Multimodal** | Agents can process and generate text, images, audio, video, and files. |
+|  | **Evals** | Measure your Agents' Accuracy, Performance, and Reliability. |
+| **Security & Privacy** | **Private by Design** | Runs entirely in your cloud. The UI connects directly to your AgentOS from your browser, no data is ever sent externally. |
+|  | **Data Governance** | Your data lives securely in your Agent database, no external data sharing or vendor lock-in. |
+|  | **Access Control** | Role-based access (RBAC) and per-agent permissions to protect sensitive contexts and tools. |
 
-2. **Integrated UI**: The [AgentOS UI](https://os.agno.com) connects directly to your runtime, letting you test, monitor, and manage your system in real time. This gives you unmatched visibility and control over your system.
+Every part of Agno is built for real-world deployment — where developer experience meets production performance.
 
-3. **Private by design**: AgentOS runs entirely in your cloud, ensuring complete data privacy. No data ever leaves your system. This is ideal for security-conscious enterprises.
+## AgentOS - Production Runtime for Multi-Agent Systems
 
-Here's what the [AgentOS UI](https://os.agno.com) looks like:
+AgentOS is Agno's high-performance runtime for serving multi-agent systems in production. Key features include:
+
+1. **Pre-built FastAPI Runtime**: AgentOS ships with a ready-to-use FastAPI app for orchestrating your agents, teams, and workflows. This provides a major head start when building an AI product.
+
+2. **Integrated Control Plane**: The [AgentOS UI](https://os.agno.com) connects directly to your runtime, letting you test, monitor, and manage your system in real time. This gives you unmatched visibility and control over your system.
+
+3. **Private by Design**: AgentOS runs entirely in your cloud, ensuring complete data privacy. No data ever leaves your system. This is ideal for security-conscious enterprises.
+
+Here's what the [AgentOS UI](https://os.agno.com) looks like in action:
 
 https://github.com/user-attachments/assets/feb23db8-15cc-4e88-be7c-01a21a03ebf6
 
 ## The Complete Agentic Solution
 
-For companies building agents, Agno provides the complete solution:
+For companies building agents, Agno provides the complete agentic solution:
 
 - The fastest framework for building agents, multi-agent teams and agentic workflows.
 - A ready-to-use FastAPI app that gets you building AI products on day one.
 - A control plane for testing, monitoring and managing your system.
 
 Agno brings a novel architecture that no other framework provides, your AgentOS runs securely in your cloud, and the control plane connects directly to it from your browser. You don't need to send data to any external services or pay retention costs, you get complete privacy and control.
-
-## Getting started
-
-If you're new to Agno, follow our [quickstart](https://docs.agno.com/introduction/quickstart) to build your first Agent and run it using the AgentOS.
-
-After that, checkout the [examples gallery](https://docs.agno.com/examples/introduction) and build real-world applications with Agno.
-
-## Documentation, Community & More Examples
-
-- Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
-- Cookbook: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
-- Community forum: <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">community.agno.com</a>
-- Discord: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
 
 ## Setup Your Coding Agent to Use Agno
 

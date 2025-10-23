@@ -278,7 +278,8 @@ class Condition:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        stream_intermediate_steps: bool = False,
+        stream_events: bool = False,
+        stream_intermediate_steps: bool = False,  # type: ignore
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -300,7 +301,10 @@ class Condition:
         condition_result = self._evaluate_condition(step_input, session_state)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Yield condition started event
             yield ConditionExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -315,7 +319,7 @@ class Condition:
             )
 
         if not condition_result:
-            if stream_intermediate_steps and workflow_run_response:
+            if stream_events and workflow_run_response:
                 # Yield condition completed event for empty case
                 yield ConditionExecutionCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -354,7 +358,7 @@ class Condition:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
@@ -411,7 +415,7 @@ class Condition:
                 break
 
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             # Yield condition completed event
             yield ConditionExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -546,6 +550,7 @@ class Condition:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
@@ -568,7 +573,10 @@ class Condition:
         condition_result = await self._aevaluate_condition(step_input, session_state)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Yield condition started event
             yield ConditionExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -583,7 +591,7 @@ class Condition:
             )
 
         if not condition_result:
-            if stream_intermediate_steps and workflow_run_response:
+            if stream_events and workflow_run_response:
                 # Yield condition completed event for empty case
                 yield ConditionExecutionCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -624,7 +632,7 @@ class Condition:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
@@ -682,7 +690,7 @@ class Condition:
 
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             # Yield condition completed event
             yield ConditionExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
