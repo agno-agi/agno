@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.schemas import UserMemory
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.session import Session
@@ -22,6 +23,7 @@ class BaseDb(ABC):
     def __init__(
         self,
         session_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -32,6 +34,7 @@ class BaseDb(ABC):
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
+        self.culture_table_name = culture_table or "agno_culture"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
@@ -77,7 +80,11 @@ class BaseDb(ABC):
 
     @abstractmethod
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -89,13 +96,15 @@ class BaseDb(ABC):
 
     @abstractmethod
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+        self,
+        sessions: List[Session],
+        deserialize: Optional[bool] = True,
+        preserve_updated_at: bool = False,
     ) -> List[Union[Session, Dict[str, Any]]]:
         """Bulk upsert multiple sessions for improved performance on large datasets."""
         raise NotImplementedError
 
     # --- Memory ---
-
     @abstractmethod
     def clear_memories(self) -> None:
         raise NotImplementedError
@@ -154,7 +163,10 @@ class BaseDb(ABC):
 
     @abstractmethod
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+        self,
+        memories: List[UserMemory],
+        deserialize: Optional[bool] = True,
+        preserve_updated_at: bool = False,
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """Bulk upsert multiple memories for improved performance on large datasets."""
         raise NotImplementedError
@@ -367,6 +379,35 @@ class BaseDb(ABC):
         Returns:
             List[Span]: List of matching spans.
         """
+
+    # --- Cultural Knowledge ---
+    @abstractmethod
+    def clear_cultural_knowledge(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_cultural_knowledge(self, id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_cultural_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_all_cultural_knowledge(
+        self,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> Optional[List[CulturalKnowledge]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
 
@@ -383,6 +424,7 @@ class AsyncBaseDb(ABC):
         knowledge_table: Optional[str] = None,
         trace_table: Optional[str] = None,
         span_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -392,6 +434,7 @@ class AsyncBaseDb(ABC):
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = trace_table or "agno_traces"
         self.span_table_name = span_table or "agno_spans"
+        self.culture_table_name = culture_table or "agno_culture"
 
     # --- Sessions ---
     @abstractmethod
@@ -431,7 +474,11 @@ class AsyncBaseDb(ABC):
 
     @abstractmethod
     async def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -442,7 +489,6 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Memory ---
-
     @abstractmethod
     async def clear_memories(self) -> None:
         raise NotImplementedError
@@ -705,4 +751,34 @@ class AsyncBaseDb(ABC):
         Returns:
             List[Span]: List of matching spans.
         """
+        raise NotImplementedError
+        
+    # --- Cultural Notions ---
+    @abstractmethod
+    async def clear_cultural_knowledge(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_cultural_knowledge(self, id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_cultural_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_all_cultural_knowledge(
+        self,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> Optional[List[CulturalKnowledge]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError

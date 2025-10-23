@@ -239,7 +239,7 @@ def test_a2a_streaming(test_agent: Agent, test_client: TestClient):
         assert call_kwargs["input"] == "Hello, agent!"
         assert call_kwargs["session_id"] == "context-789"
         assert call_kwargs["stream"] is True
-        assert call_kwargs["stream_intermediate_steps"] is True
+        assert call_kwargs["stream_events"] is True
 
 
 def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
@@ -753,7 +753,7 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
         assert call_kwargs["input"] == "Hello, team!"
         assert call_kwargs["session_id"] == "context-789"
         assert call_kwargs["stream"] is True
-        assert call_kwargs["stream_intermediate_steps"] is True
+        assert call_kwargs["stream_events"] is True
 
 
 def test_a2a_user_id_from_header(test_agent: Agent, test_client: TestClient):

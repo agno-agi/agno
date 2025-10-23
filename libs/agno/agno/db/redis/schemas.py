@@ -81,6 +81,20 @@ KNOWLEDGE_SCHEMA = {
 }
 
 
+CULTURAL_KNOWLEDGE_SCHEMA = {
+    "id": {"type": "string", "primary_key": True},
+    "name": {"type": "string"},
+    "summary": {"type": "string"},
+    "content": {"type": "json"},
+    "metadata": {"type": "json"},
+    "input": {"type": "string"},
+    "created_at": {"type": "integer"},
+    "updated_at": {"type": "integer"},
+    "agent_id": {"type": "string"},
+    "team_id": {"type": "string"},
+}
+
+
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.

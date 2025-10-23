@@ -123,6 +123,17 @@ SPAN_TABLE_SCHEMA = {
     "attributes": {"type": JSON, "nullable": True},
     "events": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
+CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False, "index": True},
+    "summary": {"type": String, "nullable": True},
+    "content": {"type": JSON, "nullable": True},
+    "metadata": {"type": JSON, "nullable": True},
+    "input": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "agent_id": {"type": String, "nullable": True},
+    "team_id": {"type": String, "nullable": True},
 }
 
 
@@ -144,6 +155,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
+        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 
