@@ -415,7 +415,7 @@ class Condition:
                 break
 
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             # Yield condition completed event
             yield ConditionExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",

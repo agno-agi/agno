@@ -1576,9 +1576,11 @@ class Team:
 
             # 8. Wait for background memory creation
             yield from wait_for_background_tasks_stream(
+                run_response=run_response,
                 memory_future=memory_future,
                 stream_events=stream_events,
-                run_response=run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
             )
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2416,7 +2418,13 @@ class Team:
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
             # 11. Wait for background memory creation
-            async for event in await_for_background_tasks_stream(run_response=run_response, memory_task=memory_task):
+            async for event in await_for_background_tasks_stream(
+                run_response=run_response,
+                memory_task=memory_task,
+                stream_events=stream_events,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            ):
                 yield event
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -7489,12 +7497,17 @@ class Team:
         # Create new session if none found
         if team_session is None:
             log_debug(f"Creating new TeamSession: {session_id}")
+            session_data = {}
+            if self.session_state is not None:
+                from copy import deepcopy
+
+                session_data["session_state"] = deepcopy(self.session_state)
             team_session = TeamSession(
                 session_id=session_id,
                 team_id=self.id,
                 user_id=user_id,
                 team_data=self._get_team_data(),
-                session_data={},
+                session_data=session_data,
                 metadata=self.metadata,
                 created_at=int(time()),
             )

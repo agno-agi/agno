@@ -104,6 +104,7 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(shared_db):
 
     session_id = "test_session_1"
     agent = Agent(
+        id="test_agent",
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
         db=shared_db,
@@ -111,7 +112,7 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(shared_db):
     )
 
     updated_tools = None
-    for response in agent.run("What is the weather in Tokyo?", session_id=session_id, stream=True):
+    for response in agent.run("What is the weather in Tokyo?", session_id=session_id, stream=True, stream_events=True):
         if response.is_paused:
             assert response.tools[0].requires_confirmation
             assert response.tools[0].tool_name == "get_the_weather"
@@ -126,6 +127,7 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(shared_db):
 
     # Create a completely new agent instance
     agent = Agent(
+        id="test_agent",
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
         db=shared_db,
@@ -133,12 +135,13 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(shared_db):
     )
 
     response = agent.continue_run(
-        run_id=run_response.run_id, updated_tools=updated_tools, session_id=session_id, stream=True
+        run_id=run_response.run_id, updated_tools=updated_tools, session_id=session_id, stream=True, stream_events=True
     )
     for response in response:
         if response.is_paused:
             assert False, "The run should not be paused"
-    run_response = agent.get_last_run_output(session_id=session_id)
+    run_response = agent.get_run_output(run_id=run_response.run_id, session_id=session_id)
+
     assert run_response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 

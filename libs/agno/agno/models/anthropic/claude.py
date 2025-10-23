@@ -75,7 +75,7 @@ class Claude(Model):
     provider: str = "Anthropic"
 
     # Request parameters
-    max_tokens: Optional[int] = 4096
+    max_tokens: Optional[int] = 8192
     thinking: Optional[Dict[str, Any]] = None
     temperature: Optional[float] = None
     stop_sequences: Optional[List[str]] = None
@@ -656,7 +656,7 @@ class Claude(Model):
 
         # Anthropic-specific additional fields
         if response_usage.server_tool_use:
-            metrics.provider_metrics = {"server_tool_use": response_usage.server_tool_use}
+            metrics.provider_metrics = {"server_tool_use": response_usage.server_tool_use.model_dump()}
         if isinstance(response_usage, Usage):
             if response_usage.service_tier:
                 metrics.provider_metrics = metrics.provider_metrics or {}
