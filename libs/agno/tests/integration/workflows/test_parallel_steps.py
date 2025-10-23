@@ -92,9 +92,7 @@ def test_parallel_direct_execute_stream():
         content="",
     )
 
-    events = list(
-        parallel.execute_stream(step_input, workflow_run_response=mock_response, stream_intermediate_steps=True)
-    )
+    events = list(parallel.execute_stream(step_input, workflow_run_response=mock_response, stream_events=True))
 
     # Should have started, completed events and final result
     started_events = [e for e in events if isinstance(e, ParallelExecutionStartedEvent)]
@@ -168,7 +166,7 @@ def test_parallel_streaming(shared_db):
         steps=[Parallel(step_a, step_b, name="Parallel Phase"), final_step],
     )
 
-    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="test", stream=True, stream_events=True))
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed_events) == 1
     assert completed_events[0].content is not None
@@ -232,7 +230,7 @@ async def test_async_parallel_streaming(shared_db):
     )
 
     events = []
-    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="test", stream=True, stream_events=True):
         events.append(event)
 
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]

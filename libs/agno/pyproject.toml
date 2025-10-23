@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.1.10"
+version = "2.2.0"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -57,7 +57,8 @@ integration-tests = [
     "ddgs",
     "yfinance",
     "sqlalchemy",
-    "Pillow"
+    "Pillow",
+    "fastmcp"
 ]
 
 # Dependencies for Telemetry

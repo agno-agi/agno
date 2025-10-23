@@ -154,7 +154,7 @@ def test_steps_direct_execute_stream():
         content="",
     )
 
-    events = list(steps.execute_stream(step_input, mock_response, stream_intermediate_steps=True))
+    events = list(steps.execute_stream(step_input, mock_response, stream_events=True))
 
     # Should have started, completed events and final step output
     started_events = [e for e in events if isinstance(e, StepsExecutionStartedEvent)]
@@ -246,7 +246,7 @@ def test_steps_streaming(shared_db):
         steps=[steps_sequence],
     )
 
-    events = list(workflow.run(input="stream test", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="stream test", stream=True, stream_events=True))
 
     # Check for required events
     steps_started = [e for e in events if isinstance(e, StepsExecutionStartedEvent)]
@@ -297,7 +297,7 @@ async def test_async_steps_streaming(shared_db):
     )
 
     events = []
-    async for event in await workflow.arun(input="async stream test", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="async stream test", stream=True, stream_events=True):
         events.append(event)
 
     # Check that we have events
