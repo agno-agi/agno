@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
 from agno.media import Audio, Image, Video
-from agno.run.agent import RunOutput, RunEvent, run_output_event_from_dict
+from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, RunStatus
-from agno.run.team import TeamRunOutput, TeamRunEvent, team_run_output_event_from_dict
+from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
 
 if TYPE_CHECKING:
     from agno.workflow.types import StepOutput, WorkflowMetrics
@@ -392,7 +392,6 @@ class CustomEvent(BaseWorkflowRunOutputEvent):
         # Store arbitrary attributes directly on the instance
         for key, value in kwargs.items():
             setattr(self, key, value)
-
 
 
 # Union type for all workflow run response events

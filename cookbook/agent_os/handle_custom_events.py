@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 from agno.agent import Agent
-from agno.team import Team
 from agno.db.postgres import PostgresDb
 from agno.os import AgentOS
 from agno.run.agent import CustomEvent
+from agno.team import Team
 
 # Setup the database
 db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
