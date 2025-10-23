@@ -457,7 +457,8 @@ RUN_EVENT_TYPE_REGISTRY = {
 def run_output_event_from_dict(data: dict) -> BaseRunOutputEvent:
     event_type = data.get("event", "")
     cls = RUN_EVENT_TYPE_REGISTRY.get(event_type)
-    
+    if not cls:
+        raise ValueError(f"Unknown event type: {event_type}")
     return cls.from_dict(data)  # type: ignore
 
 
