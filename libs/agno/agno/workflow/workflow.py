@@ -1575,7 +1575,9 @@ class Workflow:
 
                 # Capture partial progress from the step that was cancelled mid-stream
                 if partial_step_content:
-                    logger.info(f"Step with name  '{current_step_name}' was cancelled. Setting its partial progress as step output.")
+                    logger.info(
+                        f"Step with name  '{current_step_name}' was cancelled. Setting its partial progress as step output."
+                    )
                     partial_step_output = StepOutput(
                         step_name=current_step_name,
                         step_id=getattr(current_step, "step_id", None) if current_step else None,
@@ -2136,7 +2138,9 @@ class Workflow:
 
                 # Capture partial progress from the step that was cancelled mid-stream
                 if partial_step_content:
-                    logger.info(f"Step with name  '{current_step_name}' was cancelled. Setting its partial progress as step output.")
+                    logger.info(
+                        f"Step with name  '{current_step_name}' was cancelled. Setting its partial progress as step output."
+                    )
                     partial_step_output = StepOutput(
                         step_name=current_step_name,
                         step_id=getattr(current_step, "step_id", None) if current_step else None,
