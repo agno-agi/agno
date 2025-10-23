@@ -1456,7 +1456,7 @@ class Workflow:
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                         # Accumulate partial data from streaming events
-                        partial_step_content = self._accumulate_partial_step_data(event, partial_step_content) # type: ignore
+                        partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
 
                         # Handle events
                         if isinstance(event, StepOutput):
@@ -2015,7 +2015,7 @@ class Workflow:
                             raise_if_cancelled(workflow_run_response.run_id)
 
                         # Accumulate partial data from streaming events
-                        partial_step_content = self._accumulate_partial_step_data(event, partial_step_content) # type: ignore
+                        partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
 
                         if isinstance(event, StepOutput):
                             step_output = event
@@ -2071,7 +2071,7 @@ class Workflow:
                                 enriched_event, workflow_run_response, websocket_handler=websocket_handler
                             )  # type: ignore
 
-                        else:                        
+                        else:
                             # Enrich other events with workflow context before yielding
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
