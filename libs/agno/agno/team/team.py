@@ -429,8 +429,6 @@ class Team:
         overwrite_db_session_state: bool = False,
         resolve_in_context: bool = True,
         cache_session: bool = False,
-        add_history_to_context: bool = False,
-        num_history_runs: int = 3,
         add_team_history_to_members: bool = False,
         num_team_history_runs: int = 3,
         search_session_history: Optional[bool] = False,
