@@ -367,12 +367,11 @@ class OutputModelResponseCompletedEvent(BaseTeamRunEvent):
 @dataclass
 class CustomEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.custom_event.value
-    
+
     def __init__(self, **kwargs):
         # Store arbitrary attributes directly on the instance
         for key, value in kwargs.items():
             setattr(self, key, value)
-
 
 
 TeamRunOutputEvent = Union[
