@@ -1575,14 +1575,14 @@ class Workflow:
 
                 # Capture partial progress from the step that was cancelled mid-stream
                 if partial_step_content:
-                    logger.info(f"Capturing partial progress from step '{current_step_name}' before cancellation")
+                    logger.info(f"Step with name  '{current_step_name}' was cancelled. Setting its partial progress as step output.")
                     partial_step_output = StepOutput(
                         step_name=current_step_name,
                         step_id=getattr(current_step, "step_id", None) if current_step else None,
                         step_type=StepType.STEP,
                         executor_type=getattr(current_step, "executor_type", None) if current_step else None,
                         executor_name=getattr(current_step, "executor_name", None) if current_step else None,
-                        content=partial_step_content or f"Step {current_step_name} cancelled during execution",
+                        content=partial_step_content,
                         success=False,
                         error="Cancelled during execution",
                     )
@@ -2136,14 +2136,14 @@ class Workflow:
 
                 # Capture partial progress from the step that was cancelled mid-stream
                 if partial_step_content:
-                    logger.info(f"Capturing partial progress from step '{current_step_name}' before cancellation")
+                    logger.info(f"Step with name  '{current_step_name}' was cancelled. Setting its partial progress as step output.")
                     partial_step_output = StepOutput(
                         step_name=current_step_name,
                         step_id=getattr(current_step, "step_id", None) if current_step else None,
                         step_type=StepType.STEP,
                         executor_type=getattr(current_step, "executor_type", None) if current_step else None,
                         executor_name=getattr(current_step, "executor_name", None) if current_step else None,
-                        content=partial_step_content or f"Step {current_step_name} cancelled during execution",
+                        content=partial_step_content,
                         success=False,
                         error="Cancelled during execution",
                     )
