@@ -5,18 +5,16 @@ This test file validates that all Team class parameters are properly initialized
 and configured according to their expected behavior.
 """
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.exceptions import CheckTrigger, InputCheckError, OutputCheckError
 from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.session.team import TeamSession
 from agno.team import Team
-from agno.utils.message import Message
 
 
 # Test hook functions
@@ -1048,9 +1046,7 @@ def test_hook_receives_selective_parameters():
     """Test that hooks can selectively accept parameters."""
     received_params = {}
 
-    def selective_pre_hook(
-        run_input: TeamRunInput, team: Team, metadata: Optional[Dict[str, Any]] = None
-    ) -> None:
+    def selective_pre_hook(run_input: TeamRunInput, team: Team, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Pre-hook that selectively accepts some parameters."""
         received_params["selective_pre_team_name"] = team.name
         received_params["selective_pre_metadata"] = metadata
@@ -1062,9 +1058,7 @@ def test_hook_receives_selective_parameters():
 
     team = create_test_team(pre_hooks=[selective_pre_hook], post_hooks=[selective_post_hook])
 
-    result = team.run(
-        input="Selective parameters test", user_id="selective_user", metadata={"test_key": "test_value"}
-    )
+    result = team.run(input="Selective parameters test", user_id="selective_user", metadata={"test_key": "test_value"})
     assert result is not None
 
     # Verify hooks received their selected parameters
