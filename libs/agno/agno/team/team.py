@@ -5014,19 +5014,19 @@ class Team:
 
             elif isinstance(tool, Toolkit):
                 # For each function in the toolkit and process entrypoint
-                for name, func in tool.functions.items():
+                for name, _func in tool.functions.items():
                     if name in _function_names:
                         continue
                     _function_names.append(name)
 
-                    func._team = self
-                    func.process_entrypoint(strict=strict)
+                    _func._team = self
+                    _func.process_entrypoint(strict=strict)
                     if strict:
-                        func.strict = True
+                        _func.strict = True
                     if self.tool_hooks:
-                        func.tool_hooks = self.tool_hooks
-                    _functions.append(func)
-                    log_debug(f"Added tool {name} from {tool.name}")
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func)
+                    log_debug(f"Added tool {_func.name} from {tool.name}")
 
                 # Add instructions from the toolkit
                 if tool.add_instructions and tool.instructions is not None:
@@ -5057,19 +5057,19 @@ class Team:
             elif callable(tool):
                 # We add the tools, which are callable functions
                 try:
-                    func = Function.from_callable(tool, strict=strict)
+                    _func = Function.from_callable(tool, strict=strict)
 
-                    if func.name in _function_names:
+                    if _func.name in _function_names:
                         continue
-                    _function_names.append(func.name)
+                    _function_names.append(_func.name)
 
-                    func._team = self
+                    _func._team = self
                     if strict:
-                        func.strict = True
+                        _func.strict = True
                     if self.tool_hooks:
-                        func.tool_hooks = self.tool_hooks
-                    _functions.append(func)
-                    log_debug(f"Added tool {func.name}")
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func)
+                    log_debug(f"Added tool {_func.name}")
                 except Exception as e:
                     log_warning(f"Could not add tool {tool}: {e}")
 
@@ -5084,12 +5084,12 @@ class Team:
             )
 
             # Only collect media if functions actually need them
-            joint_images = collect_joint_images(run_response.input, session) if needs_media else None
-            joint_files = collect_joint_files(run_response.input) if needs_media else None
-            joint_audios = collect_joint_audios(run_response.input, session) if needs_media else None
-            joint_videos = collect_joint_videos(run_response.input, session) if needs_media else None
+            joint_images = collect_joint_images(run_response.input, session) if needs_media else None  # type: ignore
+            joint_files = collect_joint_files(run_response.input) if needs_media else None  # type: ignore
+            joint_audios = collect_joint_audios(run_response.input, session) if needs_media else None  # type: ignore
+            joint_videos = collect_joint_videos(run_response.input, session) if needs_media else None  # type: ignore
 
-            for func in _functions:
+            for func in _functions:  # type: ignore
                 if isinstance(func, Function):
                     func._session_state = session_state
                     func._dependencies = dependencies

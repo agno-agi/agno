@@ -1,13 +1,9 @@
-from pathlib import Path
-
 import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunOutput
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
-from agno.utils.log import log_warning
-from agno.utils.media import download_file
 
 
 def _assert_metrics(response: RunOutput):
@@ -20,16 +16,6 @@ def _assert_metrics(response: RunOutput):
     assert output_tokens > 0
     assert total_tokens > 0
     assert total_tokens == input_tokens + output_tokens
-
-
-def _get_large_system_prompt() -> str:
-    """Load an example large system message from S3"""
-    txt_path = Path(__file__).parent.joinpath("system_prompt.txt")
-    download_file(
-        "https://agno-public.s3.amazonaws.com/prompts/system_promt.txt",
-        str(txt_path),
-    )
-    return txt_path.read_text()
 
 
 def test_basic():
@@ -163,4 +149,3 @@ def test_history():
     run_output = agent.run("Hello 4")
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
-

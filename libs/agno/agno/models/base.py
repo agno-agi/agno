@@ -186,7 +186,7 @@ class Model(ABC):
             ModelResponse: Parsed response delta
         """
         pass
-    
+
     def _prepare_tool_dicts(self, tools: Optional[List[Union[Function, dict]]]) -> List[Dict[str, Any]]:
         _tool_dicts = []
         for tool in tools or []:
@@ -209,7 +209,7 @@ class Model(ABC):
     ) -> ModelResponse:
         """
         Generate a response from the model.
-        
+
         Args:
             messages: List of messages to send to the model
             response_format: Response format to use
@@ -227,9 +227,9 @@ class Model(ABC):
         model_response = ModelResponse()
 
         function_call_count = 0
-        
-        _tool_dicts = self._prepare_tool_dicts(tools)
-        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
+        _tool_dicts = self._prepare_tool_dicts(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         while True:
             # Get response from model
@@ -374,9 +374,9 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
         model_response = ModelResponse()
-        
-        _tool_dicts = self._prepare_tool_dicts(tools)
-        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
+        _tool_dicts = self._prepare_tool_dicts(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         function_call_count = 0
 
@@ -730,9 +730,9 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
-        
-        _tool_dicts = self._prepare_tool_dicts(tools)
-        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
+        _tool_dicts = self._prepare_tool_dicts(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         function_call_count = 0
 
@@ -900,9 +900,9 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
-        
-        _tool_dicts = self._prepare_tool_dicts(tools)
-        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
+        _tool_dicts = self._prepare_tool_dicts(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         function_call_count = 0
 
