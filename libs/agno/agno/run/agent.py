@@ -384,6 +384,11 @@ class OutputModelResponseCompletedEvent(BaseAgentRunEvent):
 @dataclass
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
+    
+    def __init__(self, **kwargs):
+        # Store arbitrary attributes directly on the instance
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 RunOutputEvent = Union[
@@ -452,8 +457,7 @@ RUN_EVENT_TYPE_REGISTRY = {
 def run_output_event_from_dict(data: dict) -> BaseRunOutputEvent:
     event_type = data.get("event", "")
     cls = RUN_EVENT_TYPE_REGISTRY.get(event_type)
-    if not cls:
-        raise ValueError(f"Unknown event type: {event_type}")
+    
     return cls.from_dict(data)  # type: ignore
 
 
