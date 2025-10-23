@@ -5,7 +5,6 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "v2.0"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -22,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9"]
+        python-version: ["3.10"]
       fail-fast: true # Stop all matrix jobs if one fails
 
     defaults:
@@ -53,6 +52,49 @@ jobs:
       - name: Mypy
         run: |
           mypy .
+
+  vulnerability-scan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+
+    defaults:
+      run:
+        working-directory: libs/agno
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit bandit safety
+          pip install --no-deps -r requirements.txt
+      - name: Run pip-audit (dependency vulnerability scan)
+        run: |
+          pip-audit --requirement requirements.txt --desc
+        continue-on-error: false
+      - name: Run bandit (code security scan)
+        run: |
+          bandit -r agno -f json -o bandit-report.json || true
+          bandit -r agno
+        continue-on-error: false
+      - name: Run safety check
+        run: |
+          safety check --json || safety check
+        continue-on-error: true
+      - name: Upload bandit results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: bandit-security-report
+          path: libs/agno/bandit-report.json
 
   # Run tests for OpenAI
   test-openai:
