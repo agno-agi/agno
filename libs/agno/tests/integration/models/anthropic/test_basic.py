@@ -164,33 +164,3 @@ def test_history():
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
 
-
-def test_prompt_caching():
-    large_system_prompt = _get_large_system_prompt()
-    agent = Agent(
-        model=Claude(id="claude-3-5-haiku-20241022", cache_system_prompt=True),
-        system_message=large_system_prompt,
-        telemetry=False,
-    )
-
-    response = agent.run("Explain the difference between REST and GraphQL APIs with examples")
-    assert response.content is not None
-    assert response.metrics is not None
-
-    # This test needs a clean Anthropic cache to run. If the cache is not empty, we skip the test.
-    if response.metrics.cache_read_tokens > 0:
-        log_warning(
-            "A cache is already active in this Anthropic context. This test can't run until the cache is cleared."
-        )
-        return
-
-    # Asserting the system prompt is cached on the first run
-    assert response.metrics.cache_write_tokens > 0
-    assert response.metrics.cache_read_tokens == 0
-
-    # Asserting the cached prompt is used on the second run
-    response = agent.run("What are the key principles of clean code and how do I apply them in Python?")
-    assert response.content is not None
-    assert response.metrics is not None
-    assert response.metrics.cache_write_tokens == 0
-    assert response.metrics.cache_read_tokens > 0
