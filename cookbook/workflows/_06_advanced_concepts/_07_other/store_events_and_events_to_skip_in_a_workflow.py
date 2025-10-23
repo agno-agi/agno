@@ -85,7 +85,7 @@ print("Running Step workflow with streaming...")
 for event in step_workflow.run(
     input="AI trends in 2024",
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 ):
     # Filter out RunContentEvent from printing to reduce noise
     if not isinstance(
@@ -134,7 +134,7 @@ print("Running Parallel workflow...")
 for event in parallel_workflow.run(
     input="Research machine learning developments",
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 ):
     # Filter out RunContentEvent from printing
     if not isinstance(event, RunContentEvent):

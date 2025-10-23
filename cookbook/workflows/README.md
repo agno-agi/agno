@@ -780,7 +780,7 @@ workflow = Workflow(
 )
 
 # Stream with proper event handling
-for event in workflow.run(input="AI trends", stream=True, stream_intermediate_steps=True):
+for event in workflow.run(input="AI trends", stream=True, stream_events=True):
     if isinstance(event, WorkflowStartedEvent):
         print(f"🚀 Workflow Started: {event.workflow_name}")
         print(f"   Run ID: {event.run_id}")
@@ -857,20 +857,20 @@ from agno.workflow import Workflow
 # Start workflow execution in background
 async def main():
     bg_response = await workflow.arun(
-        input="AI trends in 2024", 
+        input="AI trends in 2024",
         background=True
     )
     print(f"Run ID: {bg_response.run_id}")
-    
+
     # Poll for completion
     while True:
         result = workflow.get_run(bg_response.run_id)
-        
+
         if result and result.has_completed():
             break
-            
+
         await asyncio.sleep(5)  # Poll every 5 seconds
-    
+
     print("Workflow completed!")
 ```
 
@@ -933,12 +933,12 @@ workflow.print_response(
 4. **Enable streaming**: For event-based information
 5. **Add state management**: Use `session_state` for data sharing
 
-For more examples and advanced patterns, explore the following directories- 
-- [`01_basic_workflows/`](01_basic_workflows) 
-- [`02_workflows_conditional_execution/`](02_workflows_conditional_execution) 
-- [`03_workflows_loop_execution/`](03_workflows_loop_execution) 
-- [`04_workflows_parallel_execution/`](04_workflows_parallel_execution) 
-- [`05_workflows_conditional_branching/`](05_workflows_conditional_branching) 
-- [`06_advanced_concepts/`](06_advanced_concepts) 
+For more examples and advanced patterns, explore the following directories-
+- [`01_basic_workflows/`](01_basic_workflows)
+- [`02_workflows_conditional_execution/`](02_workflows_conditional_execution)
+- [`03_workflows_loop_execution/`](03_workflows_loop_execution)
+- [`04_workflows_parallel_execution/`](04_workflows_parallel_execution)
+- [`05_workflows_conditional_branching/`](05_workflows_conditional_branching)
+- [`06_advanced_concepts/`](06_advanced_concepts)
 
 Each file demonstrates a specific pattern with detailed comments and real-world use cases.

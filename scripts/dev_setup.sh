@@ -37,6 +37,7 @@ VIRTUAL_ENV=${VENV_DIR} uv pip install yfinance
 
 VIRTUAL_ENV=${VENV_DIR} uv pip install google-genai==1.17.0
 VIRTUAL_ENV=${VENV_DIR} uv pip install mcp==1.9.2
+VIRTUAL_ENV=${VENV_DIR} uv pip install fastmcp
 VIRTUAL_ENV=${VENV_DIR} uv pip install crawl4ai==0.6.3
 VIRTUAL_ENV=${VENV_DIR} uv pip install firecrawl-py==3.4.0
 VIRTUAL_ENV=${VENV_DIR} uv pip install chonkie[st] chonkie

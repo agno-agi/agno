@@ -40,7 +40,7 @@ knowledge = Knowledge(
 simple_agent = Agent(
     name="Simple Agent",
     role="Simple agent",
-    id="simple_agent",
+    id="simple-agent",
     model=OpenAIChat(id="gpt-5-mini"),
     instructions=["You are a simple agent"],
     knowledge=knowledge,
@@ -53,7 +53,7 @@ simple_team = Team(
     description="A team of agents",
     members=[simple_agent],
     model=OpenAIChat(id="gpt-5-mini"),
-    id="simple_team",
+    id="simple-team",
     instructions=[
         "You are the team lead.",
     ],
