@@ -1264,8 +1264,8 @@ class Model(ABC):
                         if function_call.function.show_result:
                             yield ModelResponse(content=item.content)
 
-                        if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
+                    if isinstance(item, CustomEvent):
+                        function_call_output += str(item)
 
                     # Yield the event itself to bubble it up
                     yield item
@@ -1634,7 +1634,7 @@ class Model(ABC):
         async def process_async_generator(result, generator_id):
             function_call_success, function_call_timer, function_call, function_execution_result = result
             function_call_output = ""
-
+            
             try:
                 async for item in function_call.result:
                     # This function yields agent/team run events
@@ -1653,8 +1653,9 @@ class Model(ABC):
                                 await event_queue.put(ModelResponse(content=item.content))
                                 continue
 
-                            if isinstance(item, CustomEvent):
-                                function_call_output += str(item)
+                        if isinstance(item, CustomEvent):
+                            print("HERE", str(item))
+                            function_call_output += str(item)
 
                         # Put the event into the queue to be yielded
                         await event_queue.put(item)

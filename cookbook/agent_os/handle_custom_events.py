@@ -7,6 +7,7 @@ In this example we also pass the session state to the tool, so that the tool can
 
 from dataclasses import dataclass
 from typing import Optional
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.os import AgentOS
@@ -30,7 +31,7 @@ async def get_customer_profile(session_state: dict):
     """
     Get customer profiles.
     """
-    
+
     customer_name = session_state.get("customer_name", "John Doe")
     customer_email = session_state.get("customer_email", "john.doe@example.com")
     customer_phone = session_state.get("customer_phone", "1234567890")
@@ -41,6 +42,7 @@ async def get_customer_profile(session_state: dict):
         customer_email=customer_email,
         customer_phone=customer_phone,
     )
+
 
 # Setup basic agents, teams and workflows
 customer_profile_agent = Agent(
@@ -67,7 +69,7 @@ if __name__ == "__main__":
     To test your custom events that read from session state, you can pass the session state on the request.
 
     Test getting customer profiles:
-    curl --location 'http://localhost:7777/agents/story-writer-agent/runs' \
+    curl --location 'http://localhost:7777/agents/customer-profile-agent/runs' \
         --header 'Content-Type: application/x-www-form-urlencoded' \
         --data-urlencode 'message=Find me information about the current customer.' \
         --data-urlencode 'user_id=user_123.' \
