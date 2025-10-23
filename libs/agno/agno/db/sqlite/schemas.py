@@ -123,6 +123,8 @@ SPAN_TABLE_SCHEMA = {
     "attributes": {"type": JSON, "nullable": True},
     "events": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
+}
+
 CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False, "index": True},
