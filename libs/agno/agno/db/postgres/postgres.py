@@ -715,8 +715,6 @@ class PostgresDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session.session_type}")
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             log_error(f"Exception upserting into sessions table: {e}")
             raise e
 
