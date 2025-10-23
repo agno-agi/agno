@@ -1,12 +1,13 @@
-from fastapi import APIRouter
 from datetime import datetime, timezone
+
+from fastapi import APIRouter
 
 from agno.os.schema import HealthResponse
 
 
 def get_health_router() -> APIRouter:
     router = APIRouter(tags=["Health"])
-    
+
     started_time_stamp = datetime.now(timezone.utc).timestamp()
 
     @router.get(

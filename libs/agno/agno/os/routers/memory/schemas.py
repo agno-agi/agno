@@ -1,24 +1,24 @@
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DeleteMemoriesRequest(BaseModel):
-    memory_ids: List[str]
-    user_id: Optional[str] = None
+    memory_ids: List[str] = Field(..., description="List of memory IDs to delete", min_length=1)
+    user_id: Optional[str] = Field(None, description="User ID to filter memories for deletion")
 
 
 class UserMemorySchema(BaseModel):
-    memory_id: str
-    memory: str
-    topics: Optional[List[str]]
+    memory_id: str = Field(..., description="Unique identifier for the memory")
+    memory: str = Field(..., description="Memory content text", min_length=1)
+    topics: Optional[List[str]] = Field(None, description="Topics or tags associated with the memory")
 
-    agent_id: Optional[str]
-    team_id: Optional[str]
-    user_id: Optional[str]
+    agent_id: Optional[str] = Field(None, description="Agent ID associated with this memory")
+    team_id: Optional[str] = Field(None, description="Team ID associated with this memory")
+    user_id: Optional[str] = Field(None, description="User ID who owns this memory")
 
-    updated_at: Optional[datetime]
+    updated_at: Optional[datetime] = Field(None, description="Timestamp when memory was last updated")
 
     @classmethod
     def from_dict(cls, memory_dict: Dict[str, Any]) -> "UserMemorySchema":
@@ -36,17 +36,17 @@ class UserMemorySchema(BaseModel):
 class UserMemoryCreateSchema(BaseModel):
     """Define the payload expected for creating a new user memory"""
 
-    memory: str
-    user_id: Optional[str] = None
-    topics: Optional[List[str]] = None
+    memory: str = Field(..., description="Memory content text", min_length=1, max_length=5000)
+    user_id: Optional[str] = Field(None, description="User ID who owns this memory")
+    topics: Optional[List[str]] = Field(None, description="Topics or tags to categorize the memory")
 
 
 class UserStatsSchema(BaseModel):
     """Schema for user memory statistics"""
 
-    user_id: str
-    total_memories: int
-    last_memory_updated_at: Optional[datetime] = None
+    user_id: str = Field(..., description="User ID")
+    total_memories: int = Field(..., description="Total number of memories for this user", ge=0)
+    last_memory_updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent memory update")
 
     @classmethod
     def from_dict(cls, user_stats_dict: Dict[str, Any]) -> "UserStatsSchema":
