@@ -1,11 +1,10 @@
 """
 Example showing async caching for model responses.
 
-Run this cookbook twice to see the difference in response time.
+The first run will take a while to finish.
+The second run will hit the cache and be much faster.
 
-The first time should take a while to run.
-The second time should be instant.
-You can also see in the console about the cache hit/miss status
+You can also see the cache hit announcement in the console logs.
 """
 
 import asyncio
@@ -13,17 +12,19 @@ import asyncio
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o", cache_response=True)
-)
+agent = Agent(model=OpenAIChat(id="gpt-4o", cache_response=True))
 
 
 async def main():
-    # Should take a while to run the first time, then replay from cache
-    response = await agent.arun(
-        "Write me a very very short and sweet story about a cat that can talk and solve problems."
+    res = await agent.arun(
+        "Write me a brief story about a cat that can talk and solve problems."
     )
-    print(response.content)
+    print(f"First run (no cache used) took: {res.metrics.duration:.3f} seconds")  # type: ignore
+
+    second_res = await agent.arun(
+        "Write me a brief story about a cat that can talk and solve problems."
+    )
+    print(f"Second run (cache used) took: {second_res.metrics.duration:.3f} seconds")  # type: ignore
 
 
 if __name__ == "__main__":
