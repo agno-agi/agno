@@ -68,15 +68,7 @@ try:
                     print(f"{indent}    {key}: {value}")
     else:
         print("No traces found at all. Make sure openinference-instrumentation-agno is installed.")
-        
-    # Now try filtering by agent_id
-    print(f"\n\nFiltering by agent_id={agent.id}:")
-    agent_traces = db.get_traces(agent_id=agent.id, limit=20)
-    if agent_traces:
-        print(f"Found {len(agent_traces)} traces for this agent")
-    else:
-        print("No traces found when filtering by agent_id")
-        
+    
 except Exception as e:
     print(f"Error querying traces: {e}")
     import traceback
