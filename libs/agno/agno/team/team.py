@@ -111,7 +111,7 @@ from agno.utils.log import (
     use_team_logger,
 )
 from agno.utils.merge_dict import merge_dictionaries
-from agno.utils.message import get_text_from_message
+from agno.utils.message import filter_tool_calls, get_text_from_message
 from agno.utils.print_response.team import (
     aprint_response,
     aprint_response_stream,
@@ -188,12 +188,6 @@ class Team:
     overwrite_db_session_state: bool = False
     # If True, cache the current Team session in memory for faster access
     cache_session: bool = False
-
-    # --- Team history settings ---
-    # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model. This only applies to the team leader, not the members.
-    add_history_to_context: bool = False
-    # Number of historical runs to include in the messages
-    num_history_runs: int = 3
 
     # Add this flag to control if the workflow should send the team history to the members. This means sending the team-level history to the members, not the agent-level history.
     add_team_history_to_members: bool = False
@@ -354,6 +348,14 @@ class Team:
     # If True, the team adds session summaries to the context
     add_session_summary_to_context: Optional[bool] = None
 
+    # --- Team History ---
+    # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
+    add_history_to_context: bool = False
+    # Number of historical runs to include in the messages
+    num_history_runs: int = 3
+    # Maximum number of tool calls to include from history (None = no limit)
+    max_tool_calls_from_history: Optional[int] = None
+
     # --- Team Storage ---
     # Metadata stored with this team
     metadata: Optional[Dict[str, Any]] = None
@@ -421,8 +423,6 @@ class Team:
         overwrite_db_session_state: bool = False,
         resolve_in_context: bool = True,
         cache_session: bool = False,
-        add_history_to_context: bool = False,
-        num_history_runs: int = 3,
         add_team_history_to_members: bool = False,
         num_team_history_runs: int = 3,
         search_session_history: Optional[bool] = False,
@@ -458,6 +458,8 @@ class Team:
         store_tool_messages: bool = True,
         store_history_messages: bool = True,
         send_media_to_model: bool = True,
+        add_history_to_context: bool = False,
+        num_history_runs: int = 3,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -480,6 +482,7 @@ class Team:
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
+        max_tool_calls_from_history: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
@@ -591,6 +594,9 @@ class Team:
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
         self.add_session_summary_to_context = add_session_summary_to_context
+        self.add_history_to_context = add_history_to_context
+        self.num_history_runs = num_history_runs
+        self.max_tool_calls_from_history = max_tool_calls_from_history
         self.metadata = metadata
 
         self.reasoning = reasoning
@@ -5824,6 +5830,10 @@ class Team:
                 for _msg in history_copy:
                     _msg.from_history = True
 
+                # Filter tool calls from history messages
+                if self.max_tool_calls_from_history is not None:
+                    filter_tool_calls(history_copy, self.max_tool_calls_from_history)
+
                 log_debug(f"Adding {len(history_copy)} messages from history")
 
                 # Extend the messages with the history
@@ -5950,6 +5960,10 @@ class Team:
                 # Tag each message as coming from history
                 for _msg in history_copy:
                     _msg.from_history = True
+
+                # Filter tool calls from history messages
+                if self.max_tool_calls_from_history is not None:
+                    filter_tool_calls(history_copy, self.max_tool_calls_from_history)
 
                 log_debug(f"Adding {len(history_copy)} messages from history")
 

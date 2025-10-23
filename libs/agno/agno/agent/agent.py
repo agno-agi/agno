@@ -117,7 +117,7 @@ from agno.utils.log import (
     set_log_level_to_info,
 )
 from agno.utils.merge_dict import merge_dictionaries
-from agno.utils.message import get_text_from_message
+from agno.utils.message import filter_tool_calls, get_text_from_message
 from agno.utils.print_response.agent import (
     aprint_response,
     aprint_response_stream,
@@ -203,6 +203,8 @@ class Agent:
     add_history_to_context: bool = False
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
+    # Maximum number of tool calls to include from history (None = no limit)
+    max_tool_calls_from_history: Optional[int] = None
 
     # --- Knowledge ---
     knowledge: Optional[Knowledge] = None
@@ -419,6 +421,7 @@ class Agent:
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
+        max_tool_calls_from_history: Optional[int] = None,
         store_media: bool = True,
         store_tool_messages: bool = True,
         store_history_messages: bool = True,
@@ -520,6 +523,7 @@ class Agent:
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
+        self.max_tool_calls_from_history = max_tool_calls_from_history
 
         self.store_media = store_media
         self.store_tool_messages = store_tool_messages
@@ -7321,6 +7325,10 @@ class Agent:
                 for _msg in history_copy:
                     _msg.from_history = True
 
+                # Filter tool calls from history if limit is set (before adding to run_messages)
+                if self.max_tool_calls_from_history is not None:
+                    filter_tool_calls(history_copy, self.max_tool_calls_from_history)
+
                 log_debug(f"Adding {len(history_copy)} messages from history")
 
                 run_messages.messages += history_copy
@@ -7513,6 +7521,10 @@ class Agent:
                 # Tag each message as coming from history
                 for _msg in history_copy:
                     _msg.from_history = True
+
+                # Filter tool calls from history if limit is set (before adding to run_messages)
+                if self.max_tool_calls_from_history is not None:
+                    filter_tool_calls(history_copy, self.max_tool_calls_from_history)
 
                 log_debug(f"Adding {len(history_copy)} messages from history")
 
