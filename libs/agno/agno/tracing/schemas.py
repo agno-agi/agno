@@ -96,11 +96,35 @@ class TraceSpan:
                 }
                 events.append(event_dict)
 
-        # Extract Agno-specific attributes
-        run_id = attributes.get("run_id") or attributes.get("agno.run.id")
-        session_id = attributes.get("session_id") or attributes.get("agno.session.id")
-        user_id = attributes.get("user_id") or attributes.get("agno.user.id")
-        agent_id = attributes.get("agent_id") or attributes.get("agno.agent.id")
+        # Extract Agno-specific attributes from OpenInference spans
+        # OpenInference uses different attribute names, check multiple possible sources
+        run_id = (
+            attributes.get("run_id")
+            or attributes.get("agno.run.id")
+        )
+        
+        session_id = (
+            attributes.get("session_id")
+            or attributes.get("agno.session.id")
+            or attributes.get("session.id")
+        )
+        
+        user_id = (
+            attributes.get("user_id")
+            or attributes.get("agno.user.id")
+            or attributes.get("user.id")
+        )
+        
+        # Try to extract agent_id from the span name or attributes
+        agent_id = (
+            attributes.get("agent_id")
+            or attributes.get("agno.agent.id")
+        )
+        
+        # If span name contains "Agent.run", try to extract agent name
+        if not agent_id and ".run" in otel_span.name:
+            # e.g., "Stock_Price_Agent.run" -> "Stock_Price_Agent"
+            agent_id = otel_span.name.replace(".run", "").replace("_", "-").lower()
 
         return cls(
             trace_id=trace_id,
