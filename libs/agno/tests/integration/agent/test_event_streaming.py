@@ -19,7 +19,7 @@ def test_basic_events():
         telemetry=False,
     )
 
-    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=False)
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_events=False)
 
     event_counts = {}
     for run_response in response_generator:
@@ -38,7 +38,7 @@ async def test_async_basic_events():
         telemetry=False,
     )
     event_counts = {}
-    async for run_response in agent.arun("Hello, how are you?", stream=True, stream_intermediate_steps=False):
+    async for run_response in agent.arun("Hello, how are you?", stream=True, stream_events=False):
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
     assert event_counts.keys() == {RunEvent.run_content}
@@ -55,7 +55,7 @@ def test_basic_intermediate_steps_events(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -115,7 +115,7 @@ def test_intermediate_steps_with_tools(shared_db):
         store_events=True,
     )
 
-    response_generator = agent.run("What is the stock price of Apple?", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("What is the stock price of Apple?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -171,9 +171,7 @@ def test_intermediate_steps_with_reasoning():
         telemetry=False,
     )
 
-    response_generator = agent.run(
-        "What is the sum of the first 10 natural numbers?", stream=True, stream_intermediate_steps=True
-    )
+    response_generator = agent.run("What is the sum of the first 10 natural numbers?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -226,7 +224,7 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("What is the weather in Tokyo?", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("What is the weather in Tokyo?", stream=True, stream_events=True)
 
     # First until we hit a pause
     events = {}
@@ -257,9 +255,7 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
     assert stored_session.runs[0].events[1].event == RunEvent.run_paused
 
     # Then we continue the run
-    response_generator = agent.continue_run(
-        run_id=run_id, updated_tools=updated_tools, stream=True, stream_intermediate_steps=True
-    )
+    response_generator = agent.continue_run(run_id=run_id, updated_tools=updated_tools, stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -313,7 +309,7 @@ def test_intermediate_steps_with_memory(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -347,7 +343,7 @@ def test_intermediate_steps_with_session_summary(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -388,7 +384,7 @@ def test_pre_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -445,7 +441,7 @@ async def test_async_pre_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.arun("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.arun("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     async for run_response_delta in response_generator:
@@ -501,7 +497,7 @@ def test_post_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -556,7 +552,7 @@ async def test_async_post_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.arun("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.arun("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     async for run_response_delta in response_generator:
@@ -611,7 +607,7 @@ def test_pre_and_post_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("Hello", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("Hello", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -662,7 +658,7 @@ def test_intermediate_steps_with_structured_output(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("Describe Elon Musk", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -718,7 +714,7 @@ def test_intermediate_steps_with_parser_model(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run("Describe Elon Musk", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -774,7 +770,7 @@ def test_run_completed_event_metrics_validation(shared_db):
         "Get the current stock price of AAPL",
         session_id="test_session",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     events = {}

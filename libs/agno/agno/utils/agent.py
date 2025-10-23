@@ -55,12 +55,12 @@ async def await_for_background_tasks_stream(
     run_response: Union[RunOutput, TeamRunOutput],
     memory_task: Optional[Task] = None,
     cultural_knowledge_task: Optional[Task] = None,
-    stream_intermediate_steps: bool = False,
+    stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
 ) -> AsyncIterator[RunOutputEvent]:
     if memory_task is not None:
-        if stream_intermediate_steps:
+        if stream_events:
             if isinstance(run_response, TeamRunOutput):
                 yield handle_event(  # type: ignore
                     create_team_memory_update_started_event(from_run_response=run_response),
@@ -79,7 +79,7 @@ async def await_for_background_tasks_stream(
             await memory_task
         except Exception as e:
             log_warning(f"Error in memory creation: {str(e)}")
-        if stream_intermediate_steps:
+        if stream_events:
             if isinstance(run_response, TeamRunOutput):
                 yield handle_event(  # type: ignore
                     create_team_memory_update_completed_event(from_run_response=run_response),
@@ -106,12 +106,12 @@ def wait_for_background_tasks_stream(
     run_response: Union[TeamRunOutput, RunOutput],
     memory_future: Optional[Future] = None,
     cultural_knowledge_future: Optional[Future] = None,
-    stream_intermediate_steps: bool = False,
+    stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
 ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]:
     if memory_future is not None:
-        if stream_intermediate_steps:
+        if stream_events:
             if isinstance(run_response, TeamRunOutput):
                 yield handle_event(  # type: ignore
                     create_team_memory_update_started_event(from_run_response=run_response),
@@ -130,7 +130,7 @@ def wait_for_background_tasks_stream(
             memory_future.result()
         except Exception as e:
             log_warning(f"Error in memory creation: {str(e)}")
-        if stream_intermediate_steps:
+        if stream_events:
             if isinstance(run_response, TeamRunOutput):
                 yield handle_event(  # type: ignore
                     create_team_memory_update_completed_event(from_run_response=run_response),
