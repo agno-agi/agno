@@ -27,6 +27,7 @@ class BaseDb(ABC):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         trace_table: Optional[str] = None,
+        span_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -36,6 +37,7 @@ class BaseDb(ABC):
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = trace_table or "agno_traces"
+        self.span_table_name = span_table or "agno_spans"
 
     # --- Sessions ---
     @abstractmethod
@@ -269,60 +271,101 @@ class BaseDb(ABC):
     # --- Traces ---
     @abstractmethod
     def create_trace(self, trace) -> None:
-        """Create a single trace span in the database.
+        """Create a single trace record in the database.
 
         Args:
-            trace: The TraceSpan object to store.
+            trace: The Trace object to store (one per trace_id).
         """
         raise NotImplementedError
 
     @abstractmethod
-    def create_traces_batch(self, traces: List) -> None:
-        """Create multiple trace spans in the database as a batch.
+    def get_trace(self, trace_id: str):
+        """Get a single trace by its trace_id.
 
         Args:
-            traces: List of TraceSpan objects to store.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_trace(self, span_id: str):
-        """Get a single trace span by its span_id.
-
-        Args:
-            span_id: The unique span identifier.
+            trace_id: The unique trace identifier.
 
         Returns:
-            Optional[TraceSpan]: The trace span if found, None otherwise.
+            Optional[Trace]: The trace if found, None otherwise.
         """
         raise NotImplementedError
 
     @abstractmethod
     def get_traces(
         self,
-        trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        status: Optional[str] = None,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
         limit: Optional[int] = 100,
     ) -> List:
-        """Get trace spans matching the provided filters.
+        """Get traces matching the provided filters.
 
         Args:
-            trace_id: Filter by trace ID.
             run_id: Filter by run ID.
             session_id: Filter by session ID.
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
-            start_time: Filter spans starting after this timestamp (nanoseconds).
-            end_time: Filter spans ending before this timestamp (nanoseconds).
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this timestamp (nanoseconds).
+            end_time: Filter traces ending before this timestamp (nanoseconds).
             limit: Maximum number of traces to return.
 
         Returns:
-            List[TraceSpan]: List of matching trace spans.
+            List[Trace]: List of matching traces.
+        """
+        raise NotImplementedError
+
+    # --- Spans ---
+    @abstractmethod
+    def create_span(self, span) -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_spans_batch(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
         """
         raise NotImplementedError
 
@@ -339,6 +382,7 @@ class AsyncBaseDb(ABC):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         trace_table: Optional[str] = None,
+        span_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -347,6 +391,7 @@ class AsyncBaseDb(ABC):
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = trace_table or "agno_traces"
+        self.span_table_name = span_table or "agno_spans"
 
     # --- Sessions ---
     @abstractmethod
@@ -564,59 +609,100 @@ class AsyncBaseDb(ABC):
     # --- Traces ---
     @abstractmethod
     async def create_trace(self, trace) -> None:
-        """Create a single trace span in the database.
+        """Create a single trace record in the database.
 
         Args:
-            trace: The TraceSpan object to store.
+            trace: The Trace object to store (one per trace_id).
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def create_traces_batch(self, traces: List) -> None:
-        """Create multiple trace spans in the database as a batch.
+    async def get_trace(self, trace_id: str):
+        """Get a single trace by its trace_id.
 
         Args:
-            traces: List of TraceSpan objects to store.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_trace(self, span_id: str):
-        """Get a single trace span by its span_id.
-
-        Args:
-            span_id: The unique span identifier.
+            trace_id: The unique trace identifier.
 
         Returns:
-            Optional[TraceSpan]: The trace span if found, None otherwise.
+            Optional[Trace]: The trace if found, None otherwise.
         """
         raise NotImplementedError
 
     @abstractmethod
     async def get_traces(
         self,
-        trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        status: Optional[str] = None,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
         limit: Optional[int] = 100,
     ) -> List:
-        """Get trace spans matching the provided filters.
+        """Get traces matching the provided filters.
 
         Args:
-            trace_id: Filter by trace ID.
             run_id: Filter by run ID.
             session_id: Filter by session ID.
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
-            start_time: Filter spans starting after this timestamp (nanoseconds).
-            end_time: Filter spans ending before this timestamp (nanoseconds).
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this timestamp (nanoseconds).
+            end_time: Filter traces ending before this timestamp (nanoseconds).
             limit: Maximum number of traces to return.
 
         Returns:
-            List[TraceSpan]: List of matching trace spans.
+            List[Trace]: List of matching traces.
+        """
+        raise NotImplementedError
+
+    # --- Spans ---
+    @abstractmethod
+    async def create_span(self, span) -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def create_spans_batch(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
         """
         raise NotImplementedError

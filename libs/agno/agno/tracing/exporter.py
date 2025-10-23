@@ -3,13 +3,14 @@ Custom OpenTelemetry SpanExporter that writes traces to Agno database.
 """
 
 import asyncio
-from typing import Sequence, Union
+from collections import defaultdict
+from typing import Dict, List, Sequence, Union
 
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.tracing.schemas import TraceSpan
+from agno.tracing.schemas import Span, create_trace_from_spans
 from agno.utils.log import logger
 
 
@@ -30,6 +31,12 @@ class DatabaseSpanExporter(SpanExporter):
         """
         Export spans to the database.
 
+        This method:
+        1. Converts OpenTelemetry spans to Span objects
+        2. Groups spans by trace_id
+        3. Creates Trace records (one per trace_id)
+        4. Creates Span records (multiple per trace_id)
+
         Args:
             spans: Sequence of OpenTelemetry ReadableSpan objects
 
@@ -44,48 +51,87 @@ class DatabaseSpanExporter(SpanExporter):
             return SpanExportResult.SUCCESS
 
         try:
-            # Convert OpenTelemetry spans to TraceSpan objects
-            trace_spans = []
+            # Convert OpenTelemetry spans to Span objects
+            converted_spans: List[Span] = []
             for span in spans:
                 try:
-                    trace_span = TraceSpan.from_otel_span(span)
-                    trace_spans.append(trace_span)
+                    converted_span = Span.from_otel_span(span)
+                    converted_spans.append(converted_span)
                 except Exception as e:
                     logger.error(f"Failed to convert span {span.name}: {e}")
                     # Continue processing other spans
                     continue
 
-            if not trace_spans:
+            if not converted_spans:
                 return SpanExportResult.SUCCESS
+
+            # Group spans by trace_id
+            spans_by_trace: Dict[str, List[Span]] = defaultdict(list)
+            for span in converted_spans:
+                spans_by_trace[span.trace_id].append(span)
 
             # Handle async DB
             if isinstance(self.db, AsyncBaseDb):
-                self._export_async(trace_spans)
+                self._export_async(spans_by_trace)
             else:
                 # Synchronous database
-                self.db.create_traces_batch(trace_spans)
+                self._export_sync(spans_by_trace)
 
             return SpanExportResult.SUCCESS
         except Exception as e:
             logger.error(f"Failed to export spans to database: {e}", exc_info=True)
             return SpanExportResult.FAILURE
 
-    def _export_async(self, trace_spans):
+    def _export_sync(self, spans_by_trace: Dict[str, List[Span]]) -> None:
+        """Export traces and spans to synchronous database"""
+        try:
+            # Create trace and span records for each trace
+            for trace_id, spans in spans_by_trace.items():
+                # Create trace record (aggregate of all spans)
+                trace = create_trace_from_spans(spans)
+                if trace:
+                    self.db.create_trace(trace)
+                
+                # Create span records
+                self.db.create_spans_batch(spans)
+                
+        except Exception as e:
+            logger.error(f"Failed to export sync traces: {e}", exc_info=True)
+            raise
+
+    def _export_async(self, spans_by_trace: Dict[str, List[Span]]) -> None:
         """Handle async database export"""
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 # We're in an async context, schedule the coroutine
-                asyncio.create_task(self.db.create_traces_batch(trace_spans))
+                asyncio.create_task(self._do_async_export(spans_by_trace))
             else:
                 # No running loop, run in new loop
-                loop.run_until_complete(self.db.create_traces_batch(trace_spans))
+                loop.run_until_complete(self._do_async_export(spans_by_trace))
         except RuntimeError:
             # No event loop, create new one
             try:
-                asyncio.run(self.db.create_traces_batch(trace_spans))
+                asyncio.run(self._do_async_export(spans_by_trace))
             except Exception as e:
                 logger.error(f"Failed to export async traces: {e}", exc_info=True)
+
+    async def _do_async_export(self, spans_by_trace: Dict[str, List[Span]]) -> None:
+        """Actually perform the async export"""
+        try:
+            # Create trace and span records for each trace
+            for trace_id, spans in spans_by_trace.items():
+                # Create trace record (aggregate of all spans)
+                trace = create_trace_from_spans(spans)
+                if trace:
+                    await self.db.create_trace(trace)
+                
+                # Create span records
+                await self.db.create_spans_batch(spans)
+                
+        except Exception as e:
+            logger.error(f"Failed to do async export: {e}", exc_info=True)
+            raise
 
     def shutdown(self) -> None:
         """Shutdown the exporter"""
@@ -105,4 +151,3 @@ class DatabaseSpanExporter(SpanExporter):
             True if flush was successful
         """
         return True
-
