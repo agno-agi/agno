@@ -3,6 +3,7 @@
 from typing import Any
 
 try:
+    from sqlalchemy.dialects.postgresql import JSONB
     from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
@@ -98,24 +99,17 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
-TRACE_TABLE_SCHEMA = {
-    "trace_id": {"type": String, "nullable": False, "index": True},
-    "span_id": {"type": String, "primary_key": True, "nullable": False},
-    "parent_span_id": {"type": String, "nullable": True, "index": True},
-    "name": {"type": String, "nullable": False},
-    "span_kind": {"type": String, "nullable": False},
-    "status_code": {"type": String, "nullable": False},
-    "status_message": {"type": String, "nullable": True},
-    "start_time_ns": {"type": BigInteger, "nullable": False, "index": True},
-    "end_time_ns": {"type": BigInteger, "nullable": False},
-    "duration_ms": {"type": BigInteger, "nullable": False},
-    "attributes": {"type": JSON, "nullable": True},
-    "events": {"type": JSON, "nullable": True},
-    "run_id": {"type": String, "nullable": True, "index": True},
-    "session_id": {"type": String, "nullable": True, "index": True},
-    "user_id": {"type": String, "nullable": True, "index": True},
-    "agent_id": {"type": String, "nullable": True, "index": True},
-    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False, "index": True},
+    "summary": {"type": String, "nullable": True},
+    "content": {"type": JSONB, "nullable": True},
+    "metadata": {"type": JSONB, "nullable": True},
+    "input": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "agent_id": {"type": String, "nullable": True},
+    "team_id": {"type": String, "nullable": True},
 }
 
 
@@ -135,7 +129,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
-        "traces": TRACE_TABLE_SCHEMA,
+        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})
