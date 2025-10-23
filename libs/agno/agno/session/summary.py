@@ -65,6 +65,9 @@ class SessionSummaryManager:
 
     # Prompt used for session summary generation
     session_summary_prompt: Optional[str] = None
+    
+    # User message prompt for requesting the summary
+    summary_request_message: str = "Provide the summary of the conversation."
 
     # Whether session summaries were created in the last run
     summaries_updated: bool = False
@@ -134,6 +137,7 @@ class SessionSummaryManager:
     def _prepare_summary_messages(
         self,
         session: Optional["Session"] = None,
+        summary_request_message: Optional[str] = None,
     ) -> Optional[List[Message]]:
         """Prepare messages for session summary generation. Returns None if no meaningful messages to summarize."""
         if not session:
@@ -150,9 +154,12 @@ class SessionSummaryManager:
         if system_message is None:
             return None
 
+        # Use injected message or fall back to instance variable or default
+        request_message = summary_request_message or self.summary_request_message
+
         return [
             system_message,
-            Message(role="user", content="Provide the summary of the conversation."),
+            Message(role="user", content=request_message),
         ]
 
     def _process_summary_response(self, summary_response, session_summary_model: "Model") -> Optional[SessionSummary]:  # type: ignore
@@ -204,13 +211,14 @@ class SessionSummaryManager:
     def create_session_summary(
         self,
         session: Union["AgentSession", "TeamSession"],
+        summary_request_message: Optional[str] = None,
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         log_debug("Creating session summary", center=True)
         if self.model is None:
             return None
 
-        messages = self._prepare_summary_messages(session)
+        messages = self._prepare_summary_messages(session, summary_request_message)
 
         # Skip summary generation if there are no meaningful messages
         if messages is None:
@@ -231,13 +239,14 @@ class SessionSummaryManager:
     async def acreate_session_summary(
         self,
         session: Union["AgentSession", "TeamSession"],
+        summary_request_message: Optional[str] = None,
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         log_debug("Creating session summary", center=True)
         if self.model is None:
             return None
 
-        messages = self._prepare_summary_messages(session)
+        messages = self._prepare_summary_messages(session, summary_request_message)
 
         # Skip summary generation if there are no meaningful messages
         if messages is None:
