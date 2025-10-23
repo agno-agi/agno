@@ -212,15 +212,14 @@ class Model(ABC):
         self, cache_key: str, result: ModelResponse, is_streaming: bool = False
     ) -> None:
         """Save a model response to cache."""
-        cache_file = self._get_model_cache_file_path(cache_key)
-
-        cache_data = {
-            "timestamp": int(time()),
-            "is_streaming": is_streaming,
-            "result": result.to_dict(),
-        }
-
         try:
+            cache_file = self._get_model_cache_file_path(cache_key)
+
+            cache_data = {
+                "timestamp": int(time()),
+                "is_streaming": is_streaming,
+                "result": result.to_dict(),
+            }
             with open(cache_file, "w") as f:
                 json.dump(cache_data, f)
         except Exception:
@@ -248,7 +247,7 @@ class Model(ABC):
         """Reconstruct a ModelResponse from cached data."""
         return ModelResponse.from_dict(cached_data["result"])
 
-    def _streaming_responses_from_cache(self, cached_data: list) -> List[ModelResponse]:
+    def _streaming_responses_from_cache(self, cached_data: list) -> Iterator[ModelResponse]:
         """Reconstruct streaming responses from cached data."""
         for cached_response in cached_data:
             yield ModelResponse.from_dict(cached_response)
@@ -320,8 +319,6 @@ class Model(ABC):
             if cached_data:
                 log_info("Cache hit for model response")
                 return self._model_response_from_cache(cached_data)
-
-            log_info("Cache miss for model response")
 
         log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
@@ -486,8 +483,6 @@ class Model(ABC):
             if cached_data:
                 log_info("Cache hit for model response")
                 return self._model_response_from_cache(cached_data)
-
-            log_info("Cache miss for model response")
 
         log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
