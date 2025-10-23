@@ -205,7 +205,6 @@ def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
     run_id = (
         attrs.get("run_id")
         or attrs.get("agno.run.id")
-        or attrs.get("session.id")
     )
     
     session_id = (
@@ -224,13 +223,7 @@ def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
     agent_id = (
         attrs.get("agent_id")
         or attrs.get("agno.agent.id")
-        or attrs.get("gen_ai.system")
     )
-    
-    # If span name contains ".run", try to extract agent name
-    if not agent_id and ".run" in root_span.name:
-        # e.g., "Stock_Price_Agent.run" -> "stock-price-agent"
-        agent_id = root_span.name.replace(".run", "").replace("_", "-").lower()
     
     return Trace(
         trace_id=trace_id,
