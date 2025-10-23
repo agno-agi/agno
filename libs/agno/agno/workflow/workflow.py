@@ -1174,7 +1174,7 @@ class Workflow:
             return func(**kwargs)
 
     def _accumulate_partial_step_data(
-        self, event: RunContentEvent | TeamRunContentEvent, partial_step_content: str
+        self, event: Union[RunContentEvent, TeamRunContentEvent], partial_step_content: str
     ) -> str:
         """Accumulate partial step data from streaming events"""
         if isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
@@ -1450,6 +1450,9 @@ class Workflow:
                     ):
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                        # Accumulate partial data from streaming events
+                        partial_step_content = self._accumulate_partial_step_data(event, partial_step_content) # type: ignore
+
                         # Handle events
                         if isinstance(event, StepOutput):
                             step_output = event
@@ -1505,9 +1508,6 @@ class Workflow:
                             yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                         else:
-                            # Accumulate partial data from streaming events
-                            partial_step_content = self._accumulate_partial_step_data(event, partial_step_content) # type: ignore
-
                             # Enrich other events with workflow context before yielding
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
@@ -2009,6 +2009,9 @@ class Workflow:
                         if workflow_run_response.run_id:
                             raise_if_cancelled(workflow_run_response.run_id)
 
+                        # Accumulate partial data from streaming events
+                        partial_step_content = self._accumulate_partial_step_data(event, partial_step_content) # type: ignore
+
                         if isinstance(event, StepOutput):
                             step_output = event
                             collected_step_outputs.append(step_output)
@@ -2064,9 +2067,6 @@ class Workflow:
                             )  # type: ignore
 
                         else:                        
-                            # Accumulate partial data from streaming events
-                            partial_step_content = self._accumulate_partial_step_data(event, partial_step_content) # type: ignore
-
                             # Enrich other events with workflow context before yielding
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
