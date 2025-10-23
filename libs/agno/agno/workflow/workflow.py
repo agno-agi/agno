@@ -29,7 +29,7 @@ from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledExcep
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
-from agno.run.agent import RunEvent
+from agno.run.agent import RunContentEvent, RunEvent
 from agno.run.base import RunStatus
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
@@ -39,6 +39,7 @@ from agno.run.cancel import (
     raise_if_cancelled,
     register_run,
 )
+from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
     StepOutputEvent,
@@ -1177,6 +1178,15 @@ class Workflow:
             logger.error(f"Function signature inspection failed: {e}. Falling back to original calling convention.")
             return func(**kwargs)
 
+    def _accumulate_partial_step_data(
+        self, event: Union[RunContentEvent, TeamRunContentEvent], partial_step_content: str
+    ) -> str:
+        """Accumulate partial step data from streaming events"""
+        if isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
+            if isinstance(event.content, str):
+                partial_step_content += event.content
+        return partial_step_content
+
     def _execute(
         self,
         session: WorkflowSession,
@@ -1400,10 +1410,21 @@ class Workflow:
 
                 early_termination = False
 
+                # Track partial step data in case of cancellation
+                current_step_name = ""
+                current_step = None
+                partial_step_content = ""
+
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step_name}")
+
+                    # Track current step for cancellation handler
+                    current_step_name = step_name
+                    current_step = step
+                    # Reset partial data for this step
+                    partial_step_content = ""
 
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
@@ -1433,6 +1454,10 @@ class Workflow:
                         num_history_runs=self.num_history_runs,
                     ):
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                        # Accumulate partial data from streaming events
+                        partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
+
                         # Handle events
                         if isinstance(event, StepOutput):
                             step_output = event
@@ -1547,6 +1572,27 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.content = str(e)
+
+                # Capture partial progress from the step that was cancelled mid-stream
+                if partial_step_content:
+                    logger.info(f"Step with name  '{current_step_name}' was cancelled. Setting its partial progress as step output.")
+                    partial_step_output = StepOutput(
+                        step_name=current_step_name,
+                        step_id=getattr(current_step, "step_id", None) if current_step else None,
+                        step_type=StepType.STEP,
+                        executor_type=getattr(current_step, "executor_type", None) if current_step else None,
+                        executor_name=getattr(current_step, "executor_name", None) if current_step else None,
+                        content=partial_step_content,
+                        success=False,
+                        error="Cancelled during execution",
+                    )
+                    collected_step_outputs.append(partial_step_output)
+
+                # Preserve all progress (completed steps + partial step) before cancellation
+                if collected_step_outputs:
+                    workflow_run_response.step_results = collected_step_outputs
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(collected_step_outputs)
+
                 cancelled_event = WorkflowCancelledEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_id=self.id,
@@ -1922,11 +1968,21 @@ class Workflow:
 
                 early_termination = False
 
+                # Track partial step data in case of cancellation
+                current_step_name = ""
+                current_step = None
+                partial_step_content = ""
+
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     if workflow_run_response.run_id:
                         raise_if_cancelled(workflow_run_response.run_id)
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async streaming step {i + 1}/{self._get_step_count()}: {step_name}")
+
+                    current_step_name = step_name
+                    current_step = step
+                    # Reset partial data for this step
+                    partial_step_content = ""
 
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
@@ -1957,6 +2013,10 @@ class Workflow:
                     ):
                         if workflow_run_response.run_id:
                             raise_if_cancelled(workflow_run_response.run_id)
+
+                        # Accumulate partial data from streaming events
+                        partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
+
                         if isinstance(event, StepOutput):
                             step_output = event
                             collected_step_outputs.append(step_output)
@@ -2073,6 +2133,27 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.content = str(e)
+
+                # Capture partial progress from the step that was cancelled mid-stream
+                if partial_step_content:
+                    logger.info(f"Step with name  '{current_step_name}' was cancelled. Setting its partial progress as step output.")
+                    partial_step_output = StepOutput(
+                        step_name=current_step_name,
+                        step_id=getattr(current_step, "step_id", None) if current_step else None,
+                        step_type=StepType.STEP,
+                        executor_type=getattr(current_step, "executor_type", None) if current_step else None,
+                        executor_name=getattr(current_step, "executor_name", None) if current_step else None,
+                        content=partial_step_content,
+                        success=False,
+                        error="Cancelled during execution",
+                    )
+                    collected_step_outputs.append(partial_step_output)
+
+                # Preserve all progress (completed steps + partial step) before cancellation
+                if collected_step_outputs:
+                    workflow_run_response.step_results = collected_step_outputs
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(collected_step_outputs)
+
                 cancelled_event = WorkflowCancelledEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_id=self.id,
