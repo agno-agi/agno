@@ -189,12 +189,6 @@ class Team:
     # If True, cache the current Team session in memory for faster access
     cache_session: bool = False
 
-    # --- Team history settings ---
-    # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model. This only applies to the team leader, not the members.
-    add_history_to_context: bool = False
-    # Number of historical runs to include in the messages
-    num_history_runs: int = 3
-
     # Add this flag to control if the workflow should send the team history to the members. This means sending the team-level history to the members, not the agent-level history.
     add_team_history_to_members: bool = False
     # Number of historical runs to include in the messages sent to the members
