@@ -156,7 +156,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         response_model=Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema],
         status_code=201,
         operation_id="create_session",
-        summary="Create Empty Session",
+        summary="Create New Session",
         description=(
             "Create a new empty session with optional configuration. "
             "Useful for pre-creating sessions with specific session_state, metadata, or other properties "
@@ -603,7 +603,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         response_model=Union[RunSchema, TeamRunSchema, WorkflowRunSchema],
         status_code=200,
         operation_id="get_session_run",
-        summary="Get Specific Run from Session",
+        summary="Get Run by ID",
         description=(
             "Retrieve a specific run by its ID from a session. Response schema varies based on the "
             "run type (agent run, team run, or workflow run)."
@@ -620,12 +620,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
                                     "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
                                     "parent_run_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
                                     "agent_id": "basic-agent",
-                                    "user_id": "",
+                                    "user_id": "user_123",
                                     "run_input": "Which tools do you have access to?",
                                     "content": "I don't have access to external tools.",
-                                    "run_response_format": "text",
-                                    "reasoning_content": "",
-                                    "created_at": "2025-09-08T15:52:10Z",
+                                    "created_at": 1728499200,
                                 },
                             }
                         }

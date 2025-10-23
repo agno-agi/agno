@@ -983,14 +983,6 @@ class Agent:
                 send_media_to_model=self.send_media_to_model,
             )
 
-            # We should break out of the run function
-            if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                wait_for_background_tasks(
-                    memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future
-                )
-
-                return self._handle_agent_run_paused(run_response=run_response, session=session, user_id=user_id)
-
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1004,6 +996,14 @@ class Agent:
             self._update_run_response(
                 model_response=model_response, run_response=run_response, run_messages=run_messages
             )
+
+            # We should break out of the run function
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                wait_for_background_tasks(
+                    memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future
+                )
+
+                return self._handle_agent_run_paused(run_response=run_response, session=session, user_id=user_id)
 
             # 8. Store media if enabled
             if self.store_media:
@@ -1247,6 +1247,11 @@ class Agent:
             # Check for cancellation after model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
+            # 7. Parse response with parser model if provided
+            yield from self._parse_response_with_parser_model_stream(
+                session=session, run_response=run_response, stream_events=stream_events
+            )
+
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 yield from wait_for_background_tasks_stream(
@@ -1254,6 +1259,8 @@ class Agent:
                     cultural_knowledge_future=cultural_knowledge_future,
                     stream_events=stream_events,
                     run_response=run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
                 )
 
                 # Handle the paused run
@@ -1261,11 +1268,6 @@ class Agent:
                     run_response=run_response, session=session, user_id=user_id
                 )
                 return
-
-            # 7. Parse response with parser model if provided
-            yield from self._parse_response_with_parser_model_stream(
-                session=session, run_response=run_response, stream_events=stream_events
-            )
 
             # Yield RunContentCompletedEvent
             if stream_events:
@@ -1816,15 +1818,6 @@ class Agent:
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # We should break out of the run function
-            if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                await await_for_background_tasks(
-                    memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task
-                )
-                return await self._ahandle_agent_run_paused(
-                    run_response=run_response, session=agent_session, user_id=user_id
-                )
-
             # If an output model is provided, generate output using the output model
             await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
 
@@ -1837,6 +1830,15 @@ class Agent:
                 run_response=run_response,
                 run_messages=run_messages,
             )
+
+            # We should break out of the run function
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                await await_for_background_tasks(
+                    memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task
+                )
+                return await self._ahandle_agent_run_paused(
+                    run_response=run_response, session=agent_session, user_id=user_id
+                )
 
             # 11. Convert the response to the structured format if needed
             self._convert_response_to_structured_format(run_response)
@@ -2117,6 +2119,20 @@ class Agent:
             # Check for cancellation after model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
+            # 10. Parse response with parser model if provided
+            async for event in self._aparse_response_with_parser_model_stream(
+                session=agent_session, run_response=run_response, stream_events=stream_events
+            ):
+                yield event
+
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    create_run_content_completed_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
+
             # Break out of the run function if a tool call is paused
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
                 async for item in await_for_background_tasks_stream(
@@ -2132,20 +2148,6 @@ class Agent:
                 ):
                     yield item
                 return
-
-            # 10. Parse response with parser model if provided
-            async for event in self._aparse_response_with_parser_model_stream(
-                session=agent_session, run_response=run_response, stream_events=stream_events
-            ):
-                yield event
-
-            if stream_events:
-                yield handle_event(  # type: ignore
-                    create_run_content_completed_event(from_run_response=run_response),
-                    run_response,
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
-                )
 
             # Execute post-hooks (after output is generated but before response is returned)
             if self.post_hooks is not None:
@@ -2168,6 +2170,8 @@ class Agent:
                 cultural_knowledge_task=cultural_knowledge_task,
                 stream_events=stream_events,
                 run_response=run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
             ):
                 yield item
 
@@ -2958,13 +2962,6 @@ class Agent:
             ):
                 yield event
 
-            # We should break out of the run function
-            if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                yield from self._handle_agent_run_paused_stream(
-                    run_response=run_response, session=session, user_id=user_id
-                )
-                return
-
             # Parse response with parser model if provided
             yield from self._parse_response_with_parser_model_stream(
                 session=session, run_response=run_response, stream_events=stream_events
@@ -2978,6 +2975,15 @@ class Agent:
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
+
+            # We should break out of the run function
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                yield from self._handle_agent_run_paused_stream(
+                    run_response=run_response, session=session, user_id=user_id
+                )
+                return
+
+            # Execute post-hooks
             if self.post_hooks is not None:
                 yield from self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
@@ -3374,12 +3380,6 @@ class Agent:
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # Break out of the run function if a tool call is paused
-            if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                return await self._ahandle_agent_run_paused(
-                    run_response=run_response, session=agent_session, user_id=user_id
-                )
-
             # If an output model is provided, generate output using the output model
             await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
 
@@ -3392,6 +3392,12 @@ class Agent:
                 run_response=run_response,
                 run_messages=run_messages,
             )
+
+            # Break out of the run function if a tool call is paused
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                return await self._ahandle_agent_run_paused(
+                    run_response=run_response, session=agent_session, user_id=user_id
+                )
 
             # 10. Convert the response to the structured format if needed
             self._convert_response_to_structured_format(run_response)
@@ -3613,14 +3619,6 @@ class Agent:
             # Check for cancellation after model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # Break out of the run function if a tool call is paused
-            if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                async for item in self._ahandle_agent_run_paused_stream(
-                    run_response=run_response, session=agent_session, user_id=user_id
-                ):
-                    yield item
-                return
-
             # Parse response with parser model if provided
             async for event in self._aparse_response_with_parser_model_stream(
                 session=agent_session, run_response=run_response, stream_events=stream_events
@@ -3635,6 +3633,14 @@ class Agent:
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
+
+            # Break out of the run function if a tool call is paused
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                async for item in self._ahandle_agent_run_paused_stream(
+                    run_response=run_response, session=agent_session, user_id=user_id
+                ):
+                    yield item
+                return
 
             # 8. Execute post-hooks
             if self.post_hooks is not None:
