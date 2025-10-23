@@ -90,7 +90,7 @@ jobs:
           safety check --json || safety check
         continue-on-error: true
       - name: Upload bandit results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: bandit-security-report
