@@ -1320,6 +1320,9 @@ class Team:
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session=session,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    metadata=metadata,
                     user_id=user_id,
                     debug_mode=debug_mode,
                     **kwargs,
@@ -2133,6 +2136,9 @@ class Team:
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session=team_session,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    metadata=metadata,
                     user_id=user_id,
                     debug_mode=debug_mode,
                     **kwargs,
