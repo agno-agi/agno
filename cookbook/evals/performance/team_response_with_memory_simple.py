@@ -60,7 +60,7 @@ async def run_team():
     _ = team.arun(
         input=f"I love {random_city}! What weather can I expect in {random_city}?",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     return "Successfully ran team"
