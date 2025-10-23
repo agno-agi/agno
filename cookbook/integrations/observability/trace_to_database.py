@@ -43,6 +43,12 @@ print("\n" + "=" * 60)
 print("Traces captured in database:")
 print("=" * 60)
 
+# Force flush traces to database before querying
+from opentelemetry import trace as trace_api
+tracer_provider = trace_api.get_tracer_provider()
+if hasattr(tracer_provider, 'force_flush'):
+    tracer_provider.force_flush(timeout_millis=5000)
+
 try:
     # First, get ALL traces without filtering
     all_traces = db.get_traces(limit=20)
