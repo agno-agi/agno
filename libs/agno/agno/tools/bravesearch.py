@@ -1,4 +1,5 @@
 import json
+import asyncio
 from os import getenv
 from typing import Optional
 from agno.tools import Toolkit
@@ -11,8 +12,6 @@ try:
         NewsSearchRequest,
         VideosSearchRequest,
         ImagesSearchRequest,
-        CountryCode,
-        LanguageCode,
     )
 except ImportError:
     raise ImportError(
@@ -23,13 +22,14 @@ except ImportError:
 
 class BraveSearchTools(Toolkit):
     """
-    Complete Brave Search toolkit with all 2024-2025 features.
+    Complete Brave Search toolkit with all new (2025) features.
     
     This toolkit provides access to Brave's independent search index with privacy-preserving
     search capabilities using the official brave-search-python-client.
     
     Features:
     - Web, news, video, and image search (dedicated endpoints)
+    - Sync/async support for compatibility with Agno agents
     - Freshness filters for time-based results
     - Safe search content filtering
     - Spellcheck support (plan-dependent)
@@ -76,6 +76,7 @@ class BraveSearchTools(Toolkit):
         self.brave_client = BraveSearch(api_key=self.api_key)
         
         # Build tools list based on enabled features
+        # Use SYNC wrappers for Agno compatibility
         tools = []
         if all or enable_web_search:
             tools.append(self.brave_search)
@@ -110,7 +111,8 @@ class BraveSearchTools(Toolkit):
             "country": self.fixed_country if self.fixed_country is not None else (country or "US"),
         }
     
-    async def brave_search(
+    
+    def brave_search(
         self,
         query: str,
         max_results: int = 5,
@@ -121,9 +123,10 @@ class BraveSearchTools(Toolkit):
         spellcheck: bool = False,
     ) -> str:
         """
-        Main web search with comprehensive results.
+        Main Brave web search with comprehensive results (SYNC wrapper).
         
-        This is the primary search method that returns web results.
+        This method wraps the async implementation to work with agent.run().
+        For async usage with agent.arun(), use brave_search_async().
         
         Args:
             query (str): The search query term. Maximum 400 characters and 50 words.
@@ -151,10 +154,117 @@ class BraveSearchTools(Toolkit):
                 - web_results: List of web results with title, url, description
                 - total_results: Total count of results
         """
+        # Run async method in sync context
+        return asyncio.run(
+            self._brave_search_async(
+                query, max_results, country, search_lang, safesearch, freshness, spellcheck
+            )
+        )
+    
+    def brave_news_search(
+        self,
+        query: str,
+        max_results: int = 5,
+        country: Optional[str] = None,
+        search_lang: Optional[str] = None,
+        freshness: str = "pw",
+        spellcheck: bool = False,
+    ) -> str:
+        """
+        Dedicated news search optimized for recent articles (SYNC wrapper).
+        
+        Args:
+            query (str): News search query.
+            max_results (int, optional): Number of results (1-50, default: 5).
+            country (str, optional): Country code. Uses fixed_country or defaults to 'US'.
+            search_lang (str, optional): Language code. Uses fixed_language or defaults to 'en'.
+            freshness (str, optional): Time filter - 'pd' (past day), 'pw' (past week, default), 
+                                      'pm' (past month), 'py' (past year).
+            spellcheck (bool, optional): Enable spellcheck. Default: False.
+        
+        Returns:
+            str: JSON with news articles including title, URL, description, age, and source.
+        """
+        return asyncio.run(
+            self._brave_news_search_async(
+                query, max_results, country, search_lang, freshness, spellcheck
+            )
+        )
+    
+    def brave_video_search(
+        self,
+        query: str,
+        max_results: int = 5,
+        country: Optional[str] = None,
+        search_lang: Optional[str] = None,
+        safesearch: str = "moderate",
+        spellcheck: bool = False,
+    ) -> str:
+        """
+        Dedicated video search for finding video content (SYNC wrapper).
+        
+        Args:
+            query (str): Video search query.
+            max_results (int, optional): Number of videos (1-50, default: 5).
+            country (str, optional): Country code. Uses fixed_country or defaults to 'US'.
+            search_lang (str, optional): Language code. Uses fixed_language or defaults to 'en'.
+            safesearch (str, optional): Content filtering - 'off', 'moderate' (default), 'strict'.
+            spellcheck (bool, optional): Enable spellcheck. Default: False.
+        
+        Returns:
+            str: JSON with video results including title, URL, description, duration,
+                 view count, creator name, and age.
+        """
+        return asyncio.run(
+            self._brave_video_search_async(
+                query, max_results, country, search_lang, safesearch, spellcheck
+            )
+        )
+    
+    def brave_image_search(
+        self,
+        query: str,
+        max_results: int = 10,
+        country: Optional[str] = None,
+        search_lang: Optional[str] = None,
+        safesearch: str = "moderate",
+        spellcheck: bool = False,
+    ) -> str:
+        """
+        Dedicated image search with privacy protection (SYNC wrapper).
+        
+        Args:
+            query (str): Image search query.
+            max_results (int, optional): Number of images (1-100, default: 10).
+            country (str, optional): Country code. Uses fixed_country or defaults to 'US'.
+            search_lang (str, optional): Language code. Uses fixed_language or defaults to 'en'.
+            safesearch (str, optional): Content filtering - 'off', 'moderate' (default), 'strict'.
+            spellcheck (bool, optional): Enable spellcheck. Default: False.
+        
+        Returns:
+            str: JSON with image results including title, URL, thumbnail, and source.
+        """
+        return asyncio.run(
+            self._brave_image_search_async(
+                query, max_results, country, search_lang, safesearch, spellcheck
+            )
+        )
+    
+    
+    async def _brave_search_async(
+        self,
+        query: str,
+        max_results: int = 5,
+        country: Optional[str] = None,
+        search_lang: Optional[str] = None,
+        safesearch: str = "moderate",
+        freshness: Optional[str] = None,
+        spellcheck: bool = False,
+    ) -> str:
+        """Async implementation of Brave web search."""
         if not query:
             return json.dumps({"error": "Query required"})
         
-        # Resolve final parameters (fixed override per-call)
         params = self._get_params(max_results, country, search_lang)
         log_info(f"Searching Brave: {query}")
         
@@ -186,7 +296,7 @@ class BraveSearchTools(Toolkit):
                     if hasattr(r, "age") and r.age:
                         result["age"] = r.age
                     if hasattr(r, "page_age") and r.page_age:
-                        result["page_age"] = r.page_age
+                        result["page_age"] = str(r.page_age)
                     web_results.append(result)
             
             filtered = {
@@ -201,7 +311,7 @@ class BraveSearchTools(Toolkit):
             log_info(f"Search error: {str(e)}")
             return json.dumps({"error": f"Search failed: {str(e)}"})
     
-    async def brave_news_search(
+    async def _brave_news_search_async(
         self,
         query: str,
         max_results: int = 5,
@@ -210,21 +320,7 @@ class BraveSearchTools(Toolkit):
         freshness: str = "pw",
         spellcheck: bool = False,
     ) -> str:
-        """
-        Dedicated news search optimized for recent articles and breaking news.
-        
-        Args:
-            query (str): News search query.
-            max_results (int, optional): Number of results (1-50, default: 5).
-            country (str, optional): Country code. Uses fixed_country or defaults to 'US'.
-            search_lang (str, optional): Language code. Uses fixed_language or defaults to 'en'.
-            freshness (str, optional): Time filter - 'pd' (past day), 'pw' (past week, default), 
-                                      'pm' (past month), 'py' (past year).
-            spellcheck (bool, optional): Enable spellcheck. Default: False.
-        
-        Returns:
-            str: JSON with news articles including title, URL, description, age, and source.
-        """
+        """Async implementation of news search."""
         if not query:
             return json.dumps({"error": "Query required"})
         
@@ -275,7 +371,7 @@ class BraveSearchTools(Toolkit):
             log_info(f"News search error: {str(e)}")
             return json.dumps({"error": f"News search failed: {str(e)}"})
     
-    async def brave_video_search(
+    async def _brave_video_search_async(
         self,
         query: str,
         max_results: int = 5,
@@ -284,21 +380,7 @@ class BraveSearchTools(Toolkit):
         safesearch: str = "moderate",
         spellcheck: bool = False,
     ) -> str:
-        """
-        Dedicated video search for finding video content.
-        
-        Args:
-            query (str): Video search query.
-            max_results (int, optional): Number of videos (1-50, default: 5).
-            country (str, optional): Country code. Uses fixed_country or defaults to 'US'.
-            search_lang (str, optional): Language code. Uses fixed_language or defaults to 'en'.
-            safesearch (str, optional): Content filtering - 'off', 'moderate' (default), 'strict'.
-            spellcheck (bool, optional): Enable spellcheck. Default: False.
-        
-        Returns:
-            str: JSON with video results including title, URL, description, duration,
-                 view count, creator name, and age.
-        """
+        """Async implementation of video search."""
         if not query:
             return json.dumps({"error": "Query required"})
         
@@ -354,7 +436,7 @@ class BraveSearchTools(Toolkit):
             log_info(f"Video search error: {str(e)}")
             return json.dumps({"error": f"Video search failed: {str(e)}"})
     
-    async def brave_image_search(
+    async def _brave_image_search_async(
         self,
         query: str,
         max_results: int = 10,
@@ -363,23 +445,7 @@ class BraveSearchTools(Toolkit):
         safesearch: str = "moderate",
         spellcheck: bool = False,
     ) -> str:
-        """
-        Dedicated image search with privacy protection.
-        
-        NEW FEATURE (2024): Independent image search protecting user privacy
-        while providing access to images from across the web.
-        
-        Args:
-            query (str): Image search query.
-            max_results (int, optional): Number of images (1-100, default: 10).
-            country (str, optional): Country code. Uses fixed_country or defaults to 'US'.
-            search_lang (str, optional): Language code. Uses fixed_language or defaults to 'en'.
-            safesearch (str, optional): Content filtering - 'off', 'moderate' (default), 'strict'.
-            spellcheck (bool, optional): Enable spellcheck. Default: False.
-        
-        Returns:
-            str: JSON with image results including title, URL, thumbnail, and source.
-        """
+        """Async implementation of image search."""
         if not query:
             return json.dumps({"error": "Query required"})
         
@@ -429,3 +495,19 @@ class BraveSearchTools(Toolkit):
         except Exception as e:
             log_info(f"Image search error: {str(e)}")
             return json.dumps({"error": f"Image search failed: {str(e)}"})
+
+
+# Usage example for testing
+if __name__ == "__main__":
+    # Synchronous usage (works with agent.run())
+    tools = BraveSearchTools(enable_web_search=True)
+    result = tools.brave_search("Python programming", max_results=3)
+    print("Sync result:", result)
+    
+    # Async usage (works with agent.arun())
+    async def test_async():
+        tools = BraveSearchTools(enable_web_search=True)
+        result = await tools._brave_search_async("Python programming", max_results=3)
+        print("Async result:", result)
+    
+    asyncio.run(test_async())
