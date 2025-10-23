@@ -24,7 +24,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, Table, and_, func, select, text
+    from sqlalchemy import Column, MetaData, Table, and_, func, select, text, update
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -45,6 +45,7 @@ class SqliteDb(BaseDb):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         trace_table: Optional[str] = None,
+        span_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -83,6 +84,7 @@ class SqliteDb(BaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             trace_table=trace_table,
+            span_table=span_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -239,6 +241,14 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.trace_table
+
+        elif table_type == "spans":
+            self.span_table = self._get_or_create_table(
+                table_name=self.span_table_name,
+                table_type="spans",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.span_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -1954,67 +1964,69 @@ class SqliteDb(BaseDb):
     # -- Trace methods --
 
     def create_trace(self, trace) -> None:
-        """Create a single trace span in the database.
+        """Create a single trace record in the database.
 
         Args:
-            trace: The TraceSpan object to store.
+            trace: The Trace object to store (one per trace_id).
         """
         try:
+            from agno.tracing.schemas import Trace
+            
             table = self._get_table(table_type="traces", create_table_if_not_found=True)
             if table is None:
                 return
 
             with self.Session() as sess, sess.begin():
-                stmt = sqlite.insert(table).values(trace.to_dict())
+                # First, check if trace exists and get current total_spans
+                existing = sess.execute(
+                    table.select().where(table.c.trace_id == trace.trace_id)
+                ).fetchone()
+                
+                if existing:
+                    # Update with incremental values
+                    current_total = existing.total_spans
+                    current_errors = existing.error_count
+                    
+                    stmt = update(table).where(table.c.trace_id == trace.trace_id).values(
+                        total_spans=current_total + trace.total_spans,
+                        error_count=current_errors + trace.error_count,
+                        end_time_ns=trace.end_time_ns,
+                        duration_ms=trace.duration_ms,
+                        status=trace.status,
+                        # Update name only if new name looks like a root span (contains ".run")
+                        name=trace.name if ".run" in trace.name else existing.name,
+                    )
+                else:
+                    # Insert new trace
+                    stmt = sqlite.insert(table).values(trace.to_dict())
+                
                 sess.execute(stmt)
 
         except Exception as e:
             log_error(f"Error creating trace: {e}")
             # Don't raise - tracing should not break the main application flow
 
-    def create_traces_batch(self, traces: List) -> None:
-        """Create multiple trace spans in the database as a batch.
+    def get_trace(self, trace_id: str):
+        """Get a single trace by its trace_id.
 
         Args:
-            traces: List of TraceSpan objects to store.
-        """
-        if not traces:
-            return
-
-        try:
-            table = self._get_table(table_type="traces", create_table_if_not_found=True)
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                trace_dicts = [trace.to_dict() for trace in traces]
-                sess.execute(sqlite.insert(table), trace_dicts)
-
-        except Exception as e:
-            log_error(f"Error creating traces batch: {e}")
-            # Don't raise - tracing should not break the main application flow
-
-    def get_trace(self, span_id: str):
-        """Get a single trace span by its span_id.
-
-        Args:
-            span_id: The unique span identifier.
+            trace_id: The unique trace identifier.
 
         Returns:
-            Optional[TraceSpan]: The trace span if found, None otherwise.
+            Optional[Trace]: The trace if found, None otherwise.
         """
         try:
-            from agno.tracing.schemas import TraceSpan
+            from agno.tracing.schemas import Trace
 
             table = self._get_table(table_type="traces")
             if table is None:
                 return None
 
             with self.Session() as sess:
-                stmt = table.select().where(table.c.span_id == span_id)
+                stmt = table.select().where(table.c.trace_id == trace_id)
                 result = sess.execute(stmt).fetchone()
                 if result:
-                    return TraceSpan.from_dict(dict(result._mapping))
+                    return Trace.from_dict(dict(result._mapping))
                 return None
 
         except Exception as e:
@@ -2023,32 +2035,32 @@ class SqliteDb(BaseDb):
 
     def get_traces(
         self,
-        trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        status: Optional[str] = None,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
         limit: Optional[int] = 100,
     ) -> List:
-        """Get trace spans matching the provided filters.
+        """Get traces matching the provided filters.
 
         Args:
-            trace_id: Filter by trace ID.
             run_id: Filter by run ID.
             session_id: Filter by session ID.
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
-            start_time: Filter spans starting after this timestamp (nanoseconds).
-            end_time: Filter spans ending before this timestamp (nanoseconds).
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this timestamp (nanoseconds).
+            end_time: Filter traces ending before this timestamp (nanoseconds).
             limit: Maximum number of traces to return.
 
         Returns:
-            List[TraceSpan]: List of matching trace spans.
+            List[Trace]: List of matching traces.
         """
         try:
-            from agno.tracing.schemas import TraceSpan
+            from agno.tracing.schemas import Trace
 
             table = self._get_table(table_type="traces")
             if table is None:
@@ -2058,8 +2070,6 @@ class SqliteDb(BaseDb):
                 stmt = table.select()
 
                 # Apply filters
-                if trace_id:
-                    stmt = stmt.where(table.c.trace_id == trace_id)
                 if run_id:
                     stmt = stmt.where(table.c.run_id == run_id)
                 if session_id:
@@ -2068,6 +2078,8 @@ class SqliteDb(BaseDb):
                     stmt = stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     stmt = stmt.where(table.c.agent_id == agent_id)
+                if status:
+                    stmt = stmt.where(table.c.status == status)
                 if start_time:
                     stmt = stmt.where(table.c.start_time_ns >= start_time)
                 if end_time:
@@ -2077,10 +2089,125 @@ class SqliteDb(BaseDb):
                 stmt = stmt.order_by(table.c.start_time_ns.desc()).limit(limit)
 
                 results = sess.execute(stmt).fetchall()
-                return [TraceSpan.from_dict(dict(row._mapping)) for row in results]
+                return [Trace.from_dict(dict(row._mapping)) for row in results]
 
         except Exception as e:
             log_error(f"Error getting traces: {e}")
+            return []
+
+    # -- Span methods --
+
+    def create_span(self, span) -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(span.to_dict())
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating span: {e}")
+            # Don't raise - tracing should not break the main application flow
+
+    def create_spans_batch(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        if not spans:
+            return
+
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                # Use INSERT OR IGNORE to avoid duplicate spans
+                for span in spans:
+                    stmt = sqlite.insert(table).values(span.to_dict())
+                    stmt = stmt.on_conflict_do_nothing(index_elements=["span_id"])
+                    sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {e}")
+            # Don't raise - tracing should not break the main application flow
+
+    def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = table.select().where(table.c.span_id == span_id)
+                result = sess.execute(stmt).fetchone()
+                if result:
+                    return Span.from_dict(dict(result._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {e}")
+            return None
+
+    def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = table.select()
+
+                # Apply filters
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                if parent_span_id:
+                    stmt = stmt.where(table.c.parent_span_id == parent_span_id)
+
+                # Order by start time and apply limit
+                stmt = stmt.order_by(table.c.start_time_ns).limit(limit)
+
+                results = sess.execute(stmt).fetchall()
+                return [Span.from_dict(dict(row._mapping)) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting spans: {e}")
             return []
 
     # -- Migrations --
