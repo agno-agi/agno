@@ -1,15 +1,29 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from pydantic import BaseModel
 
 from agno.media import Audio, Image, Video
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import Metrics
-from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
+
+if TYPE_CHECKING:
+    from agno.models.response import ToolExecution
+
+
+@dataclass
+class RunContext:
+    run_id: str
+    session_id: str
+    user_id: Optional[str] = None
+
+    dependencies: Optional[Dict[str, Any]] = None
+    knowledge_filters: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
