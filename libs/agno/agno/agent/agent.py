@@ -1500,7 +1500,7 @@ class Agent:
         )
 
         # Read existing session from database
-        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id, num_history_runs=self.num_history_runs)
         self._update_metadata(session=agent_session)
 
         # Initialize session state
@@ -5679,25 +5679,25 @@ class Agent:
 
     # -*- Session Database Functions
     def _read_session(
-        self, session_id: str, session_type: SessionType = SessionType.AGENT
+        self, session_id: str, session_type: SessionType = SessionType.AGENT, num_history_runs: Optional[int] = None
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return self.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
+            return self.db.get_session(session_id=session_id, session_type=session_type, num_history_runs=num_history_runs)  # type: ignore
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
             return None
 
     async def _aread_session(
-        self, session_id: str, session_type: SessionType = SessionType.AGENT
+        self, session_id: str, session_type: SessionType = SessionType.AGENT, num_history_runs: Optional[int] = None
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)  # type: ignore
+            return await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT, num_history_runs=num_history_runs)  # type: ignore
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
             return None
@@ -5776,6 +5776,7 @@ class Agent:
         self,
         session_id: str,
         user_id: Optional[str] = None,
+        num_history_runs: Optional[int] = None,
     ) -> AgentSession:
         from time import time
 
@@ -5788,7 +5789,7 @@ class Agent:
         if self.db is not None and self.team_id is None and self.workflow_id is None:
             log_debug(f"Reading AgentSession: {session_id}")
 
-            agent_session = cast(AgentSession, self._read_session(session_id=session_id))
+            agent_session = cast(AgentSession, self._read_session(session_id=session_id, num_history_runs=self.num_history_runs))
 
         if agent_session is None:
             # Creating new session if none found
@@ -5829,9 +5830,9 @@ class Agent:
         if self.db is not None and self.team_id is None and self.workflow_id is None:
             log_debug(f"Reading AgentSession: {session_id}")
             if self._has_async_db():
-                agent_session = cast(AgentSession, await self._aread_session(session_id=session_id))
+                agent_session = cast(AgentSession, await self._aread_session(session_id=session_id, num_history_runs=self.num_history_runs))
             else:
-                agent_session = cast(AgentSession, self._read_session(session_id=session_id))
+                agent_session = cast(AgentSession, self._read_session(session_id=session_id, num_history_runs=self.num_history_runs))
 
         if agent_session is None:
             # Creating new session if none found
