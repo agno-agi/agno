@@ -15,7 +15,7 @@ async def run_agent_with_events(prompt: str):
     async for run_output_event in finance_agent.arun(
         prompt,
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     ):
         if run_output_event.event in [RunEvent.run_started, RunEvent.run_completed]:
             print(f"\nEVENT: {run_output_event.event}")

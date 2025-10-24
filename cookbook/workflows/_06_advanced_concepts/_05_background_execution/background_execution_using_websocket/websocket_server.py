@@ -200,7 +200,7 @@ async def handle_start_workflow(websocket: WebSocket, message_data: dict):
             input=message,
             session_id=session_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             background=True,
             websocket=websocket,
         )
