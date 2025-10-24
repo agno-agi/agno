@@ -604,14 +604,42 @@ class Gemini(Model):
             else:
                 # Upload the video file to the Gemini API
                 if audio_path.exists() and audio_path.is_file():
-                    audio_file = self.get_client().files.upload(
-                        file=audio_path,
-                        config=dict(
-                            name=remote_file_name,
-                            display_name=audio_path.stem,
-                            mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3",
-                        ),
-                    )
+                    try:
+                        audio_file = self.get_client().files.upload(
+                            file=audio_path,
+                            config=dict(
+                                name=remote_file_name,
+                                display_name=audio_path.stem,
+                                mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3",
+                            ),
+                        )
+                    except KeyError as e:
+                        if "'file'" in str(e):
+                            # Handle Google genai library bug where response doesn't contain 'file' key
+                            log_warning(
+                                "Google genai library bug encountered during upload. "
+                                "Attempting to recover by listing files..."
+                            )
+
+                            # Try to find the uploaded file by listing files
+                            try:
+                                files_list = self.get_client().files.list()
+                                for file_obj in files_list:
+                                    if file_obj.name == remote_file_name:
+                                        log_info(f"Found uploaded file: {file_obj.name}")
+                                        audio_file = file_obj
+                                        break
+                                else:
+                                    log_error(f"Could not find uploaded file {remote_file_name} in file list")
+                                    return None
+                            except Exception as list_error:
+                                log_error(f"Failed to list files to recover from upload bug: {list_error}")
+                                return None
+                        else:
+                            raise  # Re-raise if it's a different KeyError
+                    except Exception as e:
+                        log_error(f"Failed to upload audio file {audio_path}: {e}")
+                        return None
                 else:
                     log_error(f"Audio file {audio_path} does not exist.")
                     return None
@@ -657,14 +685,42 @@ class Gemini(Model):
             else:
                 # Upload the video file to the Gemini API
                 if video_path.exists() and video_path.is_file():
-                    video_file = self.get_client().files.upload(
-                        file=video_path,
-                        config=dict(
-                            name=remote_file_name,
-                            display_name=video_path.stem,
-                            mime_type=f"video/{video.format}" if video.format else "video/mp4",
-                        ),
-                    )
+                    try:
+                        video_file = self.get_client().files.upload(
+                            file=video_path,
+                            config=dict(
+                                name=remote_file_name,
+                                display_name=video_path.stem,
+                                mime_type=f"video/{video.format}" if video.format else "video/mp4",
+                            ),
+                        )
+                    except KeyError as e:
+                        if "'file'" in str(e):
+                            # Handle Google genai library bug where response doesn't contain 'file' key
+                            log_warning(
+                                "Google genai library bug encountered during upload. "
+                                "Attempting to recover by listing files..."
+                            )
+
+                            # Try to find the uploaded file by listing files
+                            try:
+                                files_list = self.get_client().files.list()
+                                for file_obj in files_list:
+                                    if file_obj.name == remote_file_name:
+                                        log_info(f"Found uploaded file: {file_obj.name}")
+                                        video_file = file_obj
+                                        break
+                                else:
+                                    log_error(f"Could not find uploaded file {remote_file_name} in file list")
+                                    return None
+                            except Exception as list_error:
+                                log_error(f"Failed to list files to recover from upload bug: {list_error}")
+                                return None
+                        else:
+                            raise  # Re-raise if it's a different KeyError
+                    except Exception as e:
+                        log_error(f"Failed to upload video file {video_path}: {e}")
+                        return None
                 else:
                     log_error(f"Video file {video_path} does not exist.")
                     return None
