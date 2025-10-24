@@ -1,11 +1,10 @@
 """
 Example showing how to cache streaming model responses.
 
-This cookbook runs the same query twice in a single execution to demonstrate:
-- First run: Cache MISS (slower, streams from API)
-- Second run: Cache HIT (instant, replays cached stream)
+The first run will take a while to finish.
+The second run will hit the cache and be much faster.
 
-Check the console logs and timing to see the performance difference.
+You can also see the cache hit log in the console logs.
 """
 
 import time
@@ -24,13 +23,16 @@ for i in range(1, 3):
     print(f"{'=' * 60}\n")
 
     start_time = time.time()
-    agent.print_response(
+    for chunk in agent.run(
         "Write me a short story about a cat that can talk and solve problems.",
         stream=True,
-    )
+    ):
+        if chunk.event == "RunContent" and chunk.content:
+            print(chunk.content, end="", flush=True)
     elapsed_time = time.time() - start_time
 
-    print(f"\n Elapsed time: {elapsed_time:.2f}s")
+    print()  # New line after streaming
+    print(f"\n Elapsed time: {elapsed_time:.3f}s")
 
     # Small delay between iterations for clarity
     if i == 1:

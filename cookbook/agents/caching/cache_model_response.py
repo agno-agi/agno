@@ -1,11 +1,10 @@
 """
 Example showing how to cache model responses to avoid redundant API calls.
 
-This cookbook runs the same query twice in a single execution to demonstrate:
-- First run: Cache MISS (slower, makes actual API call)
-- Second run: Cache HIT (instant, replays from cache)
+The first run will take a while to finish.
+The second run will hit the cache and be much faster.
 
-Check the console logs and timing to see the performance difference.
+You can also see the cache hit log in the console logs.
 """
 
 import time
@@ -23,13 +22,11 @@ for i in range(1, 3):
     )
     print(f"{'=' * 60}\n")
 
-    start_time = time.time()
-    agent.print_response(
+    response = agent.run(
         "Write me a short story about a cat that can talk and solve problems."
     )
-    elapsed_time = time.time() - start_time
-
-    print(f"\n Elapsed time: {elapsed_time:.2f}s")
+    print(response.content)
+    print(f"\n Elapsed time: {response.metrics.duration:.3f}s")
 
     # Small delay between iterations for clarity
     if i == 1:

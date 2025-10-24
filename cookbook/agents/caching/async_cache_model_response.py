@@ -29,7 +29,7 @@ async def main():
         )
 
         print(response.content)
-        print(f"\n⏱️  Elapsed time: {response.metrics.duration:.3f}s")
+        print(f"\n Elapsed time: {response.metrics.duration:.3f}s")
 
         # Small delay between iterations for clarity
         if i == 1:
