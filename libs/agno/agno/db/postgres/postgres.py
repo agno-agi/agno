@@ -355,6 +355,7 @@ class PostgresDb(BaseDb):
         session_type: SessionType,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        num_history_runs: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -364,6 +365,7 @@ class PostgresDb(BaseDb):
             session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            num_history_runs (Optional[int]): Number of history runs to filter by. Defaults to None.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -391,6 +393,17 @@ class PostgresDb(BaseDb):
                     return None
 
                 session = dict(result._mapping)
+
+            log_debug(f"Session: {session}")
+
+            # Limit the number of runs to the specified number if num_history_runs is specified
+            if num_history_runs is not None and "runs" in session and session["runs"]:
+                runs = session["runs"]
+                if isinstance(runs, list) and len(runs) > num_history_runs:
+                    sorted_runs = sorted(runs, key=lambda x: x.get("created_at", 0), reverse=True)
+                    session["runs"] = sorted_runs[:num_history_runs]
+
+            log_debug(f"Session: {session}")
 
             if not deserialize:
                 return session
