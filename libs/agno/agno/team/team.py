@@ -7462,7 +7462,10 @@ class Team:
                 log_warning(f"RunOutput {run_id} not found in AgentSession {self._team_session.session_id}")
                 return None
         else:
-            team_session = self.get_session(session_id=session_id)
+            if self._has_async_db():
+                team_session = asyncio.run(self.aget_session(session_id=session_id))
+            else:
+                team_session = self.get_session(session_id=session_id)
             if team_session is not None:
                 run_response = team_session.get_run(run_id=run_id)
                 if run_response is not None:
@@ -7486,13 +7489,16 @@ class Team:
             if run_response is not None:
                 return run_response  # type: ignore
         else:
-            agent_session = self.get_session(session_id=session_id)
-            if agent_session is not None and agent_session.runs is not None and len(agent_session.runs) > 0:
-                run_response = agent_session.runs[-1]
+            if self._has_async_db():
+                team_session = asyncio.run(self.aget_session(session_id=session_id))
+            else:
+                team_session = self.get_session(session_id=session_id)
+            if team_session is not None and team_session.runs is not None and len(team_session.runs) > 0:
+                run_response = team_session.runs[-1]
                 if run_response is not None:
                     return run_response  # type: ignore
             else:
-                log_warning(f"No run responses found in AgentSession {session_id}")
+                log_warning(f"No run responses found in TeamSession {session_id}")
         return None
 
     def _read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> TeamSession:
@@ -7782,7 +7788,10 @@ class Team:
             raise Exception("Session ID is not set")
 
         # -*- Read from storage
-        session = self.get_session(session_id=session_id)  # type: ignore
+        if self._has_async_db():
+            session = asyncio.run(self.aget_session(session_id=session_id))
+        else:
+            session = self.get_session(session_id=session_id)  # type: ignore
 
         if session is None:
             raise Exception("Session not found")
@@ -7799,7 +7808,10 @@ class Team:
             session.session_data["session_name"] = session_name
 
         # -*- Save to storage
-        self.save_session(session=session)  # type: ignore
+        if self._has_async_db():
+            asyncio.run(self.asave_session(session=session))
+        else:
+            self.save_session(session=session)
 
         return session
 
@@ -7813,12 +7825,32 @@ class Team:
             raise Exception("Session not found")
         return session.session_data.get("session_name", "") if session.session_data is not None else ""
 
+    async def aget_session_name(self, session_id: Optional[str] = None) -> str:
+        """Get the session name for the given session ID and user ID."""
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        session = await self.aget_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+        return session.session_data.get("session_name", "") if session.session_data is not None else ""
+
     def get_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
         """Get the session state for the given session ID and user ID."""
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
         session = self.get_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+        return session.session_data.get("session_state", {}) if session.session_data is not None else {}
+
+    async def aget_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get the session state for the given session ID and user ID."""
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        session = await self.aget_session(session_id=session_id)  # type: ignore
         if session is None:
             raise Exception("Session not found")
         return session.session_data.get("session_state", {}) if session.session_data is not None else {}
@@ -7893,11 +7925,30 @@ class Team:
             elif isinstance(session.session_data.get("session_metrics"), Metrics):
                 return session.session_data.get("session_metrics")
         return None
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+        """Get the session metrics for the given session ID and user ID."""
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+
+        session = await self.aget_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+
+        if session.session_data is not None:
+            if isinstance(session.session_data.get("session_metrics"), dict):
+                return Metrics(**session.session_data.get("session_metrics", {}))
+            elif isinstance(session.session_data.get("session_metrics"), Metrics):
+                return session.session_data.get("session_metrics")
+        return None
 
     def delete_session(self, session_id: str) -> None:
         """Delete the current session and save to storage"""
         if self.db is not None:
-            self.db.delete_session(session_id=session_id)
+            if self._has_async_db():
+                asyncio.run(self.db.delete_session(session_id=session_id))
+            else:
+                self.db.delete_session(session_id=session_id)
 
     def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
         """Read the chat history from the session"""
@@ -7906,7 +7957,10 @@ class Team:
             log_warning("Session ID is not set, cannot get chat history")
             return []
 
-        session = self.get_session(session_id=session_id)  # type: ignore
+        if self._has_async_db():
+            session = asyncio.run(self.aget_session(session_id=session_id))
+        else:
+            session = self.get_session(session_id=session_id)  # type: ignore
 
         if session is None:
             raise Exception("Session not found")
@@ -7920,7 +7974,10 @@ class Team:
             log_warning("Session ID is not set, cannot get messages for session")
             return []
 
-        session = self.get_session(session_id=session_id)  # type: ignore
+        if self._has_async_db():
+            session = asyncio.run(self.aget_session(session_id=session_id))
+        else:
+            session = self.get_session(session_id=session_id)  # type: ignore
 
         if session is None:
             log_warning(f"Session {session_id} not found")
@@ -7938,6 +7995,19 @@ class Team:
             raise ValueError("Session ID is required")
 
         session = self.get_session(session_id=session_id)
+
+        if session is None:
+            raise Exception(f"Session {session_id} not found")
+
+        return session.get_session_summary()  # type: ignore
+
+    async def aget_session_summary(self, session_id: Optional[str] = None):
+        """Get the session summary for the given session ID and user ID."""
+        session_id = session_id if session_id is not None else self.session_id
+        if session_id is None:
+            raise ValueError("Session ID is required")
+
+        session = await self.aget_session(session_id=session_id)
 
         if session is None:
             raise Exception(f"Session {session_id} not found")
