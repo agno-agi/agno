@@ -1,8 +1,10 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
+
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.sqlite.schemas import get_table_schema_definition
@@ -50,6 +52,7 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
     """
     Check if a table with the given name exists.
     Note: db_schema parameter is ignored in SQLite but kept for API compatibility.
+
     Returns:
         bool: True if the table exists, False otherwise.
     """
@@ -65,7 +68,28 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
         return False
 
 
-def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schema: Optional[str] = None) -> bool:
+async def is_table_available_async(session: AsyncSession, table_name: str, db_schema: Optional[str] = None) -> bool:
+    """
+    Check if a table with the given name exists.
+    Note: db_schema parameter is ignored in SQLite but kept for API compatibility.
+
+    Returns:
+        bool: True if the table exists, False otherwise.
+    """
+    try:
+        exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
+        exists = (await session.execute(exists_query, {"table": table_name})).scalar() is not None
+        if not exists:
+            log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
+        return exists
+    except Exception as e:
+        log_error(f"Error checking if table exists: {e}")
+        return False
+
+
+def is_valid_table(
+    db_engine: Union[Engine, AsyncEngine], table_name: str, table_type: str, db_schema: Optional[str] = None
+) -> bool:
     """
     Check if the existing table has the expected column names.
     Note: db_schema parameter is ignored in SQLite but kept for API compatibility.
@@ -130,6 +154,39 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
     result = session.execute(stmt, metrics_records)
     results = [row._mapping for row in result.fetchall()]
     session.commit()
+
+    return results  # type: ignore
+
+
+async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_records: list[dict]) -> list[dict]:
+    """Bulk upsert metrics into the database.
+
+    Args:
+        table (Table): The table to upsert into.
+        metrics_records (list[dict]): The metrics records to upsert.
+
+    Returns:
+        list[dict]: The upserted metrics records.
+    """
+    if not metrics_records:
+        return []
+
+    results = []
+    stmt = sqlite.insert(table)
+
+    # Columns to update in case of conflict
+    update_columns = {
+        col.name: stmt.excluded[col.name]
+        for col in table.columns
+        if col.name not in ["id", "date", "created_at", "aggregation_period"]
+    }
+
+    stmt = stmt.on_conflict_do_update(index_elements=["date", "aggregation_period"], set_=update_columns).returning(  # type: ignore
+        table
+    )
+    result = await session.execute(stmt, metrics_records)
+    results = [dict(row._mapping) for row in result.fetchall()]
+    await session.commit()
 
     return results  # type: ignore
 
