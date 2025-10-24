@@ -1,18 +1,12 @@
 import json
 from os import getenv
 from typing import Any, List, Optional
+from time import sleep
+
+import httpx
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
-
-try:
-    from scrapegraph_py import Client
-    from scrapegraph_py.logger import sgai_logger
-except ImportError:
-    raise ImportError("`scrapegraph-py` not installed. Please install using `pip install scrapegraph-py`")
-
-# Set logging level
-sgai_logger.set_logging(level="INFO")
 
 
 class ScrapeGraphTools(Toolkit):
@@ -27,11 +21,21 @@ class ScrapeGraphTools(Toolkit):
         enable_scrape: bool = False,
         render_heavy_js: bool = False,
         all: bool = False,
+        base_url: str = "https://api.scrapegraphai.com/v1",
+        timeout: int = 300,
         **kwargs,
     ):
         self.api_key: Optional[str] = api_key or getenv("SGAI_API_KEY")
-        self.client = Client(api_key=self.api_key)
+        if not self.api_key:
+            raise ValueError("API key is required. Set SGAI_API_KEY environment variable or pass api_key parameter.")
+        
+        self.base_url = base_url
+        self.timeout = timeout
         self.render_heavy_js = render_heavy_js
+        self.headers = {
+            "SGAI-APIKEY": self.api_key,
+            "Content-Type": "application/json"
+        }
 
         # Start with smartscraper by default
         # Only enable markdownify if smartscraper is False
@@ -54,6 +58,46 @@ class ScrapeGraphTools(Toolkit):
 
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
 
+    def _make_request(self, method: str, endpoint: str, data: Optional[dict] = None) -> dict:
+        """Make HTTP request to ScrapeGraphAI API"""
+        url = f"{self.base_url}{endpoint}"
+        
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                if method == "GET":
+                    response = client.get(url, headers=self.headers)
+                elif method == "POST":
+                    response = client.post(url, headers=self.headers, json=data)
+                else:
+                    raise ValueError(f"Unsupported HTTP method: {method}")
+                
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as e:
+            error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
+            log_error(error_msg)
+            raise Exception(error_msg)
+        except Exception as e:
+            log_error(f"Request failed: {str(e)}")
+            raise
+
+    def _wait_for_completion(self, endpoint: str, request_id: str, max_retries: int = 60, retry_delay: int = 2) -> dict:
+        """Poll endpoint until request is completed"""
+        for _ in range(max_retries):
+            response = self._make_request("GET", f"{endpoint}/{request_id}")
+            status = response.get("status", "")
+            
+            if status == "completed":
+                return response
+            elif status == "failed":
+                raise Exception(f"Request failed: {response.get('error', 'Unknown error')}")
+            elif status in ["queued", "processing"]:
+                sleep(retry_delay)
+            else:
+                raise Exception(f"Unknown status: {status}")
+        
+        raise Exception("Request timed out")
+
     def smartscraper(self, url: str, prompt: str) -> str:
         """Extract structured data from a webpage using LLM.
         Args:
@@ -64,8 +108,23 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph smartscraper request for URL: {url}")
-            response = self.client.smartscraper(website_url=url, user_prompt=prompt)
-            return json.dumps(response["result"])
+            
+            payload = {
+                "website_url": url,
+                "user_prompt": prompt,
+                "render_heavy_js": self.render_heavy_js
+            }
+            
+            response = self._make_request("POST", "/smartscraper", payload)
+            request_id = response.get("request_id")
+            
+            if not request_id:
+                return json.dumps(response.get("result"))
+            
+            # Wait for completion
+            completed_response = self._wait_for_completion("/smartscraper", request_id)
+            return json.dumps(completed_response.get("result"))
+            
         except Exception as e:
             error_msg = f"Smartscraper failed: {str(e)}"
             log_error(error_msg)
@@ -80,8 +139,21 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph markdownify request for URL: {url}")
-            response = self.client.markdownify(website_url=url)
-            return response["result"]
+            
+            payload = {
+                "website_url": url
+            }
+            
+            response = self._make_request("POST", "/markdownify", payload)
+            request_id = response.get("request_id")
+            
+            if not request_id:
+                return response.get("result", "")
+            
+            # Wait for completion
+            completed_response = self._wait_for_completion("/markdownify", request_id)
+            return completed_response.get("result", "")
+            
         except Exception as e:
             error_msg = f"Markdownify failed: {str(e)}"
             log_error(error_msg)
@@ -113,17 +185,30 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph crawl request for URL: {url}")
-            response = self.client.crawl(
-                url=url,
-                prompt=prompt,
-                data_schema=schema,
-                cache_website=cache_website,
-                depth=depth,
-                max_pages=max_pages,
-                same_domain_only=same_domain_only,
-                batch_size=batch_size,
-            )
-            return json.dumps(response, indent=2)
+            
+            payload = {
+                "url": url,
+                "prompt": prompt,
+                "schema": schema,
+                "depth": depth,
+                "max_pages": max_pages,
+                "extraction_mode": True,
+                "render_heavy_js": self.render_heavy_js,
+                "rules": {
+                    "same_domain": same_domain_only
+                }
+            }
+            
+            response = self._make_request("POST", "/crawl", payload)
+            task_id = response.get("task_id")
+            
+            if not task_id:
+                return json.dumps(response, indent=2)
+            
+            # Wait for completion (crawl may take longer)
+            completed_response = self._wait_for_completion("/crawl", task_id, max_retries=120, retry_delay=3)
+            return json.dumps(completed_response, indent=2)
+            
         except Exception as e:
             error_msg = f"Crawl failed: {str(e)}"
             log_error(error_msg)
@@ -160,17 +245,22 @@ class ScrapeGraphTools(Toolkit):
         try:
             log_debug(f"ScrapeGraph agentic_crawler request for URL: {url}")
 
-            # Prepare parameters for the API call
-            params = {"url": url, "steps": steps, "use_session": use_session, "ai_extraction": ai_extraction}
+            # Prepare payload for the API call
+            payload = {
+                "url": url,
+                "steps": steps,
+                "use_session": use_session,
+                "ai_extraction": ai_extraction
+            }
 
             # Add optional parameters only if they are provided
             if user_prompt:
-                params["user_prompt"] = user_prompt
+                payload["user_prompt"] = user_prompt
             if output_schema:
-                params["output_schema"] = output_schema
+                payload["output_schema"] = output_schema
 
             # Call the agentic scraper API
-            response = self.client.agenticscraper(**params)
+            response = self._make_request("POST", "/agentic-scrapper", payload)
             return json.dumps(response, indent=2)
 
         except Exception as e:
@@ -187,8 +277,22 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph searchscraper request with prompt: {user_prompt}")
-            response = self.client.searchscraper(user_prompt=user_prompt)
-            return json.dumps(response["result"])
+            
+            payload = {
+                "user_prompt": user_prompt,
+                "extraction_mode": True
+            }
+            
+            response = self._make_request("POST", "/searchscraper", payload)
+            request_id = response.get("request_id")
+            
+            if not request_id:
+                return json.dumps(response.get("result"))
+            
+            # Wait for completion
+            completed_response = self._wait_for_completion("/searchscraper", request_id)
+            return json.dumps(completed_response.get("result"))
+            
         except Exception as e:
             error_msg = f"Searchscraper failed: {str(e)}"
             log_error(error_msg)
@@ -210,12 +314,18 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph scrape request for URL: {website_url}")
-            response = self.client.scrape(
-                website_url=website_url,
-                headers=headers,
-                render_heavy_js=self.render_heavy_js,
-            )
+            
+            payload = {
+                "website_url": website_url,
+                "render_heavy_js": self.render_heavy_js
+            }
+            
+            if headers:
+                payload["headers"] = headers
+            
+            response = self._make_request("POST", "/scrape", payload)
             return json.dumps(response, indent=2)
+            
         except Exception as e:
             error_msg = f"Scrape failed: {str(e)}"
             log_error(error_msg)
