@@ -16,9 +16,11 @@ gitdb==4.0.11
     # via gitpython
 gitpython==3.1.43
     # via agno (libs/agno/pyproject.toml)
-h11==0.14.0
-    # via httpcore
-httpcore==1.0.7
+h11==0.16.0
+    # via
+    #   agno (libs/agno/pyproject.toml)
+    #   httpcore
+httpcore==1.0.9
     # via httpx
 httpx==0.28.1
     # via agno (libs/agno/pyproject.toml)

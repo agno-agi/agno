@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -179,9 +180,11 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
         for session in sessions:
             if session.get("user_id"):
                 all_user_ids.add(session["user_id"])
-            metrics[runs_count_key] += len(session.get("runs", []))
+
+            # Parse runs from JSON string
             if runs := session.get("runs", []):
-                runs = json.loads(runs)
+                runs = json.loads(runs) if isinstance(runs, str) else runs
+                metrics[runs_count_key] += len(runs)
                 for run in runs:
                     if model_id := run.get("model"):
                         model_provider = run.get("model_provider", "")
@@ -189,7 +192,10 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
                             model_counts.get(f"{model_id}:{model_provider}", 0) + 1
                         )
 
-            session_data = json.loads(session.get("session_data", {}))
+            # Parse session_data from JSON string
+            session_data = session.get("session_data", {})
+            if isinstance(session_data, str):
+                session_data = json.loads(session_data)
             session_metrics = session_data.get("session_metrics", {})
             for field in token_metrics:
                 token_metrics[field] += session_metrics.get(field, 0)
@@ -266,3 +272,64 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
+
+
+# -- Cultural Knowledge util methods --
+def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> str:
+    """Serialize a CulturalKnowledge object for database storage.
+
+    Converts the model's separate content, categories, and notes fields
+    into a single JSON string for the database content column.
+    SQLite requires JSON to be stored as strings.
+
+    Args:
+        cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
+
+    Returns:
+        str: A JSON string containing content, categories, and notes.
+    """
+    content_dict: Dict[str, Any] = {}
+    if cultural_knowledge.content is not None:
+        content_dict["content"] = cultural_knowledge.content
+    if cultural_knowledge.categories is not None:
+        content_dict["categories"] = cultural_knowledge.categories
+    if cultural_knowledge.notes is not None:
+        content_dict["notes"] = cultural_knowledge.notes
+
+    return json.dumps(content_dict) if content_dict else None  # type: ignore
+
+
+def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
+    """Deserialize a database row to a CulturalKnowledge object.
+
+    The database stores content as a JSON dict containing content, categories, and notes.
+    This method extracts those fields and converts them back to the model format.
+
+    Args:
+        db_row (Dict[str, Any]): The database row as a dictionary.
+
+    Returns:
+        CulturalKnowledge: The cultural knowledge object.
+    """
+    # Extract content, categories, and notes from the JSON content field
+    content_json = db_row.get("content", {}) or {}
+
+    if isinstance(content_json, str):
+        content_json = json.loads(content_json) if content_json else {}
+
+    return CulturalKnowledge.from_dict(
+        {
+            "id": db_row.get("id"),
+            "name": db_row.get("name"),
+            "summary": db_row.get("summary"),
+            "content": content_json.get("content"),
+            "categories": content_json.get("categories"),
+            "notes": content_json.get("notes"),
+            "metadata": db_row.get("metadata"),
+            "input": db_row.get("input"),
+            "created_at": db_row.get("created_at"),
+            "updated_at": db_row.get("updated_at"),
+            "agent_id": db_row.get("agent_id"),
+            "team_id": db_row.get("team_id"),
+        }
+    )

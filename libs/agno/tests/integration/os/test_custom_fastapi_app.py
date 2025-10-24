@@ -12,6 +12,7 @@ from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
 from agno.team.team import Team
+from agno.tools.mcp import MCPTools
 from agno.workflow.workflow import Workflow
 
 
@@ -50,11 +51,10 @@ def test_custom_app_with_cors_middleware(test_agent: Agent):
         agents=[test_agent],
         base_app=custom_app,
     )
-
     app = agent_os.get_app()
     client = TestClient(app)
 
-    # Test actual CORS request with origin header (more reliable than OPTIONS)
+    # Ensure the app is running
     response = client.get(
         "/health", headers={"Origin": "https://custom.example.com", "Access-Control-Request-Method": "GET"}
     )
@@ -291,14 +291,13 @@ def test_available_endpoints_with_custom_app(test_agent: Agent, test_team: Team,
     async def custom_endpoint():
         return {"message": "custom"}
 
-    # Create AgentOS with agents, teams, and workflows
+    # Setup AgentOS with custom app
     agent_os = AgentOS(
         agents=[test_agent],
         teams=[test_team],
         workflows=[test_workflow],
         base_app=custom_app,
     )
-
     app = agent_os.get_app()
     client = TestClient(app)
 
@@ -711,3 +710,131 @@ def test_complex_route_conflict_scenario(test_agent: Agent, test_team: Team, tes
     response = client.post("/agents")
     # Should either work (custom) or have specific AgentOS behavior
     assert response.status_code != 404
+
+
+def test_custom_app_with_mcp_tools_lifespan(test_agent: Agent):
+    """Test that MCP tools work correctly with a custom base_app."""
+    base_app_startup_called = False
+    base_app_shutdown_called = False
+    mcp_connect_called = False
+    mcp_close_called = False
+
+    @asynccontextmanager
+    async def base_app_lifespan(app):
+        nonlocal base_app_startup_called, base_app_shutdown_called
+        base_app_startup_called = True
+        yield
+        base_app_shutdown_called = True
+
+    # Setup custom FastAPI app with custom lifespan
+    custom_app = FastAPI(title="Custom App", lifespan=base_app_lifespan)
+
+    # Setup MCP tools with mocked connect/close methods
+    mcp_tools = MCPTools("npm fake-command")
+
+    async def mock_connect():
+        nonlocal mcp_connect_called
+        mcp_connect_called = True
+
+    async def mock_close():
+        nonlocal mcp_close_called
+        mcp_close_called = True
+
+    mcp_tools.connect = mock_connect
+    mcp_tools.close = mock_close
+
+    # Setup agent with MCP tools
+    agent = Agent(name="mcp-test-agent", tools=[mcp_tools], db=InMemoryDb())
+
+    # Setup AgentOS with custom base_app
+    agent_os = AgentOS(
+        agents=[agent],
+        base_app=custom_app,
+    )
+
+    # Verify MCP tools were registered
+    assert len(agent_os.mcp_tools) == 1
+    assert agent_os.mcp_tools[0] is mcp_tools
+
+    app = agent_os.get_app()
+
+    # Verify lifespans were properly combined
+    assert app.router.lifespan_context is not None
+
+    # Ensure the app is running and lifespans are called
+    with TestClient(app) as client:
+        response = client.get("/health")
+        assert response.status_code == 200
+
+        # Verify the agent has access to MCP tools through the API
+        # Get the agent from the OS to check its tools
+        os_agent = agent_os.agents[0]
+        assert os_agent.tools is not None
+        assert len(os_agent.tools) == 1
+        assert os_agent.tools[0] is mcp_tools
+
+        # Verify agent endpoint is accessible and shows agent with tools
+        response = client.get(f"/agents/{os_agent.id}")
+        assert response.status_code == 200
+        agent_data = response.json()
+        assert agent_data["name"] == "mcp-test-agent"
+        # Agent should have tools configured (tools field should be present and non-empty)
+        assert "tools" in agent_data
+        assert agent_data["tools"] is not None
+
+    assert base_app_startup_called is True
+    assert base_app_shutdown_called is True
+    assert mcp_connect_called is True
+    assert mcp_close_called is True
+
+
+def test_custom_app_with_enable_mcp_server():
+    """Test that enable_mcp_server=True works with a custom base_app.
+
+    Note: This test requires a compatible version of fastmcp that exports
+    fastmcp.server.http.StarletteWithLifespan. If this import fails, it indicates
+    a version mismatch that needs to be resolved in agno/os/mcp.py.
+    """
+    # Setup lifespan events
+    base_app_startup_called = False
+    base_app_shutdown_called = False
+
+    @asynccontextmanager
+    async def base_app_lifespan(app):
+        nonlocal base_app_startup_called, base_app_shutdown_called
+        base_app_startup_called = True
+        yield
+        base_app_shutdown_called = True
+
+    # Setup custom FastAPI app with custom lifespan
+    custom_app = FastAPI(title="Custom App with MCP Server", lifespan=base_app_lifespan)
+
+    # Setup a simple agent
+    agent = Agent(name="test-agent", db=InMemoryDb())
+
+    # Setup AgentOS with enable_mcp_server=True and custom base_app
+    agent_os = AgentOS(
+        agents=[agent],
+        base_app=custom_app,
+        enable_mcp_server=True,
+    )
+    app = agent_os.get_app()
+
+    # Verify MCP server was initialized and lifespans were combined
+    assert agent_os._mcp_app is not None
+    assert app.router.lifespan_context is not None
+
+    # Verify MCP server is mounted by checking the app's routes
+    mcp_mounted = False
+    for route in app.routes:
+        if hasattr(route, "app") and route.app == agent_os._mcp_app:  # type: ignore
+            mcp_mounted = True
+            break
+    assert mcp_mounted, "MCP server should be mounted to the base_app"
+
+    # Ensure the app is running and lifespans were called
+    with TestClient(app) as client:
+        response = client.get("/health")
+        assert response.status_code == 200
+    assert base_app_startup_called is True
+    assert base_app_shutdown_called is True

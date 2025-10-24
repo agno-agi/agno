@@ -24,7 +24,8 @@ def cleanup_sessions(postgres_db_real: PostgresDb):
     with postgres_db_real.Session() as session:
         try:
             sessions_table = postgres_db_real._get_table("sessions")
-            session.execute(sessions_table.delete())
+            if sessions_table is not None:
+                session.execute(sessions_table.delete())
             session.commit()
         except Exception:
             session.rollback()

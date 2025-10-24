@@ -12,7 +12,8 @@ from rich.panel import Panel
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
+from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
     AgentOSConfig,
     DatabaseConfig,
@@ -64,6 +65,30 @@ async def mcp_lifespan(_, mcp_tools):
         await tool.close()
 
 
+def _combine_app_lifespans(lifespans: list) -> Any:
+    """Combine multiple FastAPI app lifespan context managers into one."""
+    if len(lifespans) == 1:
+        return lifespans[0]
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def combined_lifespan(app):
+        async def _run_nested(index: int):
+            if index >= len(lifespans):
+                yield
+                return
+
+            async with lifespans[index](app):
+                async for _ in _run_nested(index + 1):
+                    yield
+
+        async for _ in _run_nested(0):
+            yield
+
+    return combined_lifespan
+
+
 class AgentOS:
     def __init__(
         self,
@@ -74,6 +99,7 @@ class AgentOS:
         agents: Optional[List[Agent]] = None,
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
+        knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
         config: Optional[Union[str, AgentOSConfig]] = None,
@@ -98,6 +124,7 @@ class AgentOS:
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
+            knowledge: List of knowledge bases to include in the OS
             interfaces: List of interfaces to include in the OS
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
@@ -109,8 +136,8 @@ class AgentOS:
             telemetry: Whether to enable telemetry
 
         """
-        if not agents and not workflows and not teams:
-            raise ValueError("Either agents, teams or workflows must be provided.")
+        if not agents and not workflows and not teams and not knowledge:
+            raise ValueError("Either agents, teams, workflows or knowledge bases must be provided.")
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
@@ -119,7 +146,7 @@ class AgentOS:
         self.teams: Optional[List[Team]] = teams
         self.interfaces = interfaces or []
         self.a2a_interface = a2a_interface
-
+        self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
 
         self._app_set = False
@@ -183,9 +210,6 @@ class AgentOS:
 
                 team.initialize_team()
 
-                # Required for the built-in routes to work
-                team.store_events = True
-
                 for member in team.members:
                     if isinstance(member, Agent):
                         member.team_id = None
@@ -193,12 +217,19 @@ class AgentOS:
                     elif isinstance(member, Team):
                         member.initialize_team()
 
+                # Required for the built-in routes to work
+                team.store_events = True
+
         if self.workflows:
             for workflow in self.workflows:
                 # Track MCP tools recursively in workflow members
                 collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
+
                 if not workflow.id:
                     workflow.id = generate_id_from_name(workflow.name)
+
+                # Required for the built-in routes to work
+                workflow.store_events = True
 
         if self.telemetry:
             from agno.api.os import OSLaunch, log_os_telemetry
@@ -220,7 +251,7 @@ class AgentOS:
                         async with mcp_tools_lifespan(app):  # type: ignore
                             yield
 
-                app_lifespan = combined_lifespan  # type: ignore
+                app_lifespan = combined_lifespan
             else:
                 app_lifespan = mcp_tools_lifespan
 
@@ -237,6 +268,32 @@ class AgentOS:
     def get_app(self) -> FastAPI:
         if self.base_app:
             fastapi_app = self.base_app
+
+            # Initialize MCP server if enabled
+            if self.enable_mcp_server:
+                from agno.os.mcp import get_mcp_server
+
+                self._mcp_app = get_mcp_server(self)
+
+            # Collect all lifespans that need to be combined
+            lifespans = []
+
+            if fastapi_app.router.lifespan_context:
+                lifespans.append(fastapi_app.router.lifespan_context)
+
+            if self.mcp_tools:
+                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
+
+            if self.enable_mcp_server and self._mcp_app:
+                lifespans.append(self._mcp_app.lifespan)
+
+            if self.lifespan:
+                lifespans.append(self.lifespan)
+
+            # Combine lifespans and set them in the app
+            if lifespans:
+                fastapi_app.router.lifespan_context = _combine_app_lifespans(lifespans)
+
         else:
             if self.enable_mcp_server:
                 from contextlib import asynccontextmanager
@@ -405,32 +462,30 @@ class AgentOS:
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover the databases used by all contextual agents, teams and workflows."""
-        from agno.db.base import BaseDb
+        from agno.db.base import AsyncBaseDb, BaseDb
 
-        dbs: Dict[str, BaseDb] = {}
-        knowledge_dbs: Dict[str, BaseDb] = {}  # Track databases specifically used for knowledge
+        dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}
+        knowledge_dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
             if agent.db:
                 self._register_db_with_validation(dbs, agent.db)
             if agent.knowledge and agent.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
-                # Also add to general dbs if it's used for both purposes
-                if agent.knowledge.contents_db.id not in dbs:
-                    self._register_db_with_validation(dbs, agent.knowledge.contents_db)
 
         for team in self.teams or []:
             if team.db:
                 self._register_db_with_validation(dbs, team.db)
             if team.knowledge and team.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, team.knowledge.contents_db)
-                # Also add to general dbs if it's used for both purposes
-                if team.knowledge.contents_db.id not in dbs:
-                    self._register_db_with_validation(dbs, team.knowledge.contents_db)
 
         for workflow in self.workflows or []:
             if workflow.db:
                 self._register_db_with_validation(dbs, workflow.db)
+
+        for knowledge_base in self.knowledge or []:
+            if knowledge_base.contents_db:
+                self._register_db_with_validation(knowledge_dbs, knowledge_base.contents_db)
 
         for interface in self.interfaces or []:
             if interface.agent and interface.agent.db:
@@ -441,7 +496,7 @@ class AgentOS:
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
 
-    def _register_db_with_validation(self, registered_dbs: Dict[str, Any], db: BaseDb) -> None:
+    def _register_db_with_validation(self, registered_dbs: Dict[str, Any], db: Union[BaseDb, AsyncBaseDb]) -> None:
         """Register a database in the contextual OS after validating it is not conflicting with registered databases"""
         if db.id in registered_dbs:
             existing_db = registered_dbs[db.id]
@@ -452,7 +507,7 @@ class AgentOS:
                 )
         registered_dbs[db.id] = db
 
-    def _are_db_instances_compatible(self, db1: BaseDb, db2: BaseDb) -> bool:
+    def _are_db_instances_compatible(self, db1: Union[BaseDb, AsyncBaseDb], db2: Union[BaseDb, AsyncBaseDb]) -> bool:
         """
         Return True if the two given database objects are compatible
         Two database objects are compatible if they point to the same database with identical configuration.
@@ -486,14 +541,29 @@ class AgentOS:
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
-        knowledge_instances = []
+        seen_ids = set()
+        knowledge_instances: List[Knowledge] = []
+
+        def _add_knowledge_if_not_duplicate(knowledge: "Knowledge") -> None:
+            """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
+            # Use database ID if available, otherwise use object ID as fallback
+            if not knowledge.contents_db:
+                return
+            if knowledge.contents_db.id in seen_ids:
+                return
+            seen_ids.add(knowledge.contents_db.id)
+            knowledge_instances.append(knowledge)
+
         for agent in self.agents or []:
             if agent.knowledge:
-                knowledge_instances.append(agent.knowledge)
+                _add_knowledge_if_not_duplicate(agent.knowledge)
 
         for team in self.teams or []:
             if team.knowledge:
-                knowledge_instances.append(team.knowledge)
+                _add_knowledge_if_not_duplicate(team.knowledge)
+
+        for knowledge_base in self.knowledge or []:
+            _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances
 
@@ -503,7 +573,6 @@ class AgentOS:
         if session_config.dbs is None:
             session_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in session_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -511,9 +580,7 @@ class AgentOS:
                 session_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=SessionDomainConfig(
-                            display_name="Sessions" if not multiple_dbs else "Sessions in database '" + db_id + "'"
-                        ),
+                        domain_config=SessionDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -525,7 +592,6 @@ class AgentOS:
         if memory_config.dbs is None:
             memory_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in memory_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -533,9 +599,7 @@ class AgentOS:
                 memory_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=MemoryDomainConfig(
-                            display_name="Memory" if not multiple_dbs else "Memory in database '" + db_id + "'"
-                        ),
+                        domain_config=MemoryDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -547,7 +611,6 @@ class AgentOS:
         if knowledge_config.dbs is None:
             knowledge_config.dbs = []
 
-        multiple_knowledge_dbs: bool = len(self.knowledge_dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
         # Only add databases that are actually used for knowledge contents
@@ -556,9 +619,7 @@ class AgentOS:
                 knowledge_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=KnowledgeDomainConfig(
-                            display_name="Knowledge" if not multiple_knowledge_dbs else "Knowledge in database " + db_id
-                        ),
+                        domain_config=KnowledgeDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -570,7 +631,6 @@ class AgentOS:
         if metrics_config.dbs is None:
             metrics_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in metrics_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -578,9 +638,7 @@ class AgentOS:
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=MetricsDomainConfig(
-                            display_name="Metrics" if not multiple_dbs else "Metrics in database '" + db_id + "'"
-                        ),
+                        domain_config=MetricsDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -592,7 +650,6 @@ class AgentOS:
         if evals_config.dbs is None:
             evals_config.dbs = []
 
-        multiple_dbs: bool = len(self.dbs.keys()) > 1
         dbs_with_specific_config = [db.db_id for db in evals_config.dbs]
 
         for db_id in self.dbs.keys():
@@ -600,9 +657,7 @@ class AgentOS:
                 evals_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
-                        domain_config=EvalsDomainConfig(
-                            display_name="Evals" if not multiple_dbs else "Evals in database '" + db_id + "'"
-                        ),
+                        domain_config=EvalsDomainConfig(display_name=db_id),
                     )
                 )
 
@@ -616,6 +671,7 @@ class AgentOS:
         port: int = 7777,
         reload: bool = False,
         workers: Optional[int] = None,
+        access_log: bool = False,
         **kwargs,
     ):
         import uvicorn
@@ -648,4 +704,4 @@ class AgentOS:
             )
         )
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, **kwargs)
+        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, access_log=access_log, **kwargs)

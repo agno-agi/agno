@@ -1,4 +1,5 @@
 import json
+from itertools import chain
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
@@ -90,6 +91,14 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
         except json.JSONDecodeError:
             kwargs.pop("dependencies")
             log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
+
+    if metadata := kwargs.get("metadata"):
+        try:
+            metadata_dict = json.loads(metadata)  # type: ignore
+            kwargs["metadata"] = metadata_dict
+        except json.JSONDecodeError:
+            kwargs.pop("metadata")
+            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}")
 
     return kwargs
 
@@ -241,7 +250,7 @@ async def agent_response_streamer(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             **kwargs,
         )
         async for run_response_chunk in run_response:
@@ -278,7 +287,7 @@ async def agent_continue_response_streamer(
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
         )
         async for run_response_chunk in continue_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
@@ -326,7 +335,7 @@ async def team_response_streamer(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             **kwargs,
         )
         async for run_response_chunk in run_response:
@@ -380,12 +389,12 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
                 session_id = str(uuid4())
 
         # Execute workflow in background with streaming
-        workflow_result = await workflow.arun(
+        workflow_result = await workflow.arun(  # type: ignore
             input=user_message,
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             background=True,
             websocket=websocket,
         )
@@ -426,12 +435,12 @@ async def workflow_response_streamer(
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
-        run_response = await workflow.arun(
+        run_response = workflow.arun(
             input=input,
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             **kwargs,
         )
 
@@ -643,7 +652,7 @@ def get_base_router(
             os_id=os.id or "Unnamed OS",
             description=os.description,
             available_models=os.config.available_models if os.config else [],
-            databases=[db.id for db in os.dbs.values()],
+            databases=list({db.id for db in chain(os.dbs.values(), os.knowledge_dbs.values())}),
             chat=os.config.chat if os.config else None,
             session=os._get_session_config(),
             memory=os._get_memory_config(),
@@ -768,6 +777,11 @@ def get_base_router(
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
+        if hasattr(request.state, "metadata"):
+            metadata = request.state.metadata
+            if "metadata" in kwargs:
+                log_warning("Metadata parameter passed in both request state and kwargs, using request state")
+            kwargs["metadata"] = metadata
 
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
@@ -784,19 +798,39 @@ def get_base_router(
 
         if files:
             for file in files:
-                if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+                if file.content_type in [
+                    "image/png",
+                    "image/jpeg",
+                    "image/jpg",
+                    "image/gif",
+                    "image/webp",
+                    "image/bmp",
+                    "image/tiff",
+                    "image/tif",
+                    "image/avif",
+                ]:
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
                     except Exception as e:
                         log_error(f"Error processing image {file.filename}: {e}")
                         continue
-                elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
+                elif file.content_type in [
+                    "audio/wav",
+                    "audio/wave",
+                    "audio/mp3",
+                    "audio/mpeg",
+                    "audio/ogg",
+                    "audio/mp4",
+                    "audio/m4a",
+                    "audio/aac",
+                    "audio/flac",
+                ]:
                     try:
-                        base64_audio = process_audio(file)
-                        base64_audios.append(base64_audio)
+                        audio = process_audio(file)
+                        base64_audios.append(audio)
                     except Exception as e:
-                        log_error(f"Error processing audio {file.filename}: {e}")
+                        log_error(f"Error processing audio {file.filename} with content type {file.content_type}: {e}")
                         continue
                 elif file.content_type in [
                     "video/x-flv",
@@ -819,10 +853,19 @@ def get_base_router(
                         continue
                 elif file.content_type in [
                     "application/pdf",
-                    "text/csv",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "text/plain",
                     "application/json",
+                    "application/x-javascript",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "text/javascript",
+                    "application/x-python",
+                    "text/x-python",
+                    "text/plain",
+                    "text/html",
+                    "text/css",
+                    "text/md",
+                    "text/csv",
+                    "text/xml",
+                    "text/rtf",
                 ]:
                     # Process document files
                     try:
@@ -1150,6 +1193,11 @@ def get_base_router(
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
+        if hasattr(request.state, "metadata"):
+            metadata = request.state.metadata
+            if "metadata" in kwargs:
+                log_warning("Metadata parameter passed in both request state and kwargs, using request state")
+            kwargs["metadata"] = metadata
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
@@ -1596,6 +1644,11 @@ def get_base_router(
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
+        if hasattr(request.state, "metadata"):
+            metadata = request.state.metadata
+            if "metadata" in kwargs:
+                log_warning("Metadata parameter passed in both request state and kwargs, using request state")
+            kwargs["metadata"] = metadata
 
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, os.workflows)

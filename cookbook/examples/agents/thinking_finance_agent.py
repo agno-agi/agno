@@ -60,7 +60,7 @@ finance_agent = Agent(
     """),
     add_datetime_to_context=True,
     markdown=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 
 # Example usage with detailed market analysis request

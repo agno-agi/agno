@@ -59,7 +59,9 @@ async def test_pdf_reader_async_read_file(sample_pdf_path):
 
 
 def test_pdf_reader_with_chunking(sample_pdf_path):
-    reader = PDFReader()
+    from agno.knowledge.chunking.document import DocumentChunking
+
+    reader = PDFReader(chunking_strategy=DocumentChunking(chunk_size=50))
     reader.chunk = True
     documents = reader.read(sample_pdf_path)
 

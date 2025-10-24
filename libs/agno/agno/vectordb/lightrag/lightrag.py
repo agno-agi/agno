@@ -21,9 +21,14 @@ class LightRag(VectorDb):
         api_key: Optional[str] = None,
         auth_header_name: str = "X-API-KEY",
         auth_header_format: str = "{api_key}",
+        name: Optional[str] = None,
+        description: Optional[str] = None,
     ):
         self.server_url = server_url
         self.api_key = api_key
+        # Initialize base class with name and description
+        super().__init__(name=name, description=description)
+
         self.auth_header_name = auth_header_name
         self.auth_header_format = auth_header_format
 
@@ -372,3 +377,7 @@ class LightRag(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         raise NotImplementedError("update_metadata not supported for LightRag - use LightRag's native methods")
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # LightRag doesn't use SearchType enum
