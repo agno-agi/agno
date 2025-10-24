@@ -3,8 +3,9 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
-from agno.db.async_postgres.schemas import get_table_schema_definition
-from agno.db.async_postgres.utils import (
+from agno.db.base import AsyncBaseDb, SessionType
+from agno.db.postgres.schemas import get_table_schema_definition
+from agno.db.postgres.utils import (
     apply_sorting,
     bulk_upsert_metrics,
     calculate_date_metrics,
@@ -16,7 +17,6 @@ from agno.db.async_postgres.utils import (
     is_valid_table,
     serialize_cultural_knowledge,
 )
-from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow

@@ -282,7 +282,7 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
 
 
 # -- Cultural Knowledge util methods --
-def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
+def serialize_cultural_knowledge(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
     """Serialize a CulturalKnowledge object for database storage.
 
     Converts the model's separate content, categories, and notes fields
@@ -305,7 +305,7 @@ def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -
     return content_dict if content_dict else {}
 
 
-def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
+def deserialize_cultural_knowledge(db_row: Dict[str, Any]) -> CulturalKnowledge:
     """Deserialize a database row to a CulturalKnowledge object.
 
     The database stores content as a JSON dict containing content, categories, and notes.
