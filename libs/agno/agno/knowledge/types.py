@@ -20,6 +20,7 @@ class ContentType(str, Enum):
     MARKDOWN = ".md"
     DOCX = ".docx"
     DOC = ".doc"
+    PPTX = ".pptx"
     JSON = ".json"
 
     # Spreadsheet file extensions
