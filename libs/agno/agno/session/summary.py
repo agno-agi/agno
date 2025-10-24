@@ -66,6 +66,9 @@ class SessionSummaryManager:
     # Prompt used for session summary generation
     session_summary_prompt: Optional[str] = None
 
+    # User message prompt for requesting the summary
+    summary_request_message: str = "Provide the summary of the conversation."
+
     # Whether session summaries were created in the last run
     summaries_updated: bool = False
 
@@ -152,7 +155,7 @@ class SessionSummaryManager:
 
         return [
             system_message,
-            Message(role="user", content="Provide the summary of the conversation."),
+            Message(role="user", content=self.summary_request_message),
         ]
 
     def _process_summary_response(self, summary_response, session_summary_model: "Model") -> Optional[SessionSummary]:  # type: ignore
