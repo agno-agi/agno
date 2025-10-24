@@ -803,36 +803,59 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                     "key": "AgenticChunker",
                                     "name": "AgenticChunker",
                                     "description": "Chunking strategy that uses an LLM to determine natural breakpoints in the text",
+                                    "metadata": {
+                                        "chunk_size": 5000
+                                    },
                                 },
                                 "DocumentChunker": {
                                     "key": "DocumentChunker",
                                     "name": "DocumentChunker",
                                     "description": "A chunking strategy that splits text based on document structure like paragraphs and sections",
-                                },
-                                "RecursiveChunker": {
-                                    "key": "RecursiveChunker",
-                                    "name": "RecursiveChunker",
-                                    "description": "Chunking strategy that recursively splits text into chunks by finding natural break points",
-                                },
-                                "SemanticChunker": {
-                                    "key": "SemanticChunker",
-                                    "name": "SemanticChunker",
-                                    "description": "Chunking strategy that splits text into semantic chunks using chonkie",
+                                    "metadata": {
+                                        "chunk_size": 5000,
+                                        "chunk_overlap": 0,
+                                    },
                                 },
                                 "FixedSizeChunker": {
                                     "key": "FixedSizeChunker",
                                     "name": "FixedSizeChunker",
                                     "description": "Chunking strategy that splits text into fixed-size chunks with optional overlap",
-                                },
-                                "RowChunker": {
-                                    "key": "RowChunker",
-                                    "name": "RowChunker",
-                                    "description": "RowChunking chunking strategy",
+                                    "metadata": {
+                                        "chunk_size": 5000,
+                                        "chunk_overlap": 0,
+                                    },
                                 },
                                 "MarkdownChunker": {
                                     "key": "MarkdownChunker",
                                     "name": "MarkdownChunker",
                                     "description": "A chunking strategy that splits markdown based on structure like headers, paragraphs and sections",
+                                    "metadata": {
+                                        "chunk_size": 5000,
+                                        "chunk_overlap": 0,
+                                    },
+                                },
+                                "RecursiveChunker": {
+                                    "key": "RecursiveChunker",
+                                    "name": "RecursiveChunker",
+                                    "description": "Chunking strategy that recursively splits text into chunks by finding natural break points",
+                                    "metadata": {
+                                        "chunk_size": 5000,
+                                        "chunk_overlap": 0,
+                                    },
+                                },
+                                "RowChunker": {
+                                    "key": "RowChunker",
+                                    "name": "RowChunker",
+                                    "description": "RowChunking chunking strategy",
+                                    "metadata": {},
+                                },
+                                "SemanticChunker": {
+                                    "key": "SemanticChunker",
+                                    "name": "SemanticChunker",
+                                    "description": "Chunking strategy that splits text into semantic chunks using chonkie",
+                                    "metadata": {
+                                        "chunk_size": 5000
+                                    },
                                 },
                             },
                             "vector_dbs": [
@@ -898,7 +921,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             chunker_key = chunker_info.get("key")
             if chunker_key:
                 chunkers_dict[chunker_key] = ChunkerSchema(
-                    key=chunker_key, name=chunker_info.get("name"), description=chunker_info.get("description")
+                    key=chunker_key,
+                    name=chunker_info.get("name"),
+                    description=chunker_info.get("description"),
+                    metadata=chunker_info.get("metadata", {}),
                 )
 
         vector_dbs = []
