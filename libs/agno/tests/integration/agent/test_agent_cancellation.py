@@ -80,7 +80,6 @@ def test_cancel_agent_during_sync_streaming(shared_db):
     assert len(content_chunks) >= 5, "Should have collected at least 5 content chunks"
     
     # The partial content should match what we collected
-    collected_content = "".join(content_chunks)
     assert len(last_run.content) > 0, "Partial content should be preserved in database"
 
 
