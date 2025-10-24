@@ -87,7 +87,7 @@ class Claude(Model):
     mcp_servers: Optional[List[MCPServerConfiguration]] = None
 
     # Skills configuration
-    skills: Optional[List[str]] = None  # e.g., ["pptx", "xlsx", "docx", "pdf"]
+    skills: Optional[List[Dict[str, str]]] = None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
     betas: Optional[List[str]] = None  # Enables specific experimental or newly released features.
 
     # Client parameters
@@ -216,9 +216,7 @@ class Claude(Model):
             ]
         if self.skills:
             _request_params["betas"] = self.betas
-            _request_params["container"] = {
-                "skills": [{"type": "anthropic", "skill_id": skill, "version": "latest"} for skill in self.skills]
-            }
+            _request_params["container"] = {"skills": self.skills}
         if self.request_params:
             _request_params.update(self.request_params)
 

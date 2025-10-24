@@ -21,7 +21,11 @@ multi_skill_agent = Agent(
     name="Multi-Skill Document Creator",
     model=Claude(
         id="claude-sonnet-4-5-20250929",
-        skills=["pptx", "xlsx", "docx"],  # Enable PowerPoint, Excel, and Word skills
+        skills=[
+            {"type": "anthropic", "skill_id": "pptx", "version": "latest"},
+            {"type": "anthropic", "skill_id": "xlsx", "version": "latest"},
+            {"type": "anthropic", "skill_id": "docx", "version": "latest"},
+        ],  # Enable PowerPoint, Excel, and Word skills
     ),
     instructions=[
         "You are a comprehensive business document creator.",

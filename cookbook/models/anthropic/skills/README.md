@@ -58,7 +58,12 @@ response = client.messages.create(
     max_tokens=4096,
     betas=["skills-2025-10-02"],  # Enable skills beta
     container={
-        "skills": ["pptx", "xlsx", "docx", "pdf"]  # Enable all skills
+        "skills": [
+            {"type": "anthropic", "skill_id": "pptx", "version": "latest"},
+            {"type": "anthropic", "skill_id": "xlsx", "version": "latest"},
+            {"type": "anthropic", "skill_id": "docx", "version": "latest"},
+            {"type": "anthropic", "skill_id": "pdf", "version": "latest"},
+        ]  # Enable all skills
     },
     messages=[
         {
@@ -81,7 +86,7 @@ from agno.models.anthropic import Claude
 agent = Agent(
     model=Claude(
         id="claude-sonnet-4-5-20250929",
-        skills=["pptx"]  # Enable PowerPoint skill
+        skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]  # Enable PowerPoint skill
     ),
     instructions=[
         "You are a presentation specialist.",
@@ -93,11 +98,18 @@ agent = Agent(
 agent.print_response("Create a sales presentation with 5 slides")
 ```
 
-**Available Skills**: `["pptx", "xlsx", "docx", "pdf"]`
+**Available Skills**: `pptx`, `xlsx`, `docx`, `pdf`
 
 You can enable multiple skills at once:
 ```python
-model=Claude(id="claude-sonnet-4-5-20250929", skills=["pptx", "xlsx", "docx"])
+model=Claude(
+    id="claude-sonnet-4-5-20250929",
+    skills=[
+        {"type": "anthropic", "skill_id": "pptx", "version": "latest"},
+        {"type": "anthropic", "skill_id": "xlsx", "version": "latest"},
+        {"type": "anthropic", "skill_id": "docx", "version": "latest"},
+    ]
+)
 ```
 
 The framework automatically:
