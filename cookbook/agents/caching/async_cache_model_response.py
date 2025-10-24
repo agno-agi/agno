@@ -1,29 +1,43 @@
 """
 Example showing async caching for model responses.
 
-Run this cookbook twice to see the difference in response time.
+This cookbook runs the same query twice in a single execution to demonstrate:
+- First run: Cache MISS (slower, makes actual API call)
+- Second run: Cache HIT (instant, replays from cache)
 
-The first time should take a while to run.
-The second time should be instant.
-You can also see in the console about the cache hit/miss status
+Check the console logs and timing to see the performance difference.
 """
 
 import asyncio
+import time
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o", cache_response=True)
-)
+agent = Agent(model=OpenAIChat(id="gpt-4o", cache_response=True))
 
 
 async def main():
-    # Should take a while to run the first time, then replay from cache
-    response = await agent.arun(
-        "Write me a very very short and sweet story about a cat that can talk and solve problems."
-    )
-    print(response.content)
+    # Run the same query twice to demonstrate caching
+    for i in range(1, 3):
+        print(f"\n{'=' * 60}")
+        print(
+            f"Run {i}: {'Cache Miss (First Request)' if i == 1 else 'Cache Hit (Cached Response)'}"
+        )
+        print(f"{'=' * 60}\n")
+
+        start_time = time.time()
+        response = await agent.arun(
+            "Write me a short story about a cat that can talk and solve problems."
+        )
+        elapsed_time = time.time() - start_time
+
+        print(response.content)
+        print(f"\n Elapsed time: {elapsed_time:.2f}s")
+
+        # Small delay between iterations for clarity
+        if i == 1:
+            await asyncio.sleep(0.5)
 
 
 if __name__ == "__main__":
