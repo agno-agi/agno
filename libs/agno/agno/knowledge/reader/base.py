@@ -44,11 +44,15 @@ class Reader:
         self.max_results = max_results
         self.encoding = encoding
 
-    def set_chunking_strategy_from_string(self, strategy_name: str, **kwargs) -> None:
+    def set_chunking_strategy_from_string(
+        self, strategy_name: str, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> None:
         """Set the chunking strategy from a string name."""
         try:
             strategy_type = ChunkingStrategyType.from_string(strategy_name)
-            self.chunking_strategy = ChunkingStrategyFactory.create_strategy(strategy_type, **kwargs)
+            self.chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                strategy_type, chunk_size=chunk_size, overlap=overlap, **kwargs
+            )
         except ValueError as e:
             raise ValueError(f"Failed to set chunking strategy: {e}")
 
