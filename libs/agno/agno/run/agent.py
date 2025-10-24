@@ -384,7 +384,7 @@ class OutputModelResponseCompletedEvent(BaseAgentRunEvent):
 @dataclass
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
-    
+
     def __init__(self, **kwargs):
         # Store arbitrary attributes directly on the instance
         for key, value in kwargs.items():
