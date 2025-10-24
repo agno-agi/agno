@@ -290,7 +290,7 @@ class Model(ABC):
         """
         pass
 
-    def _prepare_tool_dicts(self, tools: Optional[List[Union[Function, dict]]]) -> List[Dict[str, Any]]:
+    def _format_tools(self, tools: Optional[List[Union[Function, dict]]]) -> List[Dict[str, Any]]:
         _tool_dicts = []
         for tool in tools or []:
             if isinstance(tool, Function):
@@ -340,7 +340,7 @@ class Model(ABC):
 
         function_call_count = 0
 
-        _tool_dicts = self._prepare_tool_dicts(tools) if tools is not None else []
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         while True:
@@ -501,7 +501,7 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
 
-        _tool_dicts = self._prepare_tool_dicts(tools) if tools is not None else []
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         function_call_count = 0
@@ -880,7 +880,7 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
 
-        _tool_dicts = self._prepare_tool_dicts(tools) if tools is not None else []
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         function_call_count = 0
@@ -1079,7 +1079,7 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
 
-        _tool_dicts = self._prepare_tool_dicts(tools) if tools is not None else []
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         function_call_count = 0
