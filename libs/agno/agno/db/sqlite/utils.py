@@ -68,7 +68,7 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
         return False
 
 
-async def is_table_available_async(session: AsyncSession, table_name: str, db_schema: Optional[str] = None) -> bool:
+async def ais_table_available(session: AsyncSession, table_name: str, db_schema: Optional[str] = None) -> bool:
     """
     Check if a table with the given name exists.
     Note: db_schema parameter is ignored in SQLite but kept for API compatibility.

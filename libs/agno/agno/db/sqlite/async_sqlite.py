@@ -12,12 +12,12 @@ from agno.db.schemas.memory import UserMemory
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     abulk_upsert_metrics,
+    ais_table_available,
     apply_sorting,
     calculate_date_metrics,
     deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    is_table_available_async,
     is_valid_table,
     serialize_cultural_knowledge_for_db,
 )
@@ -263,7 +263,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Table: SQLAlchemy Table object
         """
         async with self.async_session_factory() as sess, sess.begin():
-            table_is_available = await is_table_available_async(session=sess, table_name=table_name)
+            table_is_available = await ais_table_available(session=sess, table_name=table_name)
 
         if not table_is_available:
             return await self._create_table(table_name=table_name, table_type=table_type)
