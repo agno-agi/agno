@@ -1237,8 +1237,8 @@ class Model(ABC):
                         if function_call.function.show_result:
                             yield ModelResponse(content=item.content)
 
-                        if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
+                    if isinstance(item, CustomEvent):
+                        function_call_output += str(item)
 
                     # Yield the event itself to bubble it up
                     yield item
@@ -1626,8 +1626,8 @@ class Model(ABC):
                                 await event_queue.put(ModelResponse(content=item.content))
                                 continue
 
-                            if isinstance(item, CustomEvent):
-                                function_call_output += str(item)
+                        if isinstance(item, CustomEvent):
+                            function_call_output += str(item)
 
                         # Put the event into the queue to be yielded
                         await event_queue.put(item)

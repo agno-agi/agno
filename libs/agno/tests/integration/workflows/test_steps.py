@@ -40,10 +40,22 @@ def step3_function(step_input: StepInput) -> StepOutput:
     return StepOutput(content=f"Step3: {prev}")
 
 
+class StepClassWithCallable:
+    def __call__(self, step_input: StepInput) -> StepOutput:
+        prev = step_input.previous_step_content or ""
+        return StepOutput(content=f"StepClassWithCallable: {prev}")
+
+
 async def async_step_function(step_input: StepInput) -> StepOutput:
     """Async step function."""
     await asyncio.sleep(0.001)
     return StepOutput(content=f"AsyncStep: {step_input.input}")
+
+
+class AsyncStepClassWithCallable:
+    async def __call__(self, step_input: StepInput) -> StepOutput:
+        await asyncio.sleep(0.001)
+        return StepOutput(content=f"AsyncStepClassWithCallable: {step_input.input}")
 
 
 async def async_streaming_function(step_input: StepInput) -> AsyncIterator[str]:
@@ -73,6 +85,22 @@ def test_steps_direct_execute():
     assert find_content_in_steps(result, "Step2: Step1: direct test")
 
 
+def test_steps_direct_execute_with_callable_class():
+    """Test Steps.execute() directly without workflow."""
+    step1 = Step(name="step1", executor=step1_function)
+    step2 = Step(name="step2", executor=StepClassWithCallable())
+
+    steps = Steps(name="Direct Steps", steps=[step1, step2])
+    step_input = StepInput(input="direct test")
+
+    result = steps.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 2
+    assert find_content_in_steps(result, "Step1: direct test")
+    assert find_content_in_steps(result, "StepClassWithCallable: Step1: direct test")
+
+
 @pytest.mark.asyncio
 async def test_steps_direct_aexecute():
     """Test Steps.aexecute() directly without workflow."""
@@ -88,6 +116,23 @@ async def test_steps_direct_aexecute():
     assert len(result.steps) == 2
     assert find_content_in_steps(result, "Step1: direct async test")
     assert find_content_in_steps(result, "Step2: Step1: direct async test")
+
+
+@pytest.mark.asyncio
+async def test_steps_direct_aexecute_with_callable_class():
+    """Test Steps.aexecute() directly without workflow."""
+    step1 = Step(name="step1", executor=step1_function)
+    step2 = Step(name="step2", executor=AsyncStepClassWithCallable())
+
+    steps = Steps(name="Direct Async Steps", steps=[step1, step2])
+    step_input = StepInput(input="direct async test")
+
+    result = await steps.aexecute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 2
+    assert find_content_in_steps(result, "Step1: direct async test")
+    assert find_content_in_steps(result, "AsyncStepClassWithCallable: direct async test")
 
 
 def test_steps_direct_execute_stream():
@@ -109,7 +154,7 @@ def test_steps_direct_execute_stream():
         content="",
     )
 
-    events = list(steps.execute_stream(step_input, mock_response, stream_intermediate_steps=True))
+    events = list(steps.execute_stream(step_input, mock_response, stream_events=True))
 
     # Should have started, completed events and final step output
     started_events = [e for e in events if isinstance(e, StepsExecutionStartedEvent)]
@@ -201,7 +246,7 @@ def test_steps_streaming(shared_db):
         steps=[steps_sequence],
     )
 
-    events = list(workflow.run(input="stream test", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="stream test", stream=True, stream_events=True))
 
     # Check for required events
     steps_started = [e for e in events if isinstance(e, StepsExecutionStartedEvent)]
@@ -252,7 +297,7 @@ async def test_async_steps_streaming(shared_db):
     )
 
     events = []
-    async for event in await workflow.arun(input="async stream test", stream=True, stream_intermediate_steps=True):
+    async for event in workflow.arun(input="async stream test", stream=True, stream_events=True):
         events.append(event)
 
     # Check that we have events

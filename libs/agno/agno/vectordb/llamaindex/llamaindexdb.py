@@ -17,8 +17,18 @@ class LlamaIndexVectorDb(VectorDb):
     knowledge_retriever: BaseRetriever
     loader: Optional[Callable] = None
 
-    def __init__(self, knowledge_retriever: BaseRetriever, loader: Optional[Callable] = None, **kwargs):
+    def __init__(
+        self,
+        knowledge_retriever: BaseRetriever,
+        loader: Optional[Callable] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
+        # Initialize base class with name and description
+        super().__init__(name=name, description=description)
+
         self.knowledge_retriever = knowledge_retriever
         self.loader = loader
 
@@ -144,3 +154,7 @@ class LlamaIndexVectorDb(VectorDb):
             "LlamaIndexVectorDb.delete_by_content_id() not supported - please check the vectorstore manually."
         )
         return False
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # LlamaIndexVectorDb doesn't use SearchType enum

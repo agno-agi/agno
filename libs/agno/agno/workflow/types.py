@@ -176,7 +176,7 @@ class StepInput:
 
     def get_workflow_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
         """Get workflow conversation history as structured data for custom function steps
-        
+
         Args:
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
@@ -187,7 +187,7 @@ class StepInput:
 
     def get_workflow_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
         """Get formatted workflow conversation history context for custom function steps
-        
+
         Args:
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
