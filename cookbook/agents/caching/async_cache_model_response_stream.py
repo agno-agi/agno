@@ -28,7 +28,7 @@ async def main():
         start_time = time.time()
         await agent.aprint_response(
             "Write me a short story about a cat that can talk and solve problems.",
-            stream=True
+            stream=True,
         )
         elapsed_time = time.time() - start_time
 
