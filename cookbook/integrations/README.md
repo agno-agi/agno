@@ -5,9 +5,6 @@ Integration examples showing how to connect Agno agents with external platforms 
 
 ## Available Integrations
 
-### [Claude Agent Skills](./claude_skills/)
-Integration with Claude's Agent Skills for creating PowerPoint presentations, Excel spreadsheets, Word documents, and analyzing PDFs. Includes examples for direct API usage, specialized agents, and multi-skill orchestration.
-
 ### [Discord](./discord/)
 Discord bot implementation with media support and user memory capabilities.
 

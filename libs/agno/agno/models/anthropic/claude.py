@@ -174,9 +174,6 @@ class Claude(Model):
         Skills enable document creation capabilities (PowerPoint, Excel, Word, PDF).
         For more information, see: https://docs.claude.com/en/docs/agents-and-tools/agent-skills/quickstart
         """
-        if not self.skills:
-            return
-
         # Required betas for skills
         required_betas = ["code-execution-2025-08-25", "skills-2025-10-02"]
 
