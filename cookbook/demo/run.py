@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from agents.agno_assist import agno_assist
+from agents.agno_assist import agno_assist, agno_assist2
 from agents.web_search import web_search_agent
 from agno.os import AgentOS
 from knowledge.basic import knowledge as knowledge_base
@@ -18,7 +18,7 @@ config_path = str(Path(__file__).parent.joinpath("config.yaml"))
 # ************* Create the AgentOS *************
 agent_os = AgentOS(
     description="Demo AgentOS",
-    agents=[agno_assist, web_search_agent],
+    agents=[agno_assist, web_search_agent, agno_assist2],
     teams=[reasoning_finance_team, multilingual_team],
     workflows=[research_workflow, investment_workflow],
     knowledge=[knowledge_base],

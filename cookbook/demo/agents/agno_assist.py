@@ -12,7 +12,9 @@ from agno.vectordb.pgvector import PgVector, SearchType
 
 # ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url, id="agno_assist_db")
+db = PostgresDb(db_url, id="agno_assist_db", session_table="sessions2")
+db2 = PostgresDb(db_url, id="agno_assist_db", session_table="sessions")
+
 # *******************************
 
 
@@ -109,6 +111,18 @@ knowledge = Knowledge(
     contents_db=db,
 )
 
+agno_assist2 = Agent(
+    name="Agno Assist 2",
+    id="agno-assist-2",
+    model=Claude(id="claude-sonnet-4-0"),
+    description=description,
+    instructions=instructions,
+    db=db2,
+    # knowledge=knowledge,
+    search_knowledge=True,
+)
+
+
 # Setup our Agno Agent
 agno_assist = Agent(
     name="Agno Assist",
@@ -118,7 +132,7 @@ agno_assist = Agent(
     instructions=instructions,
     db=db,
     enable_agentic_memory=True,
-    knowledge=knowledge,
+    # knowledge=knowledge,
     search_knowledge=True,
     add_history_to_context=True,
     add_datetime_to_context=True,
