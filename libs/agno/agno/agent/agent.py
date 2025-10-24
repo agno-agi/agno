@@ -6297,7 +6297,7 @@ class Agent:
             elif isinstance(session.session_data.get("session_metrics"), Metrics):
                 return session.session_data.get("session_metrics", None)
         return None
-    
+
     async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
         """Get the session metrics for the given session ID and user ID."""
         session_id = session_id or self.session_id
@@ -6319,7 +6319,7 @@ class Agent:
         """Delete the current session and save to storage"""
         if self.db is None:
             return
-        
+
         if self._has_async_db():
             asyncio.run(self.db.delete_session(session_id=session_id))
         else:
