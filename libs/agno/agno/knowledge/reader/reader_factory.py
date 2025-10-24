@@ -133,6 +133,21 @@ class ReaderFactory:
         return FirecrawlReader(**config)
 
     @classmethod
+    def _get_tavily_reader(cls, **kwargs) -> Reader:
+        """Get Tavily reader instance."""
+        from agno.knowledge.reader.tavily_reader import TavilyReader
+
+        config: Dict[str, Any] = {
+            "api_key": kwargs.get("api_key") or os.getenv("TAVILY_API_KEY"),
+            "extract_format": "markdown",
+            "extract_depth": "basic",
+            "name": "Tavily Reader",
+            "description": "Extracts content from URLs using Tavily's Extract API with markdown or text output",
+        }
+        config.update(kwargs)
+        return TavilyReader(**config)
+
+    @classmethod
     def _get_youtube_reader(cls, **kwargs) -> Reader:
         """Get YouTube reader instance."""
         from agno.knowledge.reader.youtube_reader import YouTubeReader
@@ -256,6 +271,7 @@ class ReaderFactory:
         url_reader_priority = [
             "website",
             "firecrawl",
+            "tavily",
             "youtube",
         ]
 
