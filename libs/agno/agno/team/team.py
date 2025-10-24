@@ -643,15 +643,11 @@ class Team:
         self._team_session: Optional[TeamSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
-        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
 
         # True if we should parse a member response model
         self._member_response_model: Optional[Type[BaseModel]] = None
 
         self._formatter: Optional[SafeFormatter] = None
-
-        self._rebuild_tools = True
 
         self._hooks_normalised = False
 
@@ -1224,7 +1220,7 @@ class Team:
         # Initialize team run context
         team_run_context: Dict[str, Any] = {}
 
-        self.determine_tools_for_model(
+        _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
@@ -1263,6 +1259,7 @@ class Team:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
         if len(run_messages.messages) == 0:
@@ -1292,8 +1289,7 @@ class Team:
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 response_format=response_format,
-                tools=self._tools_for_model,
-                functions=self._functions_for_model,
+                tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
                 send_media_to_model=self.send_media_to_model,
@@ -1436,7 +1432,7 @@ class Team:
         # Initialize team run context
         team_run_context: Dict[str, Any] = {}
 
-        self.determine_tools_for_model(
+        _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
@@ -1475,6 +1471,7 @@ class Team:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
         if len(run_messages.messages) == 0:
@@ -1518,6 +1515,7 @@ class Team:
                     session=session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -1528,6 +1526,7 @@ class Team:
                     session=session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -2041,7 +2040,7 @@ class Team:
         # 4. Determine tools for model
         team_run_context: Dict[str, Any] = {}
         self.model = cast(Model, self.model)
-        self.determine_tools_for_model(
+        _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
@@ -2079,6 +2078,8 @@ class Team:
             dependencies=dependencies,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
 
@@ -2107,8 +2108,7 @@ class Team:
             # 8. Get the model response for the team leader
             model_response = await self.model.aresponse(
                 messages=run_messages.messages,
-                tools=self._tools_for_model,
-                functions=self._functions_for_model,
+                tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
                 response_format=response_format,
@@ -2277,7 +2277,7 @@ class Team:
         # 5. Determine tools for model
         team_run_context: Dict[str, Any] = {}
         self.model = cast(Model, self.model)
-        self.determine_tools_for_model(
+        _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
@@ -2314,6 +2314,7 @@ class Team:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
 
@@ -2361,6 +2362,7 @@ class Team:
                     session=team_session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -2371,6 +2373,7 @@ class Team:
                     session=team_session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -2873,6 +2876,7 @@ class Team:
         session: TeamSession,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
+        tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
@@ -2892,8 +2896,7 @@ class Team:
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=tools,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
@@ -2955,6 +2958,7 @@ class Team:
         session: TeamSession,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
+        tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
@@ -2974,8 +2978,7 @@ class Team:
         model_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=tools,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
@@ -4882,7 +4885,7 @@ class Team:
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
-    def determine_tools_for_model(
+    def _determine_tools_for_model(
         self,
         model: Model,
         run_response: TeamRunOutput,
@@ -4903,7 +4906,7 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:
+    ) -> List[Union[Function, dict]]:
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
@@ -5002,13 +5005,12 @@ class Team:
             if self.get_member_information_tool:
                 _tools.append(self.get_member_information)
 
-        self._functions_for_model = {}
-        self._tools_for_model = []
-        self._tool_instructions = []
-
         # Get Agent tools
         if len(_tools) > 0:
             log_debug("Processing tools for model")
+
+        _function_names = []
+        _functions: List[Union[Function, dict]] = []
 
         # Check if we need strict mode for the model
         strict = False
@@ -5019,25 +5021,24 @@ class Team:
             if isinstance(tool, Dict):
                 # If a dict is passed, it is a builtin tool
                 # that is run by the model provider and not the Agent
-                self._tools_for_model.append(tool)
+                _functions.append(tool)
                 log_debug(f"Included builtin tool {tool}")
 
             elif isinstance(tool, Toolkit):
                 # For each function in the toolkit and process entrypoint
-                for name, func in tool.functions.items():
-                    # If the function does not exist in self.functions
-                    if name not in self._functions_for_model:
-                        func._team = self
-                        func._session_state = session_state
-                        func._dependencies = dependencies
-                        func.process_entrypoint(strict=strict)
-                        if strict:
-                            func.strict = True
-                        if self.tool_hooks:
-                            func.tool_hooks = self.tool_hooks
-                        self._functions_for_model[name] = func
-                        self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                        log_debug(f"Added tool {name} from {tool.name}")
+                for name, _func in tool.functions.items():
+                    if name in _function_names:
+                        continue
+                    _function_names.append(name)
+
+                    _func._team = self
+                    _func.process_entrypoint(strict=strict)
+                    if strict:
+                        _func.strict = True
+                    if self.tool_hooks:
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func)
+                    log_debug(f"Added tool {_func.name} from {tool.name}")
 
                 # Add instructions from the toolkit
                 if tool.add_instructions and tool.instructions is not None:
@@ -5046,18 +5047,18 @@ class Team:
                     self._tool_instructions.append(tool.instructions)
 
             elif isinstance(tool, Function):
-                if tool.name not in self._functions_for_model:
-                    tool._team = self
-                    tool._session_state = session_state
-                    tool._dependencies = dependencies
-                    tool.process_entrypoint(strict=strict)
-                    if strict and tool.strict is None:
-                        tool.strict = True
-                    if self.tool_hooks:
-                        tool.tool_hooks = self.tool_hooks
-                    self._functions_for_model[tool.name] = tool
-                    self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                    log_debug(f"Added tool {tool.name}")
+                if tool.name in _function_names:
+                    continue
+                _function_names.append(tool.name)
+
+                tool._team = self
+                tool.process_entrypoint(strict=strict)
+                if strict and tool.strict is None:
+                    tool.strict = True
+                if self.tool_hooks:
+                    tool.tool_hooks = self.tool_hooks
+                _functions.append(tool)
+                log_debug(f"Added tool {tool.name}")
 
                 # Add instructions from the Function
                 if tool.add_instructions and tool.instructions is not None:
@@ -5068,42 +5069,48 @@ class Team:
             elif callable(tool):
                 # We add the tools, which are callable functions
                 try:
-                    func = Function.from_callable(tool, strict=strict)
-                    func._team = self
-                    func._session_state = session_state
-                    func._dependencies = dependencies
+                    _func = Function.from_callable(tool, strict=strict)
+
+                    if _func.name in _function_names:
+                        continue
+                    _function_names.append(_func.name)
+
+                    _func._team = self
                     if strict:
-                        func.strict = True
+                        _func.strict = True
                     if self.tool_hooks:
-                        func.tool_hooks = self.tool_hooks
-                    self._functions_for_model[func.name] = func
-                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                    log_debug(f"Added tool {func.name}")
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func)
+                    log_debug(f"Added tool {_func.name}")
                 except Exception as e:
                     log_warning(f"Could not add tool {tool}: {e}")
 
-        if self._functions_for_model:
+        if _functions:
             from inspect import signature
 
             # Check if any functions need media before collecting
             needs_media = any(
                 any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
-                for func in self._functions_for_model.values()
-                if func.entrypoint is not None
+                for func in _functions
+                if isinstance(func, Function) and func.entrypoint is not None
             )
 
-            if needs_media:
-                # Only collect media if functions actually need them
-                joint_images = collect_joint_images(run_response.input, session)  # type: ignore
-                joint_files = collect_joint_files(run_response.input)  # type: ignore
-                joint_audios = collect_joint_audios(run_response.input, session)  # type: ignore
-                joint_videos = collect_joint_videos(run_response.input, session)  # type: ignore
+            # Only collect media if functions actually need them
+            joint_images = collect_joint_images(run_response.input, session) if needs_media else None  # type: ignore
+            joint_files = collect_joint_files(run_response.input) if needs_media else None  # type: ignore
+            joint_audios = collect_joint_audios(run_response.input, session) if needs_media else None  # type: ignore
+            joint_videos = collect_joint_videos(run_response.input, session) if needs_media else None  # type: ignore
 
-                for func in self._functions_for_model.values():
+            for func in _functions:  # type: ignore
+                if isinstance(func, Function):
+                    func._session_state = session_state
+                    func._dependencies = dependencies
                     func._images = joint_images
                     func._files = joint_files
                     func._audios = joint_audios
                     func._videos = joint_videos
+
+        return _functions
 
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
@@ -5148,6 +5155,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
     ) -> Optional[Message]:
         """Get the system message for the team."""
@@ -5201,7 +5209,7 @@ class Team:
                 instructions.extend(_instructions)
 
         # 1.2 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
+        _model_instructions = self.model.get_instructions_for_model(tools)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
@@ -5404,7 +5412,7 @@ class Team:
                 metadata=metadata,
             )
 
-        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
+        system_message_from_model = self.model.get_system_message_for_model(tools)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
@@ -5441,6 +5449,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
     ) -> Optional[Message]:
         """Get the system message for the team."""
@@ -5494,7 +5503,7 @@ class Team:
                 instructions.extend(_instructions)
 
         # 1.2 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
+        _model_instructions = self.model.get_instructions_for_model(tools)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
@@ -5702,7 +5711,7 @@ class Team:
                 metadata=metadata,
             )
 
-        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
+        system_message_from_model = self.model.get_system_message_for_model(tools)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
@@ -5749,6 +5758,7 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -5779,6 +5789,7 @@ class Team:
             dependencies=dependencies,
             metadata=metadata,
             add_session_state_to_context=add_session_state_to_context,
+            tools=tools,
         )
         if system_message is not None:
             run_messages.system_message = system_message
@@ -5887,6 +5898,7 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -5917,6 +5929,7 @@ class Team:
             dependencies=dependencies,
             metadata=metadata,
             add_session_state_to_context=add_session_state_to_context,
+            tools=tools,
         )
         if system_message is not None:
             run_messages.system_message = system_message
@@ -7613,7 +7626,7 @@ class Team:
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
-                self._agent_session = loaded_session
+                self._team_session = loaded_session
 
             return loaded_session
 

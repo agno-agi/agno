@@ -290,12 +290,21 @@ class Model(ABC):
         """
         pass
 
+    def _format_tools(self, tools: Optional[List[Union[Function, dict]]]) -> List[Dict[str, Any]]:
+        _tool_dicts = []
+        for tool in tools or []:
+            if isinstance(tool, Function):
+                _tool_dicts.append({"type": "function", "function": tool.to_dict()})
+            else:
+                # If a dict is passed, it is a builtin tool
+                _tool_dicts.append(tool)
+        return _tool_dicts
+
     def response(
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        functions: Optional[Dict[str, Function]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         run_response: Optional[RunOutput] = None,
@@ -303,6 +312,15 @@ class Model(ABC):
     ) -> ModelResponse:
         """
         Generate a response from the model.
+
+        Args:
+            messages: List of messages to send to the model
+            response_format: Response format to use
+            tools: List of tools to use. This includes the original Function objects and dicts for built-in tools.
+            tool_choice: Tool choice to use
+            tool_call_limit: Tool call limit
+            run_response: Run response to use
+            send_media_to_model: Whether to send media to the model
         """
 
         # Check cache if enabled
@@ -322,6 +340,9 @@ class Model(ABC):
 
         function_call_count = 0
 
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
         while True:
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
@@ -330,7 +351,7 @@ class Model(ABC):
                 assistant_message=assistant_message,
                 model_response=model_response,
                 response_format=response_format,
-                tools=tools,
+                tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
                 run_response=run_response,
             )
@@ -348,7 +369,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     messages=messages,
                     model_response=model_response,
-                    functions=functions,
+                    functions=_functions,
                 )
                 function_call_results: List[Message] = []
 
@@ -457,8 +478,7 @@ class Model(ABC):
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        functions: Optional[Dict[str, Function]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         send_media_to_model: bool = True,
@@ -481,6 +501,9 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
 
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
         function_call_count = 0
 
         while True:
@@ -491,7 +514,7 @@ class Model(ABC):
                 assistant_message=assistant_message,
                 model_response=model_response,
                 response_format=response_format,
-                tools=tools,
+                tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
             )
 
@@ -508,7 +531,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     messages=messages,
                     model_response=model_response,
-                    functions=functions,
+                    functions=_functions,
                 )
                 function_call_results: List[Message] = []
 
@@ -824,8 +847,7 @@ class Model(ABC):
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        functions: Optional[Dict[str, Function]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
@@ -858,6 +880,9 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
 
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
         function_call_count = 0
 
         while True:
@@ -872,7 +897,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     stream_data=stream_data,
                     response_format=response_format,
-                    tools=tools,
+                    tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
                 ):
@@ -902,7 +927,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     model_response=model_response,
                     response_format=response_format,
-                    tools=tools,
+                    tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                 )
                 if self.cache_response:
@@ -917,7 +942,7 @@ class Model(ABC):
             if assistant_message.tool_calls is not None:
                 # Prepare function calls
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-                    assistant_message, messages, functions
+                    assistant_message=assistant_message, messages=messages, functions=_functions
                 )
                 function_call_results: List[Message] = []
 
@@ -1021,8 +1046,7 @@ class Model(ABC):
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        functions: Optional[Dict[str, Function]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
@@ -1055,6 +1079,9 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
 
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
         function_call_count = 0
 
         while True:
@@ -1069,7 +1096,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     stream_data=stream_data,
                     response_format=response_format,
-                    tools=tools,
+                    tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
                 ):
@@ -1097,7 +1124,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     model_response=model_response,
                     response_format=response_format,
-                    tools=tools,
+                    tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
                 )
@@ -1113,7 +1140,7 @@ class Model(ABC):
             if assistant_message.tool_calls is not None:
                 # Prepare function calls
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-                    assistant_message, messages, functions
+                    assistant_message=assistant_message, messages=messages, functions=_functions
                 )
                 function_call_results: List[Message] = []
 
@@ -2002,7 +2029,7 @@ class Model(ABC):
             model_response.tool_calls = []
 
         function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-            assistant_message, messages, functions
+            assistant_message=assistant_message, messages=messages, functions=functions
         )
         return function_calls_to_run
 

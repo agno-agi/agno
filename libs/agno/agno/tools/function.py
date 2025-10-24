@@ -139,6 +139,46 @@ class Function(BaseModel):
             include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
         )
 
+    def model_copy(self, *, deep: bool = False) -> "Function":
+        """
+        Override model_copy to handle callable fields that can't be deep copied (pickled).
+        Callables should always be shallow copied (referenced), not deep copied.
+        """
+        # For deep copy, we need to handle callable fields specially
+        if deep:
+            # Fields that should NOT be deep copied (callables and complex objects)
+            shallow_fields = {
+                "entrypoint",
+                "pre_hook",
+                "post_hook",
+                "tool_hooks",
+                "_agent",
+                "_team",
+            }
+
+            # Create a copy with shallow references to callable fields
+            copied_data = {}
+            for field_name, field_value in self.__dict__.items():
+                if field_name in shallow_fields:
+                    # Shallow copy - just reference the same object
+                    copied_data[field_name] = field_value
+                elif field_name == "parameters":
+                    # Deep copy the parameters dict
+                    from copy import deepcopy
+
+                    copied_data[field_name] = deepcopy(field_value)
+                else:
+                    # For simple types, just copy the value
+                    copied_data[field_name] = field_value
+
+            # Create new instance with copied data
+            new_instance = self.__class__.model_construct(**copied_data)
+
+            return new_instance
+        else:
+            # For shallow copy, use the default Pydantic behavior
+            return super().model_copy(deep=False)
+
     @classmethod
     def from_callable(cls, c: Callable, name: Optional[str] = None, strict: bool = False) -> "Function":
         from inspect import getdoc, signature
