@@ -23,12 +23,10 @@ for i in range(1, 3):
     print(f"{'=' * 60}\n")
 
     start_time = time.time()
-    for chunk in agent.run(
+    agent.print_response(
         "Write me a short story about a cat that can talk and solve problems.",
         stream=True,
-    ):
-        if chunk.event == "RunContent" and chunk.content:
-            print(chunk.content, end="", flush=True)
+    )
     elapsed_time = time.time() - start_time
 
     print()  # New line after streaming

@@ -26,12 +26,10 @@ async def main():
         print(f"{'=' * 60}\n")
 
         start_time = time.time()
-        async for chunk in agent.arun(
+        await agent.aprint_response(
             "Write me a short story about a cat that can talk and solve problems.",
-            stream=True,
-        ):
-            if chunk.event == "RunContent" and chunk.content:
-                print(chunk.content, end="", flush=True)
+            stream=True
+        )
         elapsed_time = time.time() - start_time
 
         print()  # New line after streaming
