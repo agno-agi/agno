@@ -1356,10 +1356,13 @@ class Agent:
             log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
         except RunCancelledException as e:
-            # Handle run cancellation during streaming
+            # Handle run cancellation during streaming - preserve partial data
             log_info(f"Run {run_response.run_id} was cancelled during streaming")
             run_response.status = RunStatus.cancelled
-            run_response.content = str(e)
+            # Don't overwrite content - preserve any partial content that was streamed
+            # Only set content if it's empty
+            if not run_response.content:
+                run_response.content = str(e)
 
             # Yield the cancellation event
             yield handle_event(  # type: ignore
@@ -1369,7 +1372,7 @@ class Agent:
                 store_events=self.store_events,
             )
 
-            # Cleanup and store the run response and session
+            # Cleanup and store the run response and session (preserves all partial data)
             self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
         finally:
             # Always clean up the run tracking
@@ -2237,7 +2240,10 @@ class Agent:
             # Handle run cancellation during async streaming
             log_info(f"Run {run_response.run_id} was cancelled during async streaming")
             run_response.status = RunStatus.cancelled
-            run_response.content = str(e)
+            # Don't overwrite content - preserve any partial content that was streamed
+            # Only set content if it's empty
+            if not run_response.content:
+                run_response.content = str(e)
 
             # Yield the cancellation event
             yield handle_event(  # type: ignore
@@ -2247,7 +2253,7 @@ class Agent:
                 store_events=self.store_events,
             )
 
-            # Cleanup and store the run response and session
+            # Cleanup and store the run response and session (preserves all partial data)
             await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
         finally:
             # Cancel the memory task if it's still running
