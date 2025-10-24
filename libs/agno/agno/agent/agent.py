@@ -903,6 +903,8 @@ class Agent:
             # Consume the generator without yielding
             deque(pre_hook_iterator, maxlen=0)
 
+        import time
+        start_time = time.time()
         # 2. Determine tools for model
         processed_tools = self.get_tools(
             run_response=run_response,
@@ -910,6 +912,8 @@ class Agent:
             user_id=user_id,
             knowledge_filters=knowledge_filters,
         )
+        mid_time = time.time()
+        log_info(f"Time taken to determine tools for model: {mid_time - start_time:.6f} seconds")
         _tools = self._determine_tools_for_model(
             model=self.model,
             processed_tools=processed_tools,
@@ -918,6 +922,8 @@ class Agent:
             session_state=session_state,
             dependencies=dependencies,
         )
+        end_time = time.time()
+        log_info(f"Time taken to determine tools for model after processing: {end_time - mid_time:.6f} seconds")
 
         # 3. Prepare run messages
         run_messages: RunMessages = self._get_run_messages(
