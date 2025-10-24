@@ -5373,7 +5373,7 @@ class Agent:
                             _func.strict = True
                         if self.tool_hooks is not None:
                             _func.tool_hooks = self.tool_hooks
-                        _functions.append(_func)
+                        _functions.append(_func.model_copy(deep=True))
                         log_debug(f"Added tool {name} from {tool.name}")
 
                     # Add instructions from the toolkit
@@ -5391,7 +5391,7 @@ class Agent:
                         tool.strict = True
                     if self.tool_hooks is not None:
                         tool.tool_hooks = self.tool_hooks
-                    _functions.append(tool)
+                    _functions.append(tool.model_copy(deep=True))
                     log_debug(f"Added tool {tool.name}")
 
                     # Add instructions from the Function
@@ -5412,7 +5412,7 @@ class Agent:
                             _func.strict = True
                         if self.tool_hooks is not None:
                             _func.tool_hooks = self.tool_hooks
-                        _functions.append(_func)
+                        _functions.append(_func.model_copy(deep=True))
                         log_debug(f"Added tool {_func.name}")
                     except Exception as e:
                         log_warning(f"Could not add tool {tool}: {e}")

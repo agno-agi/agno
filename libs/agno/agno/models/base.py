@@ -1822,7 +1822,7 @@ class Model(ABC):
         async def process_async_generator(result, generator_id):
             function_call_success, function_call_timer, function_call, function_execution_result = result
             function_call_output = ""
-            
+
             try:
                 async for item in function_call.result:
                     # This function yields agent/team run events
