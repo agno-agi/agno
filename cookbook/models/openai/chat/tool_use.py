@@ -11,6 +11,6 @@ agent = Agent(
     tools=[sample_tool],
     markdown=True,
 )
-agent.print_response("Please call the sample tool for the first time")
 
-agent.print_response("Please call the sample tool for the second time")
+for i in range(10):
+    agent.run("Please call the sample tool")
