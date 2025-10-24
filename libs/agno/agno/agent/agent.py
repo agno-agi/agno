@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import asyncio
+from asyncio import create_task, CancelledError
+from inspect import iscoroutinefunction
 from collections import ChainMap, deque
 from dataclasses import dataclass
 from os import getenv
@@ -67,6 +68,7 @@ from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.utils.agent import (
     await_for_background_tasks,
     await_for_background_tasks_stream,
@@ -239,6 +241,9 @@ class Agent:
 
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
+
+    # If True, on each run any instances of MCP tools are refreshed (i.e. the connection is re-established and all available tools are re-fetched)
+    refresh_mcp_tools: bool = False
 
     # --- Agent Hooks ---
     # Functions called right after agent-session is loaded, before processing starts
@@ -435,6 +440,7 @@ class Agent:
         tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        refresh_mcp_tools: bool = False,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
@@ -543,6 +549,8 @@ class Agent:
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
 
+        self.refresh_mcp_tools = refresh_mcp_tools
+
         # Initialize hooks with backward compatibility
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
@@ -622,6 +630,8 @@ class Agent:
         self._formatter: Optional[SafeFormatter] = None
 
         self._hooks_normalised = False
+
+        self._mcp_tools_initialized_on_run: List[MCPTools] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -806,6 +816,20 @@ class Agent:
 
     def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]):
         self.tools = list(tools) if tools else []
+
+    async def _connect_mcp_tools(self) -> None:
+        """Connect the MCP tools to the agent."""
+        for tool in self.tools:
+            if isinstance(tool, (MCPTools, MultiMCPTools)) and not tool.initialized:
+                # Connect the MCP server
+                await tool.connect()
+                self._mcp_tools_initialized_on_run.append(tool)
+
+    async def _disconnect_mcp_tools(self) -> None:
+        """Disconnect the MCP tools from the agent."""
+        for tool in self._mcp_tools_initialized_on_run:
+            await tool.close()
+        self._mcp_tools_initialized_on_run = []
 
     def _initialize_session(
         self,
@@ -1792,10 +1816,8 @@ class Agent:
         # 7. Start memory creation as a background task (runs concurrently with the main execution)
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            import asyncio
-
             log_debug("Starting memory creation in background task.")
-            memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+            memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
         # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
         cultural_knowledge_task = None
@@ -1804,10 +1826,8 @@ class Agent:
             and self.culture_manager is not None
             and self.update_cultural_knowledge
         ):
-            import asyncio
-
             log_debug("Starting cultural knowledge creation in background thread.")
-            cultural_knowledge_task = asyncio.create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
+            cultural_knowledge_task = create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
 
         try:
             # Check for cancellation before model call
@@ -1915,23 +1935,22 @@ class Agent:
             return run_response
 
         finally:
+            # Always disconnect MCP tools
+            await self._disconnect_mcp_tools()
+
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
-                import asyncio
-
                 memory_task.cancel()
                 try:
                     await memory_task
-                except asyncio.CancelledError:
+                except CancelledError:
                     pass
             # Cancel the cultural knowledge task if it's still running
             if cultural_knowledge_task is not None and not cultural_knowledge_task.done():
-                import asyncio
-
                 cultural_knowledge_task.cancel()
                 try:
                     await cultural_knowledge_task
-                except asyncio.CancelledError:
+                except CancelledError:
                     pass
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
@@ -2061,10 +2080,9 @@ class Agent:
         # 7. Start memory creation as a background task (runs concurrently with the main execution)
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            import asyncio
 
             log_debug("Starting memory creation in background task.")
-            memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+            memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
         # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
         cultural_knowledge_task = None
@@ -2073,10 +2091,8 @@ class Agent:
             and self.culture_manager is not None
             and self.update_cultural_knowledge
         ):
-            import asyncio
-
             log_debug("Starting cultural knowledge creation in background task.")
-            cultural_knowledge_task = asyncio.create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
+            cultural_knowledge_task = create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
 
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
@@ -2266,23 +2282,22 @@ class Agent:
             # Cleanup and store the run response and session
             await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
         finally:
+            # Always disconnect MCP tools
+            await self._disconnect_mcp_tools()
+
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
-                import asyncio
-
                 memory_task.cancel()
                 try:
                     await memory_task
-                except asyncio.CancelledError:
+                except CancelledError:
                     pass
 
             if cultural_knowledge_task is not None and not cultural_knowledge_task.done():
-                import asyncio
-
                 cultural_knowledge_task.cancel()
                 try:
                     await cultural_knowledge_task
-                except asyncio.CancelledError:
+                except CancelledError:
                     pass
 
             # Always clean up the run tracking
@@ -3498,6 +3513,9 @@ class Agent:
 
             return run_response
         finally:
+            # Always disconnect MCP tools
+            await self._disconnect_mcp_tools()
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3770,6 +3788,9 @@ class Agent:
             # Cleanup and store the run response and session
             await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
         finally:
+            # Always disconnect MCP tools
+            await self._disconnect_mcp_tools()
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3888,7 +3909,8 @@ class Agent:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     # Synchronous function
@@ -4023,7 +4045,7 @@ class Agent:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     hook(**filtered_args)
@@ -5197,17 +5219,16 @@ class Agent:
         self,
         run_response: RunOutput,
         session: AgentSession,
-        async_mode: bool = False,
         user_id: Optional[str] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
+
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Add provided tools
         if self.tools is not None:
             # If not running in async mode, raise if any tool is async
-            if not async_mode:
-                self._raise_if_async_tools()
+            self._raise_if_async_tools()
             agent_tools.extend(self.tools)
 
         # Add tools for accessing memory
@@ -5223,10 +5244,10 @@ class Agent:
             )
 
         if self.enable_agentic_memory:
-            agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
+            agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=False))
 
         if self.enable_agentic_culture:
-            agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=async_mode))
+            agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=False))
 
         if self.enable_agentic_state:
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
@@ -5236,7 +5257,7 @@ class Agent:
             # Check if knowledge retriever is an async function but used in sync mode
             from inspect import iscoroutinefunction
 
-            if not async_mode and self.knowledge_retriever and iscoroutinefunction(self.knowledge_retriever):
+            if self.knowledge_retriever and iscoroutinefunction(self.knowledge_retriever):
                 log_warning(
                     "Async knowledge retriever function is being used with synchronous agent.run() or agent.print_response(). "
                     "It is recommended to use agent.arun() or agent.aprint_response() instead."
@@ -5248,7 +5269,7 @@ class Agent:
                     agent_tools.append(
                         self._search_knowledge_base_with_agentic_filters_function(
                             run_response=run_response,
-                            async_mode=async_mode,
+                            async_mode=False,
                             knowledge_filters=knowledge_filters,
                         )
                     )
@@ -5256,7 +5277,7 @@ class Agent:
                     agent_tools.append(
                         self._get_search_knowledge_base_function(
                             run_response=run_response,
-                            async_mode=async_mode,
+                            async_mode=False,
                             knowledge_filters=knowledge_filters,
                         )
                     )
@@ -5273,11 +5294,41 @@ class Agent:
         user_id: Optional[str] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
+        import time
+        start_time = time.time()
+
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+        # Connect MCP tools
+        await self._connect_mcp_tools()
 
         # Add provided tools
         if self.tools is not None:
-            agent_tools.extend(self.tools)
+            for tool in self.tools:
+                if isinstance(tool, (MCPTools, MultiMCPTools)):
+                    if self.refresh_mcp_tools:
+                        try:
+                            is_alive = await tool.is_alive()
+                            print(f"MCP tool {tool.name} is alive: {is_alive}")
+                            if not is_alive:
+                                await tool.connect(force=True)
+                        except (RuntimeError, BaseException) as e:
+                            log_warning(f"Failed to check if MCP tool is alive: {e}")
+                            continue
+                        
+                        try:
+                            await tool.build_tools()
+                        except (RuntimeError, BaseException) as e:
+                            log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                            continue
+                    
+                    # Only add the tool if it successfully connected and built its tools
+                    if not tool.initialized:
+                        continue
+                    
+                    agent_tools.append(tool)
+                else:
+                    agent_tools.append(tool)
 
         # Add tools for accessing memory
         if self.read_chat_history:
@@ -5319,6 +5370,8 @@ class Agent:
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
+        end_time = time.time()
+        print(f"Time taken to process tools: {end_time - start_time:.8f} seconds")
         return agent_tools
 
     def _determine_tools_for_model(
@@ -9213,7 +9266,7 @@ class Agent:
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
         from agno.knowledge.reader.text_reader import TextReader
-
+        import asyncio
         asyncio.run(
             self.knowledge.add_content_async(name=document_name, text_content=document_content, reader=TextReader())
         )
