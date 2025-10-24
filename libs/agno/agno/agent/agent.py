@@ -1356,7 +1356,7 @@ class Agent:
             log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
         except RunCancelledException as e:
-            # Handle run cancellation during streaming - preserve partial data
+            # Handle run cancellation during streaming
             log_info(f"Run {run_response.run_id} was cancelled during streaming")
             run_response.status = RunStatus.cancelled
             # Don't overwrite content - preserve any partial content that was streamed
@@ -1372,7 +1372,7 @@ class Agent:
                 store_events=self.store_events,
             )
 
-            # Cleanup and store the run response and session (preserves all partial data)
+            # Cleanup and store the run response and session
             self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
         finally:
             # Always clean up the run tracking
@@ -2253,7 +2253,7 @@ class Agent:
                 store_events=self.store_events,
             )
 
-            # Cleanup and store the run response and session (preserves all partial data)
+            # Cleanup and store the run response and session
             await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
         finally:
             # Cancel the memory task if it's still running
