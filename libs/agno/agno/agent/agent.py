@@ -912,6 +912,8 @@ class Agent:
             user_id=user_id,
             knowledge_filters=knowledge_filters,
         )
+        mid_time = time.time()
+        log_info(f"Time taken to determine tools for model: {mid_time - start_time:.6f} seconds")
         _tools = self._determine_tools_for_model(
             model=self.model,
             processed_tools=processed_tools,
@@ -921,7 +923,7 @@ class Agent:
             dependencies=dependencies,
         )
         end_time = time.time()
-        log_info(f"Time taken to determine tools for model: {end_time - start_time:.6f} seconds")
+        log_info(f"Time taken to determine tools for model after processing: {end_time - mid_time:.6f} seconds")
 
         # 3. Prepare run messages
         run_messages: RunMessages = self._get_run_messages(
