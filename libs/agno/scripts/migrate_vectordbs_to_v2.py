@@ -172,7 +172,7 @@ def migrate_singlestore_table(table_name: str, schema: str = "ai") -> None:
             log_info(f"Table {schema}.{table_name} already has the v2 columns. No migration needed.")
             return
 
-        # Add missing columns (though SingleStore should already have them in new schema)
+        # Add missing columns
         with singlestore.Session() as sess, sess.begin():
             if not content_hash_exists:
                 log_info(f"Adding content_hash column to {schema}.{table_name}")
