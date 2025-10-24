@@ -1654,7 +1654,6 @@ class Model(ABC):
                                 continue
 
                         if isinstance(item, CustomEvent):
-                            print("HERE", str(item))
                             function_call_output += str(item)
 
                         # Put the event into the queue to be yielded

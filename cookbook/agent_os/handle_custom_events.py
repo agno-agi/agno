@@ -12,6 +12,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.os import AgentOS
 from agno.run.agent import CustomEvent
+from agno.team import Team
 
 # Setup the database
 db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -55,10 +56,20 @@ customer_profile_agent = Agent(
     debug_mode=True,
 )
 
+customer_team = Team(
+    members=[customer_profile_agent],
+    id="customer-team",
+    name="Customer Team",
+    db=db,
+    markdown=True,
+    instructions="You are a customer team. You are asked to get customer profiles.",
+)
+
 # Setup our AgentOS app
 agent_os = AgentOS(
     description="Example AgentOS to show how to pass dependencies to an agent",
     agents=[customer_profile_agent],
+    teams=[customer_team],
 )
 app = agent_os.get_app()
 
@@ -69,6 +80,13 @@ if __name__ == "__main__":
     To test your custom events that read from session state, you can pass the session state on the request.
 
     Test getting customer profiles:
+    curl --location 'http://localhost:7777/teams/customer-team/runs' \
+        --header 'Content-Type: application/x-www-form-urlencoded' \
+        --data-urlencode 'message=Find me information about the current customer.' \
+        --data-urlencode 'user_id=user_123.' \
+        --data-urlencode 'session_state={"customer_name": "John Doe", "customer_email": "john.doe@example.com", "customer_phone": "1234567890"}'
+        
+    Or directly to the agent:
     curl --location 'http://localhost:7777/agents/customer-profile-agent/runs' \
         --header 'Content-Type: application/x-www-form-urlencoded' \
         --data-urlencode 'message=Find me information about the current customer.' \
