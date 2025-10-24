@@ -9,7 +9,7 @@ from agno.media import Audio
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info
 
 try:
     from elevenlabs import ElevenLabs  # type: ignore
@@ -47,7 +47,7 @@ class ElevenLabsTools(Toolkit):
     ):
         self.api_key = api_key or getenv("ELEVEN_LABS_API_KEY")
         if not self.api_key:
-            logger.error("ELEVEN_LABS_API_KEY not set. Please set the ELEVEN_LABS_API_KEY environment variable.")
+            log_error("ELEVEN_LABS_API_KEY not set. Please set the ELEVEN_LABS_API_KEY environment variable.")
 
         self.target_directory = target_directory
         self.voice_id = voice_id
@@ -93,7 +93,7 @@ class ElevenLabsTools(Toolkit):
             return str(response)
 
         except Exception as e:
-            logger.error(f"Failed to fetch voices: {e}")
+            log_error(f"Failed to fetch voices: {e}")
             return f"Error: {e}"
 
     def _process_audio(self, audio_generator: Iterator[bytes]) -> bytes:
@@ -157,7 +157,7 @@ class ElevenLabsTools(Toolkit):
             )
 
         except Exception as e:
-            logger.error(f"Failed to generate sound effect: {e}")
+            log_error(f"Failed to generate sound effect: {e}")
             return ToolResult(content=f"Error: {e}")
 
     def text_to_speech(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
@@ -192,5 +192,5 @@ class ElevenLabsTools(Toolkit):
             )
 
         except Exception as e:
-            logger.error(f"Failed to generate audio: {e}")
+            log_error(f"Failed to generate audio: {e}")
             return ToolResult(content=f"Error: {e}")
