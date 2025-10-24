@@ -11,13 +11,13 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
+    abulk_upsert_metrics,
+    ais_table_available,
     apply_sorting,
-    bulk_upsert_metrics,
     calculate_date_metrics,
     deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    is_table_available,
     is_valid_table,
     serialize_cultural_knowledge_for_db,
 )
@@ -263,13 +263,13 @@ class AsyncSqliteDb(AsyncBaseDb):
             Table: SQLAlchemy Table object
         """
         async with self.async_session_factory() as sess, sess.begin():
-            table_is_available = await is_table_available(session=sess, table_name=table_name)
+            table_is_available = await ais_table_available(session=sess, table_name=table_name)
 
         if not table_is_available:
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
-        if not await is_valid_table(db_engine=self.db_engine, table_name=table_name, table_type=table_type):
+        if not is_valid_table(db_engine=self.db_engine, table_name=table_name, table_type=table_type):
             raise ValueError(f"Table {table_name} has an invalid schema")
 
         try:
@@ -784,7 +784,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         # Fetch the results for agent sessions
                         agent_ids = [session.session_id for session in agent_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(agent_ids))
-                        result = await sess.execute(select_stmt).fetchall()
+                        result = (await sess.execute(select_stmt)).fetchall()
 
                         for row in result:
                             session_dict = deserialize_session_json_fields(dict(row._mapping))
@@ -839,7 +839,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         # Fetch the results for team sessions
                         team_ids = [session.session_id for session in team_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(team_ids))
-                        result = await sess.execute(select_stmt).fetchall()
+                        result = (await sess.execute(select_stmt)).fetchall()
 
                         for row in result:
                             session_dict = deserialize_session_json_fields(dict(row._mapping))
@@ -894,7 +894,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         # Fetch the results for workflow sessions
                         workflow_ids = [session.session_id for session in workflow_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(workflow_ids))
-                        result = await sess.execute(select_stmt).fetchall()
+                        result = (await sess.execute(select_stmt)).fetchall()
 
                         for row in result:
                             session_dict = deserialize_session_json_fields(dict(row._mapping))
@@ -996,7 +996,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 # Select topics from all results
                 stmt = select(func.json_array_elements_text(table.c.topics)).select_from(table)
-                result = await sess.execute(stmt).fetchall()
+                result = (await sess.execute(stmt)).fetchall()
 
                 return list(set([record[0] for record in result]))
 
@@ -1034,7 +1034,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 stmt = select(table).where(table.c.memory_id == memory_id)
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
-                result = await sess.execute(stmt).fetchone()
+                result = (await sess.execute(stmt)).fetchone()
                 if result is None:
                     return None
 
@@ -1107,7 +1107,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 # Get total count after applying filtering
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = await sess.execute(count_stmt).scalar()
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
 
                 # Sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -1117,11 +1117,11 @@ class AsyncSqliteDb(AsyncBaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = await sess.execute(stmt).fetchall()
+                result = (await sess.execute(stmt)).fetchall()
                 if not result:
                     return [] if deserialize else ([], 0)
 
-                memories_raw = [record._mapping for record in result]
+                memories_raw = [dict(record._mapping) for record in result]
 
                 if not deserialize:
                     return memories_raw, total_count
@@ -1176,7 +1176,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = await sess.execute(count_stmt).scalar()
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
 
                 # Pagination
                 if limit is not None:
@@ -1184,7 +1184,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = await sess.execute(stmt).fetchall()
+                result = (await sess.execute(stmt)).fetchall()
                 if not result:
                     return [], 0
 
@@ -1253,7 +1253,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if row is None:
                     return None
 
-            memory_raw = row._mapping
+            memory_raw = dict(row._mapping)
             if not memory_raw or not deserialize:
                 return memory_raw
 
@@ -1293,7 +1293,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     result
                     for memory in memories
                     if memory is not None
-                    for result in [self.upsert_user_memory(memory, deserialize=deserialize)]
+                    for result in [await self.upsert_user_memory(memory, deserialize=deserialize)]
                     if result is not None
                 ]
             # Prepare bulk data
@@ -1338,7 +1338,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 # Fetch results
                 memory_ids = [memory.memory_id for memory in memories if memory.memory_id]
                 select_stmt = select(table).where(table.c.memory_id.in_(memory_ids))
-                result = await sess.execute(select_stmt).fetchall()
+                result = (await sess.execute(select_stmt)).fetchall()
 
                 for row in result:
                     memory_dict = dict(row._mapping)
@@ -1357,7 +1357,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 result
                 for memory in memories
                 if memory is not None
-                for result in [self.upsert_user_memory(memory, deserialize=deserialize)]
+                for result in [await self.upsert_user_memory(memory, deserialize=deserialize)]
                 if result is not None
             ]
 
@@ -1418,8 +1418,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 stmt = stmt.where(table.c.created_at <= end_timestamp)
 
             async with self.async_session_factory() as sess:
-                result = await sess.execute(stmt).fetchall()
-                return [record._mapping for record in result]
+                result = (await sess.execute(stmt)).fetchall()
+                return [dict(record._mapping) for record in result]
 
         except Exception as e:
             log_error(f"Error reading from sessions table: {e}")
@@ -1440,7 +1440,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         """
         async with self.async_session_factory() as sess:
             stmt = select(table).order_by(table.c.date.desc()).limit(1)
-            result = await sess.execute(stmt).fetchone()
+            result = (await sess.execute(stmt)).fetchone()
 
             # 1. Return the date of the first day without a complete metrics record.
             if result is not None:
@@ -1473,7 +1473,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             if table is None:
                 return None
 
-            starting_date = self._get_metrics_calculation_starting_date(table)
+            starting_date = await self._get_metrics_calculation_starting_date(table)
             if starting_date is None:
                 log_info("No session data found. Won't calculate metrics.")
                 return None
@@ -1492,7 +1492,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 .timestamp()
             )
 
-            sessions = self._get_all_sessions_for_metrics_calculation(
+            sessions = await self._get_all_sessions_for_metrics_calculation(
                 start_timestamp=start_timestamp, end_timestamp=end_timestamp
             )
             all_sessions_data = fetch_all_sessions_data(
@@ -1520,7 +1520,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             if metrics_records:
                 async with self.async_session_factory() as sess, sess.begin():
-                    results = bulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
+                    results = await abulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
 
             log_debug("Updated metrics calculations")
 
@@ -1558,15 +1558,15 @@ class AsyncSqliteDb(AsyncBaseDb):
                     stmt = stmt.where(table.c.date >= starting_date)
                 if ending_date:
                     stmt = stmt.where(table.c.date <= ending_date)
-                result = await sess.execute(stmt).fetchall()
+                result = (await sess.execute(stmt)).fetchall()
                 if not result:
                     return [], None
 
                 # Get the latest updated_at
                 latest_stmt = select(func.max(table.c.updated_at))
-                latest_updated_at = await sess.execute(latest_stmt).scalar()
+                latest_updated_at = (await sess.execute(latest_stmt)).scalar()
 
-            return [row._mapping for row in result], latest_updated_at
+            return [dict(row._mapping) for row in result], latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {e}")
@@ -1615,7 +1615,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
-                result = await sess.execute(stmt).fetchone()
+                result = (await sess.execute(stmt)).fetchone()
                 if result is None:
                     return None
 
@@ -1660,7 +1660,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 # Get total count before applying limit and pagination
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = await sess.execute(count_stmt).scalar()
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
 
                 # Apply pagination after count
                 if limit is not None:
@@ -1668,7 +1668,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = await sess.execute(stmt).fetchall()
+                result = (await sess.execute(stmt)).fetchall()
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
         except Exception as e:
@@ -1831,11 +1831,11 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
-                result = await sess.execute(stmt).fetchone()
+                result = (await sess.execute(stmt)).fetchone()
                 if result is None:
                     return None
 
-                eval_run_raw = result._mapping
+                eval_run_raw = dict(result._mapping)
                 if not eval_run_raw or not deserialize:
                     return eval_run_raw
 
@@ -1912,7 +1912,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 # Get total count after applying filtering
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = await sess.execute(count_stmt).scalar()
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
 
                 # Sorting - apply default sort by created_at desc if no sort parameters provided
                 if sort_by is None:
@@ -1925,11 +1925,11 @@ class AsyncSqliteDb(AsyncBaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = await sess.execute(stmt).fetchall()
+                result = (await sess.execute(stmt)).fetchall()
                 if not result:
                     return [] if deserialize else ([], 0)
 
-                eval_runs_raw = [row._mapping for row in result]
+                eval_runs_raw = [dict(row._mapping) for row in result]
                 if not deserialize:
                     return eval_runs_raw, total_count
 
@@ -1968,7 +1968,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 )
                 await sess.execute(stmt)
 
-            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            eval_run_raw = await self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
 
             log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
 
@@ -2036,7 +2036,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         elif v1_table_type == "memories":
             for memory in memories:
-                self.upsert_user_memory(memory)
+                await self.upsert_user_memory(memory)
             log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")
 
     # -- Culture methods --
@@ -2111,7 +2111,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
-                result = await sess.execute(stmt).fetchone()
+                result = (await sess.execute(stmt)).fetchone()
                 if result is None:
                     return None
 
@@ -2174,7 +2174,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 # Get total count after applying filtering
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = await sess.execute(count_stmt).scalar()
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
 
                 # Sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -2184,7 +2184,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = await sess.execute(stmt).fetchall()
+                result = (await sess.execute(stmt)).fetchall()
                 if not result:
                     return [] if deserialize else ([], 0)
 
