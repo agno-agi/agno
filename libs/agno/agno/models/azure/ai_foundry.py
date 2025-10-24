@@ -174,6 +174,9 @@ class AzureAIFoundry(Model):
         Returns:
             AsyncChatCompletionsClient: An instance of the asynchronous Azure AI client.
         """
+        if self.async_client:
+            return self.async_client
+
         client_params = self._get_client_params()
 
         self.async_client = AsyncChatCompletionsClient(**client_params)
