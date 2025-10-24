@@ -26,8 +26,8 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     tool_call_ids_list: List[str] = []
     for msg in reversed(messages):
         if msg.role == "tool" and len(tool_call_ids_list) < max_tool_calls:
-                if msg.tool_call_id:
-                    tool_call_ids_list.append(msg.tool_call_id)
+            if msg.tool_call_id:
+                tool_call_ids_list.append(msg.tool_call_id)
 
     tool_call_ids_to_keep: set[str] = set(tool_call_ids_list)
 
@@ -45,9 +45,7 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
             # Filter tool_calls
             if filtered_msg.tool_calls is not None:
                 filtered_msg.tool_calls = [
-                    tc
-                    for tc in filtered_msg.tool_calls
-                    if tc.get("id") in tool_call_ids_to_keep
+                    tc for tc in filtered_msg.tool_calls if tc.get("id") in tool_call_ids_to_keep
                 ]
 
             if filtered_msg.tool_calls:
