@@ -2036,7 +2036,9 @@ class Agent:
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
+            dependencies=dependencies,
         )
+        
 
         # 6. Prepare run messages
         run_messages: RunMessages = await self._aget_run_messages(
