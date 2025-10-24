@@ -466,7 +466,7 @@ class TeamResponse(BaseModel):
             "stream_member_events": False,
         }
 
-        team.determine_tools_for_model(
+        _tools = team._determine_tools_for_model(
             model=team.model,  # type: ignore
             session=TeamSession(session_id=str(uuid4()), session_data={}),
             run_response=TeamRunOutput(run_id=str(uuid4())),
@@ -474,7 +474,7 @@ class TeamResponse(BaseModel):
             session_state={},
             team_run_context={},
         )
-        team_tools = list(team._functions_for_model.values()) if team._functions_for_model else []
+        team_tools = _tools
         formatted_tools = format_team_tools(team_tools) if team_tools else None
 
         model_name = team.model.name or team.model.__class__.__name__ if team.model else None
