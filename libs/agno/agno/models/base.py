@@ -1604,6 +1604,7 @@ class Model(ABC):
         function_call_timer = Timer()
         function_call_timer.start()
         success: Union[bool, AgentRunException] = False
+        result: FunctionExecutionResult = FunctionExecutionResult(status="failure")
 
         try:
             if (
