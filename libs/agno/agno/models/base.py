@@ -664,6 +664,9 @@ class Model(ABC):
             if model_response.extra is None:
                 model_response.extra = {}
             model_response.extra.update(provider_response.extra)
+        # Preserve provider_data from the provider response (e.g., context_management stats)
+        if provider_response.provider_data is not None:
+            model_response.provider_data = provider_response.provider_data
 
     async def _aprocess_model_response(
         self,
@@ -717,6 +720,9 @@ class Model(ABC):
             if model_response.extra is None:
                 model_response.extra = {}
             model_response.extra.update(provider_response.extra)
+        # Preserve provider_data from the provider response (e.g., context_management stats)
+        if provider_response.provider_data is not None:
+            model_response.provider_data = provider_response.provider_data
 
     def _populate_assistant_message(
         self,
