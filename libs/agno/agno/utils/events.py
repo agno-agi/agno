@@ -106,6 +106,7 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         member_responses=from_run_response.member_responses,  # type: ignore
         metadata=from_run_response.metadata,  # type: ignore
         metrics=from_run_response.metrics,  # type: ignore
+        session_state=from_run_response.session_state,  # type: ignore
     )
 
 
@@ -130,6 +131,7 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         reasoning_messages=from_run_response.reasoning_messages,  # type: ignore
         metadata=from_run_response.metadata,  # type: ignore
         metrics=from_run_response.metrics,  # type: ignore
+        session_state=from_run_response.session_state,  # type: ignore
     )
 
 

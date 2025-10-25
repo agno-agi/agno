@@ -240,6 +240,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
     reasoning_messages: Optional[List[Message]] = None
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[Metrics] = None
+    session_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -504,6 +505,7 @@ class RunOutput:
     references: Optional[List[MessageReferences]] = None
 
     metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
 
     created_at: int = field(default_factory=lambda: int(time()))
 

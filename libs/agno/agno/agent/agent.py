@@ -1212,6 +1212,7 @@ class Agent:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -1227,6 +1228,7 @@ class Agent:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
@@ -1329,6 +1331,11 @@ class Agent:
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
                     )
+
+            # Update run_response.session_state before creating RunCompletedEvent
+            # This ensures the event has the final state after all tool modifications
+            if session.session_data is not None and "session_state" in session.session_data:
+                run_response.session_state = session.session_data["session_state"]
 
             # Create the run completed event
             completed_event = handle_event(  # type: ignore
@@ -1569,6 +1576,7 @@ class Agent:
             user_id=user_id,
             agent_name=self.name,
             metadata=metadata,
+            session_state=session_state,
             input=run_input,
         )
 
@@ -2090,6 +2098,7 @@ class Agent:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -2105,6 +2114,7 @@ class Agent:
                     run_messages=run_messages,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
@@ -2210,6 +2220,11 @@ class Agent:
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
                     )
+
+            # Update run_response.session_state before creating RunCompletedEvent
+            # This ensures the event has the final state after all tool modifications
+            if agent_session.session_data is not None and "session_state" in agent_session.session_data:
+                run_response.session_state = agent_session.session_data["session_state"]
 
             # Create the run completed event
             completed_event = handle_event(
@@ -2447,6 +2462,7 @@ class Agent:
             user_id=user_id,
             agent_name=self.name,
             metadata=metadata,
+            session_state=session_state,
             input=run_input,
         )
 
@@ -2972,6 +2988,7 @@ class Agent:
                 run_messages=run_messages,
                 response_format=response_format,
                 stream_events=stream_events,
+                session_state=session_state,
             ):
                 yield event
 
@@ -3039,6 +3056,11 @@ class Agent:
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
                     )
+
+            # Update run_response.session_state before creating RunCompletedEvent
+            # This ensures the event has the final state after all tool modifications
+            if session.session_data is not None and "session_state" in session.session_data:
+                run_response.session_state = session.session_data["session_state"]
 
             # Create the run completed event
             completed_event = handle_event(
@@ -3697,6 +3719,11 @@ class Agent:
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
                     )
+
+            # Update run_response.session_state before creating RunCompletedEvent
+            # This ensures the event has the final state after all tool modifications
+            if agent_session.session_data is not None and "session_state" in agent_session.session_data:
+                run_response.session_state = agent_session.session_data["session_state"]
 
             # Create the run completed event
             completed_event = handle_event(
@@ -4532,6 +4559,7 @@ class Agent:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
     ) -> Iterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
@@ -4565,6 +4593,7 @@ class Agent:
                 reasoning_state=reasoning_state,
                 parse_structured_output=self.should_parse_structured_output,
                 stream_events=stream_events,
+                session_state=session_state,
             )
 
         # Determine reasoning completed
@@ -4610,6 +4639,7 @@ class Agent:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
@@ -4645,6 +4675,7 @@ class Agent:
                 reasoning_state=reasoning_state,
                 parse_structured_output=self.should_parse_structured_output,
                 stream_events=stream_events,
+                session_state=session_state,
             ):
                 yield event
 
@@ -4692,6 +4723,7 @@ class Agent:
         reasoning_state: Optional[Dict[str, Any]] = None,
         parse_structured_output: bool = False,
         stream_events: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
     ) -> Iterator[RunOutputEvent]:
         if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunOutputEvent))
@@ -4900,11 +4932,15 @@ class Agent:
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
-                if model_response_event.updated_session_state is not None and session.session_data is not None:
-                    merge_dictionaries(
-                        session.session_data["session_state"],
-                        model_response_event.updated_session_state,
-                    )
+                if model_response_event.updated_session_state is not None:
+                    # update the session_state for RunOutput
+                    if session_state is not None:
+                        merge_dictionaries(session_state, model_response_event.updated_session_state)
+                    # update the DB session
+                    if session.session_data is not None and session.session_data.get("session_state") is not None:
+                        merge_dictionaries(
+                            session.session_data["session_state"], model_response_event.updated_session_state
+                        )
 
                 if model_response_event.images is not None:
                     for image in model_response_event.images:
@@ -9834,6 +9870,11 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
+        # Update run_response.session_state from session before saving
+        # This ensures RunOutput reflects all tool modifications
+        if session.session_data is not None and "session_state" in session.session_data:
+            run_response.session_state = session.session_data["session_state"]
+
         # Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response,
@@ -9860,6 +9901,11 @@ class Agent:
         # Stop the timer for the Run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
+
+        # Update run_response.session_state from session before saving
+        # This ensures RunOutput reflects all tool modifications
+        if session.session_data is not None and "session_state" in session.session_data:
+            run_response.session_state = session.session_data["session_state"]
 
         # Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
