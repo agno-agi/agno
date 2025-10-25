@@ -83,22 +83,53 @@ class EventBuffer:
 def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
     """Convert AG-UI messages to Agno messages."""
     result = []
-    for msg in messages:
-        if msg.role == "tool":
-            result.append(Message(role="tool", tool_call_id=msg.tool_call_id, content=msg.content))
-        elif msg.role == "assistant":
-            tool_calls = None
-            if msg.tool_calls:
-                tool_calls = [call.model_dump() for call in msg.tool_calls]
+    seen_tool_call_ids: Set[str] = set()
+    pending_assistant_tool_calls = []
+    pending_assistant_content = None
+
+    def flush_pending_assistant():
+        """Flush any pending assistant message with accumulated tool calls."""
+        nonlocal pending_assistant_tool_calls, pending_assistant_content
+        if pending_assistant_tool_calls:
             result.append(
                 Message(
                     role="assistant",
-                    content=msg.content,
-                    tool_calls=tool_calls,
+                    content=pending_assistant_content,
+                    tool_calls=pending_assistant_tool_calls,
                 )
             )
+            pending_assistant_tool_calls = []
+            pending_assistant_content = None
+
+    for msg in messages:
+        if msg.role == "tool":
+            flush_pending_assistant()
+            # Skip duplicate tool results
+            if msg.tool_call_id and msg.tool_call_id in seen_tool_call_ids:
+                continue
+            if msg.tool_call_id:
+                seen_tool_call_ids.add(msg.tool_call_id)
+            result.append(Message(role="tool", tool_call_id=msg.tool_call_id, content=msg.content))
+        elif msg.role == "assistant":
+            if msg.tool_calls:
+                # Filter out tool_calls that already have responses to prevent invalid message structures
+                for call in msg.tool_calls:
+                    call_dict = call.model_dump()
+                    tool_call_id = call_dict.get("id")
+                    if tool_call_id and tool_call_id not in seen_tool_call_ids:
+                        pending_assistant_tool_calls.append(call_dict)
+                if msg.content and (
+                    not pending_assistant_content or len(str(msg.content)) > len(str(pending_assistant_content))
+                ):
+                    pending_assistant_content = msg.content
+            else:
+                flush_pending_assistant()
+                result.append(Message(role="assistant", content=msg.content, tool_calls=None))
         elif msg.role == "user":
+            flush_pending_assistant()
             result.append(Message(role="user", content=msg.content))
+
+    flush_pending_assistant()
     return result
 
 
