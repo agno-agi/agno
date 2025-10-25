@@ -5,8 +5,8 @@ from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
-from agno.vectordb.pgvector import PgVector, SearchType
 from agno.os import AgentOS
+from agno.vectordb.pgvector import PgVector, SearchType
 
 # ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -123,7 +123,6 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-
     knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
     """Run your AgentOS.
 

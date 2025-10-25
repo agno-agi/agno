@@ -12,7 +12,7 @@ agent = Agent(
 )
 
 run_stream: Iterator[RunOutputEvent] = agent.run(
-    "What is the stock price of NVDA", stream=True, stream_intermediate_steps=True
+    "What is the stock price of NVDA", stream=True, stream_events=True
 )
 for chunk in run_stream:
     pprint(chunk.to_dict())

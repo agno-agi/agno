@@ -34,7 +34,7 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_events=True)
 
     responses = []
     tool_call_seen = False
@@ -83,7 +83,7 @@ async def test_async_tool_use_stream():
     responses = []
     tool_call_seen = False
 
-    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_events=True):
         responses.append(chunk)
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent

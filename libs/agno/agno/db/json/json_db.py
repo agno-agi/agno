@@ -10,10 +10,12 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.json.utils import (
     apply_sorting,
     calculate_date_metrics,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    hydrate_session,
+    serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -27,6 +29,7 @@ class JsonDb(BaseDb):
         self,
         db_path: Optional[str] = None,
         session_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -39,6 +42,7 @@ class JsonDb(BaseDb):
         Args:
             db_path (Optional[str]): Path to the directory where JSON files will be stored.
             session_table (Optional[str]): Name of the JSON file to store sessions (without .json extension).
+            culture_table (Optional[str]): Name of the JSON file to store cultural knowledge.
             memory_table (Optional[str]): Name of the JSON file to store memories.
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
@@ -52,6 +56,7 @@ class JsonDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            culture_table=culture_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -200,17 +205,15 @@ class JsonDb(BaseDb):
                     if session_data.get("session_type") != session_type_value:
                         continue
 
-                    session = hydrate_session(session_data)
-
                     if not deserialize:
-                        return session
+                        return session_data
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session)
+                        return AgentSession.from_dict(session_data)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session)
+                        return TeamSession.from_dict(session_data)
                     elif session_type == SessionType.WORKFLOW:
-                        return WorkflowSession.from_dict(session)
+                        return WorkflowSession.from_dict(session_data)
                     else:
                         raise ValueError(f"Invalid session type: {session_type}")
 
@@ -1198,4 +1201,127 @@ class JsonDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {e}")
+            raise e
+
+    # -- Culture methods --
+
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from JSON file."""
+        try:
+            self._write_json_file(self.culture_table_name, [])
+        except Exception as e:
+            log_error(f"Error clearing cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete a cultural knowledge entry from JSON file."""
+        try:
+            cultural_knowledge = self._read_json_file(self.culture_table_name)
+            cultural_knowledge = [ck for ck in cultural_knowledge if ck.get("id") != id]
+            self._write_json_file(self.culture_table_name, cultural_knowledge)
+        except Exception as e:
+            log_error(f"Error deleting cultural knowledge: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get a cultural knowledge entry from JSON file."""
+        try:
+            cultural_knowledge = self._read_json_file(self.culture_table_name)
+            for ck in cultural_knowledge:
+                if ck.get("id") == id:
+                    if not deserialize:
+                        return ck
+                    return deserialize_cultural_knowledge_from_db(ck)
+            return None
+        except Exception as e:
+            log_error(f"Error getting cultural knowledge: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge from JSON file."""
+        try:
+            cultural_knowledge = self._read_json_file(self.culture_table_name)
+
+            # Filter
+            filtered = []
+            for ck in cultural_knowledge:
+                if name and ck.get("name") != name:
+                    continue
+                if agent_id and ck.get("agent_id") != agent_id:
+                    continue
+                if team_id and ck.get("team_id") != team_id:
+                    continue
+                filtered.append(ck)
+
+            # Sort
+            if sort_by:
+                filtered = apply_sorting(filtered, sort_by, sort_order)
+
+            total_count = len(filtered)
+
+            # Paginate
+            if limit and page:
+                start = (page - 1) * limit
+                filtered = filtered[start : start + limit]
+            elif limit:
+                filtered = filtered[:limit]
+
+            if not deserialize:
+                return filtered, total_count
+
+            return [deserialize_cultural_knowledge_from_db(ck) for ck in filtered]
+        except Exception as e:
+            log_error(f"Error getting all cultural knowledge: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert a cultural knowledge entry into JSON file."""
+        try:
+            if not cultural_knowledge.id:
+                cultural_knowledge.id = str(uuid4())
+
+            all_cultural_knowledge = self._read_json_file(self.culture_table_name, create_table_if_not_found=True)
+
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the item dict with serialized content
+            ck_dict = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            # Remove existing entry
+            all_cultural_knowledge = [ck for ck in all_cultural_knowledge if ck.get("id") != cultural_knowledge.id]
+
+            # Add new entry
+            all_cultural_knowledge.append(ck_dict)
+
+            self._write_json_file(self.culture_table_name, all_cultural_knowledge)
+
+            return self.get_cultural_knowledge(cultural_knowledge.id, deserialize=deserialize)
+        except Exception as e:
+            log_error(f"Error upserting cultural knowledge: {e}")
             raise e

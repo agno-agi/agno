@@ -33,6 +33,7 @@ def print_response_stream(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,
     knowledge_filters: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
@@ -80,6 +81,9 @@ def print_response_stream(
 
         input_content = get_text_from_message(input)
 
+        # Consider both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
         for response_event in agent.run(
             input=input,
             session_id=session_id,
@@ -90,7 +94,7 @@ def print_response_stream(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream_events=stream_events,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -221,6 +225,7 @@ async def aprint_response_stream(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,
     knowledge_filters: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
@@ -266,6 +271,9 @@ async def aprint_response_stream(
         if render:
             live_log.update(Group(*panels))
 
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
         result = agent.arun(
             input=input,
             session_id=session_id,
@@ -276,7 +284,7 @@ async def aprint_response_stream(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream_events=stream_events,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -497,7 +505,6 @@ def print_response(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    stream_intermediate_steps: bool = False,
     knowledge_filters: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
@@ -543,7 +550,6 @@ def print_response(
             videos=videos,
             files=files,
             stream=False,
-            stream_intermediate_steps=stream_intermediate_steps,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -615,7 +621,6 @@ async def aprint_response(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    stream_intermediate_steps: bool = False,
     knowledge_filters: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
@@ -661,7 +666,6 @@ async def aprint_response(
             videos=videos,
             files=files,
             stream=False,
-            stream_intermediate_steps=stream_intermediate_steps,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,

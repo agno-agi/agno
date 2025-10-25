@@ -1,27 +1,27 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DayAggregatedMetrics(BaseModel):
     """Aggregated metrics for a given day"""
 
-    id: str
+    id: str = Field(..., description="Unique identifier for the metrics record")
 
-    agent_runs_count: int
-    agent_sessions_count: int
-    team_runs_count: int
-    team_sessions_count: int
-    workflow_runs_count: int
-    workflow_sessions_count: int
-    users_count: int
-    token_metrics: Dict[str, Any]
-    model_metrics: List[Dict[str, Any]]
+    agent_runs_count: int = Field(..., description="Total number of agent runs", ge=0)
+    agent_sessions_count: int = Field(..., description="Total number of agent sessions", ge=0)
+    team_runs_count: int = Field(..., description="Total number of team runs", ge=0)
+    team_sessions_count: int = Field(..., description="Total number of team sessions", ge=0)
+    workflow_runs_count: int = Field(..., description="Total number of workflow runs", ge=0)
+    workflow_sessions_count: int = Field(..., description="Total number of workflow sessions", ge=0)
+    users_count: int = Field(..., description="Total number of unique users", ge=0)
+    token_metrics: Dict[str, Any] = Field(..., description="Token usage metrics (input, output, cached, etc.)")
+    model_metrics: List[Dict[str, Any]] = Field(..., description="Metrics grouped by model (model_id, provider, count)")
 
-    date: datetime
-    created_at: int
-    updated_at: int
+    date: datetime = Field(..., description="Date for which these metrics are aggregated")
+    created_at: int = Field(..., description="Unix timestamp when metrics were created", ge=0)
+    updated_at: int = Field(..., description="Unix timestamp when metrics were last updated", ge=0)
 
     @classmethod
     def from_dict(cls, metrics_dict: Dict[str, Any]) -> "DayAggregatedMetrics":
@@ -43,5 +43,5 @@ class DayAggregatedMetrics(BaseModel):
 
 
 class MetricsResponse(BaseModel):
-    metrics: List[DayAggregatedMetrics]
-    updated_at: Optional[datetime]
+    metrics: List[DayAggregatedMetrics] = Field(..., description="List of daily aggregated metrics")
+    updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
