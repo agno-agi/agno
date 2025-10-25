@@ -84,7 +84,7 @@ def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[
     """Convert AG-UI messages to Agno messages."""
     result = []
     seen_tool_call_ids: Set[str] = set()
-    pending_assistant_tool_calls = []
+    pending_assistant_tool_calls: List[dict] = []
     pending_assistant_content = None
 
     def flush_pending_assistant():
