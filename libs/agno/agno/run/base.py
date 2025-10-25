@@ -117,19 +117,8 @@ class BaseRunOutputEvent:
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
         import json
-        from datetime import date, datetime, time
-        from enum import Enum
 
-        def json_serializer(obj):
-            # Datetime like
-            if isinstance(obj, (datetime, date, time)):
-                return obj.isoformat()
-            # Enums
-            if isinstance(obj, Enum):
-                v = obj.value
-                return v if isinstance(v, (str, int, float, bool, type(None))) else obj.name
-            # Fallback to string
-            return str(obj)
+        from agno.utils.serialize import json_serializer
 
         try:
             _dict = self.to_dict()

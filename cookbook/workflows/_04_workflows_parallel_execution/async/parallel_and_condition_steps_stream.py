@@ -158,7 +158,7 @@ if __name__ == "__main__":
             workflow.aprint_response(
                 input="Latest AI developments in machine learning",
                 stream=True,
-                stream_intermediate_steps=True,
+                stream_events=True,
             )
         )
     except Exception as e:

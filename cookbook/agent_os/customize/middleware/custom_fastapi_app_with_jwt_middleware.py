@@ -70,7 +70,7 @@ async def login(username: str = Form(...), password: str = Form(...)):
 agent_os = AgentOS(
     description="JWT Protected AgentOS",
     agents=[research_agent],
-    fastapi_app=app,
+    base_app=app,
 )
 
 # Get the final app

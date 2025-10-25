@@ -52,7 +52,7 @@ finance_agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
     tools=[
         ReasoningTools(add_instructions=True),
-        YFinanceTools(enable_all=True),
+        YFinanceTools(),
     ],
     instructions="Always use tables to display data.",
     db=db,

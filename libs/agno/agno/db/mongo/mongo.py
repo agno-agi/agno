@@ -10,13 +10,16 @@ from agno.db.mongo.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
+from agno.db.utils import deserialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -41,6 +44,7 @@ class MongoDb(BaseDb):
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
+        culture_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -55,6 +59,7 @@ class MongoDb(BaseDb):
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
+            culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -73,6 +78,7 @@ class MongoDb(BaseDb):
             metrics_table=metrics_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
+            culture_table=culture_collection,
         )
 
         _client: Optional[MongoClient] = db_client
@@ -160,6 +166,17 @@ class MongoDb(BaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.knowledge_collection
+
+        if table_type == "culture":
+            if not hasattr(self, "culture_collection"):
+                if self.culture_table_name is None:
+                    raise ValueError("Culture collection was not provided on initialization")
+                self.culture_collection = self._get_or_create_collection(
+                    collection_name=self.culture_table_name,
+                    collection_type="culture",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.culture_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -282,7 +299,6 @@ class MongoDb(BaseDb):
                 return None
 
             session = deserialize_session_json_fields(result)
-
             if not deserialize:
                 return session
 
@@ -385,7 +401,6 @@ class MongoDb(BaseDb):
             records = list(cursor)
             if records is None:
                 return [] if deserialize else ([], 0)
-
             sessions_raw = [deserialize_session_json_fields(record) for record in records]
 
             if not deserialize:
@@ -489,25 +504,25 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
-            serialized_session_dict = serialize_session_json_fields(session.to_dict())
+            session_dict = session.to_dict()
 
             if isinstance(session, AgentSession):
                 record = {
-                    "session_id": serialized_session_dict.get("session_id"),
+                    "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.AGENT.value,
-                    "agent_id": serialized_session_dict.get("agent_id"),
-                    "user_id": serialized_session_dict.get("user_id"),
-                    "runs": serialized_session_dict.get("runs"),
-                    "agent_data": serialized_session_dict.get("agent_data"),
-                    "session_data": serialized_session_dict.get("session_data"),
-                    "summary": serialized_session_dict.get("summary"),
-                    "metadata": serialized_session_dict.get("metadata"),
-                    "created_at": serialized_session_dict.get("created_at"),
+                    "agent_id": session_dict.get("agent_id"),
+                    "user_id": session_dict.get("user_id"),
+                    "runs": session_dict.get("runs"),
+                    "agent_data": session_dict.get("agent_data"),
+                    "session_data": session_dict.get("session_data"),
+                    "summary": session_dict.get("summary"),
+                    "metadata": session_dict.get("metadata"),
+                    "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
 
                 result = collection.find_one_and_replace(
-                    filter={"session_id": serialized_session_dict.get("session_id")},
+                    filter={"session_id": session_dict.get("session_id")},
                     replacement=record,
                     upsert=True,
                     return_document=ReturnDocument.AFTER,
@@ -515,7 +530,7 @@ class MongoDb(BaseDb):
                 if not result:
                     return None
 
-                session = deserialize_session_json_fields(result)  # type: ignore
+                session = result  # type: ignore
 
                 if not deserialize:
                     return session
@@ -524,21 +539,21 @@ class MongoDb(BaseDb):
 
             elif isinstance(session, TeamSession):
                 record = {
-                    "session_id": serialized_session_dict.get("session_id"),
+                    "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.TEAM.value,
-                    "team_id": serialized_session_dict.get("team_id"),
-                    "user_id": serialized_session_dict.get("user_id"),
-                    "runs": serialized_session_dict.get("runs"),
-                    "team_data": serialized_session_dict.get("team_data"),
-                    "session_data": serialized_session_dict.get("session_data"),
-                    "summary": serialized_session_dict.get("summary"),
-                    "metadata": serialized_session_dict.get("metadata"),
-                    "created_at": serialized_session_dict.get("created_at"),
+                    "team_id": session_dict.get("team_id"),
+                    "user_id": session_dict.get("user_id"),
+                    "runs": session_dict.get("runs"),
+                    "team_data": session_dict.get("team_data"),
+                    "session_data": session_dict.get("session_data"),
+                    "summary": session_dict.get("summary"),
+                    "metadata": session_dict.get("metadata"),
+                    "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
 
                 result = collection.find_one_and_replace(
-                    filter={"session_id": serialized_session_dict.get("session_id")},
+                    filter={"session_id": session_dict.get("session_id")},
                     replacement=record,
                     upsert=True,
                     return_document=ReturnDocument.AFTER,
@@ -546,7 +561,8 @@ class MongoDb(BaseDb):
                 if not result:
                     return None
 
-                session = deserialize_session_json_fields(result)  # type: ignore
+                # MongoDB stores native objects, no deserialization needed for document fields
+                session = result  # type: ignore
 
                 if not deserialize:
                     return session
@@ -555,21 +571,21 @@ class MongoDb(BaseDb):
 
             else:
                 record = {
-                    "session_id": serialized_session_dict.get("session_id"),
+                    "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.WORKFLOW.value,
-                    "workflow_id": serialized_session_dict.get("workflow_id"),
-                    "user_id": serialized_session_dict.get("user_id"),
-                    "runs": serialized_session_dict.get("runs"),
-                    "workflow_data": serialized_session_dict.get("workflow_data"),
-                    "session_data": serialized_session_dict.get("session_data"),
-                    "summary": serialized_session_dict.get("summary"),
-                    "metadata": serialized_session_dict.get("metadata"),
-                    "created_at": serialized_session_dict.get("created_at"),
+                    "workflow_id": session_dict.get("workflow_id"),
+                    "user_id": session_dict.get("user_id"),
+                    "runs": session_dict.get("runs"),
+                    "workflow_data": session_dict.get("workflow_data"),
+                    "session_data": session_dict.get("session_data"),
+                    "summary": session_dict.get("summary"),
+                    "metadata": session_dict.get("metadata"),
+                    "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
 
                 result = collection.find_one_and_replace(
-                    filter={"session_id": serialized_session_dict.get("session_id")},
+                    filter={"session_id": session_dict.get("session_id")},
                     replacement=record,
                     upsert=True,
                     return_document=ReturnDocument.AFTER,
@@ -577,7 +593,7 @@ class MongoDb(BaseDb):
                 if not result:
                     return None
 
-                session = deserialize_session_json_fields(result)  # type: ignore
+                session = result  # type: ignore
 
                 if not deserialize:
                     return session
@@ -589,7 +605,7 @@ class MongoDb(BaseDb):
             raise e
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk upsert multiple sessions for improved performance on large datasets.
@@ -597,6 +613,7 @@ class MongoDb(BaseDb):
         Args:
             sessions (List[Session]): List of sessions to upsert.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the session object.
 
         Returns:
             List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
@@ -628,49 +645,52 @@ class MongoDb(BaseDb):
                 if session is None:
                     continue
 
-                serialized_session_dict = serialize_session_json_fields(session.to_dict())
+                session_dict = session.to_dict()
+
+                # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
 
                 if isinstance(session, AgentSession):
                     record = {
-                        "session_id": serialized_session_dict.get("session_id"),
+                        "session_id": session_dict.get("session_id"),
                         "session_type": SessionType.AGENT.value,
-                        "agent_id": serialized_session_dict.get("agent_id"),
-                        "user_id": serialized_session_dict.get("user_id"),
-                        "runs": serialized_session_dict.get("runs"),
-                        "agent_data": serialized_session_dict.get("agent_data"),
-                        "session_data": serialized_session_dict.get("session_data"),
-                        "summary": serialized_session_dict.get("summary"),
-                        "metadata": serialized_session_dict.get("metadata"),
-                        "created_at": serialized_session_dict.get("created_at"),
-                        "updated_at": int(time.time()),
+                        "agent_id": session_dict.get("agent_id"),
+                        "user_id": session_dict.get("user_id"),
+                        "runs": session_dict.get("runs"),
+                        "agent_data": session_dict.get("agent_data"),
+                        "session_data": session_dict.get("session_data"),
+                        "summary": session_dict.get("summary"),
+                        "metadata": session_dict.get("metadata"),
+                        "created_at": session_dict.get("created_at"),
+                        "updated_at": updated_at,
                     }
                 elif isinstance(session, TeamSession):
                     record = {
-                        "session_id": serialized_session_dict.get("session_id"),
+                        "session_id": session_dict.get("session_id"),
                         "session_type": SessionType.TEAM.value,
-                        "team_id": serialized_session_dict.get("team_id"),
-                        "user_id": serialized_session_dict.get("user_id"),
-                        "runs": serialized_session_dict.get("runs"),
-                        "team_data": serialized_session_dict.get("team_data"),
-                        "session_data": serialized_session_dict.get("session_data"),
-                        "summary": serialized_session_dict.get("summary"),
-                        "metadata": serialized_session_dict.get("metadata"),
-                        "created_at": serialized_session_dict.get("created_at"),
-                        "updated_at": int(time.time()),
+                        "team_id": session_dict.get("team_id"),
+                        "user_id": session_dict.get("user_id"),
+                        "runs": session_dict.get("runs"),
+                        "team_data": session_dict.get("team_data"),
+                        "session_data": session_dict.get("session_data"),
+                        "summary": session_dict.get("summary"),
+                        "metadata": session_dict.get("metadata"),
+                        "created_at": session_dict.get("created_at"),
+                        "updated_at": updated_at,
                     }
                 elif isinstance(session, WorkflowSession):
                     record = {
-                        "session_id": serialized_session_dict.get("session_id"),
+                        "session_id": session_dict.get("session_id"),
                         "session_type": SessionType.WORKFLOW.value,
-                        "workflow_id": serialized_session_dict.get("workflow_id"),
-                        "user_id": serialized_session_dict.get("user_id"),
-                        "runs": serialized_session_dict.get("runs"),
-                        "workflow_data": serialized_session_dict.get("workflow_data"),
-                        "session_data": serialized_session_dict.get("session_data"),
-                        "summary": serialized_session_dict.get("summary"),
-                        "metadata": serialized_session_dict.get("metadata"),
-                        "created_at": serialized_session_dict.get("created_at"),
-                        "updated_at": int(time.time()),
+                        "workflow_id": session_dict.get("workflow_id"),
+                        "user_id": session_dict.get("user_id"),
+                        "runs": session_dict.get("runs"),
+                        "workflow_data": session_dict.get("workflow_data"),
+                        "session_data": session_dict.get("session_data"),
+                        "summary": session_dict.get("summary"),
+                        "metadata": session_dict.get("metadata"),
+                        "created_at": session_dict.get("created_at"),
+                        "updated_at": updated_at,
                     }
                 else:
                     continue
@@ -688,7 +708,7 @@ class MongoDb(BaseDb):
                 cursor = collection.find({"session_id": {"$in": session_ids}})
 
                 for doc in cursor:
-                    session_dict = deserialize_session_json_fields(doc)
+                    session_dict = doc
 
                     if deserialize:
                         session_type = doc.get("session_type")
@@ -728,11 +748,12 @@ class MongoDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete if the memory belongs to this user.
 
         Returns:
             bool: True if the memory was deleted, False otherwise.
@@ -745,7 +766,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return
 
-            result = collection.delete_one({"memory_id": memory_id})
+            query = {"memory_id": memory_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+
+            result = collection.delete_one(query)
 
             success = result.deleted_count > 0
             if success:
@@ -757,11 +782,12 @@ class MongoDb(BaseDb):
             log_error(f"Error deleting memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete memories that belong to this user.
 
         Raises:
             Exception: If there is an error deleting the memories.
@@ -771,7 +797,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return
 
-            result = collection.delete_many({"memory_id": {"$in": memory_ids}})
+            query: Dict[str, Any] = {"memory_id": {"$in": memory_ids}}
+            if user_id is not None:
+                query["user_id"] = user_id
+
+            result = collection.delete_many(query)
 
             if result.deleted_count == 0:
                 log_debug(f"No memories found with ids: {memory_ids}")
@@ -794,19 +824,22 @@ class MongoDb(BaseDb):
             if collection is None:
                 return []
 
-            topics = collection.distinct("topics")
+            topics = collection.distinct("topics", {})
             return [topic for topic in topics if topic]
 
         except Exception as e:
             log_error(f"Exception reading from collection: {e}")
             raise e
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[UserMemory]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only return the memory if it belongs to this user.
 
         Returns:
             Optional[UserMemory]:
@@ -821,7 +854,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
-            result = collection.find_one({"memory_id": memory_id})
+            query = {"memory_id": memory_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+
+            result = collection.find_one(query)
             if result is None or not deserialize:
                 return result
 
@@ -934,8 +971,10 @@ class MongoDb(BaseDb):
             if collection is None:
                 return [], 0
 
+            match_stage = {"user_id": {"$ne": None}}
+
             pipeline = [
-                {"$match": {"user_id": {"$ne": None}}},
+                {"$match": match_stage},
                 {
                     "$group": {
                         "_id": "$user_id",
@@ -1026,7 +1065,7 @@ class MongoDb(BaseDb):
             raise e
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk upsert multiple user memories for improved performance on large datasets.
@@ -1061,12 +1100,16 @@ class MongoDb(BaseDb):
             operations = []
             results: List[Union[UserMemory, Dict[str, Any]]] = []
 
+            current_time = int(time.time())
             for memory in memories:
                 if memory is None:
                     continue
 
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
+
+                # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at else current_time
 
                 record = {
                     "user_id": memory.user_id,
@@ -1075,7 +1118,7 @@ class MongoDb(BaseDb):
                     "memory_id": memory.memory_id,
                     "memory": memory.memory,
                     "topics": memory.topics,
-                    "updated_at": int(time.time()),
+                    "updated_at": updated_at,
                 }
 
                 operations.append(ReplaceOne(filter={"memory_id": memory.memory_id}, replacement=record, upsert=True))
@@ -1125,6 +1168,211 @@ class MongoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception deleting all memories: {e}")
+            raise e
+
+    # -- Cultural Knowledge methods --
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            collection = self._get_collection(table_type="culture")
+            if collection is None:
+                return
+
+            collection.delete_many({})
+
+        except Exception as e:
+            log_error(f"Exception deleting all cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            collection = self._get_collection(table_type="culture")
+            if collection is None:
+                return
+
+            collection.delete_one({"id": id})
+            log_debug(f"Deleted cultural knowledge with ID: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting cultural knowledge: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            collection = self._get_collection(table_type="culture")
+            if collection is None:
+                return None
+
+            result = collection.find_one({"id": id})
+            if result is None:
+                return None
+
+            # Remove MongoDB's _id field
+            result_filtered = {k: v for k, v in result.items() if k != "_id"}
+
+            if not deserialize:
+                return result_filtered
+
+            return deserialize_cultural_knowledge_from_db(result_filtered)
+
+        except Exception as e:
+            log_error(f"Error getting cultural knowledge: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge with filtering and pagination.
+
+        Args:
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            collection = self._get_collection(table_type="culture")
+            if collection is None:
+                if not deserialize:
+                    return [], 0
+                return []
+
+            # Build query
+            query: Dict[str, Any] = {}
+            if agent_id is not None:
+                query["agent_id"] = agent_id
+            if team_id is not None:
+                query["team_id"] = team_id
+            if name is not None:
+                query["name"] = {"$regex": name, "$options": "i"}
+
+            # Get total count for pagination
+            total_count = collection.count_documents(query)
+
+            # Apply sorting
+            sort_criteria = apply_sorting({}, sort_by, sort_order)
+
+            # Apply pagination
+            query_args = apply_pagination({}, limit, page)
+
+            cursor = collection.find(query)
+            if sort_criteria:
+                cursor = cursor.sort(sort_criteria)
+            if query_args.get("skip"):
+                cursor = cursor.skip(query_args["skip"])
+            if query_args.get("limit"):
+                cursor = cursor.limit(query_args["limit"])
+
+            # Remove MongoDB's _id field from all results
+            results_filtered = [{k: v for k, v in item.items() if k != "_id"} for item in cursor]
+
+            if not deserialize:
+                return results_filtered, total_count
+
+            return [deserialize_cultural_knowledge_from_db(item) for item in results_filtered]
+
+        except Exception as e:
+            log_error(f"Error getting all cultural knowledge: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert cultural knowledge in MongoDB.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            collection = self._get_collection(table_type="culture", create_collection_if_not_found=True)
+            if collection is None:
+                return None
+
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the document with serialized content
+            update_doc = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            result = collection.replace_one({"id": cultural_knowledge.id}, update_doc, upsert=True)
+
+            if result.upserted_id:
+                update_doc["_id"] = result.upserted_id
+
+            # Remove MongoDB's _id field
+            doc_filtered = {k: v for k, v in update_doc.items() if k != "_id"}
+
+            if not deserialize:
+                return doc_filtered
+
+            return deserialize_cultural_knowledge_from_db(doc_filtered)
+
+        except Exception as e:
+            log_error(f"Error upserting cultural knowledge: {e}")
             raise e
 
     # -- Metrics methods --

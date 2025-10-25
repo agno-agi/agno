@@ -17,7 +17,11 @@ from agno.tools.scrapegraph import ScrapeGraphTools
 startup_analyst = Agent(
     name="Startup Analyst",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[ScrapeGraphTools(markdownify=True, crawl=True, searchscraper=True)],
+    tools=[
+        ScrapeGraphTools(
+            enable_markdownify=True, enable_crawl=True, enable_searchscraper=True
+        )
+    ],
     instructions=dedent("""
         You are an elite startup analyst providing comprehensive due diligence for investment decisions.
         

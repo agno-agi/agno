@@ -37,3 +37,4 @@ team = Team(
 - **[01_team_with_custom_tools.py](./01_team_with_custom_tools.py)** - Teams with custom tool functions
 - **[02_team_with_tool_hooks.py](./02_team_with_tool_hooks.py)** - Tool execution hooks and callbacks
 - **[03_async_team_with_tools.py](./03_async_team_with_tools.py)** - Asynchronous teams with tools
+- **[04_tool_hooks_for_members.py](./04_tool_hooks_for_members.py)** - User permissions for member delegation

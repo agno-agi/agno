@@ -45,6 +45,11 @@ class OllamaEmbedder(Embedder):
     ollama_client: Optional[OllamaClient] = None
     async_client: Optional[AsyncOllamaClient] = None
 
+    def __post_init__(self):
+        if self.enable_batch:
+            logger.warning("OllamaEmbedder does not support batch embeddings, setting enable_batch to False")
+            self.enable_batch = False
+
     @property
     def client(self) -> OllamaClient:
         if self.ollama_client:

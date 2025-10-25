@@ -98,6 +98,20 @@ def print_response(
         )
         response_timer.stop()
 
+        if run_response.input is not None and run_response.input.input_content != input:
+            # Input was modified during the run
+            panels = [status]
+            if show_message:
+                # Convert message to a panel
+                message_content = get_text_from_message(run_response.input.input_content)
+                message_panel = create_panel(
+                    content=Text(message_content, style="green"),
+                    title="Message",
+                    border_style="cyan",
+                )
+                panels.append(message_panel)  # type: ignore
+                live_console.update(Group(*panels))
+
         team_markdown = False
         member_markdown = {}
         if markdown:
@@ -317,6 +331,7 @@ def print_response_stream(
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,  # type: ignore
     knowledge_filters: Optional[Dict[str, Any]] = None,
     add_history_to_context: Optional[bool] = None,
@@ -341,7 +356,7 @@ def print_response_stream(
     if not tags_to_include_in_markdown:
         tags_to_include_in_markdown = {"think", "thinking"}
 
-    stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
+    stream_events = True  # With streaming print response, we need to stream intermediate steps
 
     _response_content: str = ""
     _response_reasoning_content: str = ""
@@ -385,7 +400,7 @@ def print_response_stream(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream_events=stream_events,
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
@@ -399,6 +414,8 @@ def print_response_stream(
             yield_run_response=True,
             **kwargs,
         )
+
+        input_content = get_text_from_message(input)
 
         team_markdown = None
         member_markdown = {}
@@ -434,6 +451,10 @@ def print_response_stream(
                         _response_reasoning_content += resp.reasoning_content  # type: ignore
                 if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:  # type: ignore
                     reasoning_steps = resp.reasoning_steps  # type: ignore
+
+                if resp.event == TeamRunEvent.pre_hook_completed:  # type: ignore
+                    if resp.run_input is not None:  # type: ignore
+                        input_content = get_text_from_message(resp.run_input.input_content)  # type: ignore
 
                 # Collect team tool calls, avoiding duplicates
                 if resp.event == TeamRunEvent.tool_call_completed and resp.tool:  # type: ignore
@@ -479,12 +500,11 @@ def print_response_stream(
             # Create new panels for each chunk
             panels = []
 
-            if input and show_message:
+            if input_content and show_message:
                 render = True
                 # Convert message to a panel
-                message_content = get_text_from_message(input)
                 message_panel = create_panel(
-                    content=Text(message_content, style="green"),
+                    content=Text(input_content, style="green"),
                     title="Message",
                     border_style="cyan",
                 )
@@ -663,10 +683,9 @@ def print_response_stream(
         final_panels = []
 
         # Start with the message
-        if input and show_message:
-            message_content = get_text_from_message(input)
+        if input_content and show_message:
             message_panel = create_panel(
-                content=Text(message_content, style="green"),
+                content=Text(input_content, style="green"),
                 title="Message",
                 border_style="cyan",
             )
@@ -911,6 +930,20 @@ async def aprint_response(
         )
         response_timer.stop()
 
+        if run_response.input is not None and run_response.input.input_content != input:
+            # Input was modified during the run
+            panels = [status]
+            if show_message:
+                # Convert message to a panel
+                message_content = get_text_from_message(run_response.input.input_content)
+                message_panel = create_panel(
+                    content=Text(message_content, style="green"),
+                    title="Message",
+                    border_style="cyan",
+                )
+                panels.append(message_panel)  # type: ignore
+                live_console.update(Group(*panels))
+
         team_markdown = False
         member_markdown = {}
         if markdown:
@@ -1128,6 +1161,7 @@ async def aprint_response_stream(
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,  # type: ignore
     knowledge_filters: Optional[Dict[str, Any]] = None,
     add_history_to_context: Optional[bool] = None,
@@ -1150,7 +1184,7 @@ async def aprint_response_stream(
     if not tags_to_include_in_markdown:
         tags_to_include_in_markdown = {"think", "thinking"}
 
-    stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
+    stream_events = True  # With streaming print response, we need to stream intermediate steps
 
     _response_content: str = ""
     _response_reasoning_content: str = ""
@@ -1196,6 +1230,8 @@ async def aprint_response_stream(
         # Dict to track member response panels by member_id
         member_response_panels = {}
 
+        input_content = get_text_from_message(input)
+
         final_run_response = None
         async for resp in team.arun(  # type: ignore
             input=input,
@@ -1204,7 +1240,7 @@ async def aprint_response_stream(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream_events=stream_events,
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
@@ -1244,6 +1280,10 @@ async def aprint_response_stream(
                         _response_reasoning_content += resp.reasoning_content  # type: ignore
                 if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:  # type: ignore
                     reasoning_steps = resp.reasoning_steps  # type: ignore
+
+                if resp.event == TeamRunEvent.pre_hook_completed:  # type: ignore
+                    if resp.run_input is not None:  # type: ignore
+                        input_content = get_text_from_message(resp.run_input.input_content)  # type: ignore
 
                 # Collect team tool calls, avoiding duplicates
                 if resp.event == TeamRunEvent.tool_call_completed and resp.tool:  # type: ignore
@@ -1288,12 +1328,11 @@ async def aprint_response_stream(
             # Create new panels for each chunk
             panels = []
 
-            if input and show_message:
+            if input_content and show_message:
                 render = True
                 # Convert message to a panel
-                message_content = get_text_from_message(input)
                 message_panel = create_panel(
-                    content=Text(message_content, style="green"),
+                    content=Text(input_content, style="green"),
                     title="Message",
                     border_style="cyan",
                 )
@@ -1473,10 +1512,9 @@ async def aprint_response_stream(
         final_panels = []
 
         # Start with the message
-        if input and show_message:
-            message_content = get_text_from_message(input)
+        if input_content and show_message:
             message_panel = create_panel(
-                content=Text(message_content, style="green"),
+                content=Text(input_content, style="green"),
                 title="Message",
                 border_style="cyan",
             )

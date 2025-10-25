@@ -60,7 +60,7 @@ async def run_team_with_events(prompt: str):
     async for run_output_event in company_info_team.arun(
         prompt,
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     ):
         if run_output_event.event in [
             TeamRunEvent.run_started,

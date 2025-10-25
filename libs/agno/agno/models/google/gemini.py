@@ -26,6 +26,7 @@ try:
     from google.genai.types import (
         Content,
         DynamicRetrievalConfig,
+        FunctionCallingConfigMode,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
@@ -150,6 +151,7 @@ class Gemini(Model):
         system_message: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Returns the request keyword arguments for the GenerativeModel client.
@@ -245,6 +247,18 @@ class Gemini(Model):
         elif tools:
             config["tools"] = [format_function_definitions(tools)]
 
+        if tool_choice is not None:
+            if isinstance(tool_choice, str) and tool_choice.lower() == "auto":
+                config["tool_config"] = {"function_calling_config": {"mode": FunctionCallingConfigMode.AUTO}}
+            elif isinstance(tool_choice, str) and tool_choice.lower() == "none":
+                config["tool_config"] = {"function_calling_config": {"mode": FunctionCallingConfigMode.NONE}}
+            elif isinstance(tool_choice, str) and tool_choice.lower() == "validated":
+                config["tool_config"] = {"function_calling_config": {"mode": FunctionCallingConfigMode.VALIDATED}}
+            elif isinstance(tool_choice, str) and tool_choice.lower() == "any":
+                config["tool_config"] = {"function_calling_config": {"mode": FunctionCallingConfigMode.ANY}}
+            else:
+                config["tool_config"] = {"function_calling_config": {"mode": tool_choice}}
+
         config = {k: v for k, v in config.items() if v is not None}
 
         if config:
@@ -271,7 +285,9 @@ class Gemini(Model):
         Invokes the model with a list of messages and returns the response.
         """
         formatted_messages, system_message = self._format_messages(messages)
-        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(
+            system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
         try:
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
@@ -315,7 +331,9 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(
+            system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
         try:
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
@@ -356,7 +374,9 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(
+            system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
 
         try:
             if run_response and run_response.metrics:
@@ -400,7 +420,9 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(
+            system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
 
         try:
             if run_response and run_response.metrics:

@@ -34,7 +34,7 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_events=True)
 
     responses = []
     tool_call_seen = False
@@ -77,7 +77,7 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_events=True):
         if hasattr(chunk, "tools") and chunk.tools:  # type: ignore
             if any(tc.tool_name for tc in chunk.tools):  # type: ignore
                 tool_call_seen = True

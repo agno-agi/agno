@@ -1,4 +1,4 @@
-"""Example showing how to use AgentOS with Neon as database"""
+"""Example showing how to use AgentOS with Neon as our database provider"""
 
 from os import getenv
 

@@ -150,7 +150,8 @@ def test_get_system_message_with_custom_prompt(session_summary_manager, mock_age
     system_message = session_summary_manager.get_system_message(conversation, response_format)
 
     assert system_message.role == "system"
-    assert system_message.content == custom_prompt
+    assert custom_prompt in system_message.content
+    assert "<conversation>" in system_message.content
 
 
 def test_get_system_message_default_prompt(session_summary_manager, mock_agent_session):
