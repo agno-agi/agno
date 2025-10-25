@@ -22,7 +22,7 @@ thinking_agent = Agent(
     ],
     instructions="Use tables where possible",
     markdown=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 thinking_agent.print_response(
     "Write a report comparing NVDA to TSLA in detail", stream=True, show_reasoning=True

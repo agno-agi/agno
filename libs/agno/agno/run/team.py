@@ -109,12 +109,16 @@ class TeamRunEvent(str, Enum):
     run_started = "TeamRunStarted"
     run_content = "TeamRunContent"
     run_intermediate_content = "TeamRunIntermediateContent"
+    run_content_completed = "TeamRunContentCompleted"
     run_completed = "TeamRunCompleted"
     run_error = "TeamRunError"
     run_cancelled = "TeamRunCancelled"
 
     pre_hook_started = "TeamPreHookStarted"
     pre_hook_completed = "TeamPreHookCompleted"
+
+    post_hook_started = "TeamPostHookStarted"
+    post_hook_completed = "TeamPostHookCompleted"
 
     tool_call_started = "TeamToolCallStarted"
     tool_call_completed = "TeamToolCallCompleted"
@@ -125,6 +129,9 @@ class TeamRunEvent(str, Enum):
 
     memory_update_started = "TeamMemoryUpdateStarted"
     memory_update_completed = "TeamMemoryUpdateCompleted"
+
+    session_summary_started = "TeamSessionSummaryStarted"
+    session_summary_completed = "TeamSessionSummaryCompleted"
 
     parser_model_response_started = "TeamParserModelResponseStarted"
     parser_model_response_completed = "TeamParserModelResponseCompleted"
@@ -208,6 +215,11 @@ class IntermediateRunContentEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class RunContentCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.run_content_completed.value
+
+
+@dataclass
 class RunCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.run_completed.value
     content: Optional[Any] = None
@@ -264,6 +276,18 @@ class PreHookCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class PostHookStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.post_hook_started.value
+    post_hook_name: Optional[str] = None
+
+
+@dataclass
+class PostHookCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.post_hook_completed.value
+    post_hook_name: Optional[str] = None
+
+
+@dataclass
 class MemoryUpdateStartedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.memory_update_started.value
 
@@ -271,6 +295,17 @@ class MemoryUpdateStartedEvent(BaseTeamRunEvent):
 @dataclass
 class MemoryUpdateCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.memory_update_completed.value
+
+
+@dataclass
+class SessionSummaryStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.session_summary_started.value
+
+
+@dataclass
+class SessionSummaryCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.session_summary_completed.value
+    session_summary: Optional[Any] = None
 
 
 @dataclass
@@ -333,11 +368,17 @@ class OutputModelResponseCompletedEvent(BaseTeamRunEvent):
 class CustomEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.custom_event.value
 
+    def __init__(self, **kwargs):
+        # Store arbitrary attributes directly on the instance
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
 
 TeamRunOutputEvent = Union[
     RunStartedEvent,
     RunContentEvent,
     IntermediateRunContentEvent,
+    RunContentCompletedEvent,
     RunCompletedEvent,
     RunErrorEvent,
     RunCancelledEvent,
@@ -348,6 +389,8 @@ TeamRunOutputEvent = Union[
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
+    SessionSummaryStartedEvent,
+    SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
@@ -362,16 +405,21 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_started.value: RunStartedEvent,
     TeamRunEvent.run_content.value: RunContentEvent,
     TeamRunEvent.run_intermediate_content.value: IntermediateRunContentEvent,
+    TeamRunEvent.run_content_completed.value: RunContentCompletedEvent,
     TeamRunEvent.run_completed.value: RunCompletedEvent,
     TeamRunEvent.run_error.value: RunErrorEvent,
     TeamRunEvent.run_cancelled.value: RunCancelledEvent,
     TeamRunEvent.pre_hook_started.value: PreHookStartedEvent,
     TeamRunEvent.pre_hook_completed.value: PreHookCompletedEvent,
+    TeamRunEvent.post_hook_started.value: PostHookStartedEvent,
+    TeamRunEvent.post_hook_completed.value: PostHookCompletedEvent,
     TeamRunEvent.reasoning_started.value: ReasoningStartedEvent,
     TeamRunEvent.reasoning_step.value: ReasoningStepEvent,
     TeamRunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     TeamRunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     TeamRunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
+    TeamRunEvent.session_summary_started.value: SessionSummaryStartedEvent,
+    TeamRunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     TeamRunEvent.tool_call_started.value: ToolCallStartedEvent,
     TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     TeamRunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,

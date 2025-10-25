@@ -145,7 +145,7 @@ async def async_distributed_rag_demo():
 
     # # Run async distributed RAG
     # await distributed_rag_team.aprint_response(
-    #     query, stream=True, stream_intermediate_steps=True
+    #     query, stream=True, stream_events=True
     # )
     await distributed_rag_team.aprint_response(input=query)
 
@@ -174,7 +174,7 @@ def multi_course_meal_demo():
     print("🍽️ Multi-Course Meal Planning with Distributed RAG")
     print("=" * 55)
 
-    query = """Hi, I want to make a 3 course Thai meal. Can you recommend some recipes? 
+    query = """Hi, I want to make a 3 course Thai meal. Can you recommend some recipes?
     I'd like to start with a soup, then a thai curry for the main course and finish with a dessert.
     Please include cooking techniques and any special tips."""
 

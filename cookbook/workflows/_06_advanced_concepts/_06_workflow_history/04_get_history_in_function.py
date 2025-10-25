@@ -232,7 +232,7 @@ def demo_content_workflow():
         user="Content Manager",
         emoji="📝",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
 
