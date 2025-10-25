@@ -122,7 +122,7 @@ async def test_async_streaming_access(shared_db):
     workflow = Workflow(name="Async Streaming", db=shared_db, steps=[research_step, analysis_step, report_step])
 
     events = []
-    async for event in await workflow.arun(input="test topic", stream=True):
+    async for event in workflow.arun(input="test topic", stream=True):
         events.append(event)
 
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]

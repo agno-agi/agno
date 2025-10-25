@@ -192,7 +192,7 @@ def run_example():
             session_id="user-456",
             user_id="user-456",
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
         )
 
 

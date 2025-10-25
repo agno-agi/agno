@@ -25,7 +25,7 @@ team = Team(
 )
 
 # Stream response
-for delta in team.run("Analyze market trends", stream=True, stream_intermediate_steps=True):
+for delta in team.run("Analyze market trends", stream=True, stream_events=True):
     print(delta.content, end="")
 ```
 
