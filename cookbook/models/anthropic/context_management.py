@@ -1,5 +1,5 @@
 """
-Context Management with Claude
+Context Management
 
 Demonstrates Claude's context management feature for automatic tool result clearing.
 This reduces token usage in long-running conversations with extensive tool use.
@@ -28,8 +28,8 @@ agent = Agent(
     ),
     instructions="You are a helpful assistant.",
     tools=[DuckDuckGoTools()],
-    db=SqliteDb(db_file="tmp/context_management5.db"),
-    session_id="context-editing5",
+    db=SqliteDb(db_file="tmp/context_management.db"),
+    session_id="context-editing",
     add_history_to_context=True,
     markdown=True,
 )
