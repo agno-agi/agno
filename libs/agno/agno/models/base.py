@@ -208,9 +208,7 @@ class Model(ABC):
         except Exception:
             return None
 
-    def _save_model_response_to_cache(
-        self, cache_key: str, result: ModelResponse, is_streaming: bool = False
-    ) -> None:
+    def _save_model_response_to_cache(self, cache_key: str, result: ModelResponse, is_streaming: bool = False) -> None:
         """Save a model response to cache."""
         try:
             cache_file = self._get_model_cache_file_path(cache_key)
@@ -225,9 +223,7 @@ class Model(ABC):
         except Exception:
             pass
 
-    def _save_streaming_responses_to_cache(
-        self, cache_key: str, responses: List[ModelResponse]
-    ) -> None:
+    def _save_streaming_responses_to_cache(self, cache_key: str, responses: List[ModelResponse]) -> None:
         """Save streaming responses to cache."""
         cache_file = self._get_model_cache_file_path(cache_key)
 
@@ -311,9 +307,7 @@ class Model(ABC):
 
         # Check cache if enabled
         if self.cache_response:
-            cache_key = self._get_model_cache_key(
-                messages, stream=False, response_format=response_format, tools=tools
-            )
+            cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
             cached_data = self._get_cached_model_response(cache_key)
 
             if cached_data:
@@ -475,9 +469,7 @@ class Model(ABC):
 
         # Check cache if enabled
         if self.cache_response:
-            cache_key = self._get_model_cache_key(
-                messages, stream=False, response_format=response_format, tools=tools
-            )
+            cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
             cached_data = self._get_cached_model_response(cache_key)
 
             if cached_data:
@@ -847,9 +839,7 @@ class Model(ABC):
         # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
         cache_key = None
         if self.cache_response:
-            cache_key = self._get_model_cache_key(
-                messages, stream=True, response_format=response_format, tools=tools
-            )
+            cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
             cached_data = self._get_cached_model_response(cache_key)
 
             if cached_data:
@@ -1046,9 +1036,7 @@ class Model(ABC):
         # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
         cache_key = None
         if self.cache_response:
-            cache_key = self._get_model_cache_key(
-                messages, stream=True, response_format=response_format, tools=tools
-            )
+            cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
             cached_data = self._get_cached_model_response(cache_key)
 
             if cached_data:
