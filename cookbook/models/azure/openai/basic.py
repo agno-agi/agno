@@ -1,7 +1,7 @@
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.azure import AzureOpenAI
 
-agent = Agent(model=AzureOpenAI(id="gpt-4o-mini"), markdown=True)
+agent = Agent(model="azure:gpt-4o-mini", markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")
