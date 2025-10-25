@@ -550,11 +550,11 @@ class Claude(Model):
         # Capture context management information if present
         if self.context_management is not None and hasattr(response, "context_management"):
             if response.context_management is not None:  # type: ignore
-                model_response.extra = model_response.extra or {}
+                model_response.provider_data = model_response.provider_data or {}
                 if hasattr(response.context_management, "model_dump"):
-                    model_response.extra["context_management"] = response.context_management.model_dump()  # type: ignore
+                    model_response.provider_data["context_management"] = response.context_management.model_dump()  # type: ignore
                 else:
-                    model_response.extra["context_management"] = response.context_management  # type: ignore
+                    model_response.provider_data["context_management"] = response.context_management  # type: ignore
 
         return model_response
 
@@ -633,6 +633,16 @@ class Claude(Model):
                         model_response.citations.documents.append(  # type: ignore
                             DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                         )
+
+            # Capture context management information if present
+            if self.context_management is not None and hasattr(response.message, "context_management"):  # type: ignore
+                context_mgmt = response.message.context_management  # type: ignore
+                if context_mgmt is not None:
+                    model_response.provider_data = model_response.provider_data or {}
+                    if hasattr(context_mgmt, "model_dump"):
+                        model_response.provider_data["context_management"] = context_mgmt.model_dump()
+                    else:
+                        model_response.provider_data["context_management"] = context_mgmt
 
         if hasattr(response, "message") and hasattr(response.message, "usage") and response.message.usage is not None:  # type: ignore
             model_response.response_usage = self._get_metrics(response.message.usage)  # type: ignore
