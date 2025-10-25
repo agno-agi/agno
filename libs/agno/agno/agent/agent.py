@@ -1332,6 +1332,11 @@ class Agent:
                         store_events=self.store_events,
                     )
 
+            # Update run_response.session_state before creating RunCompletedEvent
+            # This ensures the event has the final state after all tool modifications
+            if session.session_data is not None and "session_state" in session.session_data:
+                run_response.session_state = session.session_data["session_state"]
+
             # Create the run completed event
             completed_event = handle_event(  # type: ignore
                 create_run_completed_event(from_run_response=run_response),
@@ -2216,6 +2221,11 @@ class Agent:
                         store_events=self.store_events,
                     )
 
+            # Update run_response.session_state before creating RunCompletedEvent
+            # This ensures the event has the final state after all tool modifications
+            if agent_session.session_data is not None and "session_state" in agent_session.session_data:
+                run_response.session_state = agent_session.session_data["session_state"]
+
             # Create the run completed event
             completed_event = handle_event(
                 create_run_completed_event(from_run_response=run_response),
@@ -3047,6 +3057,11 @@ class Agent:
                         store_events=self.store_events,
                     )
 
+            # Update run_response.session_state before creating RunCompletedEvent
+            # This ensures the event has the final state after all tool modifications
+            if session.session_data is not None and "session_state" in session.session_data:
+                run_response.session_state = session.session_data["session_state"]
+
             # Create the run completed event
             completed_event = handle_event(
                 create_run_completed_event(run_response),
@@ -3704,6 +3719,11 @@ class Agent:
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
                     )
+
+            # Update run_response.session_state before creating RunCompletedEvent
+            # This ensures the event has the final state after all tool modifications
+            if agent_session.session_data is not None and "session_state" in agent_session.session_data:
+                run_response.session_state = agent_session.session_data["session_state"]
 
             # Create the run completed event
             completed_event = handle_event(
@@ -9850,6 +9870,11 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
+        # Update run_response.session_state from session before saving
+        # This ensures RunOutput reflects all tool modifications
+        if session.session_data is not None and "session_state" in session.session_data:
+            run_response.session_state = session.session_data["session_state"]
+
         # Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response,
@@ -9876,6 +9901,11 @@ class Agent:
         # Stop the timer for the Run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
+
+        # Update run_response.session_state from session before saving
+        # This ensures RunOutput reflects all tool modifications
+        if session.session_data is not None and "session_state" in session.session_data:
+            run_response.session_state = session.session_data["session_state"]
 
         # Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
