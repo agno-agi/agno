@@ -40,38 +40,40 @@ class SlackTools(Toolkit):
 
         super().__init__(name="slack", tools=tools, **kwargs)
 
-    def send_message(self, channel: str, text: str) -> str:
+    def send_message(self, channel: str, text: str, mrkdwn: bool = True) -> str:
         """
         Send a message to a Slack channel.
 
         Args:
             channel (str): The channel ID or name to send the message to.
             text (str): The text of the message to send.
+            mrkdwn (bool): Whether to enable Slack markdown formatting. Defaults to True.
 
         Returns:
             str: A JSON string containing the response from the Slack API.
         """
         try:
-            response = self.client.chat_postMessage(channel=channel, text=text)
+            response = self.client.chat_postMessage(channel=channel, text=text, mrkdwn=mrkdwn)
             return json.dumps(response.data)
         except SlackApiError as e:
             logger.error(f"Error sending message: {e}")
             return json.dumps({"error": str(e)})
 
-    def send_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
+    def send_message_thread(self, channel: str, text: str, thread_ts: str, mrkdwn: bool = True) -> str:
         """
-        Send a message to a Slack channel.
+        Send a message to a Slack channel thread.
 
         Args:
             channel (str): The channel ID or name to send the message to.
             text (str): The text of the message to send.
-            thread_ts (ts): The thread to reply to
+            thread_ts (ts): The thread to reply to.
+            mrkdwn (bool): Whether to enable Slack markdown formatting. Defaults to True.
 
         Returns:
             str: A JSON string containing the response from the Slack API.
         """
         try:
-            response = self.client.chat_postMessage(channel=channel, text=text, thread_ts=thread_ts)
+            response = self.client.chat_postMessage(channel=channel, text=text, thread_ts=thread_ts, mrkdwn=mrkdwn)
             return json.dumps(response.data)
         except SlackApiError as e:
             logger.error(f"Error sending message: {e}")
