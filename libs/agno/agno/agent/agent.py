@@ -1359,7 +1359,10 @@ class Agent:
             # Handle run cancellation during streaming
             log_info(f"Run {run_response.run_id} was cancelled during streaming")
             run_response.status = RunStatus.cancelled
-            run_response.content = str(e)
+            # Don't overwrite content - preserve any partial content that was streamed
+            # Only set content if it's empty
+            if not run_response.content:
+                run_response.content = str(e)
 
             # Yield the cancellation event
             yield handle_event(  # type: ignore
@@ -2237,7 +2240,10 @@ class Agent:
             # Handle run cancellation during async streaming
             log_info(f"Run {run_response.run_id} was cancelled during async streaming")
             run_response.status = RunStatus.cancelled
-            run_response.content = str(e)
+            # Don't overwrite content - preserve any partial content that was streamed
+            # Only set content if it's empty
+            if not run_response.content:
+                run_response.content = str(e)
 
             # Yield the cancellation event
             yield handle_event(  # type: ignore
