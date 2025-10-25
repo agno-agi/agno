@@ -802,6 +802,7 @@ class Model(ABC):
         """
         Process a streaming response from the model.
         """
+        response_delta = ModelResponse()
 
         for response_delta in self.invoke_stream(
             messages=messages,
@@ -999,6 +1000,8 @@ class Model(ABC):
         """
         Process a streaming response from the model.
         """
+        model_response = ModelResponse()
+
         async for response_delta in self.ainvoke_stream(
             messages=messages,
             assistant_message=assistant_message,
