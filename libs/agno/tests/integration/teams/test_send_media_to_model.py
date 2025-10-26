@@ -125,7 +125,7 @@ def test_team_streaming_with_send_media_false(shared_db):
     assert len(events) > 0
 
     # Verify member agent has send_media_to_model=False set
-    assert agent.send_media_to_model == False
+    assert agent.send_media_to_model is False
 
 
 def test_team_with_multiple_members(shared_db):
