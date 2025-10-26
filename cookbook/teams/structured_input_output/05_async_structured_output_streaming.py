@@ -80,7 +80,7 @@ async def test_structured_streaming():
     """Test async structured output streaming."""
     # Run with streaming and consume the async generator to get the final response
     async_stream = team.arun(
-        "Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True
+        "Give me a stock report for NVDA", stream=True, stream_events=True
     )
 
     # Consume the async streaming events and get the final response
@@ -100,7 +100,7 @@ async def test_structured_streaming_with_arun():
         team.arun(
             input="Give me a stock report for AAPL",
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
         )
     )
 

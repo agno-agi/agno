@@ -186,6 +186,7 @@ def print_response_stream(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,
     markdown: bool = True,
     show_time: bool = True,
@@ -199,7 +200,7 @@ def print_response_stream(
 
         console = Console()
 
-    stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
+    stream_events = True  # With streaming print response, we need to stream intermediate steps
 
     # Show workflow info (same as before)
     media_info = []
@@ -314,7 +315,7 @@ def print_response_stream(
                 images=images,
                 videos=videos,
                 stream=True,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 **kwargs,
             ):  # type: ignore
                 # Handle the new event types
@@ -969,6 +970,7 @@ async def aprint_response_stream(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,
     markdown: bool = True,
     show_time: bool = True,
@@ -982,7 +984,7 @@ async def aprint_response_stream(
 
         console = Console()
 
-    stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
+    stream_events = True  # With streaming print response, we need to stream intermediate steps
 
     # Show workflow info (same as before)
     media_info = []
@@ -1088,7 +1090,7 @@ async def aprint_response_stream(
         live_log.update(status)
 
         try:
-            async for response in await workflow.arun(
+            async for response in workflow.arun(
                 input=input,
                 additional_data=additional_data,
                 user_id=user_id,
@@ -1097,7 +1099,7 @@ async def aprint_response_stream(
                 images=images,
                 videos=videos,
                 stream=True,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 **kwargs,
             ):  # type: ignore
                 # Handle the new event types

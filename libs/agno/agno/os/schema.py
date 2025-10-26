@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
 from agno.db.base import SessionType
@@ -25,78 +25,80 @@ from agno.workflow.workflow import Workflow
 
 
 class BadRequestResponse(BaseModel):
-    detail: str
-    error_code: Optional[str] = None
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
 
-    class Config:
-        json_schema_extra = {"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}}
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
 
 
 class NotFoundResponse(BaseModel):
-    detail: str
-    error_code: Optional[str] = None
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Not found", "error_code": "NOT_FOUND"}})
 
-    class Config:
-        json_schema_extra = {"example": {"detail": "Not found", "error_code": "NOT_FOUND"}}
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
 
 
 class UnauthorizedResponse(BaseModel):
-    detail: str
-    error_code: Optional[str] = None
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"detail": "Unauthorized access", "error_code": "UNAUTHORIZED"}}
+    )
 
-    class Config:
-        json_schema_extra = {"example": {"detail": "Unauthorized access", "error_code": "UNAUTHORIZED"}}
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
 
 
 class UnauthenticatedResponse(BaseModel):
-    detail: str
-    error_code: Optional[str] = None
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"detail": "Unauthenticated access", "error_code": "UNAUTHENTICATED"}}
+    )
 
-    class Config:
-        json_schema_extra = {"example": {"detail": "Unauthenticated access", "error_code": "UNAUTHENTICATED"}}
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
 
 
 class ValidationErrorResponse(BaseModel):
-    detail: str
-    error_code: Optional[str] = None
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"detail": "Validation error", "error_code": "VALIDATION_ERROR"}}
+    )
 
-    class Config:
-        json_schema_extra = {"example": {"detail": "Validation error", "error_code": "VALIDATION_ERROR"}}
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
 
 
 class InternalServerErrorResponse(BaseModel):
-    detail: str
-    error_code: Optional[str] = None
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"detail": "Internal server error", "error_code": "INTERNAL_SERVER_ERROR"}}
+    )
 
-    class Config:
-        json_schema_extra = {"example": {"detail": "Internal server error", "error_code": "INTERNAL_SERVER_ERROR"}}
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
 
 
 class HealthResponse(BaseModel):
-    status: str
+    model_config = ConfigDict(json_schema_extra={"example": {"status": "ok", "instantiated_at": "1760169236.778903"}})
 
-    class Config:
-        json_schema_extra = {"example": {"status": "ok"}}
+    status: str = Field(..., description="Health status of the service")
+    instantiated_at: str = Field(..., description="Unix timestamp when service was instantiated")
 
 
 class InterfaceResponse(BaseModel):
-    type: str
-    version: str
-    route: str
+    type: str = Field(..., description="Type of the interface")
+    version: str = Field(..., description="Version of the interface")
+    route: str = Field(..., description="API route path")
 
 
 class ManagerResponse(BaseModel):
-    type: str
-    name: str
-    version: str
-    route: str
+    type: str = Field(..., description="Type of the manager")
+    name: str = Field(..., description="Name of the manager")
+    version: str = Field(..., description="Version of the manager")
+    route: str = Field(..., description="API route path")
 
 
 class AgentSummaryResponse(BaseModel):
-    id: Optional[str] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
-    db_id: Optional[str] = None
+    id: Optional[str] = Field(None, description="Unique identifier for the agent")
+    name: Optional[str] = Field(None, description="Name of the agent")
+    description: Optional[str] = Field(None, description="Description of the agent")
+    db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
     def from_agent(cls, agent: Agent) -> "AgentSummaryResponse":
@@ -104,10 +106,10 @@ class AgentSummaryResponse(BaseModel):
 
 
 class TeamSummaryResponse(BaseModel):
-    id: Optional[str] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
-    db_id: Optional[str] = None
+    id: Optional[str] = Field(None, description="Unique identifier for the team")
+    name: Optional[str] = Field(None, description="Name of the team")
+    description: Optional[str] = Field(None, description="Description of the team")
+    db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
     def from_team(cls, team: Team) -> "TeamSummaryResponse":
@@ -115,10 +117,10 @@ class TeamSummaryResponse(BaseModel):
 
 
 class WorkflowSummaryResponse(BaseModel):
-    id: Optional[str] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
-    db_id: Optional[str] = None
+    id: Optional[str] = Field(None, description="Unique identifier for the workflow")
+    name: Optional[str] = Field(None, description="Name of the workflow")
+    description: Optional[str] = Field(None, description="Description of the workflow")
+    db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
     def from_workflow(cls, workflow: Workflow) -> "WorkflowSummaryResponse":
@@ -133,55 +135,52 @@ class WorkflowSummaryResponse(BaseModel):
 class ConfigResponse(BaseModel):
     """Response schema for the general config endpoint"""
 
-    os_id: str
-    name: Optional[str] = None
-    description: Optional[str] = None
-    available_models: Optional[List[str]] = None
-    databases: List[str]
-    chat: Optional[ChatConfig] = None
+    os_id: str = Field(..., description="Unique identifier for the OS instance")
+    name: Optional[str] = Field(None, description="Name of the OS instance")
+    description: Optional[str] = Field(None, description="Description of the OS instance")
+    available_models: Optional[List[str]] = Field(None, description="List of available models")
+    databases: List[str] = Field(..., description="List of database IDs")
+    chat: Optional[ChatConfig] = Field(None, description="Chat configuration")
 
-    session: Optional[SessionConfig] = None
-    metrics: Optional[MetricsConfig] = None
-    memory: Optional[MemoryConfig] = None
-    knowledge: Optional[KnowledgeConfig] = None
-    evals: Optional[EvalsConfig] = None
+    session: Optional[SessionConfig] = Field(None, description="Session configuration")
+    metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
+    memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
+    knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
+    evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
 
-    agents: List[AgentSummaryResponse]
-    teams: List[TeamSummaryResponse]
-    workflows: List[WorkflowSummaryResponse]
-    interfaces: List[InterfaceResponse]
+    agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
+    teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
+    workflows: List[WorkflowSummaryResponse] = Field(..., description="List of registered workflows")
+    interfaces: List[InterfaceResponse] = Field(..., description="List of available interfaces")
 
 
 class Model(BaseModel):
-    id: Optional[str] = None
-    provider: Optional[str] = None
+    id: Optional[str] = Field(None, description="Model identifier")
+    provider: Optional[str] = Field(None, description="Model provider name")
 
 
 class ModelResponse(BaseModel):
-    name: Optional[str] = None
-    model: Optional[str] = None
-    provider: Optional[str] = None
+    name: Optional[str] = Field(None, description="Name of the model")
+    model: Optional[str] = Field(None, description="Model identifier")
+    provider: Optional[str] = Field(None, description="Model provider name")
 
 
 class AgentResponse(BaseModel):
-    id: Optional[str] = None
-    name: Optional[str] = None
-    db_id: Optional[str] = None
-    model: Optional[ModelResponse] = None
-    tools: Optional[Dict[str, Any]] = None
-    sessions: Optional[Dict[str, Any]] = None
-    knowledge: Optional[Dict[str, Any]] = None
-    memory: Optional[Dict[str, Any]] = None
-    reasoning: Optional[Dict[str, Any]] = None
-    default_tools: Optional[Dict[str, Any]] = None
-    system_message: Optional[Dict[str, Any]] = None
-    extra_messages: Optional[Dict[str, Any]] = None
-    response_settings: Optional[Dict[str, Any]] = None
-    streaming: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-    class Config:
-        exclude_none = True
+    id: Optional[str] = Field(None, description="Unique identifier for the agent")
+    name: Optional[str] = Field(None, description="Name of the agent")
+    db_id: Optional[str] = Field(None, description="Database identifier")
+    model: Optional[ModelResponse] = Field(None, description="Model configuration")
+    tools: Optional[Dict[str, Any]] = Field(None, description="Tool configurations")
+    sessions: Optional[Dict[str, Any]] = Field(None, description="Session configurations")
+    knowledge: Optional[Dict[str, Any]] = Field(None, description="Knowledge base configurations")
+    memory: Optional[Dict[str, Any]] = Field(None, description="Memory configurations")
+    reasoning: Optional[Dict[str, Any]] = Field(None, description="Reasoning configurations")
+    default_tools: Optional[Dict[str, Any]] = Field(None, description="Default tool settings")
+    system_message: Optional[Dict[str, Any]] = Field(None, description="System message configurations")
+    extra_messages: Optional[Dict[str, Any]] = Field(None, description="Extra message configurations")
+    response_settings: Optional[Dict[str, Any]] = Field(None, description="Response settings")
+    streaming: Optional[Dict[str, Any]] = Field(None, description="Streaming configurations")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
     def from_agent(cls, agent: Agent) -> "AgentResponse":
@@ -240,6 +239,7 @@ class AgentResponse(BaseModel):
             "parse_response": True,
             "use_json_mode": False,
             # Streaming defaults
+            "stream_events": False,
             "stream_intermediate_steps": False,
         }
 
@@ -372,6 +372,7 @@ class AgentResponse(BaseModel):
 
         streaming_info = {
             "stream": agent.stream,
+            "stream_events": agent.stream_events,
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
         return AgentResponse(
@@ -394,22 +395,24 @@ class AgentResponse(BaseModel):
 
 
 class TeamResponse(BaseModel):
-    id: Optional[str] = None
-    name: Optional[str] = None
-    db_id: Optional[str] = None
-    description: Optional[str] = None
-    model: Optional[ModelResponse] = None
-    tools: Optional[Dict[str, Any]] = None
-    sessions: Optional[Dict[str, Any]] = None
-    knowledge: Optional[Dict[str, Any]] = None
-    memory: Optional[Dict[str, Any]] = None
-    reasoning: Optional[Dict[str, Any]] = None
-    default_tools: Optional[Dict[str, Any]] = None
-    system_message: Optional[Dict[str, Any]] = None
-    response_settings: Optional[Dict[str, Any]] = None
-    streaming: Optional[Dict[str, Any]] = None
-    members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
-    metadata: Optional[Dict[str, Any]] = None
+    id: Optional[str] = Field(None, description="Unique identifier for the team")
+    name: Optional[str] = Field(None, description="Name of the team")
+    db_id: Optional[str] = Field(None, description="Database identifier")
+    description: Optional[str] = Field(None, description="Description of the team")
+    model: Optional[ModelResponse] = Field(None, description="Model configuration")
+    tools: Optional[Dict[str, Any]] = Field(None, description="Tool configurations")
+    sessions: Optional[Dict[str, Any]] = Field(None, description="Session configurations")
+    knowledge: Optional[Dict[str, Any]] = Field(None, description="Knowledge base configurations")
+    memory: Optional[Dict[str, Any]] = Field(None, description="Memory configurations")
+    reasoning: Optional[Dict[str, Any]] = Field(None, description="Reasoning configurations")
+    default_tools: Optional[Dict[str, Any]] = Field(None, description="Default tool settings")
+    system_message: Optional[Dict[str, Any]] = Field(None, description="System message configurations")
+    response_settings: Optional[Dict[str, Any]] = Field(None, description="Response settings")
+    streaming: Optional[Dict[str, Any]] = Field(None, description="Streaming configurations")
+    members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = Field(
+        None, description="List of team members (agents or teams)"
+    )
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
     def from_team(cls, team: Team) -> "TeamResponse":
@@ -458,6 +461,7 @@ class TeamResponse(BaseModel):
             "parse_response": True,
             "use_json_mode": False,
             # Streaming defaults
+            "stream_events": False,
             "stream_intermediate_steps": False,
             "stream_member_events": False,
         }
@@ -577,6 +581,7 @@ class TeamResponse(BaseModel):
 
         streaming_info = {
             "stream": team.stream,
+            "stream_events": team.stream_events,
             "stream_intermediate_steps": team.stream_intermediate_steps,
             "stream_member_events": team.stream_member_events,
         }
@@ -617,18 +622,15 @@ class TeamResponse(BaseModel):
 
 
 class WorkflowResponse(BaseModel):
-    id: Optional[str] = None
-    name: Optional[str] = None
-    db_id: Optional[str] = None
-    description: Optional[str] = None
-    input_schema: Optional[Dict[str, Any]] = None
-    steps: Optional[List[Dict[str, Any]]] = None
-    agent: Optional[AgentResponse] = None
-    team: Optional[TeamResponse] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-    class Config:
-        exclude_none = True
+    id: Optional[str] = Field(None, description="Unique identifier for the workflow")
+    name: Optional[str] = Field(None, description="Name of the workflow")
+    db_id: Optional[str] = Field(None, description="Database identifier")
+    description: Optional[str] = Field(None, description="Description of the workflow")
+    input_schema: Optional[Dict[str, Any]] = Field(None, description="Input schema for the workflow")
+    steps: Optional[List[Dict[str, Any]]] = Field(None, description="List of workflow steps")
+    agent: Optional[AgentResponse] = Field(None, description="Agent configuration if used")
+    team: Optional[TeamResponse] = Field(None, description="Team configuration if used")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
     def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -682,17 +684,17 @@ class WorkflowResponse(BaseModel):
 
 
 class WorkflowRunRequest(BaseModel):
-    input: Dict[str, Any]
-    user_id: Optional[str] = None
-    session_id: Optional[str] = None
+    input: Dict[str, Any] = Field(..., description="Input parameters for the workflow run")
+    user_id: Optional[str] = Field(None, description="User identifier for the workflow run")
+    session_id: Optional[str] = Field(None, description="Session identifier for context persistence")
 
 
 class SessionSchema(BaseModel):
-    session_id: str
-    session_name: str
-    session_state: Optional[dict]
-    created_at: Optional[datetime]
-    updated_at: Optional[datetime]
+    session_id: str = Field(..., description="Unique identifier for the session")
+    session_name: str = Field(..., description="Human-readable name for the session")
+    session_state: Optional[dict] = Field(None, description="Current state data of the session")
+    created_at: Optional[datetime] = Field(None, description="Timestamp when session was created")
+    updated_at: Optional[datetime] = Field(None, description="Timestamp when session was last updated")
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
@@ -711,24 +713,43 @@ class SessionSchema(BaseModel):
 
 
 class DeleteSessionRequest(BaseModel):
-    session_ids: List[str]
-    session_types: List[SessionType]
+    session_ids: List[str] = Field(..., description="List of session IDs to delete", min_length=1)
+    session_types: List[SessionType] = Field(..., description="Types of sessions to delete", min_length=1)
+
+
+class CreateSessionRequest(BaseModel):
+    session_id: Optional[str] = Field(None, description="Optional session ID (generated if not provided)")
+    session_name: Optional[str] = Field(None, description="Name for the session")
+    session_state: Optional[Dict[str, Any]] = Field(None, description="Initial session state")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    user_id: Optional[str] = Field(None, description="User ID associated with the session")
+    agent_id: Optional[str] = Field(None, description="Agent ID if this is an agent session")
+    team_id: Optional[str] = Field(None, description="Team ID if this is a team session")
+    workflow_id: Optional[str] = Field(None, description="Workflow ID if this is a workflow session")
+
+
+class UpdateSessionRequest(BaseModel):
+    session_name: Optional[str] = Field(None, description="Updated session name")
+    session_state: Optional[Dict[str, Any]] = Field(None, description="Updated session state")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Updated metadata")
+    summary: Optional[Dict[str, Any]] = Field(None, description="Session summary")
 
 
 class AgentSessionDetailSchema(BaseModel):
-    user_id: Optional[str]
-    agent_session_id: str
-    session_id: str
-    session_name: str
-    session_summary: Optional[dict]
-    session_state: Optional[dict]
-    agent_id: Optional[str]
-    total_tokens: Optional[int]
-    agent_data: Optional[dict]
-    metrics: Optional[dict]
-    chat_history: Optional[List[dict]]
-    created_at: Optional[datetime]
-    updated_at: Optional[datetime]
+    user_id: Optional[str] = Field(None, description="User ID associated with the session")
+    agent_session_id: str = Field(..., description="Unique agent session identifier")
+    session_id: str = Field(..., description="Session identifier")
+    session_name: str = Field(..., description="Human-readable session name")
+    session_summary: Optional[dict] = Field(None, description="Summary of session interactions")
+    session_state: Optional[dict] = Field(None, description="Current state of the session")
+    agent_id: Optional[str] = Field(None, description="Agent ID used in this session")
+    total_tokens: Optional[int] = Field(None, description="Total tokens used in this session")
+    agent_data: Optional[dict] = Field(None, description="Agent-specific data")
+    metrics: Optional[dict] = Field(None, description="Session metrics")
+    metadata: Optional[dict] = Field(None, description="Additional metadata")
+    chat_history: Optional[List[dict]] = Field(None, description="Complete chat history")
+    created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
 
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
@@ -746,6 +767,7 @@ class AgentSessionDetailSchema(BaseModel):
             if session.session_data
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
+            metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
@@ -753,18 +775,19 @@ class AgentSessionDetailSchema(BaseModel):
 
 
 class TeamSessionDetailSchema(BaseModel):
-    session_id: str
-    session_name: str
-    user_id: Optional[str]
-    team_id: Optional[str]
-    session_summary: Optional[dict]
-    session_state: Optional[dict]
-    metrics: Optional[dict]
-    team_data: Optional[dict]
-    chat_history: Optional[List[dict]]
-    created_at: Optional[datetime]
-    updated_at: Optional[datetime]
-    total_tokens: Optional[int]
+    session_id: str = Field(..., description="Unique session identifier")
+    session_name: str = Field(..., description="Human-readable session name")
+    user_id: Optional[str] = Field(None, description="User ID associated with the session")
+    team_id: Optional[str] = Field(None, description="Team ID used in this session")
+    session_summary: Optional[dict] = Field(None, description="Summary of team interactions")
+    session_state: Optional[dict] = Field(None, description="Current state of the session")
+    metrics: Optional[dict] = Field(None, description="Session metrics")
+    team_data: Optional[dict] = Field(None, description="Team-specific data")
+    metadata: Optional[dict] = Field(None, description="Additional metadata")
+    chat_history: Optional[List[dict]] = Field(None, description="Complete chat history")
+    created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
+    total_tokens: Optional[int] = Field(None, description="Total tokens used in this session")
 
     @classmethod
     def from_session(cls, session: TeamSession) -> "TeamSessionDetailSchema":
@@ -783,6 +806,7 @@ class TeamSessionDetailSchema(BaseModel):
             if session.session_data
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
+            metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
@@ -790,20 +814,19 @@ class TeamSessionDetailSchema(BaseModel):
 
 
 class WorkflowSessionDetailSchema(BaseModel):
-    user_id: Optional[str]
-    workflow_id: Optional[str]
-    workflow_name: Optional[str]
+    user_id: Optional[str] = Field(None, description="User ID associated with the session")
+    workflow_id: Optional[str] = Field(None, description="Workflow ID used in this session")
+    workflow_name: Optional[str] = Field(None, description="Name of the workflow")
+    session_id: str = Field(..., description="Unique session identifier")
+    session_name: str = Field(..., description="Human-readable session name")
 
-    session_id: str
-    session_name: str
+    session_data: Optional[dict] = Field(None, description="Complete session data")
+    session_state: Optional[dict] = Field(None, description="Current workflow state")
+    workflow_data: Optional[dict] = Field(None, description="Workflow-specific data")
+    metadata: Optional[dict] = Field(None, description="Additional metadata")
 
-    session_data: Optional[dict]
-    session_state: Optional[dict]
-    workflow_data: Optional[dict]
-    metadata: Optional[dict]
-
-    created_at: Optional[int]
-    updated_at: Optional[int]
+    created_at: Optional[int] = Field(None, description="Unix timestamp of session creation")
+    updated_at: Optional[int] = Field(None, description="Unix timestamp of last update")
 
     @classmethod
     def from_session(cls, session: WorkflowSession) -> "WorkflowSessionDetailSchema":
@@ -826,28 +849,28 @@ class WorkflowSessionDetailSchema(BaseModel):
 
 
 class RunSchema(BaseModel):
-    run_id: str
-    parent_run_id: Optional[str]
-    agent_id: Optional[str]
-    user_id: Optional[str]
-    run_input: Optional[str]
-    content: Optional[Union[str, dict]]
-    run_response_format: Optional[str]
-    reasoning_content: Optional[str]
-    reasoning_steps: Optional[List[dict]]
-    metrics: Optional[dict]
-    messages: Optional[List[dict]]
-    tools: Optional[List[dict]]
-    events: Optional[List[dict]]
-    created_at: Optional[datetime]
-    references: Optional[List[dict]]
-    reasoning_messages: Optional[List[dict]]
-    images: Optional[List[dict]]
-    videos: Optional[List[dict]]
-    audio: Optional[List[dict]]
-    files: Optional[List[dict]]
-    response_audio: Optional[dict]
-    input_media: Optional[Dict[str, Any]]
+    run_id: str = Field(..., description="Unique identifier for the run")
+    parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
+    agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
+    user_id: Optional[str] = Field(None, description="User ID associated with the run")
+    run_input: Optional[str] = Field(None, description="Input provided to the run")
+    content: Optional[Union[str, dict]] = Field(None, description="Output content from the run")
+    run_response_format: Optional[str] = Field(None, description="Format of the response (text/json)")
+    reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
+    reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
+    metrics: Optional[dict] = Field(None, description="Performance and usage metrics")
+    messages: Optional[List[dict]] = Field(None, description="Message history for the run")
+    tools: Optional[List[dict]] = Field(None, description="Tools used in the run")
+    events: Optional[List[dict]] = Field(None, description="Events generated during the run")
+    created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
+    references: Optional[List[dict]] = Field(None, description="References cited in the run")
+    reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
+    images: Optional[List[dict]] = Field(None, description="Images included in the run")
+    videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
+    audio: Optional[List[dict]] = Field(None, description="Audio files included in the run")
+    files: Optional[List[dict]] = Field(None, description="Files included in the run")
+    response_audio: Optional[dict] = Field(None, description="Audio response if generated")
+    input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -882,27 +905,27 @@ class RunSchema(BaseModel):
 
 
 class TeamRunSchema(BaseModel):
-    run_id: str
-    parent_run_id: Optional[str]
-    team_id: Optional[str]
-    content: Optional[Union[str, dict]]
-    reasoning_content: Optional[str]
-    reasoning_steps: Optional[List[dict]]
-    run_input: Optional[str]
-    run_response_format: Optional[str]
-    metrics: Optional[dict]
-    tools: Optional[List[dict]]
-    messages: Optional[List[dict]]
-    events: Optional[List[dict]]
-    created_at: Optional[datetime]
-    references: Optional[List[dict]]
-    reasoning_messages: Optional[List[dict]]
-    input_media: Optional[Dict[str, Any]]
-    images: Optional[List[dict]]
-    videos: Optional[List[dict]]
-    audio: Optional[List[dict]]
-    files: Optional[List[dict]]
-    response_audio: Optional[dict]
+    run_id: str = Field(..., description="Unique identifier for the team run")
+    parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
+    team_id: Optional[str] = Field(None, description="Team ID that executed this run")
+    content: Optional[Union[str, dict]] = Field(None, description="Output content from the team run")
+    reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
+    reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
+    run_input: Optional[str] = Field(None, description="Input provided to the run")
+    run_response_format: Optional[str] = Field(None, description="Format of the response (text/json)")
+    metrics: Optional[dict] = Field(None, description="Performance and usage metrics")
+    tools: Optional[List[dict]] = Field(None, description="Tools used in the run")
+    messages: Optional[List[dict]] = Field(None, description="Message history for the run")
+    events: Optional[List[dict]] = Field(None, description="Events generated during the run")
+    created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
+    references: Optional[List[dict]] = Field(None, description="References cited in the run")
+    reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
+    input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
+    images: Optional[List[dict]] = Field(None, description="Images included in the run")
+    videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
+    audio: Optional[List[dict]] = Field(None, description="Audio files included in the run")
+    files: Optional[List[dict]] = Field(None, description="Files included in the run")
+    response_audio: Optional[dict] = Field(None, description="Audio response if generated")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -936,27 +959,27 @@ class TeamRunSchema(BaseModel):
 
 
 class WorkflowRunSchema(BaseModel):
-    run_id: str
-    run_input: Optional[str]
-    events: Optional[List[dict]]
-    workflow_id: Optional[str]
-    user_id: Optional[str]
-    content: Optional[Union[str, dict]]
-    content_type: Optional[str]
-    status: Optional[str]
-    step_results: Optional[list[dict]]
-    step_executor_runs: Optional[list[dict]]
-    metrics: Optional[dict]
-    created_at: Optional[int]
-    reasoning_content: Optional[str]
-    reasoning_steps: Optional[List[dict]]
-    references: Optional[List[dict]]
-    reasoning_messages: Optional[List[dict]]
-    images: Optional[List[dict]]
-    videos: Optional[List[dict]]
-    audio: Optional[List[dict]]
-    files: Optional[List[dict]]
-    response_audio: Optional[dict]
+    run_id: str = Field(..., description="Unique identifier for the workflow run")
+    run_input: Optional[str] = Field(None, description="Input provided to the workflow")
+    events: Optional[List[dict]] = Field(None, description="Events generated during the workflow")
+    workflow_id: Optional[str] = Field(None, description="Workflow ID that was executed")
+    user_id: Optional[str] = Field(None, description="User ID associated with the run")
+    content: Optional[Union[str, dict]] = Field(None, description="Output content from the workflow")
+    content_type: Optional[str] = Field(None, description="Type of content returned")
+    status: Optional[str] = Field(None, description="Status of the workflow run")
+    step_results: Optional[list[dict]] = Field(None, description="Results from each workflow step")
+    step_executor_runs: Optional[list[dict]] = Field(None, description="Executor runs for each step")
+    metrics: Optional[dict] = Field(None, description="Performance and usage metrics")
+    created_at: Optional[int] = Field(None, description="Unix timestamp of run creation")
+    reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
+    reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
+    references: Optional[List[dict]] = Field(None, description="References cited in the workflow")
+    reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
+    images: Optional[List[dict]] = Field(None, description="Images included in the workflow")
+    videos: Optional[List[dict]] = Field(None, description="Videos included in the workflow")
+    audio: Optional[List[dict]] = Field(None, description="Audio files included in the workflow")
+    files: Optional[List[dict]] = Field(None, description="Files included in the workflow")
+    response_audio: Optional[dict] = Field(None, description="Audio response if generated")
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
@@ -995,15 +1018,15 @@ class SortOrder(str, Enum):
 
 
 class PaginationInfo(BaseModel):
-    page: Optional[int] = 0
-    limit: Optional[int] = 20
-    total_pages: Optional[int] = 0
-    total_count: Optional[int] = 0
-    search_time_ms: Optional[float] = 0
+    page: int = Field(0, description="Current page number (0-indexed)", ge=0)
+    limit: int = Field(20, description="Number of items per page", ge=1, le=100)
+    total_pages: int = Field(0, description="Total number of pages", ge=0)
+    total_count: int = Field(0, description="Total count of items", ge=0)
+    search_time_ms: float = Field(0, description="Search execution time in milliseconds", ge=0)
 
 
 class PaginatedResponse(BaseModel, Generic[T]):
     """Wrapper to add pagination info to classes used as response models"""
 
-    data: List[T]
-    meta: PaginationInfo
+    data: List[T] = Field(..., description="List of items for the current page")
+    meta: PaginationInfo = Field(..., description="Pagination metadata")
