@@ -60,9 +60,18 @@ class WorkflowAgent(Agent):
             {workflow_context}
         """
 
+        if instructions:
+            if "{workflow_context}" not in instructions:
+                # Add the workflow context placeholder
+                final_instructions = f"{instructions}\n\n{{workflow_context}}"
+            else:
+                final_instructions = instructions
+        else:
+            final_instructions = default_instructions
+
         super().__init__(
             model=model,
-            instructions=instructions or default_instructions,
+            instructions=final_instructions,
             resolve_in_context=True,
             num_history_runs=num_history_runs,
         )
