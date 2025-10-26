@@ -58,15 +58,6 @@ Automatically created and provided to the agent:
 - **Returns**: Workflow execution result
 - **Effect**: Creates a normal workflow run in the session
 
-### 4. Session Storage
-- Agent decisions stored in `WorkflowSession.workflow_agent_responses`
-- Each entry contains:
-  - `input`: User's original query
-  - `agent_response`: Agent's response content
-  - `workflow_executed`: Boolean indicating if workflow was run
-  - `timestamp`: When the decision was made
-- Workflow runs stored normally in `WorkflowSession.runs`
-
 ## Usage Example
 
 ```python
@@ -97,8 +88,6 @@ def add_references(step_input: StepInput):
 # Create WorkflowAgent
 workflow_agent = WorkflowAgent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    name="Story Workflow Agent",
-    description="Decides when to run the story generation workflow",
 )
 
 # Create Workflow with WorkflowAgent
@@ -131,39 +120,18 @@ When `workflow.run()` is called with an agent configured:
 1. Workflow reads/creates session from database
 2. Builds history context from previous runs
 3. Creates the `run_workflow` tool dynamically
-4. Sets up WorkflowAgent with tool and context
+4. Sets up `WorkflowAgent` with tool and context
 
 ### 2. Agent Decision
-The WorkflowAgent:
+The `WorkflowAgent`:
 1. Receives user input
 2. Sees workflow history in context
 3. Decides to either:
    - Answer directly (using history)
    - Call `run_workflow` tool (to process new query)
 
-### 3. Execution Paths
-
-#### Path A: Answer Directly
-```python
-if not agent_result["workflow_executed"]:
-    # Agent answered from history
-    # Save agent response to session
-    # Return response immediately (no workflow execution)
-```
-
-#### Path B: Run Workflow
-```python
-else:
-    # Agent called run_workflow tool
-    # Workflow already executed inside tool call
-    # Get the workflow run from session
-    # Return workflow execution result
-```
-
 ### 4. Storage
-- **Agent response**: Stored in `session.workflow_agent_responses[]`
-- **Workflow run**: Stored in `session.runs[]` (only if workflow executed)
-- Both saved to database
+- **Workflow run**: Stored in `session.runs[]`
 
 ## Implementation Details
 
@@ -172,9 +140,7 @@ else:
 # ✅ Allowed
 workflow_agent = WorkflowAgent(
     model=OpenAIChat(id="gpt-4o"),
-    name="My Agent",
-    debug_mode=True,
-    add_history_to_context=True,
+    num_history_runs=3
 )
 
 # ❌ Not Allowed
