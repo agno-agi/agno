@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
 from agno.media import Audio, Image, Video
-from agno.run.agent import RunOutput
+from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, RunStatus
-from agno.run.team import TeamRunOutput
+from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
 
 if TYPE_CHECKING:
     from agno.workflow.types import StepOutput, WorkflowMetrics
@@ -388,6 +388,11 @@ class CustomEvent(BaseWorkflowRunOutputEvent):
 
     event: str = WorkflowRunEvent.custom_event.value
 
+    def __init__(self, **kwargs):
+        # Store arbitrary attributes directly on the instance
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
 
 # Union type for all workflow run response events
 WorkflowRunOutputEvent = Union[
@@ -442,10 +447,15 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
 
 def workflow_run_output_event_from_dict(data: dict) -> BaseWorkflowRunOutputEvent:
     event_type = data.get("event", "")
-    cls = WORKFLOW_RUN_EVENT_TYPE_REGISTRY.get(event_type)
-    if not cls:
+    if event_type in {e.value for e in RunEvent}:
+        return run_output_event_from_dict(data)  # type: ignore
+    elif event_type in {e.value for e in TeamRunEvent}:
+        return team_run_output_event_from_dict(data)  # type: ignore
+    else:
+        event_class = WORKFLOW_RUN_EVENT_TYPE_REGISTRY.get(event_type)
+    if not event_class:
         raise ValueError(f"Unknown workflow event type: {event_type}")
-    return cls.from_dict(data)  # type: ignore
+    return event_class.from_dict(data)  # type: ignore
 
 
 @dataclass

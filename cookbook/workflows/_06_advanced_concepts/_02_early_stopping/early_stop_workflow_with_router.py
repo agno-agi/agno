@@ -143,5 +143,5 @@ if __name__ == "__main__":
     workflow.print_response(
         input="Research the latest controversial trends in AI and machine learning",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )

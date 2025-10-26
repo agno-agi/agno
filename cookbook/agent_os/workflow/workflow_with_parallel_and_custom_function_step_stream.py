@@ -50,23 +50,23 @@ async def hackernews_research_function(
 
     research_prompt = f"""
         HACKERNEWS RESEARCH REQUEST:
-        
+
         Topic: {message}
-        
+
         Research Tasks:
         1. Search for relevant HackerNews posts and discussions
         2. Extract key insights and trends
         3. Identify popular opinions and debates
         4. Summarize technical developments
         5. Note community sentiment and engagement levels
-        
+
         Please provide comprehensive HackerNews research results.
     """
 
     try:
         # Stream the agent response
         response_iterator = hackernews_agent.arun(
-            research_prompt, stream=True, stream_intermediate_steps=True
+            research_prompt, stream=True, stream_events=True
         )
         async for event in response_iterator:
             yield event
@@ -83,14 +83,14 @@ async def hackernews_research_function(
 
         enhanced_content = f"""
             ## HackerNews Research Results
-            
+
             **Research Topic:** {message}
             **Source:** HackerNews Community Analysis
             **Processing:** Enhanced with custom streaming function
-            
+
             **Findings:**
             {response_content}
-            
+
             **Custom Function Enhancements:**
             - Community Focus: HackerNews developer perspectives
             - Technical Depth: High-level technical discussions
@@ -117,23 +117,23 @@ async def web_search_research_function(
 
     research_prompt = f"""
         WEB SEARCH RESEARCH REQUEST:
-        
+
         Topic: {message}
-        
+
         Research Tasks:
         1. Search for the latest news and articles
         2. Identify market trends and business implications
         3. Find expert opinions and analysis
         4. Gather statistical data and reports
         5. Note mainstream media coverage and public sentiment
-        
+
         Please provide comprehensive web research results.
     """
 
     try:
         # Stream the agent response
         response_iterator = web_agent.arun(
-            research_prompt, stream=True, stream_intermediate_steps=True
+            research_prompt, stream=True, stream_events=True
         )
         async for event in response_iterator:
             yield event
@@ -150,14 +150,14 @@ async def web_search_research_function(
 
         enhanced_content = f"""
             ## Web Search Research Results
-            
+
             **Research Topic:** {message}
             **Source:** General Web Search Analysis
             **Processing:** Enhanced with custom streaming function
-            
+
             **Findings:**
             {response_content}
-            
+
             **Custom Function Enhancements:**
             - Market Focus: Business and mainstream perspectives
             - Trend Analysis: Public adoption and market signals
@@ -186,25 +186,25 @@ async def custom_content_planning_function(
     # Create intelligent planning prompt
     planning_prompt = f"""
         STRATEGIC CONTENT PLANNING REQUEST:
-        
+
         Core Topic: {message}
-        
+
         Research Results: {previous_step_content[:1000] if previous_step_content else "No research results"}
-        
+
         Planning Requirements:
         1. Create a comprehensive content strategy based on the research
         2. Leverage the research findings effectively
         3. Identify content formats and channels
         4. Provide timeline and priority recommendations
         5. Include engagement and distribution strategies
-        
+
         Please create a detailed, actionable content plan.
     """
 
     try:
         # Stream the agent response
         response_iterator = content_planner.arun(
-            planning_prompt, stream=True, stream_intermediate_steps=True
+            planning_prompt, stream=True, stream_events=True
         )
         async for event in response_iterator:
             yield event
@@ -221,14 +221,14 @@ async def custom_content_planning_function(
 
         enhanced_content = f"""
             ## Strategic Content Plan
-            
+
             **Planning Topic:** {message}
-            
+
             **Research Integration:** {"✓ Multi-source research" if previous_step_content else "✗ No research foundation"}
-            
+
             **Content Strategy:**
             {response_content}
-            
+
             **Custom Planning Enhancements:**
             - Research Integration: {"High (Parallel sources)" if previous_step_content else "Baseline"}
             - Strategic Alignment: Optimized for multi-channel distribution

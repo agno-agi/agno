@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel
 
@@ -12,6 +12,9 @@ from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.utils.log import logger
+
+if TYPE_CHECKING:
+    from agno.session.summary import SessionSummary
 
 
 @dataclass
@@ -109,6 +112,7 @@ class RunEvent(str, Enum):
 
     run_started = "RunStarted"
     run_content = "RunContent"
+    run_content_completed = "RunContentCompleted"
     run_intermediate_content = "RunIntermediateContent"
     run_completed = "RunCompleted"
     run_error = "RunError"
@@ -120,6 +124,9 @@ class RunEvent(str, Enum):
     pre_hook_started = "PreHookStarted"
     pre_hook_completed = "PreHookCompleted"
 
+    post_hook_started = "PostHookStarted"
+    post_hook_completed = "PostHookCompleted"
+
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
 
@@ -129,6 +136,9 @@ class RunEvent(str, Enum):
 
     memory_update_started = "MemoryUpdateStarted"
     memory_update_completed = "MemoryUpdateCompleted"
+
+    session_summary_started = "SessionSummaryStarted"
+    session_summary_completed = "SessionSummaryCompleted"
 
     parser_model_response_started = "ParserModelResponseStarted"
     parser_model_response_completed = "ParserModelResponseCompleted"
@@ -199,6 +209,11 @@ class RunContentEvent(BaseAgentRunEvent):
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
+
+
+@dataclass
+class RunContentCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.run_content_completed.value
 
 
 @dataclass
@@ -279,6 +294,18 @@ class PreHookCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class PostHookStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.post_hook_started.value
+    post_hook_name: Optional[str] = None
+
+
+@dataclass
+class PostHookCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.post_hook_completed.value
+    post_hook_name: Optional[str] = None
+
+
+@dataclass
 class MemoryUpdateStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.memory_update_started.value
 
@@ -286,6 +313,17 @@ class MemoryUpdateStartedEvent(BaseAgentRunEvent):
 @dataclass
 class MemoryUpdateCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.memory_update_completed.value
+
+
+@dataclass
+class SessionSummaryStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.session_summary_started.value
+
+
+@dataclass
+class SessionSummaryCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.session_summary_completed.value
+    session_summary: Optional["SessionSummary"] = None
 
 
 @dataclass
@@ -348,11 +386,17 @@ class OutputModelResponseCompletedEvent(BaseAgentRunEvent):
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
 
+    def __init__(self, **kwargs):
+        # Store arbitrary attributes directly on the instance
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
 
 RunOutputEvent = Union[
     RunStartedEvent,
     RunContentEvent,
     IntermediateRunContentEvent,
+    RunContentCompletedEvent,
     RunCompletedEvent,
     RunErrorEvent,
     RunCancelledEvent,
@@ -360,11 +404,15 @@ RunOutputEvent = Union[
     RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
+    PostHookStartedEvent,
+    PostHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
+    SessionSummaryStartedEvent,
+    SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
@@ -379,6 +427,7 @@ RunOutputEvent = Union[
 RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.run_started.value: RunStartedEvent,
     RunEvent.run_content.value: RunContentEvent,
+    RunEvent.run_content_completed.value: RunContentCompletedEvent,
     RunEvent.run_intermediate_content.value: IntermediateRunContentEvent,
     RunEvent.run_completed.value: RunCompletedEvent,
     RunEvent.run_error.value: RunErrorEvent,
@@ -387,11 +436,15 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.run_continued.value: RunContinuedEvent,
     RunEvent.pre_hook_started.value: PreHookStartedEvent,
     RunEvent.pre_hook_completed.value: PreHookCompletedEvent,
+    RunEvent.post_hook_started.value: PostHookStartedEvent,
+    RunEvent.post_hook_completed.value: PostHookCompletedEvent,
     RunEvent.reasoning_started.value: ReasoningStartedEvent,
     RunEvent.reasoning_step.value: ReasoningStepEvent,
     RunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     RunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
+    RunEvent.session_summary_started.value: SessionSummaryStartedEvent,
+    RunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     RunEvent.tool_call_started.value: ToolCallStartedEvent,
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,

@@ -147,7 +147,7 @@ class WorkflowAgent(Agent):
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
                     session_state=session_state,
-                    stream_intermediate_steps=True,
+                    stream_events=True,
                 ):
                     yield event
 
@@ -259,11 +259,12 @@ class WorkflowAgent(Agent):
 
                 final_content = ""
                 async for event in workflow._aexecute_stream(
-                    session=fresh_session,
+                    session_id=fresh_session.session_id,
+                    user_id=fresh_session.user_id,
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
                     session_state=session_state,
-                    stream_intermediate_steps=True,
+                    stream_events=True,
                     websocket_handler=websocket_handler,
                 ):
                     yield event
@@ -280,7 +281,8 @@ class WorkflowAgent(Agent):
                 log_debug("TOOL EXECUTION STARTED: run_workflow with async non-streaming...")
 
                 result = await workflow._aexecute(
-                    session=fresh_session,
+                    session_id=fresh_session.session_id,
+                    user_id=fresh_session.user_id,
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
                     session_state=session_state,

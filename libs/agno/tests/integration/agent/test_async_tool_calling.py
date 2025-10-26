@@ -69,7 +69,7 @@ async def test_concurrent_async_functions_stream():
     async for event in agent.arun(
         "Call both fast_async_function and slow_async_function concurrently, with 'test'",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     ):
         if hasattr(event, "event"):
             if event.event in ["ToolCallStarted", "ToolCallCompleted"]:
@@ -117,7 +117,7 @@ async def test_concurrent_async_generators_stream():
     async for event in agent.arun(
         "Call both fast_async_generator and slow_async_generator with 'test'",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     ):
         if hasattr(event, "event"):
             if event.event in ["ToolCallStarted", "ToolCallCompleted"]:
@@ -204,7 +204,7 @@ async def test_session_state_updates_in_concurrent_async_functions_stream():
     async for _ in agent.arun(
         "Call both fast_async_function and slow_async_function concurrently, with 'test'",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
         session_state={"test": "test"},
     ):
         pass
@@ -243,7 +243,7 @@ async def test_session_state_updates_in_concurrent_async_generators_stream():
     async for _ in agent.arun(
         "Call both fast_async_generator and slow_async_generator with 'test'",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
         session_state={"test": "test"},
     ):
         pass

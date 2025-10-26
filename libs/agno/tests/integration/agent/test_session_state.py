@@ -97,6 +97,9 @@ def test_session_state_precedence_agent_and_run_only(shared_db):
     assert final_state["run_key"] == "run_value"  # Run key present
     assert final_state["agent_key"] == "agent_value"  # Agent key preserved
 
+    assert agent.session_state == agent_state  # Agent default should not be modified
+    assert agent.get_session_state() == final_state
+
 
 def test_session_state_precedence_empty_run_state_preserves_db(shared_db):
     """Test that empty/None run state preserves DB state correctly."""
@@ -136,6 +139,31 @@ def test_session_state_precedence_empty_run_state_preserves_db(shared_db):
     assert final_state["agent_key"] == "agent_value"
 
 
+def test_session_state_precedence_default_state_does_not_override_db(shared_db):
+    """Test that empty/None run state preserves DB state correctly."""
+    session_id = f"empty_run_test_{uuid.uuid4()}"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        session_state={"agent_key": []},
+        session_id=session_id,
+    )
+
+    # First run establishes DB state
+    db_state = {"agent_key": ["foo", "bar"]}
+    agent.run("First run", session_state=db_state)
+
+    # Second run with None session_state - should preserve DB
+    agent.run("Second run", session_state=None)
+
+    # Verify DB state is preserved
+    final_session = shared_db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+    final_state = final_session.session_data["session_state"]
+
+    assert final_state["agent_key"] == ["foo", "bar"]  # Agent key still there
+
+
 def test_session_state_tool_updates_persist_correctly(shared_db):
     """Test that tool updates to session state persist correctly like the working example."""
 
@@ -164,6 +192,31 @@ def test_session_state_tool_updates_persist_correctly(shared_db):
         response.messages[1].content
         == 'Current shopping list: [\'oranges\']. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
     )
+
+
+def test_manual_session_state_update(shared_db):
+    """Test that manual session state update works correctly."""
+
+    def add_item(session_state: Dict[str, Any], item: str) -> str:
+        """Add an item to the shopping list."""
+        session_state["shopping_list"].append(item)
+        return f"The shopping list is now {session_state['shopping_list']}"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        session_state={"shopping_list": []},
+        add_session_state_to_context=True,
+        tools=[add_item],
+    )
+    agent.run("Add oranges to my shopping list")
+    agent.update_session_state({"shopping_list": ["oranges", "bananas"]})
+
+    assert agent.get_session_state()["shopping_list"] == ["oranges", "bananas"]
+
+    response = agent.run("What's on my list?")
+    assert "oranges" in response.content.lower()
+    assert "bananas" in response.content.lower()
 
 
 def test_session_state_precedence_with_nested_dicts(shared_db):
