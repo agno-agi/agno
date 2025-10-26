@@ -6880,6 +6880,12 @@ class Team:
             use_agent_logger()
 
             member_session_state_copy = copy(session_state)
+
+            # If team has send_media_to_model=False, ensure member agent also has it set to False
+            # This allows tools to access files while preventing models from receiving them
+            if not self.send_media_to_model:
+                member_agent.send_media_to_model = False
+
             if stream:
                 member_agent_run_response_stream = member_agent.run(
                     input=member_agent_task if not history else history,
@@ -7006,6 +7012,12 @@ class Team:
             use_agent_logger()
 
             member_session_state_copy = copy(session_state)
+
+            # If team has send_media_to_model=False, ensure member agent also has it set to False
+            # This allows tools to access files while preventing models from receiving them
+            if not self.send_media_to_model:
+                member_agent.send_media_to_model = False
+
             if stream:
                 member_agent_run_response_stream = member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
@@ -7047,6 +7059,11 @@ class Team:
                     )
                     yield member_agent_run_response_event
             else:
+                # If team has send_media_to_model=False, ensure member agent also has it set to False
+                # This allows tools to access files while preventing models from receiving them
+                if not self.send_media_to_model:
+                    member_agent.send_media_to_model = False
+
                 member_agent_run_response = await member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
@@ -7118,6 +7135,11 @@ class Team:
                     member_agent=member_agent, task_description=task
                 )
 
+                # If team has send_media_to_model=False, ensure member agent also has it set to False
+                # This allows tools to access files while preventing models from receiving them
+                if not self.send_media_to_model:
+                    member_agent.send_media_to_model = False
+
                 member_session_state_copy = copy(session_state)
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
@@ -7161,6 +7183,11 @@ class Team:
                         yield member_agent_run_response_chunk
 
                 else:
+                    # If team has send_media_to_model=False, ensure member agent also has it set to False
+                    # This allows tools to access files while preventing models from receiving them
+                    if not self.send_media_to_model:
+                        member_agent.send_media_to_model = False
+
                     member_agent_run_response = member_agent.run(  # type: ignore
                         input=member_agent_task if not history else history,
                         user_id=user_id,
@@ -7233,6 +7260,11 @@ class Team:
                         member_agent=agent, task_description=task
                     )  # type: ignore
                     member_session_state_copy = copy(session_state)
+
+                    # If team has send_media_to_model=False, ensure member agent also has it set to False
+                    # This allows tools to access files while preventing models from receiving them
+                    if not self.send_media_to_model:
+                        agent.send_media_to_model = False
 
                     member_stream = agent.arun(  # type: ignore
                         input=member_agent_task if not history else history,
@@ -7310,6 +7342,12 @@ class Team:
 
                     async def run_member_agent(agent=current_agent) -> str:
                         member_session_state_copy = copy(session_state)
+
+                        # If team has send_media_to_model=False, ensure member agent also has it set to False
+                        # This allows tools to access files while preventing models from receiving them
+                        if not self.send_media_to_model:
+                            agent.send_media_to_model = False
+
                         member_agent_run_response = await agent.arun(
                             input=member_agent_task if not history else history,
                             user_id=user_id,
