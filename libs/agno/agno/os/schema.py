@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.models.message import Message
+from agno.models.utils import parse_model_string
 from agno.os.config import ChatConfig, EvalsConfig, KnowledgeConfig, MemoryConfig, MetricsConfig, SessionConfig
 from agno.os.utils import (
     extract_input_media,
@@ -255,18 +256,17 @@ class AgentResponse(BaseModel):
             additional_input = [message.to_dict() for message in additional_input]  # type: ignore
 
         # Build model data using model_string as the canonical representation
-        model_string = agent.model.model_string if agent.model else None
-        model_id = agent.model.id if agent.model else None
-        _agent_model_data: Dict[str, Any] = {}
-        if model_string is not None:
-            _agent_model_data["name"] = model_string
-        if model_id is not None:
-            _agent_model_data["model"] = model_id
-        if model_string is not None:
-            # Parse provider from model string for backward compatibility
-            provider = model_string.split(":")[0] if ":" in model_string else None
+        if agent.model:
+            model_string = agent.model.model_string
+            provider, model_id_from_string = parse_model_string(model_string)
+            _agent_model_data: Dict[str, Any] = {
+                "name": model_string,
+                "model": model_id_from_string or agent.model.id,
+            }
             if provider:
                 _agent_model_data["provider"] = provider
+        else:
+            _agent_model_data: Dict[str, Any] = {}
 
         session_table = agent.db.session_table_name if agent.db else None
         knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
@@ -305,7 +305,7 @@ class AgentResponse(BaseModel):
 
             if agent.memory_manager.model is not None:
                 model_string = agent.memory_manager.model.model_string
-                provider = model_string.split(":")[0] if ":" in model_string else None
+                provider, _ = parse_model_string(model_string)
                 memory_info["model"] = ModelResponse(
                     name=model_string,
                     model=agent.memory_manager.model.id,
@@ -321,7 +321,7 @@ class AgentResponse(BaseModel):
 
         if agent.reasoning_model:
             model_string = agent.reasoning_model.model_string
-            provider = model_string.split(":")[0] if ":" in model_string else None
+            provider, _ = parse_model_string(model_string)
             reasoning_info["reasoning_model"] = ModelResponse(
                 name=model_string,
                 model=agent.reasoning_model.id,
@@ -371,7 +371,7 @@ class AgentResponse(BaseModel):
 
         if agent.parser_model:
             model_string = agent.parser_model.model_string
-            provider = model_string.split(":")[0] if ":" in model_string else None
+            provider, _ = parse_model_string(model_string)
             response_settings_info["parser_model"] = ModelResponse(
                 name=model_string,
                 model=agent.parser_model.id,
@@ -524,7 +524,7 @@ class TeamResponse(BaseModel):
 
             if team.memory_manager.model is not None:
                 model_string = team.memory_manager.model.model_string
-                provider = model_string.split(":")[0] if ":" in model_string else None
+                provider, _ = parse_model_string(model_string)
                 memory_info["model"] = ModelResponse(
                     name=model_string,
                     model=team.memory_manager.model.id,
@@ -540,7 +540,7 @@ class TeamResponse(BaseModel):
 
         if team.reasoning_model:
             model_string = team.reasoning_model.model_string
-            provider = model_string.split(":")[0] if ":" in model_string else None
+            provider, _ = parse_model_string(model_string)
             reasoning_info["reasoning_model"] = ModelResponse(
                 name=model_string,
                 model=team.reasoning_model.id,
@@ -579,7 +579,7 @@ class TeamResponse(BaseModel):
 
         if team.parser_model:
             model_string = team.parser_model.model_string
-            provider = model_string.split(":")[0] if ":" in model_string else None
+            provider, _ = parse_model_string(model_string)
             response_settings_info["parser_model"] = ModelResponse(
                 name=model_string,
                 model=team.parser_model.id,
@@ -594,17 +594,17 @@ class TeamResponse(BaseModel):
         }
 
         # Build team model data using model_string as the canonical representation
-        _team_model_data: Dict[str, Any] = {}
         if team.model:
             model_string = team.model.model_string
-            if model_string:
-                _team_model_data["name"] = model_string
-                # Parse provider from model string for backward compatibility
-                provider = model_string.split(":")[0] if ":" in model_string else None
-                if provider:
-                    _team_model_data["provider"] = provider
-            if team.model.id is not None:
-                _team_model_data["model"] = team.model.id
+            provider, model_id_from_string = parse_model_string(model_string)
+            _team_model_data: Dict[str, Any] = {
+                "name": model_string,
+                "model": model_id_from_string or team.model.id,
+            }
+            if provider:
+                _team_model_data["provider"] = provider
+        else:
+            _team_model_data: Dict[str, Any] = {}
 
         return TeamResponse(
             id=team.id,

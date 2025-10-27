@@ -97,8 +97,20 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - Checkout [`agno/models/anthropic/claude.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/anthropic/claude.py) or [`agno/models/cohere/chat.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/cohere/chat.py) for inspiration.
 5. Add a recipe for using your Model provider under `cookbook/models/<your_model>`.
    - Checkout [`agno/cookbook/models/aws/claude`](https://github.com/agno-agi/agno/tree/main/cookbook/models/aws/claude) for an example.
-6. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
-7. Submit a pull request.
+6. Add your model provider to the string mapping in `libs/agno/agno/models/utils.py`:
+   - Open `libs/agno/agno/models/utils.py` and locate the `get_model_from_string()` function
+   - Add a new `elif` clause for your provider in alphabetical order
+   - Use lowercase, hyphen-separated naming (e.g., `"your-provider"`)
+   - Example:
+     ```python
+     elif provider == "your-provider":
+         from agno.models.your_provider import YourProviderModel
+         
+         return YourProviderModel(id=model_id)
+     ```
+   - Test with: `Agent(model="your-provider:model-name")`
+7. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
+8. Submit a pull request.
 
 ## Adding a new Tool.
 

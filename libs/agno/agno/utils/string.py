@@ -10,6 +10,14 @@ from pydantic import BaseModel, ValidationError
 from agno.utils.log import logger
 
 
+def parse_model_string(model_string: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Parse model string into provider and model_id components."""
+    if not model_string or ":" not in model_string:
+        return None, None
+    parts = model_string.split(":", 1)
+    return parts[0], parts[1]
+
+
 def is_valid_uuid(uuid_str: str) -> bool:
     """
     Check if a string is a valid UUID

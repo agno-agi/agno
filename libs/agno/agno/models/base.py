@@ -154,6 +154,25 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
+    @property
+    def model_string(self) -> str:
+        """Return the model string representation in provider:model_id format.
+
+        This property generates a canonical string representation of the model
+        that can be used to recreate it via get_model_from_string().
+
+        Returns:
+            str: Model string in format "provider:model_id"
+        """
+        # Get provider name, normalize to lowercase and handle spaces
+        provider_name = self.get_provider().lower()
+        # Remove parenthetical info like "(gpt-4o)" from provider name
+        if "(" in provider_name:
+            provider_name = provider_name.split("(")[0].strip()
+        # Replace spaces with hyphens for consistency
+        provider_key = provider_name.replace(" ", "-")
+        return f"{provider_key}:{self.id}"
+
     def _get_model_cache_key(self, messages: List[Message], stream: bool, **kwargs: Any) -> str:
         """Generate a cache key based on model messages and core parameters."""
         message_data = []

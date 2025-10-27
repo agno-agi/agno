@@ -1,6 +1,14 @@
-from typing import Union
+from typing import Optional, Union
 
 from agno.models.base import Model
+
+
+def parse_model_string(model_string: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Parse model string into provider and model_id components."""
+    if not model_string or ":" not in model_string:
+        return None, None
+    parts = model_string.split(":", 1)
+    return parts[0], parts[1]
 
 
 def get_model_from_string(model: Union[Model, str]) -> Model:
@@ -24,6 +32,10 @@ def get_model_from_string(model: Union[Model, str]) -> Model:
                 from agno.models.openai import OpenAIChat
 
                 return OpenAIChat(id=model_id)
+            elif provider == "openai-responses":
+                from agno.models.openai import OpenAIResponses
+
+                return OpenAIResponses(id=model_id)
             elif provider == "anthropic":
                 from agno.models.anthropic import Claude
 
@@ -92,6 +104,14 @@ def get_model_from_string(model: Union[Model, str]) -> Model:
                 from agno.models.cerebras import Cerebras
 
                 return Cerebras(id=model_id)
+            elif provider == "cerebras-openai":
+                from agno.models.cerebras import CerebrasOpenAI
+
+                return CerebrasOpenAI(id=model_id)
+            elif provider == "cometapi":
+                from agno.models.cometapi import CometAPI
+
+                return CometAPI(id=model_id)
             elif provider == "xai":
                 from agno.models.xai import xAI
 
@@ -116,6 +136,10 @@ def get_model_from_string(model: Union[Model, str]) -> Model:
                 from agno.models.nebius import Nebius
 
                 return Nebius(id=model_id)
+            elif provider == "nexus":
+                from agno.models.nexus import Nexus
+
+                return Nexus(id=model_id)
             elif provider == "internlm":
                 from agno.models.internlm import InternLM
 
@@ -136,6 +160,14 @@ def get_model_from_string(model: Union[Model, str]) -> Model:
                 from agno.models.litellm import LiteLLM
 
                 return LiteLLM(id=model_id)
+            elif provider == "litellm-openai":
+                from agno.models.litellm import LiteLLMOpenAI
+
+                return LiteLLMOpenAI(id=model_id)
+            elif provider == "llama-cpp":
+                from agno.models.llama_cpp import LlamaCpp
+
+                return LlamaCpp(id=model_id)
             elif provider == "lmstudio":
                 from agno.models.lmstudio import LMStudio
 
@@ -144,6 +176,14 @@ def get_model_from_string(model: Union[Model, str]) -> Model:
                 from agno.models.portkey import Portkey
 
                 return Portkey(id=model_id)
+            elif provider == "requesty":
+                from agno.models.requesty import Requesty
+
+                return Requesty(id=model_id)
+            elif provider == "siliconflow":
+                from agno.models.siliconflow import Siliconflow
+
+                return Siliconflow(id=model_id)
             elif provider == "vllm":
                 from agno.models.vllm import VLLM
 
@@ -152,6 +192,10 @@ def get_model_from_string(model: Union[Model, str]) -> Model:
                 from agno.models.vercel import V0
 
                 return V0(id=model_id)
+            elif provider == "vertexai":
+                from agno.models.vertexai import Claude as VertexAIClaude
+
+                return VertexAIClaude(id=model_id)
             elif provider == "langdb":
                 from agno.models.langdb import LangDB
 
