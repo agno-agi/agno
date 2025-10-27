@@ -46,7 +46,7 @@ if __name__ == "__main__":
         input="Please analyze this PDF and summarize the contents",
         files=[
             File(
-                filepath="tests/path/to/your/file.pdf" # <- put the actual path to the file
+                filepath="tests/path/to/your/file.pdf"  # <- put the actual path to the file
             )
         ],
         markdown=True,
