@@ -5677,6 +5677,17 @@ class Agent:
             agent_data["model"] = self.model.to_dict()
         return agent_data
 
+    def cancel_run(self, run_id: str) -> bool:
+        """Cancel a running agent execution.
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return cancel_run_global(run_id)
+    
     # -*- Session Database Functions
     def _read_session(
         self, session_id: str, session_type: SessionType = SessionType.AGENT
@@ -5856,6 +5867,7 @@ class Agent:
 
         return agent_session
 
+    # -*- Public Convenience Functions
     def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
         """
         Get a RunOutput from the database.
@@ -5872,10 +5884,32 @@ class Agent:
                 log_warning(f"RunOutput {run_id} not found in AgentSession {self._agent_session.session_id}")
                 return None
         else:
-            if self._has_async_db():
-                session = asyncio.run(self.aget_session(session_id=session_id))
+            session = self.get_session(session_id=session_id)
+            if session is not None:
+                run_response = session.get_run(run_id=run_id)
+                if run_response is not None:
+                    return run_response
+                else:
+                    log_warning(f"RunOutput {run_id} not found in Session {session_id}")
+        return None
+
+    async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+        """
+        Get a RunOutput from the database.
+
+        Args:
+            run_id (str): The run_id to load from storage.
+            session_id (Optional[str]): The session_id to load from storage.
+        """
+        if self._agent_session is not None:
+            run_response = self._agent_session.get_run(run_id=run_id)
+            if run_response is not None:
+                return run_response
             else:
-                session = self.get_session(session_id=session_id)
+                log_warning(f"RunOutput {run_id} not found in AgentSession {self._agent_session.session_id}")
+                return None
+        else:
+            session = await self.aget_session(session_id=session_id)
             if session is not None:
                 run_response = session.get_run(run_id=run_id)
                 if run_response is not None:
@@ -5903,10 +5937,36 @@ class Agent:
                 if hasattr(run_output, "agent_id") and run_output.agent_id == self.id:
                     return run_output
         else:
-            if self._has_async_db():
-                session = asyncio.run(self.aget_session(session_id=session_id))
+            session = self.get_session(session_id=session_id)
+            if session is not None and session.runs is not None and len(session.runs) > 0:
+                for run_output in reversed(session.runs):
+                    if hasattr(run_output, "agent_id") and run_output.agent_id == self.id:
+                        return run_output
             else:
-                session = self.get_session(session_id=session_id)
+                log_warning(f"No run responses found in Session {session_id}")
+        return None
+    
+    
+    async def aget_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
+        """
+        Get the last run response from the database.
+
+        Args:
+            session_id (Optional[str]): The session_id to load from storage.
+
+        Returns:
+            RunOutput: The last run response from the database.
+        """
+        if (
+            self._agent_session is not None
+            and self._agent_session.runs is not None
+            and len(self._agent_session.runs) > 0
+        ):
+            for run_output in reversed(self._agent_session.runs):
+                if hasattr(run_output, "agent_id") and run_output.agent_id == self.id:
+                    return run_output
+        else:
+            session = await self.aget_session(session_id=session_id)
             if session is not None and session.runs is not None and len(session.runs) > 0:
                 for run_output in reversed(session.runs):
                     if hasattr(run_output, "agent_id") and run_output.agent_id == self.id:
@@ -5915,16 +5975,6 @@ class Agent:
                 log_warning(f"No run responses found in Session {session_id}")
         return None
 
-    def cancel_run(self, run_id: str) -> bool:
-        """Cancel a running agent execution.
-
-        Args:
-            run_id (str): The run_id to cancel.
-
-        Returns:
-            bool: True if the run was found and marked for cancellation, False otherwise.
-        """
-        return cancel_run_global(run_id)
 
     def get_session(
         self,
@@ -5940,7 +5990,7 @@ class Agent:
         """
         if not session_id and not self.session_id:
             raise Exception("No session_id provided")
-
+        
         session_id_to_load = session_id or self.session_id
 
         # If there is a cached session, return it
@@ -5998,7 +6048,7 @@ class Agent:
         """
         if not session_id and not self.session_id:
             raise Exception("No session_id provided")
-
+        
         session_id_to_load = session_id or self.session_id
 
         # If there is a cached session, return it
@@ -6070,16 +6120,30 @@ class Agent:
 
         session_id_to_load = session_id or self.session_id
 
-        if self._has_async_db():
-            session = asyncio.run(self.aget_session(session_id=session_id_to_load))
-        else:
-            session = self.get_session(session_id=session_id_to_load)
+        session = self.get_session(session_id=session_id_to_load)
+
+        if session is None:
+            raise Exception(f"Session {session_id_to_load} not found")
+
+        return session.get_chat_history()
+    
+    
+    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
+        """Read the chat history from the session"""
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+
+        session = await self.aget_session(session_id=session_id_to_load)
 
         if session is None:
             raise Exception(f"Session {session_id_to_load} not found")
 
         return session.get_chat_history()
 
+
+    # -*- Session Management Functions
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         """Rename the Agent and save to storage"""
 
@@ -6122,10 +6186,7 @@ class Agent:
             raise Exception("Session ID is not set")
 
         # -*- Read from storage
-        if self._has_async_db():
-            session = asyncio.run(self.aget_session(session_id=session_id))
-        else:
-            session = self.get_session(session_id=session_id)
+        session = self.get_session(session_id=session_id)
 
         if session is None:
             raise Exception("Session not found")
@@ -6144,10 +6205,44 @@ class Agent:
             session.session_data = {"session_name": session_name}
 
         # -*- Save to storage
-        if self._has_async_db():
-            asyncio.run(self.asave_session(session=session))
+        self.save_session(session=session)
+
+        return session
+    
+    
+    async def aset_session_name(
+        self,
+        session_id: Optional[str] = None,
+        autogenerate: bool = False,
+        session_name: Optional[str] = None,
+    ) -> AgentSession:
+        """Set the session name and save to storage"""
+        session_id = session_id or self.session_id
+
+        if session_id is None:
+            raise Exception("Session ID is not set")
+
+        # -*- Read from storage
+        session = await self.aget_session(session_id=session_id)
+
+        if session is None:
+            raise Exception("Session not found")
+
+        # -*- Generate name for session
+        if autogenerate:
+            session_name = self._generate_session_name(session=session)
+            log_debug(f"Generated Session Name: {session_name}")
+        elif session_name is None:
+            raise Exception("Session Name is not set")
+
+        # -*- Rename session
+        if session.session_data is not None:
+            session.session_data["session_name"] = session_name
         else:
-            self.save_session(session=session)
+            session.session_data = {"session_name": session_name}
+
+        # -*- Save to storage
+        await self.asave_session(session=session)
 
         return session
 
@@ -6320,10 +6415,13 @@ class Agent:
         if self.db is None:
             return
 
-        if self._has_async_db():
-            asyncio.run(self.db.delete_session(session_id=session_id))
-        else:
-            self.db.delete_session(session_id=session_id)
+        self.db.delete_session(session_id=session_id)
+
+    async def adelete_session(self, session_id: str):
+        """Delete the current session and save to storage"""
+        if self.db is None:
+            return
+        await self.db.delete_session(session_id=session_id)
 
     def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
         """Get messages for a session"""
@@ -6332,10 +6430,7 @@ class Agent:
             log_warning("Session ID is not set, cannot get messages for session")
             return []
 
-        if self._has_async_db():
-            session = asyncio.run(self.aget_session(session_id=session_id))
-        else:
-            session = self.get_session(session_id=session_id)
+        session = self.get_session(session_id=session_id)
 
         if session is None:
             raise Exception("Session not found")
@@ -6345,6 +6440,23 @@ class Agent:
             agent_id=self.id if self.team_id is not None else None,
         )
 
+    async def aget_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
+        """Get messages for a session"""
+        session_id = session_id or self.session_id
+        if session_id is None:
+            log_warning("Session ID is not set, cannot get messages for session")
+            return []
+
+        session = await self.aget_session(session_id=session_id)
+
+        if session is None:
+            raise Exception("Session not found")
+
+        # Only filter by agent_id if this is part of a team
+        return session.get_messages_from_last_n_runs(
+            agent_id=self.id if self.team_id is not None else None,
+        )
+        
     def get_session_summary(self, session_id: Optional[str] = None):
         """Get the session summary for the given session ID and user ID."""
         session_id = session_id if session_id is not None else self.session_id
@@ -6405,6 +6517,8 @@ class Agent:
 
         return await self.culture_manager.aget_all_knowledge()
 
+
+    # -*- System & User Message Functions
     def _format_message_with_state_variables(
         self,
         message: Any,
