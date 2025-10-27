@@ -26,8 +26,9 @@ chat:
       - "What's happening in the global energy markets?"
 
     memory-manager:
-      - "Show me what you remember about my preferences."
-      - "I live in New York City and I'm a software engineer."
+      - "What do you know about me??"
+      - "I live in New York City"
+      - "I'm a software engineer"
 
     finance-team:
       - "Provide a full investment brief for Apple (AAPL)."
