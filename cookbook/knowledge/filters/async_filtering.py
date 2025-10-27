@@ -2,13 +2,15 @@ import asyncio
 import os
 
 from agno.agent import Agent
-from agno.db.sqlite import AsyncSqliteDb
 from agno.knowledge.knowledge import Knowledge
+from agno.db.sqlite import AsyncSqliteDb
+from agno.utils.search_filters import IN
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
 from agno.vectordb.lancedb import LanceDb
+from agno.vectordb.pgvector import PgVector
 
 # Download all sample CVs and get their paths
 downloaded_cv_paths = download_knowledge_filters_sample_data(
@@ -33,6 +35,11 @@ db = AsyncSqliteDb(
 vector_db = LanceDb(
     table_name="recipes",
     uri="tmp/lancedb",  # You can change this path to store data elsewhere
+)
+
+vector_db = PgVector(
+    table_name="recipes",
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
 )
 
 # Step 1: Initialize knowledge base with documents and metadata
@@ -110,8 +117,16 @@ if __name__ == "__main__":
     # Query for Jordan Mitchell's experience and skills
     asyncio.run(
         agent.aprint_response(
-            "Tell me about Jordan Mitchell's experience and skills",
+            "Search the knowledge base for the candidate's experience and skills",
             knowledge_filters={"user_id": "jordan_mitchell"},
+            markdown=True,
+        )
+    )
+
+    asyncio.run(
+        agent.aprint_response(
+            "Tell me about the candidate's experience and skills",
+            # knowledge_filters=[(IN("user_id", ["jordan_mitchell"]))],
             markdown=True,
         )
     )
