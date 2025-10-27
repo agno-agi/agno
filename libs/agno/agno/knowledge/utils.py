@@ -1,11 +1,11 @@
-from typing import Dict, List
+import importlib
 import inspect
 import re
-import importlib
+from typing import Dict, List
 
 from agno.knowledge.reader.reader_factory import ReaderFactory
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, log_info
 
 
 def _get_chunker_class(strategy_type):
@@ -54,7 +54,7 @@ def get_reader_info(reader_key: str) -> Dict:
     try:
         # Get the reader class directly without instantiation
         reader_class = _get_reader_class(reader_key)
-        
+
         # Call class methods directly
         supported_strategies = reader_class.get_supported_chunking_strategies()
         supported_content_types = reader_class.get_supported_content_types()
@@ -84,22 +84,22 @@ def _get_reader_class(reader_key: str):
     method_name = f"_get_{reader_key}_reader"
     if not hasattr(ReaderFactory, method_name):
         raise ValueError(f"Unknown reader: {reader_key}")
-    
+
     # Use naming conventions to construct module and class names
     # Convert reader_key to module name: "field_labeled_csv" -> "field_labeled_csv_reader"
     module_name = f"agno.knowledge.reader.{reader_key}_reader"
-    
+
     # Convert reader_key to class name: "field_labeled_csv" -> "FieldLabeledCsvReader"
     # Handle special cases and convert to PascalCase
     class_name = _reader_key_to_class_name(reader_key)
-    
+
     try:
         # Dynamically import the class
         module = importlib.import_module(module_name)
         reader_class = getattr(module, class_name)
-        
+
         return reader_class
-        
+
     except (ImportError, AttributeError) as e:
         raise ValueError(f"Failed to import reader class for {reader_key}: {str(e)}")
 
@@ -109,22 +109,22 @@ def _reader_key_to_class_name(reader_key: str) -> str:
     # Special case mappings for readers that use acronym capitalization
     # These maintain backward compatibility with existing public API class names
     special_cases = {
-        "pptx": "PPTXReader",    # PPTX acronym is all caps
-        "csv": "CSVReader",      # CSV acronym is all caps  
-        "json": "JSONReader",    # JSON acronym is all caps
-        "pdf": "PDFReader",      # PDF acronym is all caps
+        "pptx": "PPTXReader",  # PPTX acronym is all caps
+        "csv": "CSVReader",  # CSV acronym is all caps
+        "json": "JSONReader",  # JSON acronym is all caps
+        "pdf": "PDFReader",  # PDF acronym is all caps
     }
-    
+
     if reader_key in special_cases:
         return special_cases[reader_key]
-    
+
     # Default: convert snake_case to PascalCase and add "Reader" suffix
     # Examples: "field_labeled_csv" -> "FieldLabeledCsvReader"
-    #          "web_search" -> "WebSearchReader"  
+    #          "web_search" -> "WebSearchReader"
     #          "docx" -> "DocxReader"
     words = reader_key.split("_")
     class_name = "".join(word.capitalize() for word in words) + "Reader"
-    
+
     return class_name
 
 
@@ -135,20 +135,20 @@ def _get_reader_description(reader_key: str) -> str:
         method_name = f"_get_{reader_key}_reader"
         if not hasattr(ReaderFactory, method_name):
             return f"Reader for {reader_key} files"
-        
+
         # Use source inspection to extract the description from the config dict
         method = getattr(ReaderFactory, method_name)
         source = inspect.getsource(method)
-        
+
         # Look for the description in the config dict
         # Pattern: "description": "Some description text"
         desc_match = re.search(r'"description":\s*"([^"]+)"', source)
-        
+
         if desc_match:
             return desc_match.group(1)
         else:
             return f"Reader for {reader_key} files"
-            
+
     except Exception:
         # Fallback to generic description if extraction fails
         return f"Reader for {reader_key} files"
@@ -158,7 +158,6 @@ def get_all_readers_info() -> List[Dict]:
     """Get information about all available readers."""
     readers_info = []
     keys = ReaderFactory.get_all_reader_keys()
-    print(f"Keys: {keys}")
     for key in keys:
         try:
             reader_info = get_reader_info(key)
@@ -166,7 +165,7 @@ def get_all_readers_info() -> List[Dict]:
         except ValueError as e:
             # Skip readers with missing dependencies or other issues
             # Log the error but don't fail the entire request
-            log_debug(f"Skipping reader '{key}': {e}")
+            log_info(f"Skipping reader '{key}': {e}")
             continue
     return readers_info
 
