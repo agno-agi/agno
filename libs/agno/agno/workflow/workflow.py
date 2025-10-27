@@ -39,8 +39,8 @@ from agno.run.cancel import (
     raise_if_cancelled,
     register_run,
 )
+from agno.run.team import RunCompletedEvent, RunStartedEvent, TeamRunEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
-from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
     StepOutputEvent,
     WorkflowCancelledEvent,
@@ -2833,9 +2833,7 @@ class Workflow:
         session_state: Optional[Dict[str, Any]],
     ) -> Tuple[WorkflowSession, Dict[str, Any]]:
         """Helper to load or create session for workflow agent execution"""
-        return await self._aload_or_create_session(
-            session_id=session_id, user_id=user_id, session_state=session_state
-        )
+        return await self._aload_or_create_session(session_id=session_id, user_id=user_id, session_state=session_state)
 
     def _aexecute_workflow_agent(
         self,
@@ -2866,6 +2864,7 @@ class Workflow:
             Coroutine[WorkflowRunOutput] if stream=False, AsyncIterator[WorkflowRunOutputEvent] if stream=True
         """
         if stream:
+
             async def _stream():
                 session, session_state_loaded = await self._aload_session_for_workflow_agent(
                     session_id, user_id, session_state
@@ -2880,8 +2879,10 @@ class Workflow:
                     **kwargs,
                 ):
                     yield event
+
             return _stream()
         else:
+
             async def _execute():
                 session, session_state_loaded = await self._aload_session_for_workflow_agent(
                     session_id, user_id, session_state
@@ -2893,6 +2894,7 @@ class Workflow:
                     session_state=session_state_loaded,
                     stream=stream,
                 )
+
             return _execute()
 
     async def _aexecute_workflow_agent_streaming(
@@ -2931,7 +2933,7 @@ class Workflow:
         agent_response: Optional[RunOutput] = None
         workflow_executed = False
 
-        from agno.run.agent import RunContentEvent
+        from agno.run.agent import RunCompletedEvent, RunContentEvent, RunStartedEvent
         from agno.run.team import RunContentEvent as TeamRunContentEvent
 
         log_debug(f"Executing async workflow agent with streaming - input: {agent_input}...")
@@ -2950,11 +2952,22 @@ class Workflow:
                 if isinstance(event, WorkflowCompletedEvent):
                     workflow_executed = True
                     log_debug("Workflow execution detected via WorkflowCompletedEvent")
-            elif isinstance(event, (RunContentEvent, TeamRunContentEvent)):
+
+            elif isinstance(event, (RunContentEvent, TeamRunContentEvent, RunStartedEvent, RunCompletedEvent)):
                 if event.step_name is None:
                     # This is from the workflow agent itself
                     # Enrich with metadata to mark it as a workflow agent event
                     event.is_workflow_agent = True  # type: ignore
+
+                    # Broadcast to WebSocket if available (async context only)
+                    if websocket_handler:
+                        try:
+                            loop = asyncio.get_running_loop()
+                            if loop:
+                                asyncio.create_task(websocket_handler.handle_event(event))
+                        except RuntimeError:
+                            pass
+
                 yield event  # type: ignore[misc]
 
             # Capture the final RunOutput (but don't yield it)
