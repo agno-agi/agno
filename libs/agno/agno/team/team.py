@@ -757,10 +757,19 @@ class Team:
             member.team_id = self.id
             member.set_id()
 
+            # Inherit team models if agent has no explicit model
+            for model_type in ["model", "reasoning_model", "parser_model", "output_model"]:
+                if getattr(member, model_type) is None and getattr(self, model_type) is not None:
+                    setattr(member, model_type, getattr(self, model_type))
+                    log_info(f"Agent inheriting {model_type} from Team")
+
         elif isinstance(member, Team):
             member.parent_team_id = self.id
+            # Initialize the sub-team's model first so it has its model set
+            member._set_default_model()
+            # Then let the sub-team initialize its own members so they inherit from the sub-team
             for sub_member in member.members:
-                self._initialize_member(sub_member, debug_mode=debug_mode)
+                member._initialize_member(sub_member, debug_mode=debug_mode)
 
     def _set_default_model(self) -> None:
         # Set the default model
@@ -775,7 +784,7 @@ class Team:
                 )
                 exit(1)
 
-            log_info("Setting default model to OpenAI Chat")
+            log_info("Setting default model to w")
             self.model = OpenAIChat(id="gpt-4o")
 
     def _set_memory_manager(self) -> None:
