@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
-from agno.workflow.agent import WorkflowAgent
+from agno.workflow import WorkflowAgent
 from agno.workflow.types import StepInput
 from agno.workflow.workflow import Workflow
 

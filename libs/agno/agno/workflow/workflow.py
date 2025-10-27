@@ -68,7 +68,7 @@ from agno.utils.print_response.workflow import (
     print_response,
     print_response_stream,
 )
-from agno.workflow.agent import WorkflowAgent
+from agno.workflow import WorkflowAgent
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
