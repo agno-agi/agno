@@ -1,3 +1,5 @@
+"""Example demonstrating how to add a Workflow using a WorkflowAgent to your AgentOS"""
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
