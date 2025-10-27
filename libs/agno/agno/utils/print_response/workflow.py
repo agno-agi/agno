@@ -7,7 +7,7 @@ from rich.markdown import Markdown
 from rich.status import Status
 from rich.text import Text
 
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
@@ -48,6 +48,7 @@ def print_response(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[File]] = None,
     markdown: bool = True,
     show_time: bool = True,
     show_step_details: bool = True,
@@ -76,6 +77,8 @@ def print_response(
         media_info.append(f"Images: {len(images)}")
     if videos:
         media_info.append(f"Videos: {len(videos)}")
+    if files:
+        media_info.append(f"Files: {len(files)}")
 
     workflow_info = f"""**Workflow:** {workflow.name}"""
     if workflow.description:
@@ -126,6 +129,7 @@ def print_response(
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 **kwargs,
             )  # type: ignore
 
@@ -186,6 +190,7 @@ def print_response_stream(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[File]] = None,
     stream_events: bool = False,
     stream_intermediate_steps: bool = False,
     markdown: bool = True,
@@ -210,6 +215,8 @@ def print_response_stream(
         media_info.append(f"Images: {len(images)}")
     if videos:
         media_info.append(f"Videos: {len(videos)}")
+    if files:
+        media_info.append(f"Files: {len(files)}")
 
     workflow_info = f"""**Workflow:** {workflow.name}"""
     if workflow.description:
@@ -314,6 +321,7 @@ def print_response_stream(
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 stream=True,
                 stream_events=stream_events,
                 **kwargs,
@@ -832,6 +840,7 @@ async def aprint_response(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[File]] = None,
     markdown: bool = True,
     show_time: bool = True,
     show_step_details: bool = True,
@@ -860,6 +869,8 @@ async def aprint_response(
         media_info.append(f"Images: {len(images)}")
     if videos:
         media_info.append(f"Videos: {len(videos)}")
+    if files:
+        media_info.append(f"Files: {len(files)}")
 
     workflow_info = f"""**Workflow:** {workflow.name}"""
     if workflow.description:
@@ -910,6 +921,7 @@ async def aprint_response(
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 **kwargs,
             )  # type: ignore
 
@@ -970,6 +982,7 @@ async def aprint_response_stream(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[File]] = None,
     stream_events: bool = False,
     stream_intermediate_steps: bool = False,
     markdown: bool = True,
@@ -994,6 +1007,8 @@ async def aprint_response_stream(
         media_info.append(f"Images: {len(images)}")
     if videos:
         media_info.append(f"Videos: {len(videos)}")
+    if files:
+        media_info.append(f"Files: {len(files)}")
 
     workflow_info = f"""**Workflow:** {workflow.name}"""
     if workflow.description:
@@ -1098,6 +1113,7 @@ async def aprint_response_stream(
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 stream=True,
                 stream_events=stream_events,
                 **kwargs,
