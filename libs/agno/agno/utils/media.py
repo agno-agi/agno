@@ -185,3 +185,139 @@ def download_knowledge_filters_sample_data(
         )
         file_paths.append(str(download_path))
     return file_paths
+
+
+def reconstruct_image_from_dict(img_data):
+    """
+    Reconstruct an Image object from dictionary data.
+
+    Handles both base64-encoded content (from database) and regular image data (url/filepath).
+    """
+    from agno.media import Image
+
+    if isinstance(img_data, dict):
+        # If content is base64 string, decode it back to bytes
+        if "content" in img_data and isinstance(img_data["content"], str):
+            return Image.from_base64(
+                img_data["content"],
+                id=img_data.get("id"),
+                mime_type=img_data.get("mime_type"),
+                format=img_data.get("format"),
+                detail=img_data.get("detail"),
+                original_prompt=img_data.get("original_prompt"),
+                revised_prompt=img_data.get("revised_prompt"),
+                alt_text=img_data.get("alt_text"),
+            )
+        else:
+            # Regular image (filepath/url)
+            return Image(**img_data)
+    return img_data
+
+
+def reconstruct_video_from_dict(vid_data):
+    """
+    Reconstruct a Video object from dictionary data.
+
+    Handles both base64-encoded content (from database) and regular video data (url/filepath).
+    """
+    from agno.media import Video
+
+    if isinstance(vid_data, dict):
+        # If content is base64 string, decode it back to bytes
+        if "content" in vid_data and isinstance(vid_data["content"], str):
+            return Video.from_base64(
+                vid_data["content"],
+                id=vid_data.get("id"),
+                mime_type=vid_data.get("mime_type"),
+                format=vid_data.get("format"),
+            )
+        else:
+            # Regular video (filepath/url)
+            return Video(**vid_data)
+    return vid_data
+
+
+def reconstruct_audio_from_dict(aud_data):
+    """
+    Reconstruct an Audio object from dictionary data.
+
+    Handles both base64-encoded content (from database) and regular audio data (url/filepath).
+    """
+    from agno.media import Audio
+
+    if isinstance(aud_data, dict):
+        # If content is base64 string, decode it back to bytes
+        if "content" in aud_data and isinstance(aud_data["content"], str):
+            return Audio.from_base64(
+                aud_data["content"],
+                id=aud_data.get("id"),
+                mime_type=aud_data.get("mime_type"),
+                transcript=aud_data.get("transcript"),
+                expires_at=aud_data.get("expires_at"),
+                sample_rate=aud_data.get("sample_rate", 24000),
+                channels=aud_data.get("channels", 1),
+            )
+        else:
+            # Regular audio (filepath/url)
+            return Audio(**aud_data)
+    return aud_data
+
+
+def reconstruct_file_from_dict(file_data):
+    """
+    Reconstruct a File object from dictionary data.
+
+    Handles both base64-encoded content (from database) and regular file data (url/filepath).
+    """
+    from agno.media import File
+
+    if isinstance(file_data, dict):
+        # If content is base64 string, decode it back to bytes
+        if "content" in file_data and isinstance(file_data["content"], str):
+            return File.from_base64(
+                file_data["content"],
+                id=file_data.get("id"),
+                mime_type=file_data.get("mime_type"),
+                filename=file_data.get("filename"),
+                name=file_data.get("name"),
+                format=file_data.get("format"),
+            )
+        else:
+            # Regular file (filepath/url)
+            return File(**file_data)
+    return file_data
+
+
+def reconstruct_images(images_data):
+    """Reconstruct a list of Image objects from list of dictionaries."""
+    if not images_data:
+        return None
+    return [reconstruct_image_from_dict(img_data) for img_data in images_data]
+
+
+def reconstruct_videos(videos_data):
+    """Reconstruct a list of Video objects from list of dictionaries."""
+    if not videos_data:
+        return None
+    return [reconstruct_video_from_dict(vid_data) for vid_data in videos_data]
+
+
+def reconstruct_audio_list(audio_data):
+    """Reconstruct a list of Audio objects from list of dictionaries."""
+    if not audio_data:
+        return None
+    return [reconstruct_audio_from_dict(aud_data) for aud_data in audio_data]
+
+
+def reconstruct_files(files_data):
+    """Reconstruct a list of File objects from list of dictionaries."""
+    if not files_data:
+        return None
+    return [reconstruct_file_from_dict(file_data) for file_data in files_data]
+
+
+def reconstruct_response_audio(audio_data):
+    """Reconstruct a single Audio object for response audio."""
+    if not audio_data:
+        return None
+    return reconstruct_audio_from_dict(audio_data)
