@@ -467,4 +467,3 @@ def test_multiple_sessions_isolation(test_agent):
     # Check that histories are different
     assert any("session 1" in msg.content for msg in history_1)
     assert any("session 2" in msg.content for msg in history_2)
-
