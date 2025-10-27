@@ -13,12 +13,12 @@ from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     abulk_upsert_metrics,
     ais_table_available,
+    ais_valid_table,
     apply_sorting,
     calculate_date_metrics,
     deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    is_valid_table,
     serialize_cultural_knowledge_for_db,
 )
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
@@ -269,7 +269,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
-        if not is_valid_table(db_engine=self.db_engine, table_name=table_name, table_type=table_type):
+        if not await ais_valid_table(db_engine=self.db_engine, table_name=table_name, table_type=table_type):
             raise ValueError(f"Table {table_name} has an invalid schema")
 
         try:
