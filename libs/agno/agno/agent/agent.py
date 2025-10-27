@@ -1480,25 +1480,19 @@ class Agent:
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
 
-        # Initialize run context
-        run_context = RunContext(run_id=run_id, session_id=session_id, user_id=user_id)
-
         # Initialize session state
-        run_context.session_state = self._initialize_session_state(
+        session_state = self._initialize_session_state(
             session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
         )
-
         # Update session state from DB
-        run_context.session_state = self._load_session_state(
-            session=agent_session, session_state=run_context.session_state
-        )
+        session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
         # Determine runtime dependencies
-        run_context.dependencies = dependencies if dependencies is not None else self.dependencies
+        dependencies = dependencies if dependencies is not None else self.dependencies
 
         # Resolve dependencies
-        if run_context.dependencies is not None:
-            self._resolve_run_dependencies(dependencies=run_context.dependencies)
+        if dependencies is not None:
+            self._resolve_run_dependencies(dependencies=dependencies)
 
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
@@ -1512,7 +1506,7 @@ class Agent:
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
+            knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Use stream override value when necessary
         if stream is None:
@@ -1536,12 +1530,22 @@ class Agent:
         self.model = cast(Model, self.model)
 
         # Merge agent metadata with run metadata
-        run_context.metadata = metadata
         if self.metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = self.metadata
+            if metadata is None:
+                metadata = self.metadata
             else:
-                merge_dictionaries(run_context.metadata, self.metadata)
+                merge_dictionaries(metadata, self.metadata)
+
+        # Initialize run context
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+        )
 
         # Create a new run_response for this attempt
         run_response = RunOutput(
@@ -2360,11 +2364,8 @@ class Agent:
             images=images, videos=videos, audios=audio, files=files
         )
 
-        # Initialize run context
-        run_context = RunContext(run_id=run_id, session_id=session_id, user_id=user_id)
-
         # Resolve variables
-        run_context.dependencies = dependencies if dependencies is not None else self.dependencies
+        dependencies = dependencies if dependencies is not None else self.dependencies
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
         )
@@ -2406,17 +2407,27 @@ class Agent:
         self.model = cast(Model, self.model)
 
         # Get knowledge filters
-        run_context.knowledge_filters = knowledge_filters
+        knowledge_filters = knowledge_filters
         if self.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
+            knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Merge agent metadata with run metadata
-        run_context.metadata = metadata
         if self.metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = self.metadata
+            if metadata is None:
+                metadata = self.metadata
             else:
-                merge_dictionaries(run_context.metadata, self.metadata)
+                merge_dictionaries(metadata, self.metadata)
+
+        # Initialize run context
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+        )
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
@@ -2560,7 +2571,7 @@ class Agent:
         self,
         run_response: Optional[RunOutput] = None,
         *,
-        run_id: Optional[str] = None,
+        run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
@@ -2614,37 +2625,31 @@ class Agent:
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
 
-        # Initialize run context
-        run_context = RunContext(run_id=run_id, session_id=session_id, user_id=user_id)
-
         # Initialize session state
-        run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+        session_state = self._initialize_session_state(
+            session_state={}, user_id=user_id, session_id=session_id, run_id=run_id
         )
         # Update session state from DB
-        run_context.session_state = self._load_session_state(
-            session=agent_session, session_state=run_context.session_state
-        )
+        session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
-        run_context.dependencies = dependencies if dependencies is not None else self.dependencies
+        dependencies = dependencies if dependencies is not None else self.dependencies
 
         # Resolve dependencies
-        if run_context.dependencies is not None:
-            self._resolve_run_dependencies(dependencies=run_context.dependencies)
+        if dependencies is not None:
+            self._resolve_run_dependencies(dependencies=dependencies)
 
-        run_context.knowledge_filters = knowledge_filters
+        knowledge_filters = knowledge_filters
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
+            knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Merge agent metadata with run metadata
-        run_context.metadata = metadata
         if self.metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = self.metadata
+            if metadata is None:
+                metadata = self.metadata
             else:
-                merge_dictionaries(run_context.metadata, self.metadata)
+                merge_dictionaries(metadata, self.metadata)
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
@@ -2692,6 +2697,17 @@ class Agent:
         self._set_default_model()
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
+
+        # Initialize run context
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+        )
 
         self._determine_tools_for_model(
             model=self.model,
@@ -3101,7 +3117,7 @@ class Agent:
         self,
         run_response: Optional[RunOutput] = None,
         *,
-        run_id: Optional[str] = None,
+        run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
@@ -3149,10 +3165,7 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        # Initialize run context
-        run_context = RunContext(run_id=run_id, session_id=session_id, user_id=user_id)
-
-        run_context.dependencies = dependencies if dependencies is not None else self.dependencies
+        dependencies = dependencies if dependencies is not None else self.dependencies
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
@@ -3179,21 +3192,32 @@ class Agent:
         self.stream_events = self.stream_events or stream_events
 
         # Get knowledge filters
-        run_context.knowledge_filters = knowledge_filters
+        knowledge_filters = knowledge_filters
         if self.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
+            knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Merge agent metadata with run metadata
-        run_context.metadata = metadata
+        metadata = metadata
         if self.metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = self.metadata
+            if metadata is None:
+                metadata = self.metadata
             else:
-                merge_dictionaries(run_context.metadata, self.metadata)
+                merge_dictionaries(metadata, self.metadata)
 
         # Prepare arguments for the model
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
+
+        # Initialize run context
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state={},
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+        )
 
         last_exception = None
         num_attempts = retries + 1
