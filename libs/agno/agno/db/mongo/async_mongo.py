@@ -25,6 +25,8 @@ from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
 
 try:
+    import asyncio
+
     from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
     from pymongo import ReturnDocument
     from pymongo.errors import OperationFailure
@@ -80,25 +82,94 @@ class AsyncMongoDb(AsyncBaseDb):
             culture_table=culture_collection,
         )
 
-        _client: Optional[AsyncIOMotorClient] = db_client
-        if _client is None and db_url is not None:
-            _client = AsyncIOMotorClient(db_url)
-        if _client is None:
-            raise ValueError("One of db_url or db_client must be provided")
-
+        # Store configuration for lazy initialization
+        self._provided_client: Optional[AsyncIOMotorClient] = db_client
         self.db_url: Optional[str] = db_url
-        self.db_client: AsyncIOMotorClient = _client
         self.db_name: str = db_name if db_name is not None else "agno"
 
+        if self._provided_client is None and self.db_url is None:
+            raise ValueError("One of db_url or db_client must be provided")
+
+        # Client and database will be lazily initialized per event loop
+        self._client: Optional[AsyncIOMotorClient] = None
         self._database: Optional[AsyncIOMotorDatabase] = None
+        self._event_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def _ensure_client(self) -> AsyncIOMotorClient:
+        """
+        Ensure the Motor client is valid for the current event loop.
+
+        Motor's AsyncIOMotorClient is tied to the event loop it was created in.
+        If we detect a new event loop, we need to refresh the client.
+
+        Returns:
+            AsyncIOMotorClient: A valid client for the current event loop.
+        """
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop, return existing client or create new one
+            if self._client is None:
+                if self._provided_client is not None:
+                    self._client = self._provided_client
+                elif self.db_url is not None:
+                    self._client = AsyncIOMotorClient(self.db_url)
+                    log_debug("Created AsyncIOMotorClient outside event loop")
+            return self._client  # type: ignore
+
+        # Check if we're in a different event loop
+        if self._event_loop is None or self._event_loop is not current_loop:
+            # New event loop detected, create new client
+            if self._provided_client is not None:
+                # User provided a client, use it but warn them
+                log_debug(
+                    "New event loop detected. Using provided AsyncIOMotorClient, "
+                    "which may cause issues if it was created in a different event loop."
+                )
+                self._client = self._provided_client
+            elif self.db_url is not None:
+                # Create a new client for this event loop
+                old_loop_id = id(self._event_loop) if self._event_loop else "None"
+                new_loop_id = id(current_loop)
+                log_debug(f"Event loop changed from {old_loop_id} to {new_loop_id}, creating new AsyncIOMotorClient")
+                self._client = AsyncIOMotorClient(self.db_url)
+
+            self._event_loop = current_loop
+            self._database = None  # Reset database reference
+            # Clear collection caches when switching event loops
+            for attr in list(vars(self).keys()):
+                if attr.endswith("_collection"):
+                    delattr(self, attr)
+
+        return self._client  # type: ignore
+
+    @property
+    def db_client(self) -> AsyncIOMotorClient:
+        """Get the MongoDB client, ensuring it's valid for the current event loop."""
+        return self._ensure_client()
 
     @property
     def database(self) -> AsyncIOMotorDatabase:
-        if self._database is None:
-            self._database = self.db_client[self.db_name]
+        """Get the MongoDB database, ensuring it's valid for the current event loop."""
+        try:
+            current_loop = asyncio.get_running_loop()
+            if self._database is None or self._event_loop != current_loop:
+                self._database = self.db_client[self.db_name]
+        except RuntimeError:
+            # No running loop - fallback to existing database or create new one
+            if self._database is None:
+                self._database = self.db_client[self.db_name]
         return self._database
 
     # -- DB methods --
+
+    def _should_reset_collection_cache(self) -> bool:
+        """Check if collection cache should be reset due to event loop change."""
+        try:
+            current_loop = asyncio.get_running_loop()
+            return self._event_loop is not current_loop
+        except RuntimeError:
+            return False
 
     async def _get_collection(
         self, table_type: str, create_collection_if_not_found: Optional[bool] = True
@@ -112,8 +183,14 @@ class AsyncMongoDb(AsyncBaseDb):
         Returns:
             AsyncIOMotorCollection: The collection object.
         """
+        # Ensure client is valid for current event loop before accessing collections
+        _ = self.db_client  # This triggers _ensure_client()
+
+        # Check if collections need to be reset due to event loop change
+        reset_cache = self._should_reset_collection_cache()
+
         if table_type == "sessions":
-            if not hasattr(self, "session_collection"):
+            if reset_cache or not hasattr(self, "session_collection"):
                 if self.session_table_name is None:
                     raise ValueError("Session collection was not provided on initialization")
                 self.session_collection = await self._get_or_create_collection(
@@ -124,7 +201,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.session_collection
 
         if table_type == "memories":
-            if not hasattr(self, "memory_collection"):
+            if reset_cache or not hasattr(self, "memory_collection"):
                 if self.memory_table_name is None:
                     raise ValueError("Memory collection was not provided on initialization")
                 self.memory_collection = await self._get_or_create_collection(
@@ -135,7 +212,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.memory_collection
 
         if table_type == "metrics":
-            if not hasattr(self, "metrics_collection"):
+            if reset_cache or not hasattr(self, "metrics_collection"):
                 if self.metrics_table_name is None:
                     raise ValueError("Metrics collection was not provided on initialization")
                 self.metrics_collection = await self._get_or_create_collection(
@@ -146,7 +223,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.metrics_collection
 
         if table_type == "evals":
-            if not hasattr(self, "eval_collection"):
+            if reset_cache or not hasattr(self, "eval_collection"):
                 if self.eval_table_name is None:
                     raise ValueError("Eval collection was not provided on initialization")
                 self.eval_collection = await self._get_or_create_collection(
@@ -157,7 +234,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.eval_collection
 
         if table_type == "knowledge":
-            if not hasattr(self, "knowledge_collection"):
+            if reset_cache or not hasattr(self, "knowledge_collection"):
                 if self.knowledge_table_name is None:
                     raise ValueError("Knowledge collection was not provided on initialization")
                 self.knowledge_collection = await self._get_or_create_collection(
@@ -168,7 +245,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.knowledge_collection
 
         if table_type == "culture":
-            if not hasattr(self, "culture_collection"):
+            if reset_cache or not hasattr(self, "culture_collection"):
                 if self.culture_table_name is None:
                     raise ValueError("Culture collection was not provided on initialization")
                 self.culture_collection = await self._get_or_create_collection(

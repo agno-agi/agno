@@ -24,7 +24,7 @@ from agno.db.mongo import AsyncMongoDb
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # MongoDB connection settings
-db_url = "mongodb://mongoadmin:secret@localhost:27017"
+db_url = "mongodb://localhost:27017"
 
 db = AsyncMongoDb(db_url=db_url)
 
