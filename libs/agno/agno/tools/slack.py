@@ -61,7 +61,7 @@ class SlackTools(Toolkit):
 
     def send_message_thread(self, channel: str, text: str, thread_ts: str, mrkdwn: bool = True) -> str:
         """
-        Send a message to a Slack channel thread.
+        Send a message to a Slack channel.
 
         Args:
             channel (str): The channel ID or name to send the message to.
