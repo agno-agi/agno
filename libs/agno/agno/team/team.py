@@ -3379,7 +3379,7 @@ class Team:
         self._update_session_metrics(session=session)
 
         # Save session to memory
-        self.save_session(session=session)
+        await self.asave_session(session=session)
 
     def _make_memories(
         self,
