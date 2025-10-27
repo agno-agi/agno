@@ -45,7 +45,9 @@ reader_advanced = TavilyReader(
 )
 
 try:
-    documents = reader_advanced.read("https://docs.tavily.com/documentation/api-reference/endpoint/extract")
+    documents = reader_advanced.read(
+        "https://docs.tavily.com/documentation/api-reference/endpoint/extract"
+    )
 
     if documents:
         print(f"Extracted {len(documents)} document(s)")
