@@ -11,11 +11,10 @@ from db import db, db_url
 # Setup knowledge base for storing Agno documentation
 # ============================================================================
 knowledge = Knowledge(
-    name="Agno Knowledge",
-    description="A knowledge base containing Agno documentation and other relevant information",
+    name="Agno Documentation",
     vector_db=PgVector(
         db_url=db_url,
-        table_name="agno_knowledge",
+        table_name="agno_docs",
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
