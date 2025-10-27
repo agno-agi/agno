@@ -150,6 +150,7 @@ class ModelResponse:
         if response_usage is not None:
             try:
                 from pydantic import BaseModel
+
                 if isinstance(response_usage, BaseModel):
                     _dict["response_usage"] = response_usage.model_dump()
                 else:
@@ -186,6 +187,7 @@ class ModelResponse:
         # Reconstruct response usage (Metrics)
         if data.get("response_usage") and isinstance(data["response_usage"], dict):
             from agno.models.metrics import Metrics
+
             data["response_usage"] = Metrics(**data["response_usage"])
 
         return cls(**data)
