@@ -15,7 +15,7 @@ knowledge = Knowledge(
     description="A knowledge base containing Agno documentation and other relevant information",
     vector_db=PgVector(
         db_url=db_url,
-        table_name="agno_knowledge",
+        table_name="agno_knowledges",
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
