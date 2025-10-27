@@ -784,7 +784,7 @@ class Team:
                 )
                 exit(1)
 
-            log_info("Setting default model to w")
+            log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
     def _set_memory_manager(self) -> None:
