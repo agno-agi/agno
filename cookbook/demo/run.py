@@ -1,34 +1,49 @@
 """Minimal demo of the AgentOS."""
 
 from pathlib import Path
+from textwrap import dedent
 
-from agents.agno_assist import agno_assist
-from agents.web_search import web_search_agent
 from agno.os import AgentOS
-from knowledge.basic import knowledge as knowledge_base
-from teams.multilingual_team import multilingual_team
-from teams.reasoning_finance_team import reasoning_finance_team
-from workflows.investment_workflow import investment_workflow
-from workflows.research_workflow import research_workflow
+from agno_knowledge_agent import agno_knowledge_agent
+from agno_mcp_agent import agno_mcp_agent
+from finance_agent import finance_agent
+from finance_team import finance_team
+from memory_agent import memory_manager
+from research_agent import research_agent
+from youtube_agent import youtube_agent
 
-# ************* AgentOS Config *************
+# ============================================================================
+# AgentOS Config
+# ============================================================================
 config_path = str(Path(__file__).parent.joinpath("config.yaml"))
-# *******************************
 
-# ************* Create the AgentOS *************
+# ============================================================================
+# Create AgentOS
+# ============================================================================
 agent_os = AgentOS(
-    description="Demo AgentOS",
-    agents=[agno_assist, web_search_agent],
-    teams=[reasoning_finance_team, multilingual_team],
-    workflows=[research_workflow, investment_workflow],
-    knowledge=[knowledge_base],
+    description=dedent("""\
+        Demo AgentOS — a lightweight runtime wiring together demo agents and teams.
+        Includes knowledge lookup (Agno docs), MCP-powered assistance, YouTube QA,
+        market analysis, memory management, and web research — all in one process.
+        """),
+    agents=[
+        agno_knowledge_agent,
+        agno_mcp_agent,
+        youtube_agent,
+        finance_agent,
+        memory_manager,
+        research_agent,
+    ],
+    teams=[
+        finance_team,
+    ],
     config=config_path,
 )
-# Get the FastAPI app for the AgentOS
 app = agent_os.get_app()
-# *******************************
 
-# ************* Run the AgentOS *************
+# ============================================================================
+# Run AgentOS
+# ============================================================================
 if __name__ == "__main__":
+    # Serves a FastAPI app exposed by AgentOS. Use reload=True for local dev.
     agent_os.serve(app="run:app", reload=True)
-# *******************************
