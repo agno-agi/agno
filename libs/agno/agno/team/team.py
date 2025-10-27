@@ -1008,7 +1008,8 @@ class Team:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                from inspect import iscoroutinefunction
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     # Synchronous function
@@ -1139,7 +1140,8 @@ class Team:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                from inspect import iscoroutinefunction
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     hook(**filtered_args)
@@ -2087,8 +2089,6 @@ class Team:
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 6. Start memory creation in background task
-        import asyncio
-
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
@@ -2321,8 +2321,6 @@ class Team:
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 7. Start memory creation in background task
-        import asyncio
-
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
@@ -8204,6 +8202,7 @@ class Team:
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
         from agno.knowledge.reader.text_reader import TextReader
+        import asyncio
 
         asyncio.run(
             self.knowledge.add_content_async(name=document_name, text_content=document_content, reader=TextReader())

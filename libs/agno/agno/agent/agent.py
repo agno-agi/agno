@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio
+from asyncio import create_task, CancelledError
 from collections import ChainMap, deque
 from dataclasses import dataclass
 from os import getenv
@@ -1795,10 +1795,8 @@ class Agent:
         # 7. Start memory creation as a background task (runs concurrently with the main execution)
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            import asyncio
-
             log_debug("Starting memory creation in background task.")
-            memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+            memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
         # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
         cultural_knowledge_task = None
@@ -1807,10 +1805,8 @@ class Agent:
             and self.culture_manager is not None
             and self.update_cultural_knowledge
         ):
-            import asyncio
-
             log_debug("Starting cultural knowledge creation in background thread.")
-            cultural_knowledge_task = asyncio.create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
+            cultural_knowledge_task = create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
 
         try:
             # Check for cancellation before model call
@@ -1920,21 +1916,17 @@ class Agent:
         finally:
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
-                import asyncio
-
                 memory_task.cancel()
                 try:
                     await memory_task
-                except asyncio.CancelledError:
+                except CancelledError:
                     pass
             # Cancel the cultural knowledge task if it's still running
             if cultural_knowledge_task is not None and not cultural_knowledge_task.done():
-                import asyncio
-
                 cultural_knowledge_task.cancel()
                 try:
                     await cultural_knowledge_task
-                except asyncio.CancelledError:
+                except CancelledError:
                     pass
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
@@ -2066,10 +2058,9 @@ class Agent:
         # 7. Start memory creation as a background task (runs concurrently with the main execution)
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            import asyncio
 
             log_debug("Starting memory creation in background task.")
-            memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+            memory_task =create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
         # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
         cultural_knowledge_task = None
@@ -2078,10 +2069,9 @@ class Agent:
             and self.culture_manager is not None
             and self.update_cultural_knowledge
         ):
-            import asyncio
 
             log_debug("Starting cultural knowledge creation in background task.")
-            cultural_knowledge_task = asyncio.create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
+            cultural_knowledge_task = create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
 
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
@@ -2276,21 +2266,18 @@ class Agent:
         finally:
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
-                import asyncio
-
                 memory_task.cancel()
                 try:
                     await memory_task
-                except asyncio.CancelledError:
+                except CancelledError:
                     pass
 
             if cultural_knowledge_task is not None and not cultural_knowledge_task.done():
-                import asyncio
 
                 cultural_knowledge_task.cancel()
                 try:
                     await cultural_knowledge_task
-                except asyncio.CancelledError:
+                except CancelledError:
                     pass
 
             # Always clean up the run tracking
@@ -3896,7 +3883,9 @@ class Agent:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                from inspect import iscoroutinefunction
+
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     # Synchronous function
@@ -4030,8 +4019,8 @@ class Agent:
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
-
-                if asyncio.iscoroutinefunction(hook):
+                from inspect import iscoroutinefunction
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     hook(**filtered_args)
@@ -9221,6 +9210,7 @@ class Agent:
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
         from agno.knowledge.reader.text_reader import TextReader
+        import asyncio
 
         asyncio.run(
             self.knowledge.add_content_async(name=document_name, text_content=document_content, reader=TextReader())
