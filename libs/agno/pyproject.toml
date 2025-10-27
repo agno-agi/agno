@@ -101,6 +101,7 @@ evm = ["web3"]
 exa = ["exa_py"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
+tavily = ["tavily-python"]
 crawl4ai= ["crawl4ai"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
@@ -217,6 +218,7 @@ tools = [
   "agno[newspaper]",
   "agno[youtube]",
   "agno[firecrawl]",
+  "agno[tavily]",
   "agno[crawl4ai]",
   "agno[github]",
   "agno[gmail]",
