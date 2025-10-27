@@ -39,8 +39,8 @@ from agno.run.cancel import (
     raise_if_cancelled,
     register_run,
 )
-from agno.run.team import RunCompletedEvent, RunStartedEvent, TeamRunEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
     StepOutputEvent,
     WorkflowCancelledEvent,
