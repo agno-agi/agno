@@ -122,6 +122,7 @@ class Knowledge:
                     exclude=exclude,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
+                    reader=reader,
                 )
             for url in urls:
                 await self.add_content_async(
@@ -133,6 +134,7 @@ class Knowledge:
                     exclude=exclude,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
+                    reader=reader,
                 )
             for i, text_content in enumerate(text_contents):
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
@@ -146,6 +148,7 @@ class Knowledge:
                     exclude=exclude,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
+                    reader=reader,
                 )
             if topics:
                 await self.add_content_async(
@@ -168,6 +171,7 @@ class Knowledge:
                     remote_content=remote_content,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
+                    reader=reader,
                 )
 
         else:
@@ -543,6 +547,8 @@ class Knowledge:
                 reader = self.pdf_reader
             elif file_extension == ".docx":
                 reader = self.docx_reader
+            elif file_extension == ".pptx":
+                reader = self.pptx_reader
             elif file_extension == ".json":
                 reader = self.json_reader
             elif file_extension == ".markdown":
@@ -831,6 +837,8 @@ class Knowledge:
                     reader = self.csv_reader
                 elif s3_object.uri.endswith(".docx"):
                     reader = self.docx_reader
+                elif s3_object.uri.endswith(".pptx"):
+                    reader = self.pptx_reader
                 elif s3_object.uri.endswith(".json"):
                     reader = self.json_reader
                 elif s3_object.uri.endswith(".markdown"):
@@ -913,6 +921,8 @@ class Knowledge:
                     reader = self.csv_reader
                 elif gcs_object.name.endswith(".docx"):
                     reader = self.docx_reader
+                elif gcs_object.name.endswith(".pptx"):
+                    reader = self.pptx_reader
                 elif gcs_object.name.endswith(".json"):
                     reader = self.json_reader
                 elif gcs_object.name.endswith(".markdown"):
@@ -1888,6 +1898,11 @@ class Knowledge:
     def docx_reader(self) -> Optional[Reader]:
         """Docx reader - lazy loaded via factory."""
         return self._get_reader("docx")
+
+    @property
+    def pptx_reader(self) -> Optional[Reader]:
+        """PPTX reader - lazy loaded via factory."""
+        return self._get_reader("pptx")
 
     @property
     def json_reader(self) -> Optional[Reader]:
