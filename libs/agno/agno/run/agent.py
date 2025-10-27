@@ -188,6 +188,7 @@ class RunStartedEvent(BaseAgentRunEvent):
     """Event sent when the run starts"""
 
     event: str = RunEvent.run_started.value
+    is_workflow_agent: bool = False
     model: str = ""
     model_provider: str = ""
 
@@ -227,6 +228,7 @@ class IntermediateRunContentEvent(BaseAgentRunEvent):
 class RunCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_completed.value
     content: Optional[Any] = None
+    is_workflow_agent: bool = False
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
