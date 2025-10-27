@@ -6,6 +6,15 @@ from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.azure import AzureAIFoundry
 
 
+@pytest.fixture
+async def azure_model():
+    """Fixture that provides an Azure AI Foundry model and cleans it up after the test."""
+    model = AzureAIFoundry(id="Phi-4")
+    yield model
+    # Cleanup after test
+    await model.aclose()
+
+
 def _assert_metrics(response: RunOutput):
     assert response.metrics is not None
     input_tokens = response.metrics.input_tokens
@@ -45,8 +54,8 @@ def test_basic_stream():
 
 
 @pytest.mark.asyncio
-async def test_async_basic():
-    agent = Agent(model=AzureAIFoundry(id="Phi-4"), markdown=True, telemetry=False)
+async def test_async_basic(azure_model):
+    agent = Agent(model=azure_model, markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -58,8 +67,8 @@ async def test_async_basic():
 
 
 @pytest.mark.asyncio
-async def test_async_basic_stream():
-    agent = Agent(model=AzureAIFoundry(id="Phi-4"), markdown=True, telemetry=False)
+async def test_async_basic_stream(azure_model):
+    agent = Agent(model=azure_model, markdown=True, telemetry=False)
 
     async for chunk in agent.arun("Share a 2 sentence horror story", stream=True):
         assert chunk.content is not None
@@ -155,3 +164,54 @@ def test_history():
     run_output = agent.run("Hello 4")
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
+
+
+def test_client_persistence():
+    """Test that the same Azure AI Foundry client instance is reused across multiple calls"""
+    model = AzureAIFoundry(id="Phi-4")
+    agent = Agent(model=model, markdown=True, telemetry=False)
+
+    # First call should create a new client
+    agent.run("Hello")
+    first_client = model.client
+    assert first_client is not None
+
+    # Second call should reuse the same client
+    agent.run("Hello again")
+    second_client = model.client
+    assert second_client is not None
+    assert first_client is second_client, "Client should be persisted and reused"
+
+    # Third call should also reuse the same client
+    agent.run("Hello once more")
+    third_client = model.client
+    assert third_client is not None
+    assert first_client is third_client, "Client should still be the same instance"
+
+
+@pytest.mark.asyncio
+async def test_async_client_persistence():
+    """Test that the same async Azure AI Foundry client instance is reused across multiple calls"""
+    model = AzureAIFoundry(id="Phi-4")
+    agent = Agent(model=model, markdown=True, telemetry=False)
+
+    try:
+        # First call should create a new async client
+        await agent.arun("Hello")
+        first_client = model.async_client
+        assert first_client is not None
+
+        # Second call should reuse the same async client
+        await agent.arun("Hello again")
+        second_client = model.async_client
+        assert second_client is not None
+        assert first_client is second_client, "Async client should be persisted and reused"
+
+        # Third call should also reuse the same async client
+        await agent.arun("Hello once more")
+        third_client = model.async_client
+        assert third_client is not None
+        assert first_client is third_client, "Async client should still be the same instance"
+    finally:
+        # Clean up the async client
+        await model.aclose()

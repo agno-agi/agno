@@ -200,3 +200,50 @@ def test_reasoning_tokens():
     reasoning_tokens = response.metrics.reasoning_tokens
     assert reasoning_tokens is not None
     assert reasoning_tokens > 0
+
+
+def test_client_persistence():
+    """Test that the same OpenAI client instance is reused across multiple calls"""
+    model = OpenAIChat(id="gpt-4o-mini")
+    agent = Agent(model=model, markdown=True, telemetry=False)
+
+    # First call should create a new client
+    agent.run("Hello")
+    first_client = model.client
+    assert first_client is not None
+
+    # Second call should reuse the same client
+    agent.run("Hello again")
+    second_client = model.client
+    assert second_client is not None
+    assert first_client is second_client, "Client should be persisted and reused"
+
+    # Third call should also reuse the same client
+    agent.run("Hello once more")
+    third_client = model.client
+    assert third_client is not None
+    assert first_client is third_client, "Client should still be the same instance"
+
+
+@pytest.mark.asyncio
+async def test_async_client_persistence():
+    """Test that the same async OpenAI client instance is reused across multiple calls"""
+    model = OpenAIChat(id="gpt-4o-mini")
+    agent = Agent(model=model, markdown=True, telemetry=False)
+
+    # First call should create a new async client
+    await agent.arun("Hello")
+    first_client = model.async_client
+    assert first_client is not None
+
+    # Second call should reuse the same async client
+    await agent.arun("Hello again")
+    second_client = model.async_client
+    assert second_client is not None
+    assert first_client is second_client, "Async client should be persisted and reused"
+
+    # Third call should also reuse the same async client
+    await agent.arun("Hello once more")
+    third_client = model.async_client
+    assert third_client is not None
+    assert first_client is third_client, "Async client should still be the same instance"

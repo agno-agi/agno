@@ -102,7 +102,7 @@ class Cerebras(Model):
         Returns:
             CerebrasClient: An instance of the Cerebras client.
         """
-        if self.client:
+        if self.client and not self.client.is_closed():
             return self.client
 
         client_params: Dict[str, Any] = self._get_client_params()
@@ -121,7 +121,7 @@ class Cerebras(Model):
         Returns:
             AsyncCerebras: An instance of the asynchronous Cerebras client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()

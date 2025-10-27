@@ -164,7 +164,7 @@ class OpenAIResponses(Model):
         Returns:
             AsyncOpenAI: An instance of the asynchronous OpenAI client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()
