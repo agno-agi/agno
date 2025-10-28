@@ -2023,15 +2023,33 @@ class SqliteDb(BaseDb):
                     current_total = existing.total_spans
                     current_errors = existing.error_count
                     
-                    stmt = update(table).where(table.c.trace_id == trace.trace_id).values(
-                        total_spans=current_total + trace.total_spans,
-                        error_count=current_errors + trace.error_count,
-                        end_time_ns=trace.end_time_ns,
-                        duration_ms=trace.duration_ms,
-                        status=trace.status,
+                    # Build update values - preserve non-null context fields
+                    update_values = {
+                        'total_spans': current_total + trace.total_spans,
+                        'error_count': current_errors + trace.error_count,
+                        'end_time_ns': trace.end_time_ns,
+                        'duration_ms': trace.duration_ms,
+                        'status': trace.status,
                         # Update name only if new name looks like a root span (contains ".run")
-                        name=trace.name if ".run" in trace.name else existing.name,
-                    )
+                        'name': trace.name if ".run" in trace.name else existing.name,
+                    }
+                    
+                    # Update context fields ONLY if new value is not None (preserve non-null values)
+                    if trace.run_id is not None:
+                        update_values['run_id'] = trace.run_id
+                    if trace.session_id is not None:
+                        update_values['session_id'] = trace.session_id
+                    if trace.user_id is not None:
+                        update_values['user_id'] = trace.user_id
+                    if trace.agent_id is not None:
+                        update_values['agent_id'] = trace.agent_id
+                    
+                    log_debug(f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
+                              f"session_id={update_values.get('session_id', 'unchanged')}, "
+                              f"user_id={update_values.get('user_id', 'unchanged')}, "
+                              f"agent_id={update_values.get('agent_id', 'unchanged')}")
+                    
+                    stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
                 else:
                     # Insert new trace
                     stmt = sqlite.insert(table).values(trace.to_dict())
@@ -2098,17 +2116,30 @@ class SqliteDb(BaseDb):
         try:
             from agno.tracing.schemas import Trace
 
+            log_debug(f"🔍 get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}")
+
             table = self._get_table(table_type="traces")
             if table is None:
+                log_debug("❌ Traces table not found")
                 return []
 
             with self.Session() as sess:
+                # First, get ALL traces to see what we have
+                all_stmt = table.select()
+                all_results = sess.execute(all_stmt).fetchall()
+                log_debug(f"📊 Total traces in DB: {len(all_results)}")
+                for row in all_results[:3]:  # Show first 3
+                    row_dict = dict(row._mapping)
+                    log_debug(f"  Trace: id={row_dict['trace_id'][:16]}..., session_id={row_dict.get('session_id')}, name={row_dict['name']}")
+                
+                # Now apply filters
                 stmt = table.select()
 
                 # Apply filters
                 if run_id:
                     stmt = stmt.where(table.c.run_id == run_id)
                 if session_id:
+                    log_debug(f"  Filtering by session_id={session_id}")
                     stmt = stmt.where(table.c.session_id == session_id)
                 if user_id:
                     stmt = stmt.where(table.c.user_id == user_id)
@@ -2125,6 +2156,7 @@ class SqliteDb(BaseDb):
                 stmt = stmt.order_by(table.c.start_time_ns.desc()).limit(limit)
 
                 results = sess.execute(stmt).fetchall()
+                log_debug(f"✅ Filtered query returned {len(results)} traces")
                 return [Trace.from_dict(dict(row._mapping)) for row in results]
 
         except Exception as e:
