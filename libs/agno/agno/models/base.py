@@ -948,7 +948,7 @@ class Model(ABC):
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
                 # Handle function call media
-                if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     self._handle_function_call_media(
                         messages=messages,
                         function_call_results=function_call_results,
@@ -1144,7 +1144,7 @@ class Model(ABC):
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
                 # Handle function call media
-                if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     self._handle_function_call_media(
                         messages=messages,
                         function_call_results=function_call_results,
