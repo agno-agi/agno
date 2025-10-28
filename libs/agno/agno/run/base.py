@@ -35,6 +35,7 @@ class BaseRunOutputEvent:
                 "reasoning_steps",
                 "references",
                 "additional_input",
+                "session_summary",
                 "metrics",
             ]
         }
@@ -113,6 +114,9 @@ class BaseRunOutputEvent:
         if hasattr(self, "metrics") and self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
 
+        if hasattr(self, "session_summary") and self.session_summary is not None:
+            _dict["session_summary"] = self.session_summary.to_dict()
+
         return _dict
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
@@ -172,6 +176,12 @@ class BaseRunOutputEvent:
         metrics = data.pop("metrics", None)
         if metrics:
             data["metrics"] = Metrics(**metrics)
+
+        session_summary = data.pop("session_summary", None)
+        if session_summary:
+            from agno.session.summary import SessionSummary
+
+            data["session_summary"] = SessionSummary.from_dict(session_summary)
 
         return cls(**data)
 
