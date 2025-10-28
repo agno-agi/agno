@@ -2635,6 +2635,9 @@ class Workflow:
                     # This is from the workflow agent itself
                     # Enrich with metadata to mark it as a workflow agent event
 
+                    if workflow_executed:
+                        continue # Skip if workflow was already executed
+
                     # workflow_agent field is used by consumers of the events to distinguish between workflow agent and regular agent
                     event.workflow_agent = True  # type: ignore
                 yield event  # type: ignore[misc]
@@ -3004,6 +3007,9 @@ class Workflow:
                 if event.step_name is None:
                     # This is from the workflow agent itself
                     # Enrich with metadata to mark it as a workflow agent event
+
+                    if workflow_executed:
+                        continue # Skip if workflow was already executed
 
                     # workflow_agent field is used by consumers of the events to distinguish between workflow agent and regular agent
                     event.workflow_agent = True  # type: ignore
