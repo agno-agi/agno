@@ -193,8 +193,6 @@ def reconstruct_image_from_dict(img_data):
 
     Handles both base64-encoded content (from database) and regular image data (url/filepath).
     """
-    from agno.media import Image
-
     try:
         if isinstance(img_data, dict):
             # If content is base64 string, decode it back to bytes
@@ -224,8 +222,6 @@ def reconstruct_video_from_dict(vid_data):
 
     Handles both base64-encoded content (from database) and regular video data (url/filepath).
     """
-    from agno.media import Video
-
     try:
         if isinstance(vid_data, dict):
             # If content is base64 string, decode it back to bytes
@@ -251,8 +247,6 @@ def reconstruct_audio_from_dict(aud_data):
 
     Handles both base64-encoded content (from database) and regular audio data (url/filepath).
     """
-    from agno.media import Audio
-
     try:
         if isinstance(aud_data, dict):
             # If content is base64 string, decode it back to bytes
@@ -281,8 +275,6 @@ def reconstruct_file_from_dict(file_data):
 
     Handles both base64-encoded content (from database) and regular file data (url/filepath).
     """
-    from agno.media import File
-
     try:
         if isinstance(file_data, dict):
             # If content is base64 string, decode it back to bytes
