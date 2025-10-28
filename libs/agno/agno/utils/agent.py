@@ -387,7 +387,7 @@ def get_run_output_util(
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
     """
-    if entity.cached_session is not None:
+    if session_id is None and entity.cached_session is not None:
         run_response = entity.cached_session.get_run(run_id=run_id)
         if run_response is not None:
             return run_response
@@ -415,7 +415,7 @@ async def aget_run_output_util(
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
     """
-    if entity.cached_session is not None:
+    if session_id is None and entity.cached_session is not None:
         run_response = entity.cached_session.get_run(run_id=run_id)
         if run_response is not None:
             return run_response
@@ -446,7 +446,7 @@ def get_last_run_output_util(
         RunOutput: The last run response from the database.
     """
     if (
-        entity.cached_session is not None
+        session_id is None and entity.cached_session is not None
         and entity.cached_session.runs is not None
         and len(entity.cached_session.runs) > 0
     ):
@@ -485,7 +485,7 @@ async def aget_last_run_output_util(
         RunOutput: The last run response from the database.
     """
     if (
-        entity.cached_session is not None
+        session_id is None and entity.cached_session is not None
         and entity.cached_session.runs is not None
         and len(entity.cached_session.runs) > 0
     ):
