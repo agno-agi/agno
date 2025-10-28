@@ -12,4 +12,4 @@ python cookbook/tools/mcp/sse_transport/server.py
 python cookbook/tools/mcp/sse_transport/client.py
 ```
 
-Optionally set `refresh_mcp_tools` to `True` in the agent configuration to refresh the MCP tools on each run.
+Optionally set `refresh_connection` to `True` on the `MCPTools` configuration to refresh the MCP tools on each run.

@@ -652,11 +652,11 @@ class WorkflowResponse(BaseModel):
         for idx, step in enumerate(steps):
             if step.get("agent"):
                 # Convert to dict and exclude fields that are None
-                agent_response = await AgentResponse.from_agent(step.get("agent", {}))  # type: ignore
+                agent_response = await AgentResponse.from_agent(step.get("agent"))  # type: ignore
                 step["agent"] = agent_response.model_dump(exclude_none=True)
 
             if step.get("team"):
-                team_response = await TeamResponse.from_team(step.get("team", {}))  # type: ignore
+                team_response = await TeamResponse.from_team(step.get("team"))  # type: ignore
                 step["team"] = team_response.model_dump(exclude_none=True)
 
             if step.get("steps"):
