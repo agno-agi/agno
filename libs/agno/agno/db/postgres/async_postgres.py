@@ -288,7 +288,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
                 result = await sess.execute(delete_stmt)
 
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore
                     log_debug(f"No session found to delete with session_id: {session_id} in table {table.name}")
                     return False
 
@@ -317,7 +317,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
                 result = await sess.execute(delete_stmt)
 
-            log_debug(f"Successfully deleted {result.rowcount} sessions")
+            log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
@@ -737,10 +737,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
                 result = await sess.execute(delete_stmt)
 
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore
                     log_debug(f"No user memories found with ids: {memory_ids}")
                 else:
-                    log_debug(f"Successfully deleted {result.rowcount} user memories")
+                    log_debug(f"Successfully deleted {result.rowcount} user memories")  # type: ignore
 
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
@@ -1649,7 +1649,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 stmt = table.delete().where(table.c.run_id == eval_run_id)
                 result = await sess.execute(stmt)
 
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore
                     log_warning(f"No eval run found with ID: {eval_run_id}")
                 else:
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
@@ -1670,10 +1670,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
                 result = await sess.execute(stmt)
 
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore
                     log_warning(f"No eval runs found with IDs: {eval_run_ids}")
                 else:
-                    log_debug(f"Deleted {result.rowcount} eval runs")
+                    log_debug(f"Deleted {result.rowcount} eval runs")  # type: ignore
 
         except Exception as e:
             log_error(f"Error deleting eval runs {eval_run_ids}: {e}")

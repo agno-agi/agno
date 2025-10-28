@@ -309,7 +309,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
                 result = await sess.execute(delete_stmt)
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore
                     log_debug(f"No session found to delete with session_id: {session_id}")
                     return False
                 else:
@@ -339,7 +339,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
                 result = await sess.execute(delete_stmt)
 
-            log_debug(f"Successfully deleted {result.rowcount} sessions")
+            log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
@@ -945,7 +945,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
-                success = result.rowcount > 0
+                success = result.rowcount > 0  # type: ignore
                 if success:
                     log_debug(f"Successfully deleted user memory id: {memory_id}")
                 else:
@@ -975,7 +975,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore
                     log_debug(f"No user memories found with ids: {memory_ids}")
 
         except Exception as e:
@@ -1775,7 +1775,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id == eval_run_id)
                 result = await sess.execute(stmt)
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore
                     log_warning(f"No eval run found with ID: {eval_run_id}")
                 else:
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
@@ -1798,10 +1798,10 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
                 result = await sess.execute(stmt)
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore
                     log_debug(f"No eval runs found with IDs: {eval_run_ids}")
                 else:
-                    log_debug(f"Deleted {result.rowcount} eval runs")
+                    log_debug(f"Deleted {result.rowcount} eval runs")  # type: ignore
 
         except Exception as e:
             log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
@@ -2079,7 +2079,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 delete_stmt = table.delete().where(table.c.id == id)
                 result = await sess.execute(delete_stmt)
 
-                success = result.rowcount > 0
+                success = result.rowcount > 0  # type: ignore
                 if success:
                     log_debug(f"Successfully deleted cultural artifact id: {id}")
                 else:

@@ -387,14 +387,7 @@ def get_run_output_util(
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
     """
-    if session_id is None and entity.cached_session is not None:
-        run_response = entity.cached_session.get_run(run_id=run_id)
-        if run_response is not None:
-            return run_response
-        else:
-            log_warning(f"RunOutput {run_id} not found in Session {entity.cached_session.session_id}")
-            return None
-    else:
+    if session_id is not None:
         session = entity.get_session(session_id=session_id)
         if session is not None:
             run_response = session.get_run(run_id=run_id)
@@ -402,6 +395,13 @@ def get_run_output_util(
                 return run_response
             else:
                 log_warning(f"RunOutput {run_id} not found in Session {session_id}")
+    elif entity.cached_session is not None:
+        run_response = entity.cached_session.get_run(run_id=run_id)
+        if run_response is not None:
+            return run_response
+        else:
+            log_warning(f"RunOutput {run_id} not found in Session {entity.cached_session.session_id}")
+            return None
     return None
 
 
@@ -415,14 +415,7 @@ async def aget_run_output_util(
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
     """
-    if session_id is None and entity.cached_session is not None:
-        run_response = entity.cached_session.get_run(run_id=run_id)
-        if run_response is not None:
-            return run_response
-        else:
-            log_warning(f"RunOutput {run_id} not found in Session {entity.cached_session.session_id}")
-            return None
-    else:
+    if session_id is not None:
         session = await entity.aget_session(session_id=session_id)
         if session is not None:
             run_response = session.get_run(run_id=run_id)
@@ -430,6 +423,13 @@ async def aget_run_output_util(
                 return run_response
             else:
                 log_warning(f"RunOutput {run_id} not found in Session {session_id}")
+    elif entity.cached_session is not None:
+        run_response = entity.cached_session.get_run(run_id=run_id)
+        if run_response is not None:
+            return run_response
+        else:
+            log_warning(f"RunOutput {run_id} not found in Session {entity.cached_session.session_id}")
+            return None
     return None
 
 
@@ -445,19 +445,7 @@ def get_last_run_output_util(
     Returns:
         RunOutput: The last run response from the database.
     """
-    if (
-        session_id is None and entity.cached_session is not None
-        and entity.cached_session.runs is not None
-        and len(entity.cached_session.runs) > 0
-    ):
-        for run_output in reversed(entity.cached_session.runs):
-            if entity.__class__.__name__ == "Agent":
-                if hasattr(run_output, "agent_id") and run_output.agent_id == entity.id:
-                    return run_output
-            elif entity.__class__.__name__ == "Team":
-                if hasattr(run_output, "team_id") and run_output.team_id == entity.id:
-                    return run_output
-    else:
+    if session_id is not None:
         session = entity.get_session(session_id=session_id)
         if session is not None and session.runs is not None and len(session.runs) > 0:
             for run_output in reversed(session.runs):
@@ -469,6 +457,19 @@ def get_last_run_output_util(
                         return run_output
         else:
             log_warning(f"No run responses found in Session {session_id}")
+
+    elif (
+        entity.cached_session is not None
+        and entity.cached_session.runs is not None
+        and len(entity.cached_session.runs) > 0
+    ):
+        for run_output in reversed(entity.cached_session.runs):
+            if entity.__class__.__name__ == "Agent":
+                if hasattr(run_output, "agent_id") and run_output.agent_id == entity.id:
+                    return run_output
+            elif entity.__class__.__name__ == "Team":
+                if hasattr(run_output, "team_id") and run_output.team_id == entity.id:
+                    return run_output
     return None
 
 
@@ -484,19 +485,7 @@ async def aget_last_run_output_util(
     Returns:
         RunOutput: The last run response from the database.
     """
-    if (
-        session_id is None and entity.cached_session is not None
-        and entity.cached_session.runs is not None
-        and len(entity.cached_session.runs) > 0
-    ):
-        for run_output in reversed(entity.cached_session.runs):
-            if entity.__class__.__name__ == "Agent":
-                if hasattr(run_output, "agent_id") and run_output.agent_id == entity.id:
-                    return run_output
-            elif entity.__class__.__name__ == "Team":
-                if hasattr(run_output, "team_id") and run_output.team_id == entity.id:
-                    return run_output
-    else:
+    if session_id is not None:
         session = await entity.aget_session(session_id=session_id)
         if session is not None and session.runs is not None and len(session.runs) > 0:
             for run_output in reversed(session.runs):
@@ -508,6 +497,19 @@ async def aget_last_run_output_util(
                         return run_output
         else:
             log_warning(f"No run responses found in Session {session_id}")
+
+    elif (
+        entity.cached_session is not None
+        and entity.cached_session.runs is not None
+        and len(entity.cached_session.runs) > 0
+    ):
+        for run_output in reversed(entity.cached_session.runs):
+            if entity.__class__.__name__ == "Agent":
+                if hasattr(run_output, "agent_id") and run_output.agent_id == entity.id:
+                    return run_output
+            elif entity.__class__.__name__ == "Team":
+                if hasattr(run_output, "team_id") and run_output.team_id == entity.id:
+                    return run_output
     return None
 
 
@@ -566,15 +568,16 @@ async def aset_session_name_util(
     return session
 
 
-def get_session_name_util(entity: Union["Agent", "Team"], session_id: Optional[str] = None) -> str:
+def get_session_name_util(entity: Union["Agent", "Team"], session_id: str) -> str:
     """Get the session name for the given session ID and user ID."""
+
     session = entity.get_session(session_id=session_id)  # type: ignore
     if session is None:
         raise Exception("Session not found")
     return session.session_data.get("session_name", "") if session.session_data is not None else ""  # type: ignore
 
 
-async def aget_session_name_util(entity: Union["Agent", "Team"], session_id: Optional[str] = None) -> str:
+async def aget_session_name_util(entity: Union["Agent", "Team"], session_id: str) -> str:
     """Get the session name for the given session ID and user ID."""
     session = await entity.aget_session(session_id=session_id)  # type: ignore
     if session is None:
@@ -582,7 +585,7 @@ async def aget_session_name_util(entity: Union["Agent", "Team"], session_id: Opt
     return session.session_data.get("session_name", "") if session.session_data is not None else ""  # type: ignore
 
 
-def get_session_state_util(entity: Union["Agent", "Team"], session_id: Optional[str] = None) -> Dict[str, Any]:
+def get_session_state_util(entity: Union["Agent", "Team"], session_id: str) -> Dict[str, Any]:
     """Get the session state for the given session ID and user ID."""
     session = entity.get_session(session_id=session_id)  # type: ignore
     if session is None:
@@ -590,7 +593,7 @@ def get_session_state_util(entity: Union["Agent", "Team"], session_id: Optional[
     return session.session_data.get("session_state", {}) if session.session_data is not None else {}  # type: ignore
 
 
-async def aget_session_state_util(entity: Union["Agent", "Team"], session_id: Optional[str] = None) -> Dict[str, Any]:
+async def aget_session_state_util(entity: Union["Agent", "Team"], session_id: str) -> Dict[str, Any]:
     """Get the session state for the given session ID and user ID."""
     session = await entity.aget_session(session_id=session_id)  # type: ignore
     if session is None:
@@ -599,7 +602,7 @@ async def aget_session_state_util(entity: Union["Agent", "Team"], session_id: Op
 
 
 def update_session_state_util(
-    entity: Union["Agent", "Team"], session_state_updates: Dict[str, Any], session_id: Optional[str] = None
+    entity: Union["Agent", "Team"], session_state_updates: Dict[str, Any], session_id: str
 ) -> str:
     """
     Update the session state for the given session ID and user ID.
@@ -625,7 +628,7 @@ def update_session_state_util(
 
 
 async def aupdate_session_state_util(
-    entity: Union["Agent", "Team"], session_state_updates: Dict[str, Any], session_id: Optional[str] = None
+    entity: Union["Agent", "Team"], session_state_updates: Dict[str, Any], session_id: str
 ) -> str:
     """
     Update the session state for the given session ID and user ID.
@@ -650,7 +653,7 @@ async def aupdate_session_state_util(
     return session.session_data["session_state"]  # type: ignore
 
 
-def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: Optional[str] = None) -> Optional[Metrics]:
+def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[Metrics]:
     """Get the session metrics for the given session ID and user ID."""
     session = entity.get_session(session_id=session_id)  # type: ignore
     if session is None:
@@ -664,9 +667,7 @@ def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: Optiona
     return None
 
 
-async def aget_session_metrics_util(
-    entity: Union["Agent", "Team"], session_id: Optional[str] = None
-) -> Optional[Metrics]:
+async def aget_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[Metrics]:
     """Get the session metrics for the given session ID and user ID."""
     session = await entity.aget_session(session_id=session_id)  # type: ignore
     if session is None:
@@ -680,7 +681,7 @@ async def aget_session_metrics_util(
     return None
 
 
-def get_chat_history_util(entity: Union["Agent", "Team"], session_id: Optional[str] = None) -> List[Message]:
+def get_chat_history_util(entity: Union["Agent", "Team"], session_id: str) -> List[Message]:
     """Read the chat history from the session
 
     Args:
@@ -696,7 +697,7 @@ def get_chat_history_util(entity: Union["Agent", "Team"], session_id: Optional[s
     return session.get_chat_history()
 
 
-async def aget_chat_history_util(entity: Union["Agent", "Team"], session_id: Optional[str] = None) -> List[Message]:
+async def aget_chat_history_util(entity: Union["Agent", "Team"], session_id: str) -> List[Message]:
     """Read the chat history from the session
 
     Args:

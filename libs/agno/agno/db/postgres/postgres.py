@@ -2149,7 +2149,7 @@ class PostgresDb(BaseDb):
                     agent_id=cultural_knowledge.agent_id,
                     team_id=cultural_knowledge.team_id,
                 )
-                stmt = stmt.on_conflict_do_update(
+                stmt = stmt.on_conflict_do_update( # type: ignore
                     index_elements=["id"],
                     set_=dict(
                         name=cultural_knowledge.name,

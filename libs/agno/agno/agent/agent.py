@@ -5698,7 +5698,8 @@ class Agent:
             agent_data["model"] = self.model.to_dict()
         return agent_data
 
-    def cancel_run(self, run_id: str) -> bool:
+    @staticmethod
+    def cancel_run(run_id: str) -> bool:
         """Cancel a running agent execution.
 
         Args:

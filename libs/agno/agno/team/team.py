@@ -148,7 +148,16 @@ from agno.utils.response import (
 )
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import generate_id_from_name, parse_response_model_str
-from agno.utils.team import format_member_agent_task, get_member_id
+from agno.utils.team import (
+    add_interaction_to_team_run_context,
+    format_member_agent_task,
+    get_member_id,
+    get_team_member_interactions_str,
+    get_team_run_context_audio,
+    get_team_run_context_files,
+    get_team_run_context_images,
+    get_team_run_context_videos,
+)
 from agno.utils.timer import Timer
 
 
@@ -924,7 +933,8 @@ class Team:
     def set_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]]):
         self.tools = tools
 
-    def cancel_run(self, run_id: str) -> bool:
+    @staticmethod
+    def cancel_run(run_id: str) -> bool:
         """Cancel a running team execution.
 
         Args:
@@ -6709,14 +6719,14 @@ class Team:
     ) -> Optional[str]:
         team_member_interactions_str = None
         if self.share_member_interactions:
-            team_member_interactions_str = self._get_team_member_interactions_str(team_run_context=team_run_context)  # type: ignore
-            if context_images := self._get_team_run_context_images(team_run_context=team_run_context):  # type: ignore
+            team_member_interactions_str = get_team_member_interactions_str(team_run_context=team_run_context)  # type: ignore
+            if context_images := get_team_run_context_images(team_run_context=team_run_context):  # type: ignore
                 images.extend(context_images)
-            if context_videos := self._get_team_run_context_videos(team_run_context=team_run_context):  # type: ignore
+            if context_videos := get_team_run_context_videos(team_run_context=team_run_context):  # type: ignore
                 videos.extend(context_videos)
-            if context_audio := self._get_team_run_context_audio(team_run_context=team_run_context):  # type: ignore
+            if context_audio := get_team_run_context_audio(team_run_context=team_run_context):  # type: ignore
                 audio.extend(context_audio)
-            if context_files := self._get_team_run_context_files(team_run_context=team_run_context):  # type: ignore
+            if context_files := get_team_run_context_files(team_run_context=team_run_context):  # type: ignore
                 files.extend(context_files)
         return team_member_interactions_str
 
@@ -6859,7 +6869,7 @@ class Team:
                 normalized_task = str(member_agent_task.content)
             else:
                 normalized_task = ""
-            self._add_interaction_to_team_run_context(
+            add_interaction_to_team_run_context(
                 team_run_context=team_run_context,
                 member_name=member_name,
                 task=normalized_task,
@@ -8153,88 +8163,6 @@ class Team:
             user_id = "default"
 
         return await self.memory_manager.aget_user_memories(user_id=user_id)
-
-    # -*- Internal functions -*-
-    def _add_interaction_to_team_run_context(
-        self,
-        team_run_context: Dict[str, Any],
-        member_name: str,
-        task: str,
-        run_response: Union[RunOutput, TeamRunOutput],
-    ) -> None:
-        if "member_responses" not in team_run_context:
-            team_run_context["member_responses"] = []
-        team_run_context["member_responses"].append(
-            {
-                "member_name": member_name,
-                "task": task,
-                "run_response": run_response,
-            }
-        )
-        log_debug(f"Updated team run context with member name: {member_name}")
-
-    def _get_team_member_interactions_str(self, team_run_context: Dict[str, Any]) -> str:
-        if not team_run_context:
-            return ""
-        team_member_interactions_str = ""
-        if "member_responses" in team_run_context:
-            team_member_interactions_str += (
-                "<member_interaction_context>\nSee below interactions wit other team members.\n"
-            )
-
-            for interaction in team_run_context["member_responses"]:
-                response_dict = interaction["run_response"].to_dict()
-                response_content = (
-                    response_dict.get("content")
-                    or ",".join([tool.get("content", "") for tool in response_dict.get("tools", [])])
-                    or ""
-                )
-                team_member_interactions_str += f"Member: {interaction['member_name']}\n"
-                team_member_interactions_str += f"Task: {interaction['task']}\n"
-                team_member_interactions_str += f"Response: {response_content}\n"
-                team_member_interactions_str += "\n"
-            team_member_interactions_str += "</member_interaction_context>\n"
-        return team_member_interactions_str
-
-    def _get_team_run_context_images(self, team_run_context: Dict[str, Any]) -> List[Image]:
-        if not team_run_context:
-            return []
-        images = []
-        if "member_responses" in team_run_context:
-            for interaction in team_run_context["member_responses"]:
-                if interaction["run_response"].images:
-                    images.extend(interaction["run_response"].images)
-        return images
-
-    def _get_team_run_context_videos(self, team_run_context: Dict[str, Any]) -> List[Video]:
-        if not team_run_context:
-            return []
-        videos = []
-        if "member_responses" in team_run_context:
-            for interaction in team_run_context["member_responses"]:
-                if interaction["run_response"].videos:
-                    videos.extend(interaction["run_response"].videos)
-        return videos
-
-    def _get_team_run_context_audio(self, team_run_context: Dict[str, Any]) -> List[Audio]:
-        if not team_run_context:
-            return []
-        audio = []
-        if "member_responses" in team_run_context:
-            for interaction in team_run_context["member_responses"]:
-                if interaction["run_response"].audio:
-                    audio.extend(interaction["run_response"].audio)
-        return audio
-
-    def _get_team_run_context_files(self, team_run_context: Dict[str, Any]) -> List[File]:
-        if not team_run_context:
-            return []
-        files = []
-        if "member_responses" in team_run_context:
-            for interaction in team_run_context["member_responses"]:
-                if interaction["run_response"].files:
-                    files.extend(interaction["run_response"].files)
-        return files
 
     ###########################################################################
     # Handle images, videos and audio

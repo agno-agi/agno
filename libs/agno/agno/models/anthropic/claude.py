@@ -87,7 +87,9 @@ class Claude(Model):
     mcp_servers: Optional[List[MCPServerConfiguration]] = None
 
     # Skills configuration
-    skills: Optional[List[Dict[str, str]]] = None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
+    skills: Optional[List[Dict[str, str]]] = (
+        None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
+    )
     betas: Optional[List[str]] = None  # Enables specific experimental or newly released features.
 
     # Client parameters
@@ -583,7 +585,7 @@ class Claude(Model):
 
         # Extract file IDs if skills are enabled
         if self.skills and response.content:
-            file_ids = []
+            file_ids: List[str] = []
             for block in response.content:
                 if block.type == "bash_code_execution_tool_result":
                     if hasattr(block, "content") and hasattr(block.content, "content"):
