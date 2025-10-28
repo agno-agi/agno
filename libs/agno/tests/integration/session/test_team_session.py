@@ -184,6 +184,52 @@ def test_get_messages_from_last_n_runs_with_last_n_messages_skip_system_message(
     assert messages[2].content == "Third response"
 
 
+def test_get_messages_from_last_n_runs_with_last_n_messages_skip_incomplete_tool_results(shared_db):
+    """Test getting last N messages and skipping incomplete tool results"""
+    session_id = f"test_session_{uuid.uuid4()}"
+
+    # Create multiple runs with system messages
+    runs = [
+        TeamRunOutput(
+            team_id="test_team",
+            run_id="run1",
+            status=RunStatus.completed,
+            messages=[
+                Message(role="system", content="System prompt"),
+                Message(role="user", content="Third message"),
+                Message(
+                    role="assistant",
+                    content="Third response",
+                    tool_calls=[{"id": "tool_call_id_1"}, {"id": "tool_call_id_2"}],
+                ),
+                Message(role="tool", content="Tool result 1", tool_call_id="tool_call_id_1"),
+                Message(role="tool", content="Tool result 2", tool_call_id="tool_call_id_2"),
+                Message(role="assistant", content="Assistant response"),
+            ],
+        ),
+    ]
+
+    team_session = create_session_with_runs(shared_db, session_id, runs)
+    assert team_session is not None
+
+    # This will include the tool result only, but we don't want to include it without an associated assistant response with tool calls
+    messages = team_session.get_messages_from_last_n_runs(last_n_messages=3, skip_role="system")
+
+    assert len(messages) == 1
+    # Then the assistant response with the tool call
+    assert messages[0].content == "Assistant response"
+
+    # This will include the tool result and the assistant response with the tool call
+    messages = team_session.get_messages_from_last_n_runs(last_n_messages=4, skip_role="system")
+
+    assert len(messages) == 4
+    # Then the assistant response with the tool call
+    assert messages[0].content == "Third response"
+    assert messages[1].content == "Tool result 1"
+    assert messages[2].content == "Tool result 2"
+    assert messages[3].content == "Assistant response"
+
+
 def test_get_messages_skip_history_messages(shared_db):
     """Test that messages tagged as from_history are skipped"""
     session_id = f"test_session_{uuid.uuid4()}"

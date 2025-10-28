@@ -196,6 +196,10 @@ class TeamSession:
                 ]  # Grab one less message then add the system message
             else:
                 messages_from_history = messages_from_history[-last_n_messages:]
+
+            # Remove tool result messages that don't have an associated assistant message with tool calls
+            while len(messages_from_history) > 0 and messages_from_history[0].role == "tool":
+                messages_from_history.pop(0)
         else:
             # Filter by last_n runs
             runs_to_process = session_runs[-last_n:] if last_n is not None else session_runs
