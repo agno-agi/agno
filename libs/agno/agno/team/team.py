@@ -761,7 +761,9 @@ class Team:
             for model_type in ["model", "reasoning_model", "parser_model", "output_model"]:
                 if getattr(member, model_type) is None and getattr(self, model_type) is not None:
                     setattr(member, model_type, getattr(self, model_type))
-                    log_info(f"Agent inheriting {model_type} from Team")
+                    log_info(
+                        f"Agent '{member.name or member.id}' inheriting {model_type} from Team: {getattr(self, model_type).id}"
+                    )
 
         elif isinstance(member, Team):
             member.parent_team_id = self.id
