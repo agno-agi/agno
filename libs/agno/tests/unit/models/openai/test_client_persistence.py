@@ -5,7 +5,6 @@ class _FakeOpenAIClient:
     def __init__(self, **kwargs):
         self._closed = False
 
-
     def is_closed(self):
         return self._closed
 

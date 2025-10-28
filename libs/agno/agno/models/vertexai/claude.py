@@ -30,10 +30,6 @@ class Claude(AnthropicClaude):
     project_id: Optional[str] = None
     base_url: Optional[str] = None
 
-    # Anthropic clients
-    client: Optional[AnthropicClient] = None
-    async_client: Optional[AsyncAnthropicClient] = None
-
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
 

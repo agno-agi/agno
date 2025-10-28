@@ -121,7 +121,7 @@ class AzureOpenAI(OpenAILike):
             _client_params["http_client"] = self.http_client
         else:
             if self.http_client:
-                log_debug(f"The current http_client is not async. A default httpx.AsyncClient will be used instead.")
+                log_debug("The current http_client is not async. A default httpx.AsyncClient will be used instead.")
             # Create a new async HTTP client with custom limits
             _client_params["http_client"] = httpx.AsyncClient(
                 limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
