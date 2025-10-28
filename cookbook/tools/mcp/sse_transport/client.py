@@ -19,12 +19,14 @@ async def run_agent(message: str) -> None:
         url=server_url,
         refresh_connection=True,  # (Optional) Refresh the MCP connection and tools on each run
     )
+    await mcp_tools.connect()
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         tools=[mcp_tools],
         markdown=True,
     )
     await agent.aprint_response(input=message, stream=True, markdown=True)
+    await mcp_tools.close()
 
 
 # Using MultiMCPTools, we can connect to multiple MCP servers at once, even if they use different transports.
@@ -36,13 +38,14 @@ async def run_agent_with_multimcp(message: str) -> None:
         urls_transports=["sse"],
         refresh_connection=True,  # (Optional) Refresh the MCP connection and tools on each run
     )
+    await mcp_tools.connect()
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         tools=[mcp_tools],
         markdown=True,
     )
     await agent.aprint_response(input=message, stream=True, markdown=True)
-
+    await mcp_tools.close()
 
 if __name__ == "__main__":
     asyncio.run(run_agent("Do I have any birthdays this week?"))
