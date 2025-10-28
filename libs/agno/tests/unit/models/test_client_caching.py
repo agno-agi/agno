@@ -7,8 +7,9 @@ This test suite verifies that:
 3. No new httpx clients are created on every request
 """
 
-import httpx
 import os
+
+import httpx
 import pytest
 
 # Set test API key to avoid env var lookup errors
@@ -264,9 +265,7 @@ class TestSetGlobalClients:
 
     def test_set_custom_sync_client_affects_all_models(self):
         """Verify that setting a custom sync client affects all models."""
-        custom_client = httpx.Client(
-            limits=httpx.Limits(max_connections=100, max_keepalive_connections=50)
-        )
+        custom_client = httpx.Client(limits=httpx.Limits(max_connections=100, max_keepalive_connections=50))
         set_default_sync_client(custom_client)
 
         # Create models after setting custom client
@@ -280,9 +279,7 @@ class TestSetGlobalClients:
 
     def test_set_custom_async_client_affects_all_models(self):
         """Verify that setting a custom async client affects all models."""
-        custom_client = httpx.AsyncClient(
-            limits=httpx.Limits(max_connections=100, max_keepalive_connections=50)
-        )
+        custom_client = httpx.AsyncClient(limits=httpx.Limits(max_connections=100, max_keepalive_connections=50))
         set_default_async_client(custom_client)
 
         # Create models after setting custom client
@@ -295,9 +292,7 @@ class TestSetGlobalClients:
 
     def test_custom_client_persists_across_multiple_calls(self):
         """Verify that custom client persists across multiple calls."""
-        custom_client = httpx.Client(
-            limits=httpx.Limits(max_connections=250)
-        )
+        custom_client = httpx.Client(limits=httpx.Limits(max_connections=250))
         set_default_sync_client(custom_client)
 
         model = OpenAIChat(id="gpt-4o")
@@ -314,9 +309,7 @@ class TestSetGlobalClients:
         default_client = get_default_sync_client()
 
         # Set custom client
-        custom_client = httpx.Client(
-            limits=httpx.Limits(max_connections=100)
-        )
+        custom_client = httpx.Client(limits=httpx.Limits(max_connections=100))
         set_default_sync_client(custom_client)
 
         # New calls should get custom client

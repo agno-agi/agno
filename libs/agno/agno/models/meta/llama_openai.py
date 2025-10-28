@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
-
 try:
     from openai import AsyncOpenAI as AsyncOpenAIClient
 except ImportError:
