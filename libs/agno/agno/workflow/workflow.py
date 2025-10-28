@@ -2676,6 +2676,7 @@ class Workflow:
 
             # Yield WorkflowAgentCompletedEvent
             agent_completed_event = WorkflowAgentCompletedEvent(
+                run_id=agent_response.run_id if agent_response else None,
                 workflow_name=self.name,
                 workflow_id=self.id,
                 session_id=session.session_id,
@@ -2704,6 +2705,7 @@ class Workflow:
 
                 # Yield WorkflowAgentCompletedEvent
                 agent_completed_event = WorkflowAgentCompletedEvent(
+                    run_id=agent_response.run_id if agent_response else None,
                     workflow_name=self.name,
                     workflow_id=self.id,
                     session_id=session.session_id,
@@ -3059,6 +3061,7 @@ class Workflow:
             agent_completed_event = WorkflowAgentCompletedEvent(
                 workflow_name=self.name,
                 workflow_id=self.id,
+                run_id=agent_response.run_id,
                 session_id=session.session_id,
                 content=workflow_run_response.content,
             )
@@ -3091,6 +3094,7 @@ class Workflow:
 
                 # Yield WorkflowAgentCompletedEvent
                 agent_completed_event = WorkflowAgentCompletedEvent(
+                    run_id=agent_response.run_id if agent_response else None,
                     workflow_name=self.name,
                     workflow_id=self.id,
                     session_id=session.session_id,
