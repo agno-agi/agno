@@ -2495,6 +2495,7 @@ class Workflow:
         workflow_tool = Function.from_callable(workflow_tool_func)
 
         self.agent.tools = [workflow_tool]  # type: ignore
+        self.agent._rebuild_tools = True
 
         log_debug("Workflow agent initialized with run_workflow tool")
 
@@ -2870,6 +2871,7 @@ class Workflow:
         workflow_tool = Function.from_callable(workflow_tool_func)
 
         self.agent.tools = [workflow_tool]  # type: ignore
+        self.agent._rebuild_tools = True
 
         log_debug("Workflow agent initialized with async run_workflow tool")
 
