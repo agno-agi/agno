@@ -10,6 +10,7 @@ This example shows:
 Requirements:
     pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
 """
+from opentelemetry import trace as trace_api
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -38,7 +39,6 @@ print("=" * 60)
 agent.print_response("What is the current price of Tesla?")
 
 # Force flush traces to database
-from opentelemetry import trace as trace_api
 tracer_provider = trace_api.get_tracer_provider()
 if hasattr(tracer_provider, 'force_flush'):
     tracer_provider.force_flush(timeout_millis=5000)

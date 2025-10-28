@@ -2005,9 +2005,7 @@ class SqliteDb(BaseDb):
         Args:
             trace: The Trace object to store (one per trace_id).
         """
-        try:
-            from agno.tracing.schemas import Trace
-            
+        try:            
             table = self._get_table(table_type="traces", create_table_if_not_found=True)
             if table is None:
                 return
