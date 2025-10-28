@@ -1335,12 +1335,14 @@ class Model(ABC):
         images = None
         videos = None
         audios = None
+        files = None
 
         if success and function_execution_result:
             # With unified classes, no conversion needed - use directly
             images = function_execution_result.images
             videos = function_execution_result.videos
             audios = function_execution_result.audios
+            files = function_execution_result.files
 
         return Message(
             role=self.tool_message_role,
@@ -1353,6 +1355,7 @@ class Model(ABC):
             images=images,
             videos=videos,
             audio=audios,
+            files=files,
             **kwargs,  # type: ignore
         )
 
