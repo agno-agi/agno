@@ -42,6 +42,7 @@ class MCPTools(Toolkit):
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
+        refresh_connection: bool = False,
         **kwargs,
     ):
         """
@@ -58,6 +59,7 @@ class MCPTools(Toolkit):
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
             transport: The transport protocol to use, either "stdio" or "sse" or "streamable-http"
+            refresh_connection: If True, the connection and tools will be refreshed on each run
         """
         super().__init__(name="MCPTools", **kwargs)
 
@@ -68,6 +70,7 @@ class MCPTools(Toolkit):
         # because tools are not available until `initialize()` is called.
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools
+        self.refresh_connection = refresh_connection
 
         if session is None and server_params is None:
             if transport == "sse" and url is None:

@@ -45,6 +45,7 @@ class MultiMCPTools(Toolkit):
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
+        refresh_connection: bool = False,
         allow_partial_failure: bool = False,
         **kwargs,
     ):
@@ -62,6 +63,7 @@ class MultiMCPTools(Toolkit):
             include_tools: Optional list of tool names to include (if None, includes all).
             exclude_tools: Optional list of tool names to exclude (if None, excludes none).
             allow_partial_failure: If True, allows toolkit to initialize even if some MCP servers fail to connect. If False, any failure will raise an exception.
+            refresh_connection: If True, the connection and tools will be refreshed on each run
         """
         super().__init__(name="MultiMCPTools", **kwargs)
 
@@ -82,6 +84,7 @@ class MultiMCPTools(Toolkit):
         # beacuse tools are not available until `initialize()` is called.
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools
+        self.refresh_connection = refresh_connection
 
         if server_params_list is None and commands is None and urls is None:
             raise ValueError("Either server_params_list or commands or urls must be provided")
@@ -183,6 +186,7 @@ class MultiMCPTools(Toolkit):
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
+        refresh_connection: bool = False,
         **kwargs,
     ) -> "MultiMCPTools":
         """Initialize a MultiMCPTools instance and connect to the MCP servers"""
@@ -196,6 +200,7 @@ class MultiMCPTools(Toolkit):
             client=client,
             include_tools=include_tools,
             exclude_tools=exclude_tools,
+            refresh_connection=refresh_connection,
             **kwargs,
         )
 

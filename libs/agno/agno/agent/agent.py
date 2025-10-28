@@ -242,9 +242,6 @@ class Agent:
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
 
-    # If True, on each run any instances of MCP tools are refreshed (i.e. the connection is re-established and all available tools are re-fetched)
-    refresh_mcp_tools: bool = False
-
     # --- Agent Hooks ---
     # Functions called right after agent-session is loaded, before processing starts
     pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
@@ -440,7 +437,6 @@ class Agent:
         tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        refresh_mcp_tools: bool = False,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
@@ -548,8 +544,6 @@ class Agent:
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
-
-        self.refresh_mcp_tools = refresh_mcp_tools
 
         # Initialize hooks with backward compatibility
         self.pre_hooks = pre_hooks
@@ -5309,7 +5303,7 @@ class Agent:
         if self.tools is not None:
             for tool in self.tools:
                 if isinstance(tool, (MCPTools, MultiMCPTools)):
-                    if self.refresh_mcp_tools:
+                    if tool.refresh_connection:
                         try:
                             is_alive = await tool.is_alive()
                             if not is_alive:

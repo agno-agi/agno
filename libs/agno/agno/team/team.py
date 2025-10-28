@@ -308,9 +308,6 @@ class Team:
     # A list of hooks to be called before and after the tool call
     tool_hooks: Optional[List[Callable]] = None
 
-    # If True, on each run any instances of MCP tools are refreshed (i.e. the connection is re-established and all available tools are re-fetched)
-    refresh_mcp_tools: bool = False
-
     # --- Team Hooks ---
     # Functions called right after team session is loaded, before processing starts
     pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
@@ -470,7 +467,6 @@ class Team:
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
-        refresh_mcp_tools: bool = False,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parser_model: Optional[Model] = None,
@@ -576,7 +572,6 @@ class Team:
         self.tool_choice = tool_choice
         self.tool_call_limit = tool_call_limit
         self.tool_hooks = tool_hooks
-        self.refresh_mcp_tools = refresh_mcp_tools
 
         # Initialize hooks with backward compatibility
         self.pre_hooks = pre_hooks
@@ -4921,7 +4916,7 @@ class Team:
         if self.tools is not None:
             for tool in self.tools:
                 if isinstance(tool, (MCPTools, MultiMCPTools)):
-                    if self.refresh_mcp_tools:
+                    if tool.refresh_connection:
                         try:
                             is_alive = await tool.is_alive()
                             if not is_alive:

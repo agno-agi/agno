@@ -14,12 +14,15 @@ server_url = "http://localhost:8000/sse"
 
 
 async def run_agent(message: str) -> None:
-    mcp_tools = MCPTools(transport="sse", url=server_url)
+    mcp_tools = MCPTools(
+        transport="sse",
+        url=server_url,
+        refresh_connection=True,  # (Optional) Refresh the MCP connection and tools on each run
+    )
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         tools=[mcp_tools],
         markdown=True,
-        refresh_mcp_tools=True,  # (Optional) Refresh the MCP tools on each run
     )
     await agent.aprint_response(input=message, stream=True, markdown=True)
 
@@ -31,12 +34,12 @@ async def run_agent_with_multimcp(message: str) -> None:
         commands=["npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt"],
         urls=[server_url],
         urls_transports=["sse"],
+        refresh_connection=True,  # (Optional) Refresh the MCP connection and tools on each run
     )
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         tools=[mcp_tools],
         markdown=True,
-        refresh_mcp_tools=True,  # (Optional) Refresh the MCP tools on each run
     )
     await agent.aprint_response(input=message, stream=True, markdown=True)
 
