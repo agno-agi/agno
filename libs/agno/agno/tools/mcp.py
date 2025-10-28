@@ -11,6 +11,9 @@ from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool
 
+# New addition
+from agno.utils.mcp import get_entrypoint_for_prompt 
+
 try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.sse import sse_client
@@ -387,6 +390,62 @@ class MCPTools(Toolkit):
 
             log_debug(f"{self.name} initialized with {len(filtered_tools)} tools")
             self._initialized = True
+
+            # ===== PROMPTS SECTION (new code) =====
+            try:
+                # Get the list of prompts from the MCP server
+                available_prompts = await self.session.list_prompts()
+                
+                # Store prompts in a dictionary for easy access
+                self.prompts = {}
+                
+                for prompt in available_prompts.prompts:
+                    try:
+                        # Store the prompt metadata
+                        self.prompts[prompt.name] = prompt
+                        
+                        # Get an entrypoint for the prompt (same pattern as tools!)
+                        entrypoint = get_entrypoint_for_prompt(prompt, self.session)
+                        
+                        # Build parameters schema from prompt arguments
+                        parameters = {
+                            "type": "object",
+                            "properties": {},
+                            "required": []
+                        }
+                        
+                        # Add each argument from the prompt to the schema
+                        if prompt.arguments:
+                            for arg in prompt.arguments:
+                                parameters["properties"][arg.name] = {
+                                    "type": "string",
+                                    "description": arg.description if arg.description else f"Argument: {arg.name}"
+                                }
+                                if arg.required:
+                                    parameters["required"].append(arg.name)
+
+                        # Create a Function for the prompt (just like tools!)
+                        f = Function(
+                            name=f"{prompt.name}",
+                            description=prompt.description,
+                            parameters=parameters,
+                            entrypoint=entrypoint,
+                            skip_entrypoint_processing=True,
+                        )                                                                               
+                        
+                        # Register the Function with the toolkit (THIS IS THE KEY PART!)
+                        self.functions[f.name] = f
+                        log_debug(f"Prompt: {prompt.name} registered with {self.name}")
+                        
+                    except Exception as e:
+                        log_error(f"Failed to register prompt {prompt.name}: {e}")
+                
+                log_debug(f"{self.name} initialized with {len(self.prompts)} prompts")
+                
+            except Exception as e:
+                # If the server doesn't support prompts, log a warning but don't fail
+                log_warning(f"Could not fetch prompts from MCP server: {e}")
+                self.prompts = {}
 
         except Exception as e:
             log_error(f"Failed to get MCP tools: {e}")
