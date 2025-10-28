@@ -87,7 +87,9 @@ class Claude(Model):
     mcp_servers: Optional[List[MCPServerConfiguration]] = None
 
     # Skills configuration
-    skills: Optional[List[Dict[str, str]]] = None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
+    skills: Optional[List[Dict[str, str]]] = (
+        None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
+    )
     betas: Optional[List[str]] = None  # Enables specific experimental or newly released features.
 
     # Client parameters

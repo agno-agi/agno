@@ -77,6 +77,4 @@ workflow.print_response(
 print("\n" + "=" * 80)
 print("FOURTH CALL (STREAMING): Compare Rocky and Luna")
 print("=" * 80)
-workflow.print_response(
-    "Compare Rocky and Luna", stream=True, stream_events=True
-)
+workflow.print_response("Compare Rocky and Luna", stream=True, stream_events=True)

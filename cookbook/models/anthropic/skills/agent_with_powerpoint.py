@@ -21,7 +21,9 @@ powerpoint_agent = Agent(
     name="PowerPoint Creator",
     model=Claude(
         id="claude-sonnet-4-5-20250929",
-        skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}],  # Enable PowerPoint presentation skill
+        skills=[
+            {"type": "anthropic", "skill_id": "pptx", "version": "latest"}
+        ],  # Enable PowerPoint presentation skill
     ),
     instructions=[
         "You are a professional presentation creator with access to PowerPoint skills.",

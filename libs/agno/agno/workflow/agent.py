@@ -109,7 +109,7 @@ class WorkflowAgent(Agent):
             """
             Execute the complete workflow with the given query.
             Use this tool when you need to run the workflow to answer the user's question.
-            
+
             Args:
                 query: The input query/question to process through the workflow
             Returns:
@@ -117,12 +117,12 @@ class WorkflowAgent(Agent):
             """
             # Reload session to get latest data from database
             # This ensures we don't overwrite any updates made after the tool was created
-            fresh_session = workflow.get_session(session_id=session.session_id)
-            if fresh_session is None:
-                fresh_session = session  # Fallback to closure session if reload fails
-                log_debug(f"Fallback to closure session: {len(fresh_session.runs or [])} runs")
+            session_from_db = workflow.get_session(session_id=session.session_id)
+            if session_from_db is None:
+                session_from_db = session  # Fallback to closure session if reload fails
+                log_debug(f"Fallback to closure session: {len(session_from_db.runs or [])} runs")
             else:
-                log_debug(f"Reloaded session before tool execution: {len(fresh_session.runs or [])} runs")
+                log_debug(f"Reloaded session before tool execution: {len(session_from_db.runs or [])} runs")
 
             # Create a new run ID for this execution
             run_id = str(uuid4())
@@ -131,7 +131,7 @@ class WorkflowAgent(Agent):
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
                 input=query,
-                session_id=fresh_session.session_id,
+                session_id=session_from_db.session_id,
                 workflow_id=workflow.id,
                 workflow_name=workflow.name,
                 created_at=int(datetime.now().timestamp()),
@@ -149,11 +149,9 @@ class WorkflowAgent(Agent):
 
             # ===== EXECUTION LOGIC (Based on streaming mode) =====
             if stream:
-                log_debug("TOOL EXECUTION STARTED: run_workflow with streaming...")
-
                 final_content = ""
                 for event in workflow._execute_stream(
-                    session=fresh_session,
+                    session=session_from_db,
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
                     session_state=session_state,
@@ -170,16 +168,12 @@ class WorkflowAgent(Agent):
                 return final_content
             else:
                 # NON-STREAMING MODE: Execute synchronously
-                log_debug("TOOL EXECUTION STARTED: run_workflow with non-streaming...")
-
                 result = workflow._execute(
-                    session=fresh_session,
+                    session=session_from_db,
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
                     session_state=session_state,
                 )
-
-                log_debug("TOOL EXECUTION COMPLETE: run_workflow")
 
                 if isinstance(result.content, str):
                     return result.content
@@ -235,12 +229,12 @@ class WorkflowAgent(Agent):
             """
             # Reload session to get latest data from database
             # This ensures we don't overwrite any updates made after the tool was created
-            fresh_session = workflow.get_session(session_id=session.session_id)
-            if fresh_session is None:
-                fresh_session = session  # Fallback to closure session if reload fails
-                log_debug(f"Fallback to closure session: {len(fresh_session.runs or [])} runs")
+            session_from_db = workflow.get_session(session_id=session.session_id)
+            if session_from_db is None:
+                session_from_db = session  # Fallback to closure session if reload fails
+                log_debug(f"Fallback to closure session: {len(session_from_db.runs or [])} runs")
             else:
-                log_debug(f"Reloaded session before async tool execution: {len(fresh_session.runs or [])} runs")
+                log_debug(f"Reloaded session before async tool execution: {len(session_from_db.runs or [])} runs")
 
             # Create a new run ID for this execution
             run_id = str(uuid4())
@@ -249,7 +243,7 @@ class WorkflowAgent(Agent):
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
                 input=query,
-                session_id=fresh_session.session_id,
+                session_id=session_from_db.session_id,
                 workflow_id=workflow.id,
                 workflow_name=workflow.name,
                 created_at=int(datetime.now().timestamp()),
@@ -265,12 +259,10 @@ class WorkflowAgent(Agent):
             )
 
             if stream:
-                log_debug("TOOL EXECUTION STARTED: run_workflow with async streaming...")
-
                 final_content = ""
                 async for event in workflow._aexecute_stream(
-                    session_id=fresh_session.session_id,
-                    user_id=fresh_session.user_id,
+                    session_id=session_from_db.session_id,
+                    user_id=session_from_db.user_id,
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
                     session_state=session_state,
@@ -284,21 +276,15 @@ class WorkflowAgent(Agent):
                     if isinstance(event, WorkflowCompletedEvent):
                         final_content = str(event.content) if event.content else ""
 
-                log_debug("TOOL EXECUTION COMPLETE: run_workflow with async streaming")
-
                 yield final_content
             else:
-                log_debug("TOOL EXECUTION STARTED: run_workflow with async non-streaming...")
-
                 result = await workflow._aexecute(
-                    session_id=fresh_session.session_id,
-                    user_id=fresh_session.user_id,
+                    session_id=session_from_db.session_id,
+                    user_id=session_from_db.user_id,
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
                     session_state=session_state,
                 )
-
-                log_debug("TOOL EXECUTION COMPLETE: run_workflow with async non-streaming")
 
                 if isinstance(result.content, str):
                     yield result.content
