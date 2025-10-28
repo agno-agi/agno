@@ -895,9 +895,6 @@ class Agent:
                 run_response=run_response,
                 run_input=run_input,
                 run_context=run_context,
-                session_state=run_context.session_state,
-                dependencies=run_context.dependencies,
-                metadata=run_context.metadata,
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
@@ -1109,9 +1106,6 @@ class Agent:
                 run_response=run_response,
                 run_input=run_input,
                 run_context=run_context,
-                session_state=run_context.session_state,
-                dependencies=run_context.dependencies,
-                metadata=run_context.metadata,
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
@@ -1503,18 +1497,17 @@ class Agent:
         # Determine runtime dependencies
         dependencies = dependencies if dependencies is not None else self.dependencies
 
+        # Initialize run context
         run_context = RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
             dependencies=dependencies,
-            knowledge_filters=knowledge_filters,
-            metadata=metadata,
         )
 
         # Resolve dependencies
-        if dependencies is not None:
+        if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
 
         add_dependencies = (
@@ -1528,8 +1521,8 @@ class Agent:
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
         # When filters are passed manually
-        if self.knowledge_filters or knowledge_filters:
-            knowledge_filters = self._get_effective_filters(knowledge_filters)
+        if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
+            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Use stream override value when necessary
         if stream is None:
@@ -1558,17 +1551,6 @@ class Agent:
                 metadata = self.metadata
             else:
                 merge_dictionaries(metadata, self.metadata)
-
-        # Initialize run context
-        run_context = RunContext(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            session_state=session_state,
-            dependencies=dependencies,
-            knowledge_filters=knowledge_filters,
-            metadata=metadata,
-        )
 
         # Create a new run_response for this attempt
         run_response = RunOutput(
@@ -1739,9 +1721,6 @@ class Agent:
                 hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_context=run_context,
-                session_state=run_context.session_state,
-                dependencies=run_context.dependencies,
-                metadata=run_context.metadata,
                 run_input=run_input,
                 session=agent_session,
                 user_id=user_id,
@@ -1861,9 +1840,6 @@ class Agent:
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     run_context=run_context,
-                    session_state=run_context.session_state,
-                    dependencies=run_context.dependencies,
-                    metadata=run_context.metadata,
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
@@ -2016,9 +1992,6 @@ class Agent:
                 run_response=run_response,
                 run_input=run_input,
                 session=agent_session,
-                session_state=run_context.session_state,
-                dependencies=run_context.dependencies,
-                metadata=run_context.metadata,
                 user_id=user_id,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -2174,9 +2147,6 @@ class Agent:
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     run_context=run_context,
-                    session_state=run_context.session_state,
-                    dependencies=run_context.dependencies,
-                    metadata=run_context.metadata,
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
@@ -2672,22 +2642,30 @@ class Agent:
 
         dependencies = dependencies if dependencies is not None else self.dependencies
 
-        # Resolve dependencies
-        if dependencies is not None:
-            self._resolve_run_dependencies(dependencies=dependencies)
+        # Initialize run context
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+        )
 
-        knowledge_filters = knowledge_filters
+        # Resolve dependencies
+        if run_context.dependencies is not None:
+            self._resolve_run_dependencies(run_context=run_context)
 
         # When filters are passed manually
-        if self.knowledge_filters or knowledge_filters:
-            knowledge_filters = self._get_effective_filters(knowledge_filters)
+        if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
+            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Merge agent metadata with run metadata
+        run_context.metadata = metadata
         if self.metadata is not None:
-            if metadata is None:
-                metadata = self.metadata
+            if run_context.metadata is None:
+                run_context.metadata = self.metadata
             else:
-                merge_dictionaries(metadata, self.metadata)
+                merge_dictionaries(run_context.metadata, self.metadata)
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
@@ -2735,17 +2713,6 @@ class Agent:
         self._set_default_model()
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
-
-        # Initialize run context
-        run_context = RunContext(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            session_state=session_state,
-            dependencies=dependencies,
-            knowledge_filters=knowledge_filters,
-            metadata=metadata,
-        )
 
         self._determine_tools_for_model(
             model=self.model,
@@ -2977,7 +2944,7 @@ class Agent:
 
         # 1. Resolve dependencies
         if run_context.dependencies is not None:
-            self._resolve_run_dependencies(dependencies=run_context.dependencies)
+            self._resolve_run_dependencies(run_context=run_context)
 
         # Start the Run by yielding a RunContinued event
         if stream_events:
@@ -3235,7 +3202,6 @@ class Agent:
             knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Merge agent metadata with run metadata
-        metadata = metadata
         if self.metadata is not None:
             if metadata is None:
                 metadata = self.metadata
@@ -3465,9 +3431,6 @@ class Agent:
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     run_context=run_context,
-                    session_state=run_context.session_state,
-                    dependencies=run_context.dependencies,
-                    metadata=run_context.metadata,
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
@@ -3708,9 +3671,6 @@ class Agent:
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     run_context=run_context,
-                    session_state=run_context.session_state,
-                    dependencies=run_context.dependencies,
-                    metadata=run_context.metadata,
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
@@ -3807,9 +3767,6 @@ class Agent:
         run_input: RunInput,
         session: AgentSession,
         run_context: RunContext,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -3824,9 +3781,9 @@ class Agent:
             "agent": self,
             "session": session,
             "run_context": run_context,
-            "session_state": session_state,
-            "dependencies": dependencies,
-            "metadata": metadata,
+            "session_state": run_context.session_state,
+            "dependencies": run_context.dependencies,
+            "metadata": run_context.metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -3879,9 +3836,6 @@ class Agent:
         run_input: RunInput,
         run_context: RunContext,
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -3896,9 +3850,9 @@ class Agent:
             "agent": self,
             "session": session,
             "run_context": run_context,
-            "session_state": session_state,
-            "dependencies": dependencies,
-            "metadata": metadata,
+            "session_state": run_context.session_state,
+            "dependencies": run_context.dependencies,
+            "metadata": run_context.metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -3954,9 +3908,6 @@ class Agent:
         run_output: RunOutput,
         session: AgentSession,
         run_context: RunContext,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -3970,9 +3921,9 @@ class Agent:
             "run_output": run_output,
             "agent": self,
             "session": session,
-            "session_state": session_state,
-            "dependencies": dependencies,
-            "metadata": metadata,
+            "session_state": run_context.session_state,
+            "dependencies": run_context.dependencies,
+            "metadata": run_context.metadata,
             "user_id": user_id,
             "run_context": run_context,
             "debug_mode": debug_mode or self.debug_mode,
@@ -4019,9 +3970,6 @@ class Agent:
         run_output: RunOutput,
         run_context: RunContext,
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -4036,9 +3984,9 @@ class Agent:
             "agent": self,
             "session": session,
             "run_context": run_context,
-            "session_state": session_state,
-            "dependencies": dependencies,
-            "metadata": metadata,
+            "session_state": run_context.session_state,
+            "dependencies": run_context.dependencies,
+            "metadata": run_context.metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -5728,25 +5676,34 @@ class Agent:
             else:
                 run_context.dependencies[key] = value
 
-    async def _aresolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
+    async def _aresolve_run_dependencies(self, run_context: RunContext) -> None:
         from inspect import iscoroutine, iscoroutinefunction, signature
 
         log_debug("Resolving context (async)")
-        if not isinstance(dependencies, dict):
+        if not isinstance(run_context.dependencies, dict):
             log_warning("Context is not a dict")
             return
 
-        for key, value in dependencies.items():
+        for key, value in run_context.dependencies.items():
             if not callable(value):
-                dependencies[key] = value
+                run_context.dependencies[key] = value
                 continue
             try:
                 sig = signature(value)
-                result = value(agent=self) if "agent" in sig.parameters else value()
 
+                # Build kwargs for the function
+                kwargs = {}
+                if "agent" in sig.parameters:
+                    kwargs["agent"] = self
+                if "run_context" in sig.parameters:
+                    kwargs["run_context"] = run_context
+
+                # Run the function
+                result = value(**kwargs)
                 if iscoroutine(result) or iscoroutinefunction(result):
                     result = await result
-                dependencies[key] = result
+
+                run_context.dependencies[key] = result
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 

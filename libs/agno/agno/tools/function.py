@@ -869,7 +869,7 @@ class FunctionCall(BaseModel):
                 run_context = entrypoint_args.get("run_context")
                 updated_session_state = (
                     run_context.session_state
-                    if run_context is not None and hasattr(run_context, "session_state")
+                    if run_context is not None and run_context.session_state is not None
                     else None
                 )
             else:
@@ -1103,7 +1103,7 @@ class FunctionCall(BaseModel):
                 run_context = entrypoint_args.get("run_context")
                 updated_session_state = (
                     run_context.session_state
-                    if run_context is not None and hasattr(run_context, "session_state")
+                    if run_context is not None and run_context.session_state is not None
                     else None
                 )
 
