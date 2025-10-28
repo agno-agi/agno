@@ -1,14 +1,9 @@
 """Integration tests for session and run endpoints in AgentOS."""
 
-import threading
-import time
-from typing import Dict
-
 import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
-from agno.db.base import SessionType
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 
@@ -16,7 +11,7 @@ from agno.os import AgentOS
 @pytest.fixture
 def test_agent(shared_db):
     """Create a test agent with SQLite database."""
-    
+
     return Agent(
         name="test-agent",
         id="test-agent-id",
@@ -45,4 +40,3 @@ def test_create_agent_run(test_os_client, test_agent: Agent):
     assert response_json["run_id"] is not None
     assert response_json["agent_id"] == test_agent.id
     assert response_json["content"] is not None
-

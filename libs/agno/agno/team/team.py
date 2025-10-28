@@ -1008,7 +1008,9 @@ class Team:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                from inspect import iscoroutinefunction
+
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     # Synchronous function
@@ -1139,7 +1141,9 @@ class Team:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                from inspect import iscoroutinefunction
+
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     hook(**filtered_args)
@@ -2087,8 +2091,6 @@ class Team:
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 6. Start memory creation in background task
-        import asyncio
-
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
@@ -2321,8 +2323,6 @@ class Team:
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 7. Start memory creation in background task
-        import asyncio
-
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
@@ -5037,7 +5037,7 @@ class Team:
                         _func.strict = True
                     if self.tool_hooks:
                         _func.tool_hooks = self.tool_hooks
-                    _functions.append(_func)
+                    _functions.append(_func.model_copy(deep=True))
                     log_debug(f"Added tool {_func.name} from {tool.name}")
 
                 # Add instructions from the toolkit
@@ -5057,7 +5057,7 @@ class Team:
                     tool.strict = True
                 if self.tool_hooks:
                     tool.tool_hooks = self.tool_hooks
-                _functions.append(tool)
+                _functions.append(tool.model_copy(deep=True))
                 log_debug(f"Added tool {tool.name}")
 
                 # Add instructions from the Function
@@ -5080,7 +5080,7 @@ class Team:
                         _func.strict = True
                     if self.tool_hooks:
                         _func.tool_hooks = self.tool_hooks
-                    _functions.append(_func)
+                    _functions.append(_func.model_copy(deep=True))
                     log_debug(f"Added tool {_func.name}")
                 except Exception as e:
                     log_warning(f"Could not add tool {tool}: {e}")
@@ -6764,6 +6764,11 @@ class Team:
             # 1. Initialize the member agent
             self._initialize_member(member_agent)
 
+            # If team has send_media_to_model=False, ensure member agent also has it set to False
+            # This allows tools to access files while preventing models from receiving them
+            if not self.send_media_to_model:
+                member_agent.send_media_to_model = False
+
             # 2. Handle respond_directly nuances
             if self.respond_directly:
                 # Since we return the response directly from the member agent, we need to set the output schema from the team down.
@@ -6893,6 +6898,7 @@ class Team:
             use_agent_logger()
 
             member_session_state_copy = copy(session_state)
+
             if stream:
                 member_agent_run_response_stream = member_agent.run(
                     input=member_agent_task if not history else history,
@@ -7019,6 +7025,7 @@ class Team:
             use_agent_logger()
 
             member_session_state_copy = copy(session_state)
+
             if stream:
                 member_agent_run_response_stream = member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
@@ -7323,6 +7330,7 @@ class Team:
 
                     async def run_member_agent(agent=current_agent) -> str:
                         member_session_state_copy = copy(session_state)
+
                         member_agent_run_response = await agent.arun(
                             input=member_agent_task if not history else history,
                             user_id=user_id,
@@ -8195,6 +8203,8 @@ class Team:
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
+        import asyncio
+
         from agno.knowledge.reader.text_reader import TextReader
 
         asyncio.run(
