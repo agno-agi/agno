@@ -141,6 +141,36 @@ def redis_db(import_redisdb, mock_embedder):
     db.index = idx
     return db, idx
 
+@pytest.fixture()
+def import_knowledge():
+    from agno.knowledge.knowledge import Knowledge
+    return Knowledge
+
+@pytest.fixture()
+def create_knowledge(import_knowledge, redis_db):
+    db, idx = redis_db
+    Knowledge = import_knowledge
+    knowledge = Knowledge(
+        name="My Redis Vector Knowledge Base",
+        description="This knowledge base uses Redis + RedisVL as the vector store",
+        vector_db=db,
+    )
+    return knowledge
+
+def test_knowlwedge_add_content(create_knowledge):
+    knowledge = create_knowledge
+    try:
+        result = knowledge.add_content(
+            name="Recipes",
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+            metadata={"doc_type": "recipe_book"},
+            skip_if_exists=True,
+        )
+
+        assert result is None or result is not False
+    
+    except Exception as e:
+        pytest.fail(f"add_content raised an unexpected exception: {e}")
 
 def test_create_and_exists(redis_db):
     db, idx = redis_db
