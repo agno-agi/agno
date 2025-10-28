@@ -165,6 +165,7 @@ class Function(BaseModel):
                 del type_hints["session_state"]
             if "dependencies" in sig.parameters and "dependencies" in type_hints:
                 del type_hints["dependencies"]
+
             # Remove media parameters from type hints as they are injected automatically
             if "images" in sig.parameters and "images" in type_hints:
                 del type_hints["images"]
@@ -186,13 +187,13 @@ class Function(BaseModel):
                     "agent",
                     "team",
                     "run_context",
+                    "session_state",
+                    "dependencies",
                     "self",
                     "images",
                     "videos",
                     "audios",
                     "files",
-                    "session_state",
-                    "dependencies",
                 ]
             }
 
@@ -227,6 +228,8 @@ class Function(BaseModel):
                         "agent",
                         "team",
                         "run_context",
+                        "session_state",
+                        "dependencies",
                         "self",
                         "images",
                         "videos",
@@ -245,6 +248,8 @@ class Function(BaseModel):
                         "agent",
                         "team",
                         "run_context",
+                        "session_state",
+                        "dependencies",
                         "self",
                         "images",
                         "videos",
@@ -321,13 +326,13 @@ class Function(BaseModel):
                 "agent",
                 "team",
                 "run_context",
+                "session_state",
+                "dependencies",
                 "self",
                 "images",
                 "videos",
                 "audios",
                 "files",
-                "session_state",
-                "dependencies",
             ]
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
@@ -489,13 +494,13 @@ class Function(BaseModel):
                 "agent",
                 "team",
                 "run_context",
+                "session_state",
+                "dependencies",
                 "images",
                 "videos",
                 "audios",
                 "files",
                 "self",
-                "session_state",
-                "dependencies",
             ]
         ]
 
@@ -651,6 +656,12 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an session_state argument
                 if "run_context" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["run_context"] = self.function._run_context
+                # Check if the pre-hook has an session_state argument
+                if "session_state" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["session_state"] = self.function._session_state
+                # Check if the pre-hook has an dependencies argument
+                if "dependencies" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["dependencies"] = self.function._dependencies
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -679,6 +690,12 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an session_state argument
                 if "run_context" in signature(self.function.post_hook).parameters:
                     post_hook_args["run_context"] = self.function._run_context
+                # Check if the post-hook has an session_state argument
+                if "session_state" in signature(self.function.post_hook).parameters:
+                    post_hook_args["session_state"] = self.function._session_state
+                # Check if the post-hook has an dependencies argument
+                if "dependencies" in signature(self.function.post_hook).parameters:
+                    post_hook_args["dependencies"] = self.function._dependencies
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
@@ -705,6 +722,12 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an run_context argument
         if "run_context" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["run_context"] = self.function._run_context
+        # Check if the entrypoint has an session_state argument
+        if "session_state" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["session_state"] = self.function._session_state
+        # Check if the entrypoint has an dependencies argument
+        if "dependencies" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["dependencies"] = self.function._dependencies
         # Check if the entrypoint has an fc argument
         if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["fc"] = self
@@ -734,7 +757,12 @@ class FunctionCall(BaseModel):
         # Check if the hook has an run_context argument
         if "run_context" in signature(hook).parameters:
             hook_args["run_context"] = self.function._run_context
-
+        # Check if the hook has an session_state argument
+        if "session_state" in signature(hook).parameters:
+            hook_args["session_state"] = self.function._session_state
+        # Check if the hook has an dependencies argument
+        if "dependencies" in signature(hook).parameters:
+            hook_args["dependencies"] = self.function._dependencies
         if "name" in signature(hook).parameters:
             hook_args["name"] = name
         if "function_name" in signature(hook).parameters:
@@ -897,6 +925,12 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an run_context argument
                 if "run_context" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["run_context"] = self.function._run_context
+                # Check if the pre-hook has an session_state argument
+                if "session_state" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["session_state"] = self.function._session_state
+                # Check if the pre-hook has an dependencies argument
+                if "dependencies" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["dependencies"] = self.function._dependencies
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -926,6 +960,12 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an run_context argument
                 if "run_context" in signature(self.function.post_hook).parameters:
                     post_hook_args["run_context"] = self.function._run_context
+                # Check if the post-hook has an session_state argument
+                if "session_state" in signature(self.function.post_hook).parameters:
+                    post_hook_args["session_state"] = self.function._session_state
+                # Check if the post-hook has an dependencies argument
+                if "dependencies" in signature(self.function.post_hook).parameters:
+                    post_hook_args["dependencies"] = self.function._dependencies
 
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
