@@ -1009,6 +1009,7 @@ class Team:
                 filtered_args = filter_hook_args(hook, all_args)
 
                 from inspect import iscoroutinefunction
+
                 if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
@@ -1141,6 +1142,7 @@ class Team:
                 filtered_args = filter_hook_args(hook, all_args)
 
                 from inspect import iscoroutinefunction
+
                 if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
@@ -8201,8 +8203,9 @@ class Team:
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
-        from agno.knowledge.reader.text_reader import TextReader
         import asyncio
+
+        from agno.knowledge.reader.text_reader import TextReader
 
         asyncio.run(
             self.knowledge.add_content_async(name=document_name, text_content=document_content, reader=TextReader())
