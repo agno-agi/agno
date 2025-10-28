@@ -68,7 +68,6 @@ from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.utils.agent import (
     await_for_background_tasks,
     await_for_background_tasks_stream,
@@ -625,7 +624,7 @@ class Agent:
 
         self._hooks_normalised = False
 
-        self._mcp_tools_initialized_on_run: List[Union[MCPTools, MultiMCPTools]] = []
+        self._mcp_tools_initialized_on_run: List[Union["MCPTools", "MultiMCPTools"]] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -815,7 +814,7 @@ class Agent:
         """Connect the MCP tools to the agent."""
         if self.tools:
             for tool in self.tools:
-                if isinstance(tool, (MCPTools, MultiMCPTools)) and not tool.initialized:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:
                     # Connect the MCP server
                     await tool.connect()
                     self._mcp_tools_initialized_on_run.append(tool)
@@ -2390,6 +2389,8 @@ class Agent:
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
+        
+        print("RUN ID", run_id)
 
         # 2. Validate input against input_schema if provided
         validated_input = self._validate_input(input)
@@ -5302,7 +5303,7 @@ class Agent:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if isinstance(tool, (MCPTools, MultiMCPTools)):
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
                     if tool.refresh_connection:
                         try:
                             is_alive = await tool.is_alive()

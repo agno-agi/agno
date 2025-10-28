@@ -61,7 +61,6 @@ from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutp
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.utils.agent import (
     await_for_background_tasks,
     await_for_background_tasks_stream,
@@ -653,7 +652,7 @@ class Team:
         self._hooks_normalised = False
 
         # List of MCP tools that were initialized on the last run
-        self._mcp_tools_initialized_on_run: List[Union[MCPTools, MultiMCPTools]] = []
+        self._mcp_tools_initialized_on_run: List[Union["MCPTools", "MultiMCPTools"]] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -918,7 +917,7 @@ class Team:
         """Connect the MCP tools to the agent."""
         if self.tools is not None:
             for tool in self.tools:
-                if isinstance(tool, (MCPTools, MultiMCPTools)) and not tool.initialized:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:
                     # Connect the MCP server
                     await tool.connect()
                     self._mcp_tools_initialized_on_run.append(tool)
@@ -4926,7 +4925,7 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if isinstance(tool, (MCPTools, MultiMCPTools)):
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
                     if tool.refresh_connection:
                         try:
                             is_alive = await tool.is_alive()
@@ -4970,7 +4969,7 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if isinstance(tool, (MCPTools, MultiMCPTools)):
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
                     # Only add the tool if it successfully connected and built its tools
                     if not tool.initialized:
                         continue

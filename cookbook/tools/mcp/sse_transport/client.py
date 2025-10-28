@@ -47,6 +47,7 @@ async def run_agent_with_multimcp(message: str) -> None:
     await agent.aprint_response(input=message, stream=True, markdown=True)
     await mcp_tools.close()
 
+
 if __name__ == "__main__":
     asyncio.run(run_agent("Do I have any birthdays this week?"))
     asyncio.run(run_agent("What else is on my calendar this week?"))

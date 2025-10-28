@@ -21,7 +21,9 @@ excel_agent = Agent(
     name="Excel Creator",
     model=Claude(
         id="claude-sonnet-4-5-20250929",
-        skills=[{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],  # Enable Excel spreadsheet skill
+        skills=[
+            {"type": "anthropic", "skill_id": "xlsx", "version": "latest"}
+        ],  # Enable Excel spreadsheet skill
     ),
     instructions=[
         "You are a data analysis specialist with access to Excel skills.",
