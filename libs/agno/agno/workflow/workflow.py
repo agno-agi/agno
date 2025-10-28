@@ -3061,7 +3061,7 @@ class Workflow:
             agent_completed_event = WorkflowAgentCompletedEvent(
                 workflow_name=self.name,
                 workflow_id=self.id,
-                run_id=agent_response.run_id,
+                run_id=agent_response.run_id if agent_response else None,
                 session_id=session.session_id,
                 content=workflow_run_response.content,
             )
