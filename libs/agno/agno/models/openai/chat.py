@@ -14,6 +14,7 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.reasoning import extract_thinking_content
@@ -81,6 +82,10 @@ class OpenAIChat(Model):
     http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
+    # Cached clients to avoid recreating them on every request
+    openai_client: Optional[OpenAIClient] = None
+    openai_async_client: Optional[AsyncOpenAIClient] = None
+
     # The role to map the message role to.
     default_role_map = {
         "system": "developer",
@@ -118,42 +123,59 @@ class OpenAIChat(Model):
 
     def get_client(self) -> OpenAIClient:
         """
-        Returns an OpenAI client.
+        Returns an OpenAI client. Caches the client to avoid recreating it on every request.
 
         Returns:
             OpenAIClient: An instance of the OpenAI client.
         """
+        # Return cached client if it exists and is not closed
+        if self.openai_client is not None and not self.openai_client.is_closed():
+            return self.openai_client
+
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
             if isinstance(self.http_client, httpx.Client):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client.")
-        return OpenAIClient(**client_params)
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                client_params["http_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            client_params["http_client"] = get_default_sync_client()
+
+        # Create and cache the client
+        self.openai_client = OpenAIClient(**client_params)
+        return self.openai_client
 
     def get_async_client(self) -> AsyncOpenAIClient:
         """
-        Returns an asynchronous OpenAI client.
+        Returns an asynchronous OpenAI client. Caches the client to avoid recreating it on every request.
 
         Returns:
             AsyncOpenAIClient: An instance of the asynchronous OpenAI client.
         """
+        # Return cached client if it exists
+        if self.openai_async_client is not None:
+            return self.openai_async_client
+
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
             if isinstance(self.http_client, httpx.AsyncClient):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.AsyncClient. Using default httpx.AsyncClient.")
-                # Create a new async HTTP client with custom limits
-                client_params["http_client"] = httpx.AsyncClient(
-                    limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
                 )
+                # Use global async client when user http_client is invalid
+                client_params["http_client"] = get_default_async_client()
         else:
-            # Create a new async HTTP client with custom limits
-            client_params["http_client"] = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-            )
-        return AsyncOpenAIClient(**client_params)
+            # Use global async client when no custom http_client is provided
+            client_params["http_client"] = get_default_async_client()
+
+        # Create and cache the client
+        self.openai_async_client = AsyncOpenAIClient(**client_params)
+        return self.openai_async_client
 
     def get_request_params(
         self,

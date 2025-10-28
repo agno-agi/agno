@@ -34,7 +34,7 @@ dependencies = [
   "docstring-parser",
   "gitpython",
   "h11>=0.16.0",
-  "httpx",
+  "httpx[http2]",
   "packaging",
   "pydantic-settings",
   "pydantic",

@@ -652,7 +652,7 @@ class Team:
         self._hooks_normalised = False
 
         # List of MCP tools that were initialized on the last run
-        self._mcp_tools_initialized_on_run: List[Any] = []  
+        self._mcp_tools_initialized_on_run: List[Any] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
