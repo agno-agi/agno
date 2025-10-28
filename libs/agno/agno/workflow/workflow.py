@@ -2619,6 +2619,8 @@ class Workflow:
                 if event.step_name is None:
                     # This is from the workflow agent itself
                     # Enrich with metadata to mark it as a workflow agent event
+                    
+                    # workflow_agent field is used by FE to distinguish between workflow agent and regular agent
                     event.workflow_agent = True  # type: ignore
                 yield event  # type: ignore[misc]
 
@@ -2957,6 +2959,8 @@ class Workflow:
                 if event.step_name is None:
                     # This is from the workflow agent itself
                     # Enrich with metadata to mark it as a workflow agent event
+
+                    # workflow_agent field is used by FE to distinguish between workflow agent and regular agent
                     event.workflow_agent = True  # type: ignore
 
                     # Broadcast to WebSocket if available (async context only)
