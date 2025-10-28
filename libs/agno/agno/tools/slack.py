@@ -79,7 +79,6 @@ class SlackTools(Toolkit):
             channel (str): The channel ID or name to send the message to.
             text (str): The text of the message to send.
             thread_ts (ts): The thread to reply to.
-            mrkdwn (bool): Whether to enable Slack markdown formatting. Defaults to True.
 
         Returns:
             str: A JSON string containing the response from the Slack API.
