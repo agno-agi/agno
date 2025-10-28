@@ -610,10 +610,7 @@ class WorkflowRunOutput:
         workflow_agent_run = None
         if workflow_agent_run_data:
             if isinstance(workflow_agent_run_data, dict):
-                if "agent_id" in workflow_agent_run_data or "messages" in workflow_agent_run_data:
-                    workflow_agent_run = RunOutput.from_dict(workflow_agent_run_data)
-                else:
-                    workflow_agent_run = None
+                workflow_agent_run = RunOutput.from_dict(workflow_agent_run_data)
             elif isinstance(workflow_agent_run_data, RunOutput):
                 workflow_agent_run = workflow_agent_run_data
 
