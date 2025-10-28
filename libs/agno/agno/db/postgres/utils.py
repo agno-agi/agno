@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from sqlalchemy import Engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas.culture import CulturalKnowledge
@@ -63,6 +64,20 @@ def create_schema(session: Session, db_schema: str) -> None:
         log_warning(f"Could not create schema {db_schema}: {e}")
 
 
+async def acreate_schema(session: AsyncSession, db_schema: str) -> None:
+    """Create the database schema if it doesn't exist.
+
+    Args:
+        session: The SQLAlchemy session to use
+        db_schema (str): The definition of the database schema to create
+    """
+    try:
+        log_debug(f"Creating schema if not exists: {db_schema}")
+        await session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {db_schema};"))
+    except Exception as e:
+        log_warning(f"Could not create schema {db_schema}: {e}")
+
+
 def is_table_available(session: Session, table_name: str, db_schema: str) -> bool:
     """
     Check if a table with the given name exists in the given schema.
@@ -77,6 +92,24 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
         exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
         return exists
 
+    except Exception as e:
+        log_error(f"Error checking if table exists: {e}")
+        return False
+
+
+async def ais_table_available(session: AsyncSession, table_name: str, db_schema: str) -> bool:
+    """
+    Check if a table with the given name exists in the given schema.
+
+    Returns:
+        bool: True if the table exists, False otherwise.
+    """
+    try:
+        exists_query = text(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
+        )
+        exists = (await session.execute(exists_query, {"schema": db_schema, "table": table_name})).scalar() is not None
+        return exists
     except Exception as e:
         log_error(f"Error checking if table exists: {e}")
         return False
@@ -114,6 +147,44 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
         return False
 
 
+async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: str, db_schema: str) -> bool:
+    """
+    Check if the existing table has the expected column names.
+
+    Args:
+        table_name (str): Name of the table to validate
+        schema (str): Database schema name
+
+    Returns:
+        bool: True if table has all expected columns, False otherwise
+    """
+    try:
+        expected_table_schema = get_table_schema_definition(table_type)
+        expected_columns = {col_name for col_name in expected_table_schema.keys() if not col_name.startswith("_")}
+
+        # Get existing columns from the async engine
+        async with db_engine.connect() as conn:
+            existing_columns = await conn.run_sync(_get_table_columns, table_name)
+
+        # Check if all expected columns exist
+        missing_columns = expected_columns - existing_columns
+        if missing_columns:
+            log_warning(f"Missing columns {missing_columns} in table {db_schema}.{table_name}")
+            return False
+
+        return True
+    except Exception as e:
+        log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
+        return False
+
+
+def _get_table_columns(conn, table_name: str) -> set[str]:
+    """Helper function to get table columns using sync inspector."""
+    inspector = inspect(conn)
+    columns_info = inspector.get_columns(table_name)
+    return {col["name"] for col in columns_info}
+
+
 # -- Metrics util methods --
 def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[dict]) -> list[dict]:
     """Bulk upsert metrics into the database.
@@ -144,6 +215,39 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
     result = session.execute(stmt, metrics_records)
     results = [row._mapping for row in result.fetchall()]
     session.commit()
+
+    return results  # type: ignore
+
+
+async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_records: list[dict]) -> list[dict]:
+    """Bulk upsert metrics into the database.
+
+    Args:
+        table (Table): The table to upsert into.
+        metrics_records (list[dict]): The metrics records to upsert.
+
+    Returns:
+        list[dict]: The upserted metrics records.
+    """
+    if not metrics_records:
+        return []
+
+    results = []
+    stmt = postgresql.insert(table)
+
+    # Columns to update in case of conflict
+    update_columns = {
+        col.name: stmt.excluded[col.name]
+        for col in table.columns
+        if col.name not in ["id", "date", "created_at", "aggregation_period"]
+    }
+
+    stmt = stmt.on_conflict_do_update(index_elements=["date", "aggregation_period"], set_=update_columns).returning(  # type: ignore
+        table
+    )
+    result = await session.execute(stmt, metrics_records)
+    results = [row._mapping for row in result.fetchall()]
+    await session.commit()
 
     return results  # type: ignore
 
@@ -282,7 +386,7 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
 
 
 # -- Cultural Knowledge util methods --
-def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
+def serialize_cultural_knowledge(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
     """Serialize a CulturalKnowledge object for database storage.
 
     Converts the model's separate content, categories, and notes fields
@@ -305,7 +409,7 @@ def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -
     return content_dict if content_dict else {}
 
 
-def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
+def deserialize_cultural_knowledge(db_row: Dict[str, Any]) -> CulturalKnowledge:
     """Deserialize a database row to a CulturalKnowledge object.
 
     The database stores content as a JSON dict containing content, categories, and notes.

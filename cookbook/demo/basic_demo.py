@@ -11,6 +11,8 @@ agno_agent = Agent(
     db=SqliteDb(db_file="agno.db"),
     tools=[MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")],
     add_history_to_context=True,
+    add_datetime_to_context=True,
+    num_history_runs=3,
     markdown=True,
 )
 
