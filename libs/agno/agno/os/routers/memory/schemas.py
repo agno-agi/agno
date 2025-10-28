@@ -11,7 +11,7 @@ class DeleteMemoriesRequest(BaseModel):
 
 class UserMemorySchema(BaseModel):
     memory_id: str = Field(..., description="Unique identifier for the memory")
-    memory: str = Field(..., description="Memory content text", min_length=1)
+    memory: str = Field(..., description="Memory content text")
     topics: Optional[List[str]] = Field(None, description="Topics or tags associated with the memory")
 
     agent_id: Optional[str] = Field(None, description="Agent ID associated with this memory")
