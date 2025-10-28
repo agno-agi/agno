@@ -18,10 +18,8 @@ from agno.utils.models.claude import MCPServerConfiguration, format_messages, fo
 try:
     from anthropic import Anthropic as AnthropicClient
     from anthropic import (
-        AnthropicVertex,
         APIConnectionError,
         APIStatusError,
-        AsyncAnthropicVertex,
         RateLimitError,
     )
     from anthropic import (
@@ -100,8 +98,8 @@ class Claude(Model):
     timeout: Optional[float] = None
     client_params: Optional[Dict[str, Any]] = None
 
-    client: Optional[Union[AnthropicClient, AnthropicVertex]] = None
-    async_client: Optional[Union[AsyncAnthropicClient, AsyncAnthropicVertex]] = None
+    client: Optional[AnthropicClient] = None
+    async_client: Optional[AsyncAnthropicClient] = None
 
     def __post_init__(self):
         """Validate model configuration after initialization"""
