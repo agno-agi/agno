@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -87,9 +87,7 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
         return False
 
 
-def is_valid_table(
-    db_engine: Union[Engine, AsyncEngine], table_name: str, table_type: str, db_schema: Optional[str] = None
-) -> bool:
+def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schema: Optional[str] = None) -> bool:
     """
     Check if the existing table has the expected column names.
     Note: db_schema parameter is ignored in SQLite but kept for API compatibility.
