@@ -2411,8 +2411,6 @@ class Agent:
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
-        print("RUN ID", run_id)
-
         # 2. Validate input against input_schema if provided
         validated_input = self._validate_input(input)
 
