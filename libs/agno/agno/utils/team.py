@@ -9,19 +9,20 @@ if TYPE_CHECKING:
 
 def format_member_agent_task(
     task_description: str,
-    expected_output: Optional[str] = None,
     team_member_interactions_str: Optional[str] = None,
+    team_history_str: Optional[str] = None,
 ) -> str:
-    member_agent_task = "You are a member of a team of agents. Your goal is to complete the following task:"
-    member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
-
-    if expected_output is not None:
-        member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
+    member_task_str = ""
 
     if team_member_interactions_str:
-        member_agent_task += f"\n\n{team_member_interactions_str}"
+        member_task_str += f"{team_member_interactions_str}\n\n"
 
-    return member_agent_task
+    if team_history_str:
+        member_task_str += f"{team_history_str}\n\n"
+
+    member_task_str += f"{task_description}"
+
+    return member_task_str
 
 
 def get_member_id(member: Union[Agent, "Team"]) -> str:

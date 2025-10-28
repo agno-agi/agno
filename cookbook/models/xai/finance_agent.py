@@ -65,7 +65,7 @@ finance_agent = Agent(
 finance_agent.print_response(
     "Write a comprehensive report on TSLA",
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 
 # # Semiconductor market analysis example

@@ -279,16 +279,16 @@ def set_session_state_step(
     return StepOutput(
         content=f"""
         ## Customer Research Session Initialized
-        
+
         **Research Query:** {customer_query}
         **Workflow ID:** {session_state["customer_research"]["workflow_id"]}
         **Research Phases:** {len(session_state["customer_research"]["research_phases"])} phases planned
-        
+
         **Session Configuration:**
         - Research Depth: {session_state["workflow_config"]["research_depth"]}
         - Focus Areas: {", ".join(session_state["workflow_config"]["focus_areas"])}
         - Analysis Style: {session_state["research_preferences"]["analysis_style"]}
-        
+
         Session state has been initialized and is ready for comprehensive customer research.
         """.strip()
     )
@@ -310,24 +310,24 @@ async def customer_profile_research_step(
 
     research_prompt = f"""
     CUSTOMER PROFILE RESEARCH REQUEST:
-    
+
     Research Query: {customer_query}
     Session Context: {session_state["customer_research"]["workflow_id"]}
     Previous Context: {previous_content[:300] if previous_content else "Initial research"}
-    
+
     RESEARCH OBJECTIVES:
     1. Identify target customer demographics and psychographics
     2. Understand customer personas and segmentation
     3. Analyze customer pain points and motivations
     4. Research customer journey and touchpoints
     5. Identify customer preferences and behaviors
-    
+
     Provide comprehensive customer profile insights with specific data points and actionable findings.
     """
 
     try:
         research_result_iterator = customer_profile_agent.arun(
-            research_prompt, stream=True, stream_intermediate_steps=True
+            research_prompt, stream=True, stream_events=True
         )
 
         async for event in research_result_iterator:
@@ -379,24 +379,24 @@ async def customer_biz_goals_research_step(
 
     research_prompt = f"""
     CUSTOMER BUSINESS GOALS RESEARCH REQUEST:
-    
+
     Research Query: {customer_query}
     Session Context: {session_state["customer_research"]["workflow_id"]}
     Research Depth: {session_state["workflow_config"]["research_depth"]}
-    
+
     RESEARCH OBJECTIVES:
     1. Identify customer's primary business objectives and KPIs
     2. Understand success metrics and performance indicators
     3. Analyze industry trends affecting customer goals
     4. Research competitive landscape and market positioning
     5. Identify growth opportunities and challenges
-    
+
     Provide detailed business goals analysis with strategic insights and market context.
     """
 
     try:
         research_result_iterator = business_goals_agent.arun(
-            research_prompt, stream=True, stream_intermediate_steps=True
+            research_prompt, stream=True, stream_events=True
         )
 
         async for event in research_result_iterator:
@@ -448,24 +448,24 @@ async def web_intelligence_research_step(
 
     research_prompt = f"""
     WEB INTELLIGENCE RESEARCH REQUEST:
-    
+
     Research Query: {customer_query}
     Session Context: {session_state["customer_research"]["workflow_id"]}
     Analysis Style: {session_state["research_preferences"]["analysis_style"]}
-    
+
     RESEARCH OBJECTIVES:
     1. Analyze customer's digital presence and online footprint
     2. Research social media activity and engagement patterns
     3. Understand web behavior and digital touchpoints
     4. Identify online brand positioning and messaging
     5. Analyze digital marketing strategies and channels
-    
+
     Provide comprehensive web intelligence with digital insights and online behavior analysis.
     """
 
     try:
         research_result_iterator = web_intelligence_agent.arun(
-            research_prompt, stream=True, stream_intermediate_steps=True
+            research_prompt, stream=True, stream_events=True
         )
 
         async for event in research_result_iterator:
@@ -542,23 +542,23 @@ async def customer_report_consolidation_step(
 
     consolidation_prompt = f"""
     COMPREHENSIVE CUSTOMER RESEARCH CONSOLIDATION (STRUCTURED DATA):
-    
+
     Original Query: {customer_query}
     Session ID: {research_data["workflow_id"]}
     Total Research Phases: {len(research_data["research_phases"])}
     Completed Steps: {research_data["research_metadata"]["completed_steps"]}
-    
+
     STRUCTURED RESEARCH FINDINGS TO CONSOLIDATE:
-    
+
     Customer Profile Research:
     {json.dumps(structured_summaries.get("profile", {}), indent=2) if "profile" in structured_summaries else "No structured data available"}
-    
+
     Business Goals Research:
     {json.dumps(structured_summaries.get("business_goals", {}), indent=2) if "business_goals" in structured_summaries else "No structured data available"}
-    
+
     Web Intelligence Research:
     {json.dumps(structured_summaries.get("web_intelligence", {}), indent=2) if "web_intelligence" in structured_summaries else "No structured data available"}
-    
+
     CONSOLIDATION OBJECTIVES:
     1. Synthesize all structured research findings into cohesive customer insights
     2. Identify patterns, correlations, and key themes across customer profile, business goals, and web intelligence
@@ -566,13 +566,13 @@ async def customer_report_consolidation_step(
     4. Highlight critical findings and cross-research correlations
     5. Provide executive summaries and high-level recommendations
     6. Structure response according to ConsolidatedResearch model
-    
+
     Create a detailed, consolidated customer research report that integrates all structured findings.
     """
 
     try:
         consolidation_result_iterator = research_consolidation_team.arun(
-            consolidation_prompt, stream=True, stream_intermediate_steps=True
+            consolidation_prompt, stream=True, stream_events=True
         )
 
         async for event in consolidation_result_iterator:
@@ -626,37 +626,37 @@ async def task_recommender_step(
 
     recommendation_prompt = f"""
     STRATEGIC TASK RECOMMENDATIONS REQUEST (BASED ON STRUCTURED DATA):
-    
+
     Research Query: {customer_query}
     Session Context: {research_data["workflow_id"]}
-    
+
     CONSOLIDATED RESEARCH INSIGHTS (STRUCTURED):
     {json.dumps(consolidated_structured_data, indent=2) if consolidated_structured_data else "No structured consolidated research available"}
-    
+
     WORKFLOW CONFIGURATION:
     - Research Depth: {workflow_config["research_depth"]}
     - Focus Areas: {", ".join(workflow_config["focus_areas"])}
     - Recommendation Type: {research_prefs["recommendation_type"]}
     - Reporting Level: {research_prefs["reporting_level"]}
-    
+
     SESSION RESEARCH SUMMARY:
     - Total Research Phases: {len(research_data["research_phases"])}
     - Completed Analysis Steps: {research_data["research_metadata"]["completed_steps"]}
     - Research Duration: Session-based analysis
-    
+
     RECOMMENDATION OBJECTIVES:
     1. Generate specific, actionable tasks based on research findings
     2. Prioritize recommendations by impact, urgency, and feasibility
     3. Create detailed action plans with timelines and success metrics
     4. Align recommendations with identified customer goals and pain points
     5. Provide implementation guidance and resource requirements
-    
+
     Create comprehensive task recommendations with clear action items and strategic priorities.
     """
 
     try:
         recommendation_result_iterator = task_recommender_agent.arun(
-            recommendation_prompt, stream=True, stream_intermediate_steps=True
+            recommendation_prompt, stream=True, stream_events=True
         )
 
         async for event in recommendation_result_iterator:
@@ -768,7 +768,7 @@ if __name__ == "__main__":
 #         input=research_query,
 #         markdown=True,
 #         stream=True,
-#         stream_intermediate_steps=True,
+#         stream_events=True,
 #     )
 
 #     print("\n" + "=" * 70)

@@ -25,6 +25,7 @@ Dependencies: `pip install openai ddgs newspaper4k lxml_html_clean agno`
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
@@ -112,14 +113,39 @@ research_agent = Agent(
         Published: {current_date}
         Last Updated: {current_time}\
     """),
+    db=SqliteDb(db_file="tmp/research_agent.db"),
+    num_history_runs=2,
     markdown=True,
     add_datetime_to_context=True,
+    add_history_to_context=True,
+    max_tool_calls_from_history=5,
+    debug_mode=True,
 )
 
 # Example usage with detailed research request
 if __name__ == "__main__":
     research_agent.print_response(
         "Analyze the current state and future implications of artificial intelligence regulation worldwide",
+        stream=True,
+    )
+    research_agent.print_response(
+        "Research the current state of quantum computing and its practical applications",
+        stream=True,
+    )
+    research_agent.print_response(
+        "Explore the latest developments in CRISPR gene editing technology",
+        stream=True,
+    )
+    research_agent.print_response(
+        "Report on innovative carbon capture technologies and their effectiveness",
+        stream=True,
+    )
+    research_agent.print_response(
+        "Investigate the global progress in renewable energy adoption",
+        stream=True,
+    )
+    research_agent.print_response(
+        "Examine the effects of social media on democratic processes",
         stream=True,
     )
 
