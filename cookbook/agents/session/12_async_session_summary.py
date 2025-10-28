@@ -8,12 +8,12 @@ Start the postgres db locally on Docker by running: cookbook/scripts/run_pgvecto
 import asyncio
 
 from agno.agent.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.postgres import AsyncPostgresDb
 from agno.models.openai import OpenAIChat
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db_url = "postgresql+psycopg_async://ai:ai@localhost:5532/ai"
 
-db = PostgresDb(db_url=db_url, session_table="sessions")
+db = AsyncPostgresDb(db_url=db_url, session_table="sessions")
 
 
 async def main():
@@ -27,10 +27,10 @@ async def main():
 
     # Run some interactions
     print("Running first interaction...")
-    agent.print_response("Hi my name is John and I live in New York")
+    await agent.aprint_response("Hi my name is John and I live in New York")
 
     print("\nRunning second interaction...")
-    agent.print_response("I like to play basketball and hike in the mountains")
+    await agent.aprint_response("I like to play basketball and hike in the mountains")
 
     # Use the async method to get the session summary
     print("\nRetrieving session summary asynchronously...")
