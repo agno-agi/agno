@@ -7963,6 +7963,19 @@ class Team:
 
         return session.get_session_summary()  # type: ignore
 
+    async def aget_session_summary(self, session_id: Optional[str] = None):
+        """Get the session summary for the given session ID (async version)."""
+        session_id = session_id if session_id is not None else self.session_id
+        if session_id is None:
+            raise ValueError("Session ID is required")
+
+        session = await self.aget_session(session_id=session_id)
+
+        if session is None:
+            raise Exception(f"Session {session_id} not found")
+
+        return session.get_session_summary()  # type: ignore
+
     def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for the given user ID."""
         if self.memory_manager is None:
