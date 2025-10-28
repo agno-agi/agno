@@ -624,7 +624,7 @@ class Agent:
 
         self._hooks_normalised = False
 
-        self._mcp_tools_initialized_on_run: List[Union["MCPTools", "MultiMCPTools"]] = []
+        self._mcp_tools_initialized_on_run: List[Any] = []  
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -814,9 +814,9 @@ class Agent:
         """Connect the MCP tools to the agent."""
         if self.tools:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:  # type: ignore
                     # Connect the MCP server
-                    await tool.connect()
+                    await tool.connect()  # type: ignore
                     self._mcp_tools_initialized_on_run.append(tool)
 
     async def _disconnect_mcp_tools(self) -> None:
@@ -2389,7 +2389,7 @@ class Agent:
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
-        
+
         print("RUN ID", run_id)
 
         # 2. Validate input against input_schema if provided
@@ -5304,23 +5304,23 @@ class Agent:
         if self.tools is not None:
             for tool in self.tools:
                 if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
-                    if tool.refresh_connection:
+                    if tool.refresh_connection:  # type: ignore
                         try:
-                            is_alive = await tool.is_alive()
+                            is_alive = await tool.is_alive()  # type: ignore
                             if not is_alive:
-                                await tool.connect(force=True)
+                                await tool.connect(force=True)  # type: ignore
                         except (RuntimeError, BaseException) as e:
                             log_warning(f"Failed to check if MCP tool is alive or to connect to it: {e}")
                             continue
 
                         try:
-                            await tool.build_tools()
+                            await tool.build_tools()  # type: ignore
                         except (RuntimeError, BaseException) as e:
                             log_warning(f"Failed to build tools for {str(tool)}: {e}")
                             continue
 
                     # Only add the tool if it successfully connected and built its tools
-                    if not tool.initialized:
+                    if not tool.initialized:  # type: ignore
                         continue
 
                     agent_tools.append(tool)

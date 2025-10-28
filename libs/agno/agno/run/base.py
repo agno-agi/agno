@@ -180,6 +180,7 @@ class BaseRunOutputEvent:
         session_summary = data.pop("session_summary", None)
         if session_summary:
             from agno.session.summary import SessionSummary
+
             data["session_summary"] = SessionSummary.from_dict(session_summary)
 
         return cls(**data)
