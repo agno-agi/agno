@@ -8,6 +8,10 @@ try:
     from mcp import ClientSession
     from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
+
+    # New additions
+    from mcp.types import Prompt as MCPPrompt
+    from mcp.types import GetPromptResult  
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
 
@@ -122,3 +126,48 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
             return ToolResult(content=f"Error: {e}")
 
     return partial(call_tool, tool_name=tool.name)
+
+# ADD THIS NEW FUNCTION
+def get_entrypoint_for_prompt(prompt: MCPPrompt, session: ClientSession):
+    """
+    Return an entrypoint for an MCP prompt.
+
+    Args:
+        prompt: The MCP prompt to create an entrypoint for
+        session: The session to use
+
+    Returns:
+        Callable: The entrypoint function for the prompt
+    """
+    from agno.agent import Agent
+
+    async def get_prompt(agent: Agent, prompt_name: str, **kwargs) -> str:
+        try:
+            log_debug(f"Retrieving MCP Prompt '{prompt_name}' with args: {kwargs}")
+            
+            # Convert all arguments to strings (get_prompt expects dict[str, str])
+            arguments = {k: str(v) for k, v in kwargs.items()} if kwargs else None
+            
+            # Call the MCP get_prompt method
+            result: GetPromptResult = await session.get_prompt(prompt_name, arguments)  # type: ignore
+
+            # Extract text content from all messages
+            messages = []
+            for message in result.messages:
+                # Handle different content types
+                if hasattr(message.content, 'text'):
+                    messages.append(message.content.text)
+                elif isinstance(message.content, TextContent):
+                    messages.append(message.content.text)
+                else:
+                    # Fallback for other content types
+                    messages.append(str(message.content))
+            
+            # Join all messages with double newlines
+            return "\n\n".join(messages) if messages else ""
+            
+        except Exception as e:
+            log_exception(f"Failed to retrieve MCP prompt '{prompt_name}': {e}")
+            return f"Error retrieving prompt: {e}"
+
+    return partial(get_prompt, prompt_name=prompt.name)
