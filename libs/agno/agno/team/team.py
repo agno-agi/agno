@@ -4942,10 +4942,6 @@ class Team:
                             log_warning(f"Failed to build tools for {str(tool)}: {e}")
                             continue
 
-                    # Only add the tool if it successfully connected and built its tools
-                    if not tool.initialized:
-                        continue
-
     def _determine_tools_for_model(
         self,
         model: Model,
