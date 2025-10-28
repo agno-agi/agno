@@ -1,10 +1,36 @@
 chat:
   quick_prompts:
-    web-search-agent:
+    agno-mcp-agent:
+      - "What is the AgentOS?"
+      - "What are Agno's key features?"
+      - "What's the difference between an Agent and a Team in Agno?"
+
+    agno-knowledge-agent:
+      - "What is the AgentOS?"
+      - "What are Agno's key features?"
+      - "What's the difference between an Agent and a Team in Agno?"
+
+    youtube-agent:
+      - "Summarize this video: https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+      - "Explain this video in simple terms: <paste YouTube URL>"
       - "What can you do?"
-      - "What is currently happening in France?"
-      - "What is the latest news on the stock market?"
-    agno-assist:
-      - "What can you do?"
-      - "What is the latest news on Agno?"
-      - "Tell me about Agno's AgentOS"
+
+    finance-agent:
+      - "Get the latest stock data for Apple (AAPL)."
+      - "Summarize key financial metrics for Microsoft (MSFT)."
+      - "Show me Tesla's (TSLA) fundamentals."
+
+    research-agent:
+      - "What are the latest AI breakthroughs this week?"
+      - "Find credible sources about quantum computing trends."
+      - "What's happening in the global energy markets?"
+
+    memory-manager:
+      - "What do you know about me??"
+      - "I live in New York City"
+      - "I'm a software engineer"
+
+    finance-team:
+      - "Provide a full investment brief for Apple (AAPL)."
+      - "Compare Apple (AAPL), Google (GOOGL), and Microsoft (MSFT) fundamentals."
+      - "Analyze current sentiment around AI stocks."
