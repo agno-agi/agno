@@ -895,6 +895,9 @@ class Agent:
                 run_response=run_response,
                 run_input=run_input,
                 run_context=run_context,
+                session_state=run_context.session_state,
+                dependencies=run_context.dependencies,
+                metadata=run_context.metadata,
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
@@ -1106,6 +1109,9 @@ class Agent:
                 run_response=run_response,
                 run_input=run_input,
                 run_context=run_context,
+                session_state=run_context.session_state,
+                dependencies=run_context.dependencies,
+                metadata=run_context.metadata,
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
@@ -1842,6 +1848,9 @@ class Agent:
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     run_context=run_context,
+                    session_state=run_context.session_state,
+                    dependencies=run_context.dependencies,
+                    metadata=run_context.metadata,
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
@@ -2152,6 +2161,9 @@ class Agent:
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     run_context=run_context,
+                    session_state=run_context.session_state,
+                    dependencies=run_context.dependencies,
+                    metadata=run_context.metadata,
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
@@ -3440,6 +3452,9 @@ class Agent:
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     run_context=run_context,
+                    session_state=run_context.session_state,
+                    dependencies=run_context.dependencies,
+                    metadata=run_context.metadata,
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
@@ -3680,6 +3695,9 @@ class Agent:
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     run_context=run_context,
+                    session_state=run_context.session_state,
+                    dependencies=run_context.dependencies,
+                    metadata=run_context.metadata,
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
@@ -3776,6 +3794,9 @@ class Agent:
         run_input: RunInput,
         session: AgentSession,
         run_context: RunContext,
+        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
+        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
+        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -3790,6 +3811,9 @@ class Agent:
             "agent": self,
             "session": session,
             "run_context": run_context,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -3842,6 +3866,9 @@ class Agent:
         run_input: RunInput,
         run_context: RunContext,
         session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
+        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
+        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -3856,6 +3883,9 @@ class Agent:
             "agent": self,
             "session": session,
             "run_context": run_context,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -3911,6 +3941,9 @@ class Agent:
         run_output: RunOutput,
         session: AgentSession,
         run_context: RunContext,
+        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
+        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
+        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -3924,6 +3957,9 @@ class Agent:
             "run_output": run_output,
             "agent": self,
             "session": session,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
             "user_id": user_id,
             "run_context": run_context,
             "debug_mode": debug_mode or self.debug_mode,
@@ -3968,8 +4004,11 @@ class Agent:
         self,
         hooks: Optional[List[Callable[..., Any]]],
         run_output: RunOutput,
-        session: AgentSession,
         run_context: RunContext,
+        session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
+        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
+        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -3983,8 +4022,11 @@ class Agent:
             "run_output": run_output,
             "agent": self,
             "session": session,
-            "user_id": user_id,
             "run_context": run_context,
+            "session_state": session_state,
+            "dependencies": dependencies,
+            "metadata": metadata,
+            "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
@@ -5144,12 +5186,16 @@ class Agent:
     def get_tools(
         self,
         run_response: RunOutput,
+        run_context: RunContext,
         session: AgentSession,
         async_mode: bool = False,
         user_id: Optional[str] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+        # Consider both run_context.knowledge_filters and knowledge_filters (deprecated)
+        run_context.knowledge_filters = run_context.knowledge_filters or knowledge_filters
 
         # Add provided tools
         if self.tools is not None:
@@ -5251,12 +5297,16 @@ class Agent:
     async def aget_tools(
         self,
         run_response: RunOutput,
+        run_context: RunContext,
         session: AgentSession,
         async_mode: bool = False,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+        # Consider both run_context.knowledge_filters and knowledge_filters (deprecated)
+        run_context.knowledge_filters = run_context.knowledge_filters or knowledge_filters
 
         # Add provided tools
         if self.tools is not None:
@@ -5360,10 +5410,10 @@ class Agent:
 
             agent_tools = self.get_tools(
                 run_response=run_response,
+                run_context=run_context,
                 session=session,
                 async_mode=async_mode,
                 user_id=user_id,
-                knowledge_filters=run_context.knowledge_filters,
             )
 
             self._tools_for_model = []
@@ -5460,6 +5510,8 @@ class Agent:
 
             for func in self._functions_for_model.values():
                 func._run_context = run_context
+                func._session_state = run_context.session_state
+                func._dependencies = run_context.dependencies
                 func._images = joint_images
                 func._files = joint_files
                 func._audios = joint_audios
@@ -6376,11 +6428,12 @@ class Agent:
     def get_system_message(
         self,
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
+        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
+        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -6388,6 +6441,12 @@ class Agent:
         2. If build_context is False, return None.
         3. Build and return the default system message for the Agent.
         """
+
+        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
+        if run_context is not None:
+            session_state = run_context.session_state or session_state
+            dependencies = run_context.dependencies or dependencies
+            metadata = run_context.metadata or metadata
 
         # 1. If the system_message is provided, use that.
         if self.system_message is not None:
@@ -9852,8 +9911,11 @@ class Agent:
         self._update_session_metrics(session=session, run_response=run_response)
 
         # Update session state before saving the session
-        if session.session_data is not None:
-            session.session_data["session_state"] = session_state
+        if session_state is not None:
+            if session.session_data is not None:
+                session.session_data["session_state"] = session_state
+            else:
+                session.session_data = {"session_state": session_state}
 
         # Save session to memory
         self.save_session(session=session)
@@ -9887,8 +9949,11 @@ class Agent:
         self._update_session_metrics(session=session, run_response=run_response)
 
         # Update session state before saving the session
-        if session.session_data is not None:
-            session.session_data["session_state"] = session_state
+        if session_state is not None:
+            if session.session_data is not None:
+                session.session_data["session_state"] = session_state
+            else:
+                session.session_data = {"session_state": session_state}
 
         # Save session to storage
         await self.asave_session(session=session)
