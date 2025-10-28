@@ -3514,7 +3514,7 @@ class Agent:
             await self._aresolve_run_dependencies(dependencies=dependencies)
 
         # 2. Read existing session from db
-        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
 
         # 3. Update session state and metadata
         self._update_metadata(session=agent_session)
