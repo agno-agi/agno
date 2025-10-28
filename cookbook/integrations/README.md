@@ -19,10 +19,6 @@ Monitoring and observability integrations for agent performance tracking.
 Install required dependencies based on the integration you want to use:
 
 ```bash
-# For Claude Agent Skills integration
-pip install anthropic agno
-export ANTHROPIC_API_KEY="your_api_key_here"
-
 # For Discord integration
 pip install discord.py agno
 
