@@ -1,7 +1,7 @@
 """
 Use AsyncMongoDb as the database for a team.
 
-Run `pip install openai ddgs newspaper4k lxml_html_clean motor agno` to install the dependencies
+Run `pip install openai ddgs newspaper4k lxml_html_clean pymongo motor agno` to install the dependencies
 
 Run a local MongoDB server using:
 ```bash
@@ -72,4 +72,6 @@ hn_team = Team(
     add_member_tools_to_context=False,
 )
 
-asyncio.run(hn_team.aprint_response("Write an article about the top 2 stories on hackernews"))
+asyncio.run(
+    hn_team.aprint_response("Write an article about the top 2 stories on hackernews")
+)

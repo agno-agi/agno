@@ -1,5 +1,5 @@
 """
-Run: `pip install openai ddgs motor` to install dependencies
+Run: `pip install openai ddgs pymongo motor` to install dependencies
 Run: `python cookbook/db/mongo/async_mongo/async_mongodb_for_workflow.py` to run the workflow
 
 Run a local MongoDB server using:
