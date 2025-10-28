@@ -15,13 +15,15 @@ server_url = "http://localhost:8000/mcp"
 
 
 async def run_agent(message: str) -> None:
-    async with MCPTools(transport="streamable-http", url=server_url) as mcp_tools:
-        agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
-            tools=[mcp_tools],
-            markdown=True,
-        )
-        await agent.aprint_response(input=message, stream=True, markdown=True)
+    mcp_tools = MCPTools(transport="streamable-http", url=server_url)
+    await mcp_tools.connect()
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o"),
+        tools=[mcp_tools],
+        markdown=True,
+    )
+    await agent.aprint_response(input=message, stream=True, markdown=True)
+    await mcp_tools.close()
 
 
 # Using MultiMCPTools, we can connect to multiple MCP servers at once, even if they use different transports.
