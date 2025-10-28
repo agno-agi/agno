@@ -90,7 +90,7 @@ def custom_content_planning_function(
     try:
         # Stream the agent's response
         response_iterator = content_planner.run(
-            planning_prompt, stream=True, stream_intermediate_steps=True
+            planning_prompt, stream=True, stream_events=True
         )
 
         # Forward all agent events
@@ -211,7 +211,7 @@ if __name__ == "__main__":
         input="AI trends in 2024",
         markdown=True,
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     print(
@@ -225,7 +225,7 @@ if __name__ == "__main__":
         input="Machine Learning automation tools",
         markdown=True,
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     print(f"\nFinal Session State: {streaming_content_workflow.get_session_state()}")

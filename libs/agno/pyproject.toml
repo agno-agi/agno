@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.1.9"
+version = "2.2.1"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -57,7 +57,8 @@ integration-tests = [
     "ddgs",
     "yfinance",
     "sqlalchemy",
-    "Pillow"
+    "Pillow",
+    "fastmcp"
 ]
 
 # Dependencies for Telemetry
@@ -100,6 +101,7 @@ evm = ["web3"]
 exa = ["exa_py"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
+tavily = ["tavily-python"]
 crawl4ai= ["crawl4ai"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
@@ -154,6 +156,7 @@ upstash = ["upstash-vector"]
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
+pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
@@ -215,6 +218,7 @@ tools = [
   "agno[newspaper]",
   "agno[youtube]",
   "agno[firecrawl]",
+  "agno[tavily]",
   "agno[crawl4ai]",
   "agno[github]",
   "agno[gmail]",
@@ -277,6 +281,7 @@ vectordbs = [
 knowledge = [
   "agno[pdf]",
   "agno[docx]",
+  "agno[pptx]",
   "agno[text]",
   "agno[csv]",
   "agno[markdown]",

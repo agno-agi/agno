@@ -185,7 +185,7 @@ class AgentSession:
             else:
                 messages_from_history = messages_from_history[-last_n_messages:]
         else:
-            # Filter by last_n
+            # Filter by last_n runs
             runs_to_process = session_runs[-last_n:] if last_n is not None else session_runs
             for run_response in runs_to_process:
                 if not run_response or not run_response.messages:

@@ -300,7 +300,7 @@ async def test_async_custom_execution_streaming(shared_db):
 
     # Collect async streaming events
     events = []
-    async for event in await workflow.arun(input="Async AI trends", stream=True):
+    async for event in workflow.arun(input="Async AI trends", stream=True):
         events.append(event)
 
     # Verify streaming events were generated
