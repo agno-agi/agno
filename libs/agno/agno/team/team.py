@@ -61,6 +61,7 @@ from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutp
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.utils.agent import (
     await_for_background_tasks,
     await_for_background_tasks_stream,
@@ -307,6 +308,9 @@ class Team:
     # A list of hooks to be called before and after the tool call
     tool_hooks: Optional[List[Callable]] = None
 
+    # If True, on each run any instances of MCP tools are refreshed (i.e. the connection is re-established and all available tools are re-fetched)
+    refresh_mcp_tools: bool = False
+
     # --- Team Hooks ---
     # Functions called right after team session is loaded, before processing starts
     pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
@@ -466,6 +470,7 @@ class Team:
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
+        refresh_mcp_tools: bool = False,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parser_model: Optional[Model] = None,
@@ -571,6 +576,7 @@ class Team:
         self.tool_choice = tool_choice
         self.tool_call_limit = tool_call_limit
         self.tool_hooks = tool_hooks
+        self.refresh_mcp_tools = refresh_mcp_tools
 
         # Initialize hooks with backward compatibility
         self.pre_hooks = pre_hooks
@@ -650,6 +656,9 @@ class Team:
         self._formatter: Optional[SafeFormatter] = None
 
         self._hooks_normalised = False
+
+        # List of MCP tools that were initialized on the last run
+        self._mcp_tools_initialized_on_run: List[Union[MCPTools, MultiMCPTools]] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -899,6 +908,21 @@ class Team:
         """
         return cancel_run_global(run_id)
 
+    async def _connect_mcp_tools(self) -> None:
+        """Connect the MCP tools to the agent."""
+        if self.tools is not None:
+            for tool in self.tools:
+                if isinstance(tool, (MCPTools, MultiMCPTools)) and not tool.initialized:
+                    # Connect the MCP server
+                    await tool.connect()
+                    self._mcp_tools_initialized_on_run.append(tool)
+
+    async def _disconnect_mcp_tools(self) -> None:
+        """Disconnect the MCP tools from the agent."""
+        for tool in self._mcp_tools_initialized_on_run:
+            await tool.close()
+        self._mcp_tools_initialized_on_run = []
+
     def _execute_pre_hooks(
         self,
         hooks: Optional[List[Callable[..., Any]]],
@@ -1008,7 +1032,9 @@ class Team:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                from inspect import iscoroutinefunction
+
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     # Synchronous function
@@ -1139,7 +1165,9 @@ class Team:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                from inspect import iscoroutinefunction
+
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     hook(**filtered_args)
@@ -2040,6 +2068,7 @@ class Team:
         # 4. Determine tools for model
         team_run_context: Dict[str, Any] = {}
         self.model = cast(Model, self.model)
+        await self._check_and_refresh_mcp_tools()
         _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
@@ -2087,8 +2116,6 @@ class Team:
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 6. Start memory creation in background task
-        import asyncio
-
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
@@ -2189,6 +2216,7 @@ class Team:
 
             return run_response
         finally:
+            await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
                 memory_task.cancel()
@@ -2277,6 +2305,7 @@ class Team:
         # 5. Determine tools for model
         team_run_context: Dict[str, Any] = {}
         self.model = cast(Model, self.model)
+        await self._check_and_refresh_mcp_tools()
         _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
@@ -2321,8 +2350,6 @@ class Team:
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 7. Start memory creation in background task
-        import asyncio
-
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
@@ -2515,6 +2542,7 @@ class Team:
             await self._acleanup_and_store(run_response=run_response, session=team_session)
 
         finally:
+            await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
                 memory_task.cancel()
@@ -3382,7 +3410,7 @@ class Team:
         self._update_session_metrics(session=session)
 
         # Save session to memory
-        self.save_session(session=session)
+        await self.asave_session(session=session)
 
     def _make_memories(
         self,
@@ -4885,6 +4913,33 @@ class Team:
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
+    async def _check_and_refresh_mcp_tools(self) -> None:
+        # Connect MCP tools
+        await self._connect_mcp_tools()
+
+        # Add provided tools
+        if self.tools is not None:
+            for tool in self.tools:
+                if isinstance(tool, (MCPTools, MultiMCPTools)):
+                    if self.refresh_mcp_tools:
+                        try:
+                            is_alive = await tool.is_alive()
+                            if not is_alive:
+                                await tool.connect(force=True)
+                        except (RuntimeError, BaseException) as e:
+                            log_warning(f"Failed to check if MCP tool is alive: {e}")
+                            continue
+
+                        try:
+                            await tool.build_tools()
+                        except (RuntimeError, BaseException) as e:
+                            log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                            continue
+
+                    # Only add the tool if it successfully connected and built its tools
+                    if not tool.initialized:
+                        continue
+
     def _determine_tools_for_model(
         self,
         model: Model,
@@ -4913,6 +4968,10 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
+                if isinstance(tool, (MCPTools, MultiMCPTools)):
+                    # Only add the tool if it successfully connected and built its tools
+                    if not tool.initialized:
+                        continue
                 _tools.append(tool)
 
         if self.read_chat_history:
@@ -5037,7 +5096,7 @@ class Team:
                         _func.strict = True
                     if self.tool_hooks:
                         _func.tool_hooks = self.tool_hooks
-                    _functions.append(_func)
+                    _functions.append(_func.model_copy(deep=True))
                     log_debug(f"Added tool {_func.name} from {tool.name}")
 
                 # Add instructions from the toolkit
@@ -5057,7 +5116,7 @@ class Team:
                     tool.strict = True
                 if self.tool_hooks:
                     tool.tool_hooks = self.tool_hooks
-                _functions.append(tool)
+                _functions.append(tool.model_copy(deep=True))
                 log_debug(f"Added tool {tool.name}")
 
                 # Add instructions from the Function
@@ -5080,7 +5139,7 @@ class Team:
                         _func.strict = True
                     if self.tool_hooks:
                         _func.tool_hooks = self.tool_hooks
-                    _functions.append(_func)
+                    _functions.append(_func.model_copy(deep=True))
                     log_debug(f"Added tool {_func.name}")
                 except Exception as e:
                     log_warning(f"Could not add tool {tool}: {e}")
@@ -6764,6 +6823,11 @@ class Team:
             # 1. Initialize the member agent
             self._initialize_member(member_agent)
 
+            # If team has send_media_to_model=False, ensure member agent also has it set to False
+            # This allows tools to access files while preventing models from receiving them
+            if not self.send_media_to_model:
+                member_agent.send_media_to_model = False
+
             # 2. Handle respond_directly nuances
             if self.respond_directly:
                 # Since we return the response directly from the member agent, we need to set the output schema from the team down.
@@ -6893,6 +6957,7 @@ class Team:
             use_agent_logger()
 
             member_session_state_copy = copy(session_state)
+
             if stream:
                 member_agent_run_response_stream = member_agent.run(
                     input=member_agent_task if not history else history,
@@ -7019,6 +7084,7 @@ class Team:
             use_agent_logger()
 
             member_session_state_copy = copy(session_state)
+
             if stream:
                 member_agent_run_response_stream = member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
@@ -7323,6 +7389,7 @@ class Team:
 
                     async def run_member_agent(agent=current_agent) -> str:
                         member_session_state_copy = copy(session_state)
+
                         member_agent_run_response = await agent.arun(
                             input=member_agent_task if not history else history,
                             user_id=user_id,
@@ -8195,6 +8262,8 @@ class Team:
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
+        import asyncio
+
         from agno.knowledge.reader.text_reader import TextReader
 
         asyncio.run(

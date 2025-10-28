@@ -1,10 +1,9 @@
-import asyncio
 import weakref
 from contextlib import AsyncExitStack
 from dataclasses import asdict
 from datetime import timedelta
 from types import TracebackType
-from typing import Any,List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -19,7 +18,6 @@ try:
     from mcp.client.streamable_http import streamablehttp_client
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
-
 
 
 class MultiMCPTools(Toolkit):
@@ -122,10 +120,9 @@ class MultiMCPTools(Toolkit):
                     self.server_params_list.append(StreamableHTTPClientParams(url=url))
 
         self._async_exit_stack = AsyncExitStack()
-        
 
         self._client = client
-        
+
         self._initialized = False
         self._connection_task = None
         self._successful_connections = 0
@@ -152,18 +149,17 @@ class MultiMCPTools(Toolkit):
             return True
         except (RuntimeError, BaseException):
             return False
-        
+
     async def connect(self, force: bool = False):
         """Initialize a MultiMCPTools instance and connect to the MCP servers"""
-        
+
         if force:
             # Clean up the session and context so we force a new connection
             self._sessions = []
             self._successful_connections = 0
             self._initialized = False
             self._connection_task = None
-        
-        
+
         if self._initialized:
             return
 
@@ -244,7 +240,7 @@ class MultiMCPTools(Toolkit):
                     session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
                     await self.initialize(session)
                     self._successful_connections += 1
-                    
+
             except Exception as e:
                 if not self.allow_partial_failure:
                     raise ValueError(f"MCP connection failed: {e}")
@@ -266,15 +262,15 @@ class MultiMCPTools(Toolkit):
         """Close the MCP connections and clean up resources"""
         if not self._initialized:
             return
-        
+
         try:
             await self._async_exit_stack.aclose()
             self._sessions = []
             self._successful_connections = 0
-        
+
         except (RuntimeError, BaseException) as e:
             log_error(f"Failed to close MCP connections: {e}")
-            
+
         self._initialized = False
 
     async def __aenter__(self) -> "MultiMCPTools":
@@ -295,8 +291,8 @@ class MultiMCPTools(Toolkit):
         await self._async_exit_stack.aclose()
         self._initialized = False
         self._successful_connections = 0
-        
-    async def build_tools(self) -> list[Function]:
+
+    async def build_tools(self) -> None:
         for session in self._sessions:
             # Get the list of tools from the MCP server
             available_tools = await session.list_tools()
@@ -331,14 +327,14 @@ class MultiMCPTools(Toolkit):
                 except Exception as e:
                     log_error(f"Failed to register tool {tool.name}: {e}")
                     raise
-                    
+
     async def initialize(self, session: ClientSession) -> None:
         """Initialize the MCP toolkit by getting available tools from the MCP server"""
 
         try:
             # Initialize the session if not already initialized
             await session.initialize()
-            
+
             self._sessions.append(session)
             self._initialized = True
         except Exception as e:

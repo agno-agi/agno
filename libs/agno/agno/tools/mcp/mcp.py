@@ -1,4 +1,3 @@
-import asyncio
 import weakref
 from dataclasses import asdict
 from datetime import timedelta
@@ -124,7 +123,7 @@ class MCPTools(Toolkit):
             self.server_params = StdioServerParameters(command=cmd, args=arguments, env=env)
 
         self._client = client
-        
+
         self._initialized = False
         self._connection_task = None
         self._active_contexts: list[Any] = []
@@ -142,17 +141,19 @@ class MCPTools(Toolkit):
     @property
     def initialized(self) -> bool:
         return self._initialized
-    
+
     async def is_alive(self) -> bool:
+        if self.session is None:
+            return False
         try:
             await self.session.send_ping()
             return True
         except (RuntimeError, BaseException):
             return False
-        
+
     async def connect(self, force: bool = False):
         """Initialize a MCPTools instance and connect to the contextual MCP server"""
-        
+
         if force:
             # Clean up the session and context so we force a new connection
             self.session = None
@@ -161,8 +162,7 @@ class MCPTools(Toolkit):
             self._initialized = False
             self._connection_task = None
             self._active_contexts = []
-        
-        
+
         if self._initialized:
             return
 
@@ -173,7 +173,7 @@ class MCPTools(Toolkit):
 
     async def _connect(self) -> None:
         """Connects to the MCP server and initializes the tools"""
-        
+
         if self._initialized:
             return
 
@@ -205,7 +205,7 @@ class MCPTools(Toolkit):
                 raise ValueError("server_params must be provided when using stdio transport.")
             self._context = stdio_client(self.server_params)  # type: ignore
             client_timeout = self.timeout_seconds
-            
+
         session_params = await self._context.__aenter__()  # type: ignore
         self._active_contexts.append(self._context)
         read, write = session_params[0:2]
@@ -221,7 +221,7 @@ class MCPTools(Toolkit):
         """Close the MCP connection and clean up resources"""
         if not self._initialized:
             return
-        
+
         try:
             if self._session_context is not None:
                 await self._session_context.__aexit__(None, None, None)
@@ -252,13 +252,15 @@ class MCPTools(Toolkit):
             self._context = None
 
         self._initialized = False
-        
+
     async def build_tools(self) -> None:
         """Build the tools for the MCP toolkit"""
-        
+        if self.session is None:
+            raise ValueError("Session is not initialized")
+
         try:
             # Get the list of tools from the MCP server
-            available_tools = await self.session.list_tools()
+            available_tools = await self.session.list_tools()  # type: ignore
 
             self._check_tools_filters(
                 available_tools=[tool.name for tool in available_tools.tools],
@@ -278,7 +280,7 @@ class MCPTools(Toolkit):
             for tool in filtered_tools:
                 try:
                     # Get an entrypoint for the tool
-                    entrypoint = get_entrypoint_for_tool(tool, self.session)
+                    entrypoint = get_entrypoint_for_tool(tool, self.session)  # type: ignore
                     # Create a Function for the tool
                     f = Function(
                         name=tool.name,
@@ -297,7 +299,7 @@ class MCPTools(Toolkit):
 
         except (RuntimeError, BaseException) as e:
             log_error(f"Failed to get tools for {str(self)}: {e}")
-            raise        
+            raise
 
     async def initialize(self) -> None:
         """Initialize the MCP toolkit by getting available tools from the MCP server"""
@@ -306,15 +308,14 @@ class MCPTools(Toolkit):
 
         try:
             if self.session is None:
-                raise ValueError("Failed to establish session connection")
+                raise ValueError("Session is not initialized")
 
             # Initialize the session if not already initialized
             await self.session.initialize()
-            
+
             await self.build_tools()
 
             self._initialized = True
 
         except (RuntimeError, BaseException) as e:
             log_error(f"Failed to initialize MCP toolkit: {e}")
-

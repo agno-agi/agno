@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from asyncio import create_task, CancelledError
-from inspect import iscoroutinefunction
+from asyncio import CancelledError, create_task
 from collections import ChainMap, deque
 from dataclasses import dataclass
+from inspect import iscoroutinefunction
 from os import getenv
 from textwrap import dedent
 from typing import (
@@ -631,7 +631,7 @@ class Agent:
 
         self._hooks_normalised = False
 
-        self._mcp_tools_initialized_on_run: List[MCPTools] = []
+        self._mcp_tools_initialized_on_run: List[Union[MCPTools, MultiMCPTools]] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -819,11 +819,12 @@ class Agent:
 
     async def _connect_mcp_tools(self) -> None:
         """Connect the MCP tools to the agent."""
-        for tool in self.tools:
-            if isinstance(tool, (MCPTools, MultiMCPTools)) and not tool.initialized:
-                # Connect the MCP server
-                await tool.connect()
-                self._mcp_tools_initialized_on_run.append(tool)
+        if self.tools:
+            for tool in self.tools:
+                if isinstance(tool, (MCPTools, MultiMCPTools)) and not tool.initialized:
+                    # Connect the MCP server
+                    await tool.connect()
+                    self._mcp_tools_initialized_on_run.append(tool)
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
@@ -1389,7 +1390,10 @@ class Agent:
             # Handle run cancellation during streaming
             log_info(f"Run {run_response.run_id} was cancelled during streaming")
             run_response.status = RunStatus.cancelled
-            run_response.content = str(e)
+            # Don't overwrite content - preserve any partial content that was streamed
+            # Only set content if it's empty
+            if not run_response.content:
+                run_response.content = str(e)
 
             # Yield the cancellation event
             yield handle_event(  # type: ignore
@@ -2052,6 +2056,7 @@ class Agent:
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
+            dependencies=dependencies,
         )
 
         # 6. Prepare run messages
@@ -2080,7 +2085,6 @@ class Agent:
         # 7. Start memory creation as a background task (runs concurrently with the main execution)
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-
             log_debug("Starting memory creation in background task.")
             memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
@@ -2269,7 +2273,10 @@ class Agent:
             # Handle run cancellation during async streaming
             log_info(f"Run {run_response.run_id} was cancelled during async streaming")
             run_response.status = RunStatus.cancelled
-            run_response.content = str(e)
+            # Don't overwrite content - preserve any partial content that was streamed
+            # Only set content if it's empty
+            if not run_response.content:
+                run_response.content = str(e)
 
             # Yield the cancellation event
             yield handle_event(  # type: ignore
@@ -3909,7 +3916,6 @@ class Agent:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-
                 if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
@@ -4044,6 +4050,7 @@ class Agent:
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
+                from inspect import iscoroutinefunction
 
                 if iscoroutinefunction(hook):
                     await hook(**filtered_args)
@@ -5222,7 +5229,6 @@ class Agent:
         user_id: Optional[str] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
-
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Add provided tools
@@ -5294,9 +5300,6 @@ class Agent:
         user_id: Optional[str] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
-        import time
-        start_time = time.time()
-
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Connect MCP tools
@@ -5309,23 +5312,22 @@ class Agent:
                     if self.refresh_mcp_tools:
                         try:
                             is_alive = await tool.is_alive()
-                            print(f"MCP tool {tool.name} is alive: {is_alive}")
                             if not is_alive:
                                 await tool.connect(force=True)
                         except (RuntimeError, BaseException) as e:
                             log_warning(f"Failed to check if MCP tool is alive: {e}")
                             continue
-                        
+
                         try:
                             await tool.build_tools()
                         except (RuntimeError, BaseException) as e:
                             log_warning(f"Failed to build tools for {str(tool)}: {e}")
                             continue
-                    
+
                     # Only add the tool if it successfully connected and built its tools
                     if not tool.initialized:
                         continue
-                    
+
                     agent_tools.append(tool)
                 else:
                     agent_tools.append(tool)
@@ -5370,8 +5372,6 @@ class Agent:
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
-        end_time = time.time()
-        print(f"Time taken to process tools: {end_time - start_time:.8f} seconds")
         return agent_tools
 
     def _determine_tools_for_model(
@@ -5420,7 +5420,7 @@ class Agent:
                             _func.strict = True
                         if self.tool_hooks is not None:
                             _func.tool_hooks = self.tool_hooks
-                        _functions.append(_func)
+                        _functions.append(_func.model_copy(deep=True))
                         log_debug(f"Added tool {name} from {tool.name}")
 
                     # Add instructions from the toolkit
@@ -5438,7 +5438,7 @@ class Agent:
                         tool.strict = True
                     if self.tool_hooks is not None:
                         tool.tool_hooks = self.tool_hooks
-                    _functions.append(tool)
+                    _functions.append(tool.model_copy(deep=True))
                     log_debug(f"Added tool {tool.name}")
 
                     # Add instructions from the Function
@@ -5459,7 +5459,7 @@ class Agent:
                             _func.strict = True
                         if self.tool_hooks is not None:
                             _func.tool_hooks = self.tool_hooks
-                        _functions.append(_func)
+                        _functions.append(_func.model_copy(deep=True))
                         log_debug(f"Added tool {_func.name}")
                     except Exception as e:
                         log_warning(f"Could not add tool {tool}: {e}")
@@ -9265,8 +9265,10 @@ class Agent:
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
-        from agno.knowledge.reader.text_reader import TextReader
         import asyncio
+
+        from agno.knowledge.reader.text_reader import TextReader
+
         asyncio.run(
             self.knowledge.add_content_async(name=document_name, text_content=document_content, reader=TextReader())
         )

@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Dict, Optional
+
+
 @dataclass
 class SSEClientParams:
     """Parameters for SSE client connection."""
@@ -20,4 +22,3 @@ class StreamableHTTPClientParams:
     timeout: Optional[timedelta] = timedelta(seconds=30)
     sse_read_timeout: Optional[timedelta] = timedelta(seconds=60 * 5)
     terminate_on_close: Optional[bool] = None
-

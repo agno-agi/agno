@@ -27,8 +27,8 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
     Returns:
         Callable: The entrypoint function for the tool
     """
-    async def call_tool(tool_name: str, **kwargs) -> ToolResult:
 
+    async def call_tool(tool_name: str, **kwargs) -> ToolResult:
         try:
             await session.send_ping()
         except Exception as e:
@@ -212,4 +212,3 @@ def prepare_command(command: str) -> list[str]:
         return parts
 
     raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")
-
