@@ -109,6 +109,7 @@ class WorkflowAgent(Agent):
             """
             Execute the complete workflow with the given query.
             Use this tool when you need to run the workflow to answer the user's question.
+            
             Args:
                 query: The input query/question to process through the workflow
             Returns:
