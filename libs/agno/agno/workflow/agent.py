@@ -229,7 +229,12 @@ class WorkflowAgent(Agent):
             """
             # Reload session to get latest data from database
             # This ensures we don't overwrite any updates made after the tool was created
-            session_from_db = workflow.get_session(session_id=session.session_id)
+            # Use async or sync method based on database type
+            if workflow._has_async_db():
+                session_from_db = await workflow.aget_session(session_id=session.session_id)
+            else:
+                session_from_db = workflow.get_session(session_id=session.session_id)
+                
             if session_from_db is None:
                 session_from_db = session  # Fallback to closure session if reload fails
                 log_debug(f"Fallback to closure session: {len(session_from_db.runs or [])} runs")

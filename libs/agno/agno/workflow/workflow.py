@@ -3005,7 +3005,10 @@ class Workflow:
             # Update the run in session
             session.upsert_run(run=workflow_run_response)
             # Save session
-            self.save_session(session=session)
+            if self._has_async_db():
+                await self.asave_session(session=session)
+            else:
+                self.save_session(session=session)
 
             # Yield a workflow completed event with the agent's direct response
             completed_event = WorkflowCompletedEvent(
@@ -3020,7 +3023,10 @@ class Workflow:
             yield completed_event
         else:
             # Workflow was executed by the tool
-            reloaded_session = self.get_session(session_id=session.session_id)
+            if self._has_async_db():
+                reloaded_session = await self.aget_session(session_id=session.session_id)
+            else:
+                reloaded_session = self.get_session(session_id=session.session_id)
 
             if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
                 # Get the last run (which is the one just created by the tool)
@@ -3035,7 +3041,10 @@ class Workflow:
                     agent_response.workflow_id = last_run.workflow_id
 
                 # Save the reloaded session (which has the updated run)
-                self.save_session(session=reloaded_session)
+                if self._has_async_db():
+                    await self.asave_session(session=reloaded_session)
+                else:
+                    self.save_session(session=reloaded_session)
 
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
@@ -3111,7 +3120,10 @@ class Workflow:
 
             # Update the run in session
             session.upsert_run(run=workflow_run_response)
-            self.save_session(session=session)
+            if self._has_async_db():
+                await self.asave_session(session=session)
+            else:
+                self.save_session(session=session)
 
             log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
@@ -3124,7 +3136,10 @@ class Workflow:
             logger.info("=" * 80)
 
             log_debug("Reloading session from database to get the latest workflow run...")
-            reloaded_session = self.get_session(session_id=session.session_id)
+            if self._has_async_db():
+                reloaded_session = await self.aget_session(session_id=session.session_id)
+            else:
+                reloaded_session = self.get_session(session_id=session.session_id)
 
             if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
                 # Get the last run (which is the one just created by the tool)
@@ -3141,7 +3156,10 @@ class Workflow:
                     agent_response.workflow_id = last_run.workflow_id
 
                 # Save the reloaded session (which has the updated run)
-                self.save_session(session=reloaded_session)
+                if self._has_async_db():
+                    await self.asave_session(session=reloaded_session)
+                else:
+                    self.save_session(session=reloaded_session)
 
                 log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
