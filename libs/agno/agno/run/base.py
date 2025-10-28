@@ -183,7 +183,13 @@ class BaseRunOutputEvent:
 
             data["session_summary"] = SessionSummary.from_dict(session_summary)
 
-        return cls(**data)
+        # Filter data to only include fields that are actually defined in the target class
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
+        return cls(**filtered_data)
 
     @property
     def is_paused(self):
