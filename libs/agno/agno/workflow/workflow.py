@@ -2608,13 +2608,24 @@ class Workflow:
 
         log_debug(f"Executing workflow agent with streaming - input: {agent_input}...")
 
-        # Yield WorkflowAgentStartedEvent at the beginning
+        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed)
+        run_id = str(uuid4())
+        direct_reply_run_response = WorkflowRunOutput(
+            run_id=run_id,
+            input=execution_input.input,
+            session_id=session.session_id,
+            workflow_id=self.id,
+            workflow_name=self.name,
+            created_at=int(datetime.now().timestamp()),
+        )
+
+        # Yield WorkflowAgentStartedEvent at the beginning (stored in direct_reply_run_response)
         agent_started_event = WorkflowAgentStartedEvent(
             workflow_name=self.name,
             workflow_id=self.id,
             session_id=session.session_id,
         )
-        yield agent_started_event
+        yield self._handle_event(agent_started_event, direct_reply_run_response)
 
         # Run the agent in streaming mode and yield all events
         for event in self.agent.run(  # type: ignore[union-attr]
@@ -2648,33 +2659,21 @@ class Workflow:
 
         # Handle direct answer case (no workflow execution)
         if not workflow_executed:
-            # Create a new workflow run output for the direct answer
-            run_id = str(uuid4())
-            workflow_run_response = WorkflowRunOutput(
-                run_id=run_id,
-                input=execution_input.input,
-                session_id=session.session_id,
-                workflow_id=self.id,
-                workflow_name=self.name,
-                created_at=int(datetime.now().timestamp()),
-                content=agent_response.content if agent_response else "",
-                status=RunStatus.completed,
-                workflow_agent_run=agent_response,
-            )
+            # Update the pre-created workflow run response with the direct answer
+            direct_reply_run_response.content = agent_response.content if agent_response else ""
+            direct_reply_run_response.status = RunStatus.completed
+            direct_reply_run_response.workflow_agent_run = agent_response
+            
+            workflow_run_response = direct_reply_run_response
 
             # Store the full agent RunOutput and establish parent-child relationship
             if agent_response:
                 agent_response.parent_run_id = workflow_run_response.run_id
                 agent_response.workflow_id = workflow_run_response.workflow_id
 
-            # Update the run in session
-            session.upsert_run(run=workflow_run_response)
-            # Save session
-            self.save_session(session=session)
-
             log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
-            # Yield WorkflowAgentCompletedEvent
+            # Yield WorkflowAgentCompletedEvent (user internally by print_response_stream)
             agent_completed_event = WorkflowAgentCompletedEvent(
                 run_id=agent_response.run_id if agent_response else None,
                 workflow_name=self.name,
@@ -2682,7 +2681,7 @@ class Workflow:
                 session_id=session.session_id,
                 content=workflow_run_response.content,
             )
-            yield agent_completed_event
+            yield self._handle_event(agent_completed_event, workflow_run_response)
 
             # Yield a workflow completed event with the agent's direct response
             completed_event = WorkflowCompletedEvent(
@@ -2695,6 +2694,12 @@ class Workflow:
                 metadata={"agent_direct_response": True},
             )
             yield completed_event
+
+            # Update the run in session
+            session.upsert_run(run=workflow_run_response)
+            # Save session
+            self.save_session(session=session)
+
         else:
             # Workflow was executed by the tool
             reloaded_session = self.get_session(session_id=session.session_id)
@@ -2979,16 +2984,24 @@ class Workflow:
 
         log_debug(f"Executing async workflow agent with streaming - input: {agent_input}...")
 
-        # Yield WorkflowAgentStartedEvent at the beginning
+        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed)
+        run_id = str(uuid4())
+        direct_reply_run_response = WorkflowRunOutput(
+            run_id=run_id,
+            input=execution_input.input,
+            session_id=session.session_id,
+            workflow_id=self.id,
+            workflow_name=self.name,
+            created_at=int(datetime.now().timestamp()),
+        )
+
+        # Yield WorkflowAgentStartedEvent at the beginning (stored in direct_reply_run_response)
         agent_started_event = WorkflowAgentStartedEvent(
             workflow_name=self.name,
             workflow_id=self.id,
             session_id=session.session_id,
         )
-
-        self._broadcast_to_websocket(agent_started_event, websocket_handler)
-
-        yield agent_started_event
+        yield self._handle_event(agent_started_event, direct_reply_run_response, websocket_handler=websocket_handler)
 
         # Run the agent in streaming mode and yield all events
         async for event in self.agent.arun(  # type: ignore[union-attr]
@@ -3030,32 +3043,17 @@ class Workflow:
 
         # Handle direct answer case (no workflow execution)
         if not workflow_executed:
-            # Create a new workflow run output for the direct answer
-            run_id = str(uuid4())
-            workflow_run_response = WorkflowRunOutput(
-                run_id=run_id,
-                input=execution_input.input,
-                session_id=session.session_id,
-                workflow_id=self.id,
-                workflow_name=self.name,
-                created_at=int(datetime.now().timestamp()),
-                content=agent_response.content if agent_response else "",
-                status=RunStatus.completed,
-                workflow_agent_run=agent_response,
-            )
+            # Update the pre-created workflow run response with the direct answer
+            direct_reply_run_response.content = agent_response.content if agent_response else ""
+            direct_reply_run_response.status = RunStatus.completed
+            direct_reply_run_response.workflow_agent_run = agent_response
+            
+            workflow_run_response = direct_reply_run_response
 
             # Store the full agent RunOutput and establish parent-child relationship
             if agent_response:
                 agent_response.parent_run_id = workflow_run_response.run_id
                 agent_response.workflow_id = workflow_run_response.workflow_id
-
-            # Update the run in session
-            session.upsert_run(run=workflow_run_response)
-            # Save session
-            if self._has_async_db():
-                await self.asave_session(session=session)
-            else:
-                self.save_session(session=session)
 
             # Yield WorkflowAgentCompletedEvent
             agent_completed_event = WorkflowAgentCompletedEvent(
@@ -3065,12 +3063,9 @@ class Workflow:
                 session_id=session.session_id,
                 content=workflow_run_response.content,
             )
+            yield self._handle_event(agent_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
-            self._broadcast_to_websocket(agent_completed_event, websocket_handler)
-
-            yield agent_completed_event
-
-            # Yield a workflow completed event with the agent's direct response
+            # Yield a workflow completed event with the agent's direct response (user internally by aprint_response_stream)
             completed_event = WorkflowCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
                 content=workflow_run_response.content,
@@ -3081,6 +3076,15 @@ class Workflow:
                 metadata={"agent_direct_response": True},
             )
             yield completed_event
+
+            # Update the run in session
+            session.upsert_run(run=workflow_run_response)
+            # Save session
+            if self._has_async_db():
+                await self.asave_session(session=session)
+            else:
+                self.save_session(session=session)
+                
         else:
             # Workflow was executed by the tool
             if self._has_async_db():
