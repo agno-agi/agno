@@ -108,7 +108,7 @@ class Llama(Model):
             if isinstance(self.http_client, httpx.Client):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client.")
+                log_debug("http_client is not an instance of httpx.Client.")
         self.client = LlamaAPIClient(**client_params)
         return self.client
 
@@ -127,7 +127,7 @@ class Llama(Model):
             client_params["http_client"] = self.http_client
         else:
             if self.http_client:
-                log_warning("http_client is not an instance of httpx.AsyncClient. Using default httpx.AsyncClient.")
+                log_debug(f"The current http_client is not async. A default httpx.AsyncClient will be used instead.")
             # Create a new async HTTP client with custom limits
             client_params["http_client"] = httpx.AsyncClient(
                 limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)

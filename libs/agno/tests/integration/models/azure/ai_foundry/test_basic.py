@@ -30,8 +30,8 @@ def _assert_metrics(response: RunOutput):
     assert total_tokens == input_tokens + output_tokens
 
 
-def test_basic():
-    agent = Agent(model=AzureAIFoundry(id="Phi-4"), markdown=True, telemetry=False)
+def test_basic(azure_model):
+    agent = Agent(model=azure_model, markdown=True, telemetry=False)
 
     # Print the response in the terminal
     response: RunOutput = agent.run("Share a 2 sentence horror story")
@@ -44,9 +44,9 @@ def test_basic():
     _assert_metrics(response)
 
 
-def test_basic_stream():
+def test_basic_stream(azure_model):
     agent = Agent(
-        model=AzureAIFoundry(id="Phi-4"),
+        model=azure_model,
         instructions="You tell ghost stories",
         markdown=True,
         telemetry=False,
@@ -77,10 +77,10 @@ async def test_async_basic_stream(azure_model):
         assert chunk.content is not None
 
 
-def test_with_memory():
+def test_with_memory(azure_model):
     agent = Agent(
         db=SqliteDb(db_file="tmp/test_with_memory.db"),
-        model=AzureAIFoundry(id="Phi-4"),
+        model=azure_model,
         add_history_to_context=True,
         markdown=True,
         telemetry=False,
@@ -105,14 +105,14 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_output_schema():
+def test_output_schema(azure_model):
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AzureAIFoundry(id="Phi-4"),
+        model=azure_model,
         output_schema=MovieScript,
         telemetry=False,
     )
@@ -126,14 +126,14 @@ def test_output_schema():
     assert response.content.plot is not None
 
 
-def test_json_response_mode():
+def test_json_response_mode(azure_model):
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AzureAIFoundry(id="Phi-4"),
+        model=azure_model,
         output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
@@ -148,9 +148,9 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
-def test_history():
+def test_history(azure_model):
     agent = Agent(
-        model=AzureAIFoundry(id="Phi-4"),
+        model=azure_model,
         db=SqliteDb(db_file="tmp/azure-ai-foundry/test_basic.db"),
         add_history_to_context=True,
         telemetry=False,
