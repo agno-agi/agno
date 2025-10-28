@@ -388,6 +388,9 @@ def get_run_output_util(
         session_id (Optional[str]): The session_id to load from storage.
     """
     if session_id is not None:
+        if entity._has_async_db():
+            raise ValueError("Async database not supported for sync functions")
+
         session = entity.get_session(session_id=session_id)
         if session is not None:
             run_response = session.get_run(run_id=run_id)
@@ -446,6 +449,9 @@ def get_last_run_output_util(
         RunOutput: The last run response from the database.
     """
     if session_id is not None:
+        if entity._has_async_db():
+            raise ValueError("Async database not supported for sync functions")
+
         session = entity.get_session(session_id=session_id)
         if session is not None and session.runs is not None and len(session.runs) > 0:
             for run_output in reversed(session.runs):
@@ -517,6 +523,9 @@ def set_session_name_util(
     entity: Union["Agent", "Team"], session_id: str, autogenerate: bool = False, session_name: Optional[str] = None
 ) -> Union[AgentSession, TeamSession]:
     """Set the session name and save to storage"""
+    if entity._has_async_db():
+        raise ValueError("Async database not supported for sync functions")
+
     session = entity.get_session(session_id=session_id)  # type: ignore
 
     if session is None:
@@ -571,6 +580,9 @@ async def aset_session_name_util(
 def get_session_name_util(entity: Union["Agent", "Team"], session_id: str) -> str:
     """Get the session name for the given session ID and user ID."""
 
+    if entity._has_async_db():
+        raise ValueError("Async database not supported for sync functions")
+
     session = entity.get_session(session_id=session_id)  # type: ignore
     if session is None:
         raise Exception("Session not found")
@@ -587,6 +599,9 @@ async def aget_session_name_util(entity: Union["Agent", "Team"], session_id: str
 
 def get_session_state_util(entity: Union["Agent", "Team"], session_id: str) -> Dict[str, Any]:
     """Get the session state for the given session ID and user ID."""
+    if entity._has_async_db():
+        raise ValueError("Async database not supported for sync functions")
+
     session = entity.get_session(session_id=session_id)  # type: ignore
     if session is None:
         raise Exception("Session not found")
@@ -612,6 +627,9 @@ def update_session_state_util(
     Returns:
         dict: The updated session state.
     """
+    if entity._has_async_db():
+        raise ValueError("Async database not supported for sync functions")
+
     session = entity.get_session(session_id=session_id)  # type: ignore
     if session is None:
         raise Exception("Session not found")
@@ -655,6 +673,9 @@ async def aupdate_session_state_util(
 
 def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[Metrics]:
     """Get the session metrics for the given session ID and user ID."""
+    if entity._has_async_db():
+        raise ValueError("Async database not supported for sync functions")
+
     session = entity.get_session(session_id=session_id)  # type: ignore
     if session is None:
         raise Exception("Session not found")
@@ -689,6 +710,9 @@ def get_chat_history_util(entity: Union["Agent", "Team"], session_id: str) -> Li
     Returns:
         List[Message]: The chat history from the session.
     """
+    if entity._has_async_db():
+        raise ValueError("Async database not supported for sync functions")
+
     session = entity.get_session(session_id=session_id)  # type: ignore
 
     if session is None:

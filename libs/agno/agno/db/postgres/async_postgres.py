@@ -712,7 +712,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
                 result = await sess.execute(delete_stmt)
 
-                success = result.rowcount > 0
+                success = result.rowcount > 0  # type: ignore
                 if success:
                     log_debug(f"Successfully deleted user memory id: {memory_id}")
                 else:

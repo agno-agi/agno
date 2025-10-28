@@ -669,17 +669,16 @@ class Team:
         self._cached_session: Optional[TeamSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
-        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
 
         # True if we should parse a member response model
         self._member_response_model: Optional[Type[BaseModel]] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
-        self._rebuild_tools = True
-
         self._hooks_normalised = False
+
+        # List of MCP tools that were initialized on the last run
+        self._mcp_tools_initialized_on_run: List[Any] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -945,6 +944,21 @@ class Team:
         """
         return cancel_run_global(run_id)
 
+    async def _connect_mcp_tools(self) -> None:
+        """Connect the MCP tools to the agent."""
+        if self.tools is not None:
+            for tool in self.tools:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:  # type: ignore
+                    # Connect the MCP server
+                    await tool.connect()  # type: ignore
+                    self._mcp_tools_initialized_on_run.append(tool)
+
+    async def _disconnect_mcp_tools(self) -> None:
+        """Disconnect the MCP tools from the agent."""
+        for tool in self._mcp_tools_initialized_on_run:
+            await tool.close()
+        self._mcp_tools_initialized_on_run = []
+
     def _execute_pre_hooks(
         self,
         hooks: Optional[List[Callable[..., Any]]],
@@ -1054,7 +1068,9 @@ class Team:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                from inspect import iscoroutinefunction
+
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     # Synchronous function
@@ -1185,7 +1201,9 @@ class Team:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                from inspect import iscoroutinefunction
+
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     hook(**filtered_args)
@@ -1266,7 +1284,7 @@ class Team:
         # Initialize team run context
         team_run_context: Dict[str, Any] = {}
 
-        self.determine_tools_for_model(
+        _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
@@ -1305,6 +1323,7 @@ class Team:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
         if len(run_messages.messages) == 0:
@@ -1334,8 +1353,7 @@ class Team:
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 response_format=response_format,
-                tools=self._tools_for_model,
-                functions=self._functions_for_model,
+                tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
                 send_media_to_model=self.send_media_to_model,
@@ -1478,7 +1496,7 @@ class Team:
         # Initialize team run context
         team_run_context: Dict[str, Any] = {}
 
-        self.determine_tools_for_model(
+        _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
@@ -1517,6 +1535,7 @@ class Team:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
         if len(run_messages.messages) == 0:
@@ -1560,6 +1579,7 @@ class Team:
                     session=session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -1570,6 +1590,7 @@ class Team:
                     session=session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -2083,7 +2104,8 @@ class Team:
         # 4. Determine tools for model
         team_run_context: Dict[str, Any] = {}
         self.model = cast(Model, self.model)
-        self.determine_tools_for_model(
+        await self._check_and_refresh_mcp_tools()
+        _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
@@ -2121,6 +2143,8 @@ class Team:
             dependencies=dependencies,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
 
@@ -2128,8 +2152,6 @@ class Team:
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 6. Start memory creation in background task
-        import asyncio
-
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
@@ -2149,8 +2171,7 @@ class Team:
             # 8. Get the model response for the team leader
             model_response = await self.model.aresponse(
                 messages=run_messages.messages,
-                tools=self._tools_for_model,
-                functions=self._functions_for_model,
+                tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
                 response_format=response_format,
@@ -2231,6 +2252,7 @@ class Team:
 
             return run_response
         finally:
+            await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
                 memory_task.cancel()
@@ -2319,7 +2341,8 @@ class Team:
         # 5. Determine tools for model
         team_run_context: Dict[str, Any] = {}
         self.model = cast(Model, self.model)
-        self.determine_tools_for_model(
+        await self._check_and_refresh_mcp_tools()
+        _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
@@ -2356,14 +2379,13 @@ class Team:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 7. Start memory creation in background task
-        import asyncio
-
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
@@ -2403,6 +2425,7 @@ class Team:
                     session=team_session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -2413,6 +2436,7 @@ class Team:
                     session=team_session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -2554,6 +2578,7 @@ class Team:
             await self._acleanup_and_store(run_response=run_response, session=team_session)
 
         finally:
+            await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
                 memory_task.cancel()
@@ -2915,6 +2940,7 @@ class Team:
         session: TeamSession,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
+        tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
@@ -2934,8 +2960,7 @@ class Team:
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=tools,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
@@ -2997,6 +3022,7 @@ class Team:
         session: TeamSession,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
+        tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
@@ -3016,8 +3042,7 @@ class Team:
         model_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=tools,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
@@ -4924,7 +4949,30 @@ class Team:
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
-    def determine_tools_for_model(
+    async def _check_and_refresh_mcp_tools(self) -> None:
+        # Connect MCP tools
+        await self._connect_mcp_tools()
+
+        # Add provided tools
+        if self.tools is not None:
+            for tool in self.tools:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                    if tool.refresh_connection:  # type: ignore
+                        try:
+                            is_alive = await tool.is_alive()  # type: ignore
+                            if not is_alive:
+                                await tool.connect(force=True)  # type: ignore
+                        except (RuntimeError, BaseException) as e:
+                            log_warning(f"Failed to check if MCP tool is alive: {e}")
+                            continue
+
+                        try:
+                            await tool.build_tools()  # type: ignore
+                        except (RuntimeError, BaseException) as e:
+                            log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                            continue
+
+    def _determine_tools_for_model(
         self,
         model: Model,
         run_response: TeamRunOutput,
@@ -4945,13 +4993,17 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:
+    ) -> List[Union[Function, dict]]:
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                    # Only add the tool if it successfully connected and built its tools
+                    if not tool.initialized:  # type: ignore
+                        continue
                 _tools.append(tool)
 
         if self.read_chat_history:
@@ -5044,13 +5096,12 @@ class Team:
             if self.get_member_information_tool:
                 _tools.append(self.get_member_information)
 
-        self._functions_for_model = {}
-        self._tools_for_model = []
-        self._tool_instructions = []
-
         # Get Agent tools
         if len(_tools) > 0:
             log_debug("Processing tools for model")
+
+        _function_names = []
+        _functions: List[Union[Function, dict]] = []
 
         # Check if we need strict mode for the model
         strict = False
@@ -5061,25 +5112,24 @@ class Team:
             if isinstance(tool, Dict):
                 # If a dict is passed, it is a builtin tool
                 # that is run by the model provider and not the Agent
-                self._tools_for_model.append(tool)
+                _functions.append(tool)
                 log_debug(f"Included builtin tool {tool}")
 
             elif isinstance(tool, Toolkit):
                 # For each function in the toolkit and process entrypoint
-                for name, func in tool.functions.items():
-                    # If the function does not exist in self.functions
-                    if name not in self._functions_for_model:
-                        func._team = self
-                        func._session_state = session_state
-                        func._dependencies = dependencies
-                        func.process_entrypoint(strict=strict)
-                        if strict:
-                            func.strict = True
-                        if self.tool_hooks:
-                            func.tool_hooks = self.tool_hooks
-                        self._functions_for_model[name] = func
-                        self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                        log_debug(f"Added tool {name} from {tool.name}")
+                for name, _func in tool.functions.items():
+                    if name in _function_names:
+                        continue
+                    _function_names.append(name)
+
+                    _func._team = self
+                    _func.process_entrypoint(strict=strict)
+                    if strict:
+                        _func.strict = True
+                    if self.tool_hooks:
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func.model_copy(deep=True))
+                    log_debug(f"Added tool {_func.name} from {tool.name}")
 
                 # Add instructions from the toolkit
                 if tool.add_instructions and tool.instructions is not None:
@@ -5088,18 +5138,18 @@ class Team:
                     self._tool_instructions.append(tool.instructions)
 
             elif isinstance(tool, Function):
-                if tool.name not in self._functions_for_model:
-                    tool._team = self
-                    tool._session_state = session_state
-                    tool._dependencies = dependencies
-                    tool.process_entrypoint(strict=strict)
-                    if strict and tool.strict is None:
-                        tool.strict = True
-                    if self.tool_hooks:
-                        tool.tool_hooks = self.tool_hooks
-                    self._functions_for_model[tool.name] = tool
-                    self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                    log_debug(f"Added tool {tool.name}")
+                if tool.name in _function_names:
+                    continue
+                _function_names.append(tool.name)
+
+                tool._team = self
+                tool.process_entrypoint(strict=strict)
+                if strict and tool.strict is None:
+                    tool.strict = True
+                if self.tool_hooks:
+                    tool.tool_hooks = self.tool_hooks
+                _functions.append(tool.model_copy(deep=True))
+                log_debug(f"Added tool {tool.name}")
 
                 # Add instructions from the Function
                 if tool.add_instructions and tool.instructions is not None:
@@ -5110,42 +5160,48 @@ class Team:
             elif callable(tool):
                 # We add the tools, which are callable functions
                 try:
-                    func = Function.from_callable(tool, strict=strict)
-                    func._team = self
-                    func._session_state = session_state
-                    func._dependencies = dependencies
+                    _func = Function.from_callable(tool, strict=strict)
+
+                    if _func.name in _function_names:
+                        continue
+                    _function_names.append(_func.name)
+
+                    _func._team = self
                     if strict:
-                        func.strict = True
+                        _func.strict = True
                     if self.tool_hooks:
-                        func.tool_hooks = self.tool_hooks
-                    self._functions_for_model[func.name] = func
-                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                    log_debug(f"Added tool {func.name}")
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func.model_copy(deep=True))
+                    log_debug(f"Added tool {_func.name}")
                 except Exception as e:
                     log_warning(f"Could not add tool {tool}: {e}")
 
-        if self._functions_for_model:
+        if _functions:
             from inspect import signature
 
             # Check if any functions need media before collecting
             needs_media = any(
                 any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
-                for func in self._functions_for_model.values()
-                if func.entrypoint is not None
+                for func in _functions
+                if isinstance(func, Function) and func.entrypoint is not None
             )
 
-            if needs_media:
-                # Only collect media if functions actually need them
-                joint_images = collect_joint_images(run_response.input, session)  # type: ignore
-                joint_files = collect_joint_files(run_response.input)  # type: ignore
-                joint_audios = collect_joint_audios(run_response.input, session)  # type: ignore
-                joint_videos = collect_joint_videos(run_response.input, session)  # type: ignore
+            # Only collect media if functions actually need them
+            joint_images = collect_joint_images(run_response.input, session) if needs_media else None  # type: ignore
+            joint_files = collect_joint_files(run_response.input) if needs_media else None  # type: ignore
+            joint_audios = collect_joint_audios(run_response.input, session) if needs_media else None  # type: ignore
+            joint_videos = collect_joint_videos(run_response.input, session) if needs_media else None  # type: ignore
 
-                for func in self._functions_for_model.values():
+            for func in _functions:  # type: ignore
+                if isinstance(func, Function):
+                    func._session_state = session_state
+                    func._dependencies = dependencies
                     func._images = joint_images
                     func._files = joint_files
                     func._audios = joint_audios
                     func._videos = joint_videos
+
+        return _functions
 
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
@@ -5190,6 +5246,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
     ) -> Optional[Message]:
         """Get the system message for the team."""
@@ -5243,7 +5300,7 @@ class Team:
                 instructions.extend(_instructions)
 
         # 1.2 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
+        _model_instructions = self.model.get_instructions_for_model(tools)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
@@ -5446,7 +5503,7 @@ class Team:
                 metadata=metadata,
             )
 
-        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
+        system_message_from_model = self.model.get_system_message_for_model(tools)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
@@ -5483,6 +5540,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
     ) -> Optional[Message]:
         """Get the system message for the team."""
@@ -5536,7 +5594,7 @@ class Team:
                 instructions.extend(_instructions)
 
         # 1.2 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
+        _model_instructions = self.model.get_instructions_for_model(tools)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
@@ -5744,7 +5802,7 @@ class Team:
                 metadata=metadata,
             )
 
-        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
+        system_message_from_model = self.model.get_system_message_for_model(tools)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
@@ -5791,6 +5849,7 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -5821,6 +5880,7 @@ class Team:
             dependencies=dependencies,
             metadata=metadata,
             add_session_state_to_context=add_session_state_to_context,
+            tools=tools,
         )
         if system_message is not None:
             run_messages.system_message = system_message
@@ -5929,6 +5989,7 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -5959,6 +6020,7 @@ class Team:
             dependencies=dependencies,
             metadata=metadata,
             add_session_state_to_context=add_session_state_to_context,
+            tools=tools,
         )
         if system_message is not None:
             run_messages.system_message = system_message
@@ -7681,7 +7743,7 @@ class Team:
             TeamSession: The TeamSession loaded from the database or created if it does not exist.
         """
         if not session_id and not self.session_id:
-            return None
+            raise Exception("No session_id provided")
 
         session_id_to_load = session_id or self.session_id
 
@@ -7689,6 +7751,9 @@ class Team:
         if self.cache_session and hasattr(self, "_cached_session") and self._cached_session is not None:
             if self._cached_session.session_id == session_id_to_load:
                 return self._cached_session
+
+        if self._has_async_db():
+            raise ValueError("Async database not supported for get_session")
 
         # Load and return the session from the database
         if self.db is not None:
@@ -7722,7 +7787,7 @@ class Team:
             TeamSession: The TeamSession loaded from the database or created if it does not exist.
         """
         if not session_id and not self.session_id:
-            return None
+            raise Exception("No session_id provided")
 
         session_id_to_load = session_id or self.session_id
 
@@ -7757,6 +7822,9 @@ class Team:
         Args:
             session: The TeamSession to save.
         """
+        if self._has_async_db():
+            raise ValueError("Async database not supported for save_session")
+
         if self.db is not None and self.parent_team_id is None and self.workflow_id is None:
             if session.session_data is not None and "session_state" in session.session_data:
                 session.session_data["session_state"].pop("current_session_id", None)  # type: ignore
@@ -8311,6 +8379,8 @@ class Team:
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
+        import asyncio
+
         from agno.knowledge.reader.text_reader import TextReader
 
         asyncio.run(
