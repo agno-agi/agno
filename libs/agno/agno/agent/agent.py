@@ -5309,7 +5309,7 @@ class Agent:
                             if not is_alive:
                                 await tool.connect(force=True)
                         except (RuntimeError, BaseException) as e:
-                            log_warning(f"Failed to check if MCP tool is alive: {e}")
+                            log_warning(f"Failed to check if MCP tool is alive or to connect to it: {e}")
                             continue
 
                         try:
