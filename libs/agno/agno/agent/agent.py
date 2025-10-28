@@ -1503,9 +1503,19 @@ class Agent:
         # Determine runtime dependencies
         dependencies = dependencies if dependencies is not None else self.dependencies
 
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+        )
+
         # Resolve dependencies
         if dependencies is not None:
-            self._resolve_run_dependencies(dependencies=dependencies)
+            self._resolve_run_dependencies(run_context=run_context)
 
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
@@ -5682,29 +5692,41 @@ class Agent:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
 
-    def _resolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
+    def _resolve_run_dependencies(self, run_context: RunContext) -> None:
         from inspect import iscoroutine, iscoroutinefunction, signature
 
         # Dependencies should already be resolved in run() method
         log_debug("Resolving dependencies")
-        if not isinstance(dependencies, dict):
+        if not isinstance(run_context.dependencies, dict):
             log_warning("Dependencies is not a dict")
             return
 
-        for key, value in dependencies.items():
+        for key, value in run_context.dependencies.items():
             if iscoroutine(value) or iscoroutinefunction(value):
                 log_warning(f"Dependency {key} is a coroutine. Use agent.arun() or agent.aprint_response() instead.")
                 continue
             elif callable(value):
                 try:
                     sig = signature(value)
-                    result = value(agent=self) if "agent" in sig.parameters else value()
+
+                    # Build kwargs for the function
+                    kwargs = {}
+                    if "agent" in sig.parameters:
+                        kwargs["agent"] = self
+                    if "run_context" in sig.parameters:
+                        kwargs["run_context"] = run_context
+
+                    # Run the function
+                    result = value(**kwargs)
+
+                    # Carry the result in the run context
                     if result is not None:
-                        dependencies[key] = result
+                        run_context.dependencies[key] = result
+
                 except Exception as e:
                     log_warning(f"Failed to resolve dependencies for '{key}': {e}")
             else:
-                dependencies[key] = value
+                run_context.dependencies[key] = value
 
     async def _aresolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
         from inspect import iscoroutine, iscoroutinefunction, signature
@@ -6502,6 +6524,11 @@ class Agent:
                 if "session_state" in signature.parameters:
                     instruction_args["session_state"] = session_state or {}
 
+                # Check for run_context parameter
+                if "run_context" in signature.parameters:
+                    instruction_args["run_context"] = run_context or None
+
+                # Run the instructions function
                 _instructions = self.instructions(**instruction_args)
 
             if isinstance(_instructions, str):
@@ -6779,6 +6806,7 @@ class Agent:
     async def aget_system_message(
         self,
         session: AgentSession,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         dependencies: Optional[Dict[str, Any]] = None,
@@ -6790,6 +6818,12 @@ class Agent:
         2. If build_context is False, return None.
         3. Build and return the default system message for the Agent.
         """
+
+        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
+        if run_context is not None:
+            session_state = run_context.session_state or session_state
+            dependencies = run_context.dependencies or dependencies
+            metadata = run_context.metadata or metadata
 
         # 1. If the system_message is provided, use that.
         if self.system_message is not None:
@@ -7334,6 +7368,7 @@ class Agent:
         # 1. Add system message to run_messages
         system_message = self.get_system_message(
             session=session,
+            run_context=run_context,
             session_state=run_context.session_state,
             dependencies=run_context.dependencies,
             metadata=run_context.metadata,
@@ -7492,6 +7527,7 @@ class Agent:
         run_response: RunOutput,
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         session: AgentSession,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -7530,12 +7566,19 @@ class Agent:
         )
         """
 
+        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
+        if run_context is not None:
+            session_state = run_context.session_state or session_state
+            dependencies = run_context.dependencies or dependencies
+            metadata = run_context.metadata or metadata
+
         # Initialize the RunMessages object (no media here - that's in RunInput now)
         run_messages = RunMessages()
 
         # 1. Add system message to run_messages
         system_message = await self.aget_system_message(
             session=session,
+            run_context=run_context,
             session_state=session_state,
             user_id=user_id,
             dependencies=dependencies,
