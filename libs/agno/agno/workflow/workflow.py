@@ -2633,6 +2633,7 @@ class Workflow:
             stream=True,
             stream_intermediate_steps=True,
             yield_run_response=True,
+            session_id=session.session_id,
             dependencies=dependencies,  # Pass context dynamically per-run
         ):  # type: ignore
             if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
@@ -2758,6 +2759,7 @@ class Workflow:
         # Run the agent
         agent_response: RunOutput = self.agent.run(  # type: ignore[union-attr]
             input=agent_input,
+            session_id=session.session_id,
             dependencies=dependencies,
             stream=stream,
         )  # type: ignore
@@ -3009,6 +3011,7 @@ class Workflow:
             stream=True,
             stream_intermediate_steps=True,
             yield_run_response=True,
+            session_id=session.session_id, 
             dependencies=dependencies,  # Pass context dynamically per-run
         ):  # type: ignore
             if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
@@ -3151,6 +3154,7 @@ class Workflow:
         # Run the agent
         agent_response: RunOutput = await self.agent.arun(  # type: ignore[union-attr]
             input=agent_input,
+            session_id=session.session_id,
             dependencies=dependencies,
             stream=stream,
         )  # type: ignore
