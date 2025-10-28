@@ -220,10 +220,6 @@ class GcsJsonDb(BaseDb):
                     if user_id is not None and session_data.get("user_id") != user_id:
                         continue
 
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    if session_data.get("session_type") != session_type_value:
-                        continue
-
                     if not deserialize:
                         return session_data
 

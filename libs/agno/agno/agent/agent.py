@@ -3,6 +3,7 @@ from __future__ import annotations
 from asyncio import CancelledError, create_task
 from collections import ChainMap, deque
 from dataclasses import dataclass
+from inspect import iscoroutinefunction
 from os import getenv
 from textwrap import dedent
 from typing import (
@@ -65,18 +66,35 @@ from agno.run.cancel import (
 from agno.run.messages import RunMessages
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
+from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
+    aget_chat_history_util,
+    aget_last_run_output_util,
+    aget_run_output_util,
+    aget_session_metrics_util,
+    aget_session_name_util,
+    aget_session_state_util,
+    aset_session_name_util,
+    aupdate_session_state_util,
     await_for_background_tasks,
     await_for_background_tasks_stream,
     collect_joint_audios,
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
+    get_chat_history_util,
+    get_last_run_output_util,
+    get_run_output_util,
+    get_session_metrics_util,
+    get_session_name_util,
+    get_session_state_util,
     scrub_history_messages_from_run_output,
     scrub_media_from_run_output,
     scrub_tool_results_from_run_output,
+    set_session_name_util,
+    update_session_state_util,
     wait_for_background_tasks,
     wait_for_background_tasks_stream,
 )
@@ -627,13 +645,15 @@ class Agent:
         self.telemetry = telemetry
 
         # If we are caching the agent session
-        self._agent_session: Optional[AgentSession] = None
+        self._cached_session: Optional[AgentSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
         self._hooks_normalised = False
+
+        self._mcp_tools_initialized_on_run: List[Any] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -650,6 +670,14 @@ class Agent:
 
             self._background_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="agno-bg")
         return self._background_executor
+
+    @property
+    def should_parse_structured_output(self) -> bool:
+        return self.output_schema is not None and self.parse_response and self.parser_model is None
+
+    @property
+    def cached_session(self) -> Optional[AgentSession]:
+        return self._cached_session
 
     def set_id(self) -> None:
         if self.id is None:
@@ -807,10 +835,6 @@ class Agent:
         if self._formatter is None:
             self._formatter = SafeFormatter()
 
-    @property
-    def should_parse_structured_output(self) -> bool:
-        return self.output_schema is not None and self.parse_response and self.parser_model is None
-
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         if not self.tools:
             self.tools = []
@@ -818,6 +842,21 @@ class Agent:
 
     def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]):
         self.tools = list(tools) if tools else []
+
+    async def _connect_mcp_tools(self) -> None:
+        """Connect the MCP tools to the agent."""
+        if self.tools:
+            for tool in self.tools:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:  # type: ignore
+                    # Connect the MCP server
+                    await tool.connect()  # type: ignore
+                    self._mcp_tools_initialized_on_run.append(tool)
+
+    async def _disconnect_mcp_tools(self) -> None:
+        """Disconnect the MCP tools from the agent."""
+        for tool in self._mcp_tools_initialized_on_run:
+            await tool.close()
+        self._mcp_tools_initialized_on_run = []
 
     def _initialize_session(
         self,
@@ -1926,6 +1965,9 @@ class Agent:
             return run_response
 
         finally:
+            # Always disconnect MCP tools
+            await self._disconnect_mcp_tools()
+
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
                 memory_task.cancel()
@@ -2273,6 +2315,9 @@ class Agent:
             # Cleanup and store the run response and session
             await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
         finally:
+            # Always disconnect MCP tools
+            await self._disconnect_mcp_tools()
+
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
                 memory_task.cancel()
@@ -2377,6 +2422,8 @@ class Agent:
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
+
+        print("RUN ID", run_id)
 
         # 2. Validate input against input_schema if provided
         validated_input = self._validate_input(input)
@@ -3501,6 +3548,9 @@ class Agent:
 
             return run_response
         finally:
+            # Always disconnect MCP tools
+            await self._disconnect_mcp_tools()
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3773,6 +3823,9 @@ class Agent:
             # Cleanup and store the run response and session
             await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
         finally:
+            # Always disconnect MCP tools
+            await self._disconnect_mcp_tools()
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3890,8 +3943,6 @@ class Agent:
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
-
-                from inspect import iscoroutinefunction
 
                 if iscoroutinefunction(hook):
                     await hook(**filtered_args)
@@ -5203,7 +5254,6 @@ class Agent:
         self,
         run_response: RunOutput,
         session: AgentSession,
-        async_mode: bool = False,
         user_id: Optional[str] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
@@ -5212,8 +5262,7 @@ class Agent:
         # Add provided tools
         if self.tools is not None:
             # If not running in async mode, raise if any tool is async
-            if not async_mode:
-                self._raise_if_async_tools()
+            self._raise_if_async_tools()
             agent_tools.extend(self.tools)
 
         # Add tools for accessing memory
@@ -5229,10 +5278,10 @@ class Agent:
             )
 
         if self.enable_agentic_memory:
-            agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
+            agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=False))
 
         if self.enable_agentic_culture:
-            agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=async_mode))
+            agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=False))
 
         if self.enable_agentic_state:
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
@@ -5242,7 +5291,7 @@ class Agent:
             # Check if knowledge retriever is an async function but used in sync mode
             from inspect import iscoroutinefunction
 
-            if not async_mode and self.knowledge_retriever and iscoroutinefunction(self.knowledge_retriever):
+            if self.knowledge_retriever and iscoroutinefunction(self.knowledge_retriever):
                 log_warning(
                     "Async knowledge retriever function is being used with synchronous agent.run() or agent.print_response(). "
                     "It is recommended to use agent.arun() or agent.aprint_response() instead."
@@ -5254,7 +5303,7 @@ class Agent:
                     agent_tools.append(
                         self._search_knowledge_base_with_agentic_filters_function(
                             run_response=run_response,
-                            async_mode=async_mode,
+                            async_mode=False,
                             knowledge_filters=knowledge_filters,
                         )
                     )
@@ -5262,7 +5311,7 @@ class Agent:
                     agent_tools.append(
                         self._get_search_knowledge_base_function(
                             run_response=run_response,
-                            async_mode=async_mode,
+                            async_mode=False,
                             knowledge_filters=knowledge_filters,
                         )
                     )
@@ -5281,9 +5330,35 @@ class Agent:
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
+        # Connect MCP tools
+        await self._connect_mcp_tools()
+
         # Add provided tools
         if self.tools is not None:
-            agent_tools.extend(self.tools)
+            for tool in self.tools:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                    if tool.refresh_connection:  # type: ignore
+                        try:
+                            is_alive = await tool.is_alive()  # type: ignore
+                            if not is_alive:
+                                await tool.connect(force=True)  # type: ignore
+                        except (RuntimeError, BaseException) as e:
+                            log_warning(f"Failed to check if MCP tool is alive or to connect to it: {e}")
+                            continue
+
+                        try:
+                            await tool.build_tools()  # type: ignore
+                        except (RuntimeError, BaseException) as e:
+                            log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                            continue
+
+                    # Only add the tool if it successfully connected and built its tools
+                    if not tool.initialized:  # type: ignore
+                        continue
+
+                    agent_tools.append(tool)
+                else:
+                    agent_tools.append(tool)
 
         # Add tools for accessing memory
         if self.read_chat_history:
@@ -5543,6 +5618,18 @@ class Agent:
             agent_data["model"] = self.model.to_dict()
         return agent_data
 
+    @staticmethod
+    def cancel_run(run_id: str) -> bool:
+        """Cancel a running agent execution.
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return cancel_run_global(run_id)
+
     # -*- Session Database Functions
     def _read_session(
         self, session_id: str, session_type: SessionType = SessionType.AGENT
@@ -5646,8 +5733,8 @@ class Agent:
         from time import time
 
         # Returning cached session if we have one
-        if self._agent_session is not None and self._agent_session.session_id == session_id:
-            return self._agent_session
+        if self._cached_session is not None and self._cached_session.session_id == session_id:
+            return self._cached_session
 
         # Try to load from database
         agent_session = None
@@ -5675,7 +5762,7 @@ class Agent:
             )
 
         if self.cache_session:
-            self._agent_session = agent_session
+            self._cached_session = agent_session
 
         return agent_session
 
@@ -5687,8 +5774,8 @@ class Agent:
         from time import time
 
         # Returning cached session if we have one
-        if self._agent_session is not None and self._agent_session.session_id == session_id:
-            return self._agent_session
+        if self._cached_session is not None and self._cached_session.session_id == session_id:
+            return self._cached_session
 
         # Try to load from database
         agent_session = None
@@ -5718,10 +5805,11 @@ class Agent:
             )
 
         if self.cache_session:
-            self._agent_session = agent_session
+            self._cached_session = agent_session
 
         return agent_session
 
+    # -*- Public Convenience Functions
     def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
         """
         Get a RunOutput from the database.
@@ -5729,23 +5817,22 @@ class Agent:
         Args:
             run_id (str): The run_id to load from storage.
             session_id (Optional[str]): The session_id to load from storage.
+        Returns:
+            Optional[RunOutput]: The RunOutput from the database or None if not found.
         """
-        if self._agent_session is not None:
-            run_response = self._agent_session.get_run(run_id=run_id)
-            if run_response is not None:
-                return run_response
-            else:
-                log_warning(f"RunOutput {run_id} not found in AgentSession {self._agent_session.session_id}")
-                return None
-        else:
-            session = self.get_session(session_id=session_id)
-            if session is not None:
-                run_response = session.get_run(run_id=run_id)
-                if run_response is not None:
-                    return run_response
-                else:
-                    log_warning(f"RunOutput {run_id} not found in Session {session_id}")
-        return None
+        return cast(RunOutput, get_run_output_util(self, run_id=run_id, session_id=session_id))
+
+    async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+        """
+        Get a RunOutput from the database.
+
+        Args:
+            run_id (str): The run_id to load from storage.
+            session_id (Optional[str]): The session_id to load from storage.
+        Returns:
+            Optional[RunOutput]: The RunOutput from the database or None if not found.
+        """
+        return cast(RunOutput, await aget_run_output_util(self, run_id=run_id, session_id=session_id))
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
         """
@@ -5755,36 +5842,21 @@ class Agent:
             session_id (Optional[str]): The session_id to load from storage.
 
         Returns:
-            RunOutput: The last run response from the database.
+            Optional[RunOutput]: The last run response from the database or None if not found.
         """
-        if (
-            self._agent_session is not None
-            and self._agent_session.runs is not None
-            and len(self._agent_session.runs) > 0
-        ):
-            for run_output in reversed(self._agent_session.runs):
-                if hasattr(run_output, "agent_id") and run_output.agent_id == self.id:
-                    return run_output
-        else:
-            session = self.get_session(session_id=session_id)
-            if session is not None and session.runs is not None and len(session.runs) > 0:
-                for run_output in reversed(session.runs):
-                    if hasattr(run_output, "agent_id") and run_output.agent_id == self.id:
-                        return run_output
-            else:
-                log_warning(f"No run responses found in Session {session_id}")
-        return None
+        return cast(RunOutput, get_last_run_output_util(self, session_id=session_id))
 
-    def cancel_run(self, run_id: str) -> bool:
-        """Cancel a running agent execution.
+    async def aget_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
+        """
+        Get the last run response from the database.
 
         Args:
-            run_id (str): The run_id to cancel.
+            session_id (Optional[str]): The session_id to load from storage.
 
         Returns:
-            bool: True if the run was found and marked for cancellation, False otherwise.
+            Optional[RunOutput]: The last run response from the database or None if not found.
         """
-        return cancel_run_global(run_id)
+        return cast(RunOutput, await aget_last_run_output_util(self, session_id=session_id))
 
     def get_session(
         self,
@@ -5804,9 +5876,12 @@ class Agent:
         session_id_to_load = session_id or self.session_id
 
         # If there is a cached session, return it
-        if self.cache_session and hasattr(self, "_agent_session") and self._agent_session is not None:
-            if self._agent_session.session_id == session_id_to_load:
-                return self._agent_session
+        if self.cache_session and hasattr(self, "_cached_session") and self._cached_session is not None:
+            if self._cached_session.session_id == session_id_to_load:
+                return self._cached_session
+
+        if self._has_async_db():
+            raise ValueError("Async database not supported for get_session")
 
         # Load and return the session from the database
         if self.db is not None:
@@ -5837,7 +5912,7 @@ class Agent:
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
-                self._agent_session = loaded_session
+                self._cached_session = loaded_session
 
             return loaded_session
 
@@ -5862,29 +5937,53 @@ class Agent:
         session_id_to_load = session_id or self.session_id
 
         # If there is a cached session, return it
-        if self.cache_session and hasattr(self, "_agent_session") and self._agent_session is not None:
-            if self._agent_session.session_id == session_id_to_load:
-                return self._agent_session
+        if self.cache_session and hasattr(self, "_cached_session") and self._cached_session is not None:
+            if self._cached_session.session_id == session_id_to_load:
+                return self._cached_session
 
         # Load and return the session from the database
         if self.db is not None:
-            agent_session = cast(AgentSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
+            loaded_session = None
+
+            # We have a standalone agent, so we are loading an AgentSession
+            if self.team_id is None and self.workflow_id is None:
+                loaded_session = cast(
+                    AgentSession,
+                    await self._aread_session(session_id=session_id_to_load, session_type=SessionType.AGENT),  # type: ignore
+                )
+
+            # We have a team member agent, so we are loading a TeamSession
+            if loaded_session is None and self.team_id is not None:
+                # Load session for team member agents
+                loaded_session = cast(
+                    TeamSession,
+                    await self._aread_session(session_id=session_id_to_load, session_type=SessionType.TEAM),  # type: ignore
+                )
+
+            # We have a workflow member agent, so we are loading a WorkflowSession
+            if loaded_session is None and self.workflow_id is not None:
+                # Load session for workflow memberagents
+                loaded_session = cast(
+                    WorkflowSession,
+                    await self._aread_session(session_id=session_id_to_load, session_type=SessionType.WORKFLOW),  # type: ignore
+                )
 
             # Cache the session if relevant
-            if agent_session is not None and self.cache_session:
-                self._agent_session = agent_session
+            if loaded_session is not None and self.cache_session:
+                self._cached_session = loaded_session
 
-            return agent_session
+            return loaded_session
 
         log_debug(f"AgentSession {session_id_to_load} not found in db")
         return None
 
     def save_session(self, session: AgentSession) -> None:
-        """Save the AgentSession to storage
-
-        Returns:
-            Optional[AgentSession]: The saved AgentSession or None if not saved.
         """
+        Save the AgentSession to storage
+        """
+        if self._has_async_db():
+            raise ValueError("Async database not supported for save_session")
+
         # If the agent is a member of a team, do not save the session to the database
         if (
             self.db is not None
@@ -5901,10 +6000,8 @@ class Agent:
             log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
     async def asave_session(self, session: AgentSession) -> None:
-        """Save the AgentSession to storage
-
-        Returns:
-            Optional[AgentSession]: The saved AgentSession or None if not saved.
+        """
+        Save the AgentSession to storage
         """
         # If the agent is a member of a team, do not save the session to the database
         if (
@@ -5924,27 +6021,56 @@ class Agent:
             log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
     def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session"""
-        if not session_id and not self.session_id:
-            raise Exception("No session_id provided")
+        """Read the chat history from the session
 
-        session_id_to_load = session_id or self.session_id
-        session = self.get_session(session_id=session_id_to_load)
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The chat history from the session.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            log_warning("Session ID is not set, cannot get chat history")
+            return []
 
-        if session is None:
-            raise Exception(f"Session {session_id_to_load} not found")
+        return get_chat_history_util(self, session_id=session_id)
 
-        return session.get_chat_history()
+    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
+        """Read the chat history from the session
 
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The chat history from the session.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            log_warning("Session ID is not set, cannot get chat history")
+            return []
+
+        return await aget_chat_history_util(self, session_id=session_id)
+
+    # -*- Session Management Functions
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
-        """Rename the Agent and save to storage"""
+        """
+        Rename the Agent and save to storage
+
+        Args:
+            name (str): The new name for the Agent.
+            session_id (Optional[str]): The session_id of the session where to store the new name. If not provided, the current cached session ID is used.
+        """
 
         session_id = session_id or self.session_id
 
         if session_id is None:
             raise Exception("Session ID is not set")
 
-        session = self.get_session(session_id=session_id)  # type: ignore
+        if self._has_async_db():
+            import asyncio
+
+            session = asyncio.run(self.aget_session(session_id=session_id))
+        else:
+            session = self.get_session(session_id=session_id)
 
         if session is None:
             raise Exception("Session not found")
@@ -5957,7 +6083,12 @@ class Agent:
             session.agent_data = {"name": name}
 
         # -*- Save to storage
-        self.save_session(session=session)  # type: ignore
+        if self._has_async_db():
+            import asyncio
+
+            asyncio.run(self.asave_session(session=session))
+        else:
+            self.save_session(session=session)
 
     def set_session_name(
         self,
@@ -5965,38 +6096,63 @@ class Agent:
         autogenerate: bool = False,
         session_name: Optional[str] = None,
     ) -> AgentSession:
-        """Set the session name and save to storage"""
+        """
+        Set the session name and save to storage
+
+        Args:
+            session_id: The session ID to set the name for. If not provided, the current cached session ID is used.
+            autogenerate: Whether to autogenerate the session name.
+            session_name: The session name to set. If not provided, the session name will be autogenerated.
+        Returns:
+            AgentSession: The updated session.
+        """
         session_id = session_id or self.session_id
 
         if session_id is None:
             raise Exception("Session ID is not set")
 
-        # -*- Read from storage
-        session = self.get_session(session_id=session_id)  # type: ignore
+        return cast(
+            AgentSession,
+            set_session_name_util(self, session_id=session_id, autogenerate=autogenerate, session_name=session_name),
+        )
 
-        if session is None:
-            raise Exception("Session not found")
+    async def aset_session_name(
+        self,
+        session_id: Optional[str] = None,
+        autogenerate: bool = False,
+        session_name: Optional[str] = None,
+    ) -> AgentSession:
+        """
+        Set the session name and save to storage
 
-        # -*- Generate name for session
-        if autogenerate:
-            session_name = self._generate_session_name(session=session)
-            log_debug(f"Generated Session Name: {session_name}")
-        elif session_name is None:
-            raise Exception("Session Name is not set")
+        Args:
+            session_id: The session ID to set the name for. If not provided, the current cached session ID is used.
+            autogenerate: Whether to autogenerate the session name.
+            session_name: The session name to set. If not provided, the session name will be autogenerated.
+        Returns:
+            AgentSession: The updated session.
+        """
+        session_id = session_id or self.session_id
 
-        # -*- Rename session
-        if session.session_data is not None:
-            session.session_data["session_name"] = session_name
-        else:
-            session.session_data = {"session_name": session_name}
+        if session_id is None:
+            raise Exception("Session ID is not set")
 
-        # -*- Save to storage
-        self.save_session(session=session)  # type: ignore
+        return cast(
+            AgentSession,
+            await aset_session_name_util(
+                self, session_id=session_id, autogenerate=autogenerate, session_name=session_name
+            ),
+        )
 
-        return session
+    def generate_session_name(self, session: AgentSession) -> str:
+        """
+        Generate a name for the session using the first 6 messages from the memory
 
-    def _generate_session_name(self, session: AgentSession) -> str:
-        """Generate a name for the session using the first 6 messages from the memory"""
+        Args:
+            session (AgentSession): The session to generate a name for.
+        Returns:
+            str: The generated session name.
+        """
 
         if self.model is None:
             raise Exception("Model not set")
@@ -6023,32 +6179,68 @@ class Agent:
         content = generated_name.content
         if content is None:
             log_error("Generated name is None. Trying again.")
-            return self._generate_session_name(session=session)
+            return self.generate_session_name(session=session)
 
         if len(content.split()) > 5:
             log_error("Generated name is too long. It should be less than 5 words. Trying again.")
-            return self._generate_session_name(session=session)
+            return self.generate_session_name(session=session)
         return content.replace('"', "").strip()
 
     def get_session_name(self, session_id: Optional[str] = None) -> str:
-        """Get the session name for the given session ID and user ID."""
+        """
+        Get the session name for the given session ID.
+
+        Args:
+            session_id: The session ID to get the name for. If not provided, the current cached session ID is used.
+        Returns:
+            str: The session name.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
-        session = self.get_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
-        return session.session_data.get("session_name", "") if session.session_data is not None else ""
+        return get_session_name_util(self, session_id=session_id)
+
+    async def aget_session_name(self, session_id: Optional[str] = None) -> str:
+        """
+        Get the session name for the given session ID.
+
+        Args:
+            session_id: The session ID to get the name for. If not provided, the current cached session ID is used.
+        Returns:
+            str: The session name.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        return await aget_session_name_util(self, session_id=session_id)
 
     def get_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get the session state for the given session ID and user ID."""
+        """
+        Get the session state for the given session ID.
+
+        Args:
+            session_id: The session ID to get the state for. If not provided, the current cached session ID is used.
+        Returns:
+            Dict[str, Any]: The session state.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
-        session = self.get_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
-        return session.session_data.get("session_state", {}) if session.session_data is not None else {}
+        return get_session_state_util(self, session_id=session_id)
+
+    async def aget_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get the session state for the given session ID.
+
+        Args:
+            session_id: The session ID to get the state for. If not provided, the current cached session ID is used.
+        Returns:
+            Dict[str, Any]: The session state.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        return await aget_session_state_util(self, session_id=session_id)
 
     def update_session_state(self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None) -> str:
         """
@@ -6062,20 +6254,7 @@ class Agent:
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
-        session = self.get_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
-
-        if session.session_data is not None and "session_state" not in session.session_data:
-            session.session_data["session_state"] = {}
-
-        # Overwrite the loaded DB session state with the new session state
-        for key, value in session_state_updates.items():
-            session.session_data["session_state"][key] = value  # type: ignore
-
-        self.save_session(session=session)
-
-        return session.session_data["session_state"]  # type: ignore
+        return update_session_state_util(self, session_state_updates=session_state_updates, session_id=session_id)
 
     async def aupdate_session_state(
         self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None
@@ -6091,52 +6270,65 @@ class Agent:
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
-        session = await self.aget_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
-
-        if session.session_data is not None and "session_state" not in session.session_data:
-            session.session_data["session_state"] = {}
-
-        for key, value in session_state_updates.items():
-            session.session_data["session_state"][key] = value  # type: ignore
-
-        await self.asave_session(session=session)
-
-        return session.session_data["session_state"]  # type: ignore
+        return await aupdate_session_state_util(
+            self, session_state_updates=session_state_updates, session_id=session_id
+        )
 
     def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
-        """Get the session metrics for the given session ID and user ID."""
+        """Get the session metrics for the given session ID.
+
+        Args:
+            session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
+        Returns:
+            Optional[Metrics]: The session metrics.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
 
-        session = self.get_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
+        return get_session_metrics_util(self, session_id=session_id)
 
-        if session.session_data is not None and session.session_data.get("session_metrics") is not None:
-            if isinstance(session.session_data.get("session_metrics"), dict):
-                return Metrics(**session.session_data.get("session_metrics", {}))
-            elif isinstance(session.session_data.get("session_metrics"), Metrics):
-                return session.session_data.get("session_metrics", None)
-        return None
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+        """Get the session metrics for the given session ID.
+
+        Args:
+            session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
+        Returns:
+            Optional[Metrics]: The session metrics.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+
+        return await aget_session_metrics_util(self, session_id=session_id)
 
     def delete_session(self, session_id: str):
         """Delete the current session and save to storage"""
         if self.db is None:
             return
-        # -*- Delete session
+
         self.db.delete_session(session_id=session_id)
 
+    async def adelete_session(self, session_id: str):
+        """Delete the current session and save to storage"""
+        if self.db is None:
+            return
+        await self.db.delete_session(session_id=session_id)  # type: ignore
+
     def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session"""
+        """Get messages for a session
+
+        Args:
+            session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The messages for the session.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
             log_warning("Session ID is not set, cannot get messages for session")
             return []
 
-        session = self.get_session(session_id=session_id)  # type: ignore
+        session = self.get_session(session_id=session_id)
 
         if session is None:
             raise Exception("Session not found")
@@ -6146,8 +6338,37 @@ class Agent:
             agent_id=self.id if self.team_id is not None else None,
         )
 
-    def get_session_summary(self, session_id: Optional[str] = None):
-        """Get the session summary for the given session ID and user ID."""
+    async def aget_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
+        """Get messages for a session
+
+        Args:
+            session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The messages for the session.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            log_warning("Session ID is not set, cannot get messages for session")
+            return []
+
+        session = await self.aget_session(session_id=session_id)
+
+        if session is None:
+            raise Exception("Session not found")
+
+        # Only filter by agent_id if this is part of a team
+        return session.get_messages_from_last_n_runs(
+            agent_id=self.id if self.team_id is not None else None,
+        )
+
+    def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
+        """Get the session summary for the given session ID and user ID
+
+        Args:
+            session_id: The session ID to get the summary for. If not provided, the current cached session ID is used.
+        Returns:
+            SessionSummary: The session summary.
+        """
         session_id = session_id if session_id is not None else self.session_id
         if session_id is None:
             raise ValueError("Session ID is required")
@@ -6159,8 +6380,33 @@ class Agent:
 
         return session.get_session_summary()
 
+    async def aget_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
+        """Get the session summary for the given session ID and user ID.
+
+        Args:
+            session_id: The session ID to get the summary for. If not provided, the current cached session ID is used.
+        Returns:
+            SessionSummary: The session summary.
+        """
+        session_id = session_id if session_id is not None else self.session_id
+        if session_id is None:
+            raise ValueError("Session ID is required")
+
+        session = await self.aget_session(session_id=session_id)
+
+        if session is None:
+            raise Exception(f"Session {session_id} not found")
+
+        return session.get_session_summary()
+
     def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-        """Get the user memories for the given user ID."""
+        """Get the user memories for the given user ID.
+
+        Args:
+            user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
+        Returns:
+            Optional[List[UserMemory]]: The user memories.
+        """
         if self.memory_manager is None:
             return None
         user_id = user_id if user_id is not None else self.user_id
@@ -6170,7 +6416,13 @@ class Agent:
         return self.memory_manager.get_user_memories(user_id=user_id)
 
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-        """Get the user memories for the given user ID."""
+        """Get the user memories for the given user ID.
+
+        Args:
+            user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
+        Returns:
+            Optional[List[UserMemory]]: The user memories.
+        """
         if self.memory_manager is None:
             return None
         user_id = user_id if user_id is not None else self.user_id
@@ -6180,19 +6432,28 @@ class Agent:
         return await self.memory_manager.aget_user_memories(user_id=user_id)
 
     def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        """Get the cultural knowledge the agent has access to"""
+        """Get the cultural knowledge the agent has access to
+
+        Returns:
+            Optional[List[CulturalKnowledge]]: The cultural knowledge.
+        """
         if self.culture_manager is None:
             return None
 
         return self.culture_manager.get_all_knowledge()
 
     async def aget_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        """Get the cultural knowledge the agent has access to"""
+        """Get the cultural knowledge the agent has access to
+
+        Returns:
+            Optional[List[CulturalKnowledge]]: The cultural knowledge.
+        """
         if self.culture_manager is None:
             return None
 
         return await self.culture_manager.aget_all_knowledge()
 
+    # -*- System & User Message Functions
     def _format_message_with_state_variables(
         self,
         message: Any,

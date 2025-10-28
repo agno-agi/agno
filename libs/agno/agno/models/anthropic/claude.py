@@ -585,7 +585,7 @@ class Claude(Model):
 
         # Extract file IDs if skills are enabled
         if self.skills and response.content:
-            file_ids = []
+            file_ids: List[str] = []
             for block in response.content:
                 if block.type == "bash_code_execution_tool_result":
                     if hasattr(block, "content") and hasattr(block.content, "content"):
