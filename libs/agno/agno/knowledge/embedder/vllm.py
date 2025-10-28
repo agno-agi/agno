@@ -98,17 +98,17 @@ class VLLMEmbedder(Embedder):
         self.async_openai_client = AsyncOpenAI(**_client_params)
         return self.async_openai_client
 
-    def _response_local(self, text: str) -> Optional[Any]:
-        """Get embedding response from local VLLM."""
+    def _create_embedding_local(self, text: str) -> Optional[Any]:
+        """Create embedding using local VLLM."""
         try:
             outputs = self._get_vllm_client().embed([text])
             return outputs[0] if outputs else None
         except Exception as e:
-            logger.warning(f"Error getting local embedding response: {e}")
+            logger.warning(f"Error creating local embedding: {e}")
             return None
 
-    def _response_remote(self, text: str) -> CreateEmbeddingResponse:
-        """Get embedding response from remote VLLM server."""
+    def _create_embedding_remote(self, text: str) -> CreateEmbeddingResponse:
+        """Create embedding using remote VLLM server."""
         _request_params: Dict[str, Any] = {
             "input": text,
             "model": self.id,
@@ -121,11 +121,11 @@ class VLLMEmbedder(Embedder):
         try:
             if self.is_remote:
                 # Remote mode: OpenAI-compatible API
-                response: CreateEmbeddingResponse = self._response_remote(text=text)
+                response: CreateEmbeddingResponse = self._create_embedding_remote(text=text)
                 return response.data[0].embedding
             else:
                 # Local mode: Direct VLLM
-                output = self._response_local(text=text)
+                output = self._create_embedding_local(text=text)
                 if output and hasattr(output, "outputs") and hasattr(output.outputs, "embedding"):
                     embedding = output.outputs.embedding
                     if len(embedding) != self.dimensions:
@@ -139,7 +139,7 @@ class VLLMEmbedder(Embedder):
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         if self.is_remote:
             try:
-                response: CreateEmbeddingResponse = self._response_remote(text=text)
+                response: CreateEmbeddingResponse = self._create_embedding_remote(text=text)
                 embedding = response.data[0].embedding
                 usage = response.usage
                 if usage:
