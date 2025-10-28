@@ -14,7 +14,7 @@ class TestModelStringCore:
         # Test successful creation
         model = get_model_from_string("openai:gpt-4o-mini")
         assert model.id == "gpt-4o-mini"
-        assert model.model_string == "openai-chat:gpt-4o-mini" or model.model_string == "openaichat:gpt-4o-mini"
+        assert "gpt-4o-mini" in model.model_string
 
     def test_create_model_with_model_object(self):
         """Test that passing Model objects works unchanged."""
@@ -69,7 +69,7 @@ class TestModelStringProviders:
             ("ollama", "Ollama"),
             ("aws", "AwsBedrock"),
             ("aws-claude", "Claude"),
-            ("azure", "AzureOpenAI"),
+            ("azure-openai", "AzureOpenAI"),
             ("azure-ai-foundry", "AzureAIFoundry"),
             ("mistral", "MistralChat"),
             ("cohere", "Cohere"),
@@ -77,8 +77,8 @@ class TestModelStringProviders:
             ("fireworks", "Fireworks"),
             ("perplexity", "Perplexity"),
             ("openrouter", "OpenRouter"),
-            ("llama", "Llama"),
-            ("llama-openai", "LlamaOpenAI"),
+            ("meta", "Llama"),
+            ("llamaopenai", "LlamaOpenAI"),
             ("cerebras", "Cerebras"),
             ("cerebras-openai", "CerebrasOpenAI"),
             ("cometapi", "CometAPI"),
@@ -133,6 +133,7 @@ class TestAgentModelStrings:
         try:
             # Test main model
             agent = Agent(model="openai:gpt-4o-mini", telemetry=False)
+            agent.initialize_agent()  # Explicitly initialize to resolve model strings
             assert agent.model is not None
             assert agent.model.id == "gpt-4o-mini"
             assert "gpt-4o-mini" in agent.model.model_string
@@ -141,6 +142,7 @@ class TestAgentModelStrings:
             agent_reasoning = Agent(
                 model="openai:gpt-4o-mini", reasoning_model="anthropic:claude-3-5-sonnet", telemetry=False
             )
+            agent_reasoning.initialize_agent()  # Explicitly initialize to resolve model strings
             assert agent_reasoning.reasoning_model is not None
             assert "claude-3-5-sonnet" in agent_reasoning.reasoning_model.model_string
 
@@ -154,9 +156,11 @@ class TestAgentModelStrings:
 
             # Old syntax
             old_agent = Agent(model=OpenAIChat(id="gpt-4o"), telemetry=False)
+            old_agent.initialize_agent()
 
             # New syntax
             new_agent = Agent(model="openai:gpt-4o", telemetry=False)
+            new_agent.initialize_agent()
 
             # Both should work and produce equivalent results
             assert old_agent.model.id == new_agent.model.id
@@ -178,6 +182,7 @@ class TestTeamModelStrings:
             # Create team with string model
             agent = Agent(name="test-agent", telemetry=False)
             team = Team(name="test-team", members=[agent], model="openai:gpt-4o-mini", telemetry=False)
+            team._resolve_model_strings()  # Explicitly resolve model strings
 
             assert team.model is not None
             assert team.model.id == "gpt-4o-mini"
@@ -196,9 +201,11 @@ class TestTeamModelStrings:
 
             # Old syntax
             old_team = Team(name="old-team", members=[agent], model=OpenAIChat(id="gpt-4o"), telemetry=False)
+            old_team._resolve_model_strings()
 
             # New syntax
             new_team = Team(name="new-team", members=[agent], model="openai:gpt-4o", telemetry=False)
+            new_team._resolve_model_strings()
 
             # Both should work and produce equivalent results
             assert old_team.model.id == new_team.model.id
@@ -250,6 +257,38 @@ class TestModelStringEdgeCases:
         except ImportError:
             pytest.skip("OpenAI dependencies not installed")
 
+    def test_model_string_round_trip(self):
+        """Test that model_string property produces strings that can round-trip through get_model_from_string."""
+        test_cases = [
+            ("openai:gpt-4o", "OpenAIChat"),
+            ("anthropic:claude-3-5-sonnet", "Claude"),
+            ("google:gemini-2.0-flash", "Gemini"),
+            ("meta:llama-3", "Llama"),
+            ("azure-openai:gpt-4o", "AzureOpenAI"),
+        ]
+
+        for model_string, expected_class_name in test_cases:
+            try:
+                # Create model from string
+                original_model = get_model_from_string(model_string)
+                assert original_model.__class__.__name__ == expected_class_name
+
+                # Get the model_string property
+                generated_string = original_model.model_string
+
+                # Create another model from the generated string
+                recreated_model = get_model_from_string(generated_string)
+
+                # Verify they're the same type and have the same id
+                assert type(original_model) == type(recreated_model), (
+                    f"Round-trip failed for {model_string}: "
+                    f"{type(original_model).__name__} != {type(recreated_model).__name__}"
+                )
+                assert original_model.id == recreated_model.id
+
+            except ImportError:
+                pytest.skip(f"Dependencies for {model_string} not installed")
+
     def test_model_string_property(self):
         """Test the model_string property on Model instances."""
 
@@ -272,10 +311,10 @@ class TestModelStringEdgeCases:
             async def ainvoke_stream(self, *args, **kwargs):
                 pass
 
-            def parse_provider_response(self, *args, **kwargs):
+            def _parse_provider_response(self, *args, **kwargs):
                 pass
 
-            def parse_provider_response_delta(self, *args, **kwargs):
+            def _parse_provider_response_delta(self, *args, **kwargs):
                 pass
 
         # Test with provider

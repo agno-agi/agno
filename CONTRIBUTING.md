@@ -101,12 +101,24 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - Open `libs/agno/agno/models/utils.py` and locate the `get_model_from_string()` function
    - Add a new `elif` clause for your provider in alphabetical order
    - Use lowercase, hyphen-separated naming (e.g., `"your-provider"`)
+   - **Naming Convention**:
+     - Prefer company name over product name (e.g., `"meta"` not `"llama"`, `"google"` not `"gemini"`)
+     - Use hyphenated variants when multiple model classes exist for same provider (e.g., `"azure-openai"`, `"azure-ai-foundry"`)
+     - The string key should match what the `provider` field normalizes to (lowercase, spaces→hyphens)
    - Example:
      ```python
      elif provider == "your-provider":
          from agno.models.your_provider import YourProviderModel
          
          return YourProviderModel(id=model_id)
+     ```
+   - Set the `provider` field in your Model class so it normalizes correctly:
+     ```python
+     @dataclass
+     class YourProviderModel(Model):
+         id: str = "default-model"
+         name: str = "YourProvider"
+         provider: str = "Your Provider"  # Will normalize to "your-provider"
      ```
    - Test with: `Agent(model="your-provider:model-name")`
 7. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.

@@ -60,7 +60,7 @@ def get_model_from_string(model: Union[Model, str]) -> Model:
                 from agno.models.aws import Claude as AWSClaude
 
                 return AWSClaude(id=model_id)
-            elif provider == "azure":
+            elif provider == "azure-openai":
                 from agno.models.azure import AzureOpenAI
 
                 return AzureOpenAI(id=model_id)
@@ -92,7 +92,7 @@ def get_model_from_string(model: Union[Model, str]) -> Model:
                 from agno.models.openrouter import OpenRouter
 
                 return OpenRouter(id=model_id)
-            elif provider == "llama":
+            elif provider == "meta":
                 from agno.models.meta import Llama
 
                 return Llama(id=model_id)
