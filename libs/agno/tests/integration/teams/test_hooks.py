@@ -1,9 +1,11 @@
 """
-Tests for Team hooks functionality.
+Tests for Team parameter initialization and configuration.
 
+This test file validates that all Team class parameters are properly initialized
+and configured according to their expected behavior.
 """
 
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -920,44 +922,323 @@ def test_hook_with_guardrail_exceptions():
 
 
 def test_hook_receives_correct_parameters():
-    """Test that hooks receive the correct parameters and can access them properly."""
+    """Test that hooks receive all available parameters correctly."""
     received_params = {}
 
-    def param_capturing_pre_hook(
+    def comprehensive_pre_hook(
         run_input: TeamRunInput,
         team: Team,
         session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
     ) -> None:
-        received_params["input"] = run_input.input_content is not None
-        received_params["team"] = team is not None and hasattr(team, "name")
-        received_params["session"] = session is not None
-        received_params["user_id"] = user_id
-        received_params["debug_mode"] = debug_mode
+        """Pre-hook that captures all available parameters."""
+        received_params["pre_run_input"] = run_input is not None
+        received_params["pre_run_input_content"] = run_input.input_content if run_input else None
+        received_params["pre_team"] = team is not None
+        received_params["pre_team_name"] = team.name if team else None
+        received_params["pre_session"] = session is not None
+        received_params["pre_session_id"] = session.session_id if session else None
+        received_params["pre_session_state"] = session_state
+        received_params["pre_dependencies"] = dependencies
+        received_params["pre_metadata"] = metadata
+        received_params["pre_user_id"] = user_id
+        received_params["pre_debug_mode"] = debug_mode
 
-    def param_capturing_post_hook(
+    def comprehensive_post_hook(
         run_output: TeamRunOutput,
         team: Team,
         session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
     ) -> None:
-        received_params["run_output"] = run_output is not None and hasattr(run_output, "content")
-        received_params["post_team"] = team is not None and hasattr(team, "name")
+        """Post-hook that captures all available parameters."""
+        received_params["post_run_output"] = run_output is not None
+        received_params["post_run_output_content"] = run_output.content if run_output else None
+        received_params["post_team"] = team is not None
+        received_params["post_team_name"] = team.name if team else None
         received_params["post_session"] = session is not None
+        received_params["post_session_id"] = session.session_id if session else None
+        received_params["post_session_state"] = session_state
+        received_params["post_dependencies"] = dependencies
+        received_params["post_metadata"] = metadata
         received_params["post_user_id"] = user_id
         received_params["post_debug_mode"] = debug_mode
 
-    team = create_test_team(pre_hooks=[param_capturing_pre_hook], post_hooks=[param_capturing_post_hook])
+    # Create team with specific configuration
+    team = create_test_team(pre_hooks=[comprehensive_pre_hook], post_hooks=[comprehensive_post_hook])
 
-    result = team.run(input="Test parameter passing", user_id="test_user")
+    # Run with various parameters
+    test_session_state = {"counter": 1, "data": "test"}
+    test_dependencies = {"api_key": "secret", "config": {"timeout": 30}}
+    test_metadata = {"version": "1.0", "environment": "test"}
+
+    result = team.run(
+        input="Test comprehensive parameter passing",
+        user_id="test_user_123",
+        session_state=test_session_state,
+        dependencies=test_dependencies,
+        metadata=test_metadata,
+        debug_mode=True,
+    )
     assert result is not None
 
-    # Verify that hooks received proper parameters
-    assert received_params["input"] is True
-    assert received_params["team"] is True
-    assert received_params["session"] is True
-    assert received_params["run_output"] is True
+    # Verify pre-hook received all parameters correctly
+    assert received_params["pre_run_input"] is True
+    assert received_params["pre_run_input_content"] == "Test comprehensive parameter passing"
+    assert received_params["pre_team"] is True
+    assert received_params["pre_team_name"] == "Test Team"
+    assert received_params["pre_session"] is True
+    assert received_params["pre_session_id"] is not None
+    assert received_params["pre_session_state"] == test_session_state
+    assert received_params["pre_dependencies"] == test_dependencies
+    assert received_params["pre_metadata"] == test_metadata
+    assert received_params["pre_user_id"] == "test_user_123"
+    assert received_params["pre_debug_mode"] is True
+
+    # Verify post-hook received all parameters correctly
+    assert received_params["post_run_output"] is True
+    assert received_params["post_run_output_content"] is not None
     assert received_params["post_team"] is True
+    assert received_params["post_team_name"] == "Test Team"
     assert received_params["post_session"] is True
+    assert received_params["post_session_id"] is not None
+    assert received_params["post_session_state"] == test_session_state
+    assert received_params["post_dependencies"] == test_dependencies
+    assert received_params["post_metadata"] == test_metadata
+    assert received_params["post_user_id"] == "test_user_123"
+    assert received_params["post_debug_mode"] is True
+
+
+def test_hook_receives_minimal_parameters():
+    """Test that hooks work with minimal parameter signatures."""
+    received_params = {}
+
+    def minimal_pre_hook(run_input: TeamRunInput) -> None:
+        """Pre-hook that only accepts run_input."""
+        received_params["minimal_pre_called"] = True
+        received_params["minimal_pre_input"] = run_input.input_content
+
+    def minimal_post_hook(run_output: TeamRunOutput) -> None:
+        """Post-hook that only accepts run_output."""
+        received_params["minimal_post_called"] = True
+        received_params["minimal_post_output"] = run_output.content
+
+    team = create_test_team(pre_hooks=[minimal_pre_hook], post_hooks=[minimal_post_hook])
+
+    result = team.run(input="Minimal parameters test")
+    assert result is not None
+
+    # Verify hooks were called and received basic parameters
+    assert received_params["minimal_pre_called"] is True
+    assert received_params["minimal_pre_input"] == "Minimal parameters test"
+    assert received_params["minimal_post_called"] is True
+    assert received_params["minimal_post_output"] is not None
+
+
+def test_hook_receives_selective_parameters():
+    """Test that hooks can selectively accept parameters."""
+    received_params = {}
+
+    def selective_pre_hook(run_input: TeamRunInput, team: Team, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Pre-hook that selectively accepts some parameters."""
+        received_params["selective_pre_team_name"] = team.name
+        received_params["selective_pre_metadata"] = metadata
+
+    def selective_post_hook(run_output: TeamRunOutput, user_id: Optional[str] = None) -> None:
+        """Post-hook that selectively accepts some parameters."""
+        received_params["selective_post_output_length"] = len(run_output.content) if run_output.content else 0
+        received_params["selective_post_user_id"] = user_id
+
+    team = create_test_team(pre_hooks=[selective_pre_hook], post_hooks=[selective_post_hook])
+
+    result = team.run(input="Selective parameters test", user_id="selective_user", metadata={"test_key": "test_value"})
+    assert result is not None
+
+    # Verify hooks received their selected parameters
+    assert received_params["selective_pre_team_name"] == "Test Team"
+    assert received_params["selective_pre_metadata"] == {"test_key": "test_value"}
+    assert received_params["selective_post_output_length"] > 0
+    assert received_params["selective_post_user_id"] == "selective_user"
+
+
+@pytest.mark.asyncio
+async def test_async_hook_receives_all_parameters():
+    """Test that async hooks receive all available parameters correctly."""
+    received_params = {}
+
+    async def async_comprehensive_pre_hook(
+        run_input: TeamRunInput,
+        team: Team,
+        session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+    ) -> None:
+        """Async pre-hook that captures all available parameters."""
+        received_params["async_pre_run_input"] = run_input is not None
+        received_params["async_pre_team_name"] = team.name if team else None
+        received_params["async_pre_session_state"] = session_state
+        received_params["async_pre_dependencies"] = dependencies
+        received_params["async_pre_metadata"] = metadata
+        received_params["async_pre_user_id"] = user_id
+        received_params["async_pre_debug_mode"] = debug_mode
+
+    async def async_comprehensive_post_hook(
+        run_output: TeamRunOutput,
+        team: Team,
+        session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+    ) -> None:
+        """Async post-hook that captures all available parameters."""
+        received_params["async_post_run_output"] = run_output is not None
+        received_params["async_post_team_name"] = team.name if team else None
+        received_params["async_post_session_state"] = session_state
+        received_params["async_post_dependencies"] = dependencies
+        received_params["async_post_metadata"] = metadata
+        received_params["async_post_user_id"] = user_id
+        received_params["async_post_debug_mode"] = debug_mode
+
+    team = create_test_team(pre_hooks=[async_comprehensive_pre_hook], post_hooks=[async_comprehensive_post_hook])
+
+    test_session_state = {"async_counter": 42}
+    test_dependencies = {"async_key": "async_value"}
+    test_metadata = {"async_meta": "data"}
+
+    result = await team.arun(
+        input="Async comprehensive test",
+        user_id="async_user",
+        session_state=test_session_state,
+        dependencies=test_dependencies,
+        metadata=test_metadata,
+        debug_mode=False,
+    )
+    assert result is not None
+
+    # Verify async pre-hook received all parameters
+    assert received_params["async_pre_run_input"] is True
+    assert received_params["async_pre_team_name"] == "Test Team"
+    assert received_params["async_pre_session_state"] == test_session_state
+    assert received_params["async_pre_dependencies"] == test_dependencies
+    assert received_params["async_pre_metadata"] == test_metadata
+    assert received_params["async_pre_user_id"] == "async_user"
+    assert received_params["async_pre_debug_mode"] is False
+
+    # Verify async post-hook received all parameters
+    assert received_params["async_post_run_output"] is True
+    assert received_params["async_post_team_name"] == "Test Team"
+    assert received_params["async_post_session_state"] == test_session_state
+    assert received_params["async_post_dependencies"] == test_dependencies
+    assert received_params["async_post_metadata"] == test_metadata
+    assert received_params["async_post_user_id"] == "async_user"
+    assert received_params["async_post_debug_mode"] is False
+
+
+def test_hook_parameters_with_none_values():
+    """Test that hooks handle None values for optional parameters correctly."""
+    received_params = {}
+
+    def none_handling_pre_hook(
+        run_input: TeamRunInput,
+        team: Team,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Pre-hook that checks None values."""
+        received_params["pre_session_state_is_none"] = session_state is None
+        received_params["pre_dependencies_is_none"] = dependencies is None
+        received_params["pre_metadata_is_none"] = metadata is None
+        received_params["pre_user_id_is_none"] = user_id is None
+
+    def none_handling_post_hook(
+        run_output: TeamRunOutput,
+        team: Team,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Post-hook that checks None values."""
+        received_params["post_session_state_is_none"] = session_state is None
+        received_params["post_dependencies_is_none"] = dependencies is None
+        received_params["post_metadata_is_none"] = metadata is None
+
+    team = create_test_team(pre_hooks=[none_handling_pre_hook], post_hooks=[none_handling_post_hook])
+
+    # Run without providing optional parameters
+    result = team.run(input="Testing None values")
+    assert result is not None
+
+    # Verify that hooks received None for unprovided parameters
+    # Note: session_state might not be None as it could have defaults
+    assert received_params["pre_dependencies_is_none"] is True
+    assert received_params["pre_metadata_is_none"] is True
+    assert received_params["pre_user_id_is_none"] is True
+    assert received_params["post_dependencies_is_none"] is True
+    assert received_params["post_metadata_is_none"] is True
+
+
+def test_hook_parameters_modification():
+    """Test that hooks can access and potentially use parameter values."""
+    modification_log = []
+
+    def parameter_using_pre_hook(
+        run_input: TeamRunInput,
+        team: Team,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Pre-hook that uses parameters to make decisions."""
+        # Log what we received
+        modification_log.append(f"Team: {team.name}")
+        modification_log.append(f"Input: {run_input.input_content}")
+
+        if session_state:
+            modification_log.append(f"Session State Keys: {list(session_state.keys())}")
+
+        if dependencies:
+            modification_log.append(f"Dependencies: {list(dependencies.keys())}")
+
+        if metadata:
+            modification_log.append(f"Metadata: {list(metadata.keys())}")
+
+    def parameter_using_post_hook(
+        run_output: TeamRunOutput, team: Team, metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Post-hook that uses parameters."""
+        modification_log.append(f"Output length: {len(run_output.content) if run_output.content else 0}")
+
+        if metadata and metadata.get("track_output"):
+            modification_log.append("Output tracking enabled")
+
+    team = create_test_team(pre_hooks=[parameter_using_pre_hook], post_hooks=[parameter_using_post_hook])
+
+    result = team.run(
+        input="Parameter usage test",
+        session_state={"key1": "value1", "key2": "value2"},
+        dependencies={"dep1": "val1"},
+        metadata={"track_output": True, "environment": "test"},
+    )
+    assert result is not None
+
+    # Verify hooks used the parameters
+    assert "Team: Test Team" in modification_log
+    assert "Input: Parameter usage test" in modification_log
+    assert "Session State Keys: ['key1', 'key2', 'current_session_id', 'current_run_id']" in modification_log
+    assert "Dependencies: ['dep1']" in modification_log
+    assert any("Metadata:" in log for log in modification_log)
+    assert "Output tracking enabled" in modification_log

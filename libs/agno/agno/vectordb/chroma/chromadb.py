@@ -25,6 +25,9 @@ class ChromaDb(VectorDb):
     def __init__(
         self,
         collection: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         path: str = "tmp/chromadb",
@@ -32,9 +35,22 @@ class ChromaDb(VectorDb):
         reranker: Optional[Reranker] = None,
         **kwargs,
     ):
+        # Validate required parameters
+        if not collection:
+            raise ValueError("Collection name must be provided.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            seed = f"{path}#{collection}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         # Collection attributes
         self.collection_name: str = collection
-
         # Embedder for embedding the document contents
         if embedder is None:
             from agno.knowledge.embedder.openai import OpenAIEmbedder
@@ -497,11 +513,11 @@ class ChromaDb(VectorDb):
         # Build search results
         search_results: List[Document] = []
 
-        ids_list = result.get("ids", [[]])
-        metadata_list = result.get("metadatas", [[{}]])
-        documents_list = result.get("documents", [[]])
-        embeddings_list = result.get("embeddings")
-        distances_list = result.get("distances", [[]])
+        ids_list = result.get("ids", [[]])  # type: ignore
+        metadata_list = result.get("metadatas", [[{}]])  # type: ignore
+        documents_list = result.get("documents", [[]])  # type: ignore
+        embeddings_list = result.get("embeddings")  # type: ignore
+        distances_list = result.get("distances", [[]])  # type: ignore
 
         if not ids_list or not metadata_list or not documents_list or embeddings_list is None or not distances_list:
             return search_results
@@ -901,3 +917,7 @@ class ChromaDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # ChromaDb doesn't use SearchType enum

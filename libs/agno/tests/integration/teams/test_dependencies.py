@@ -170,7 +170,7 @@ async def test_dependencies_mixed_async_stream():
         "Tell me a 5 second short story about a robot named {robot_name}",
         dependencies={"robot_name": "Anna"},
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
     async for _ in response:
         pass

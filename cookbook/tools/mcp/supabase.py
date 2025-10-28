@@ -62,7 +62,7 @@ async def run_agent(task: str) -> None:
             await agent.aprint_response(
                 input=task,
                 stream=True,
-                stream_intermediate_steps=True,
+                stream_events=True,
                 show_full_reasoning=True,
             )
     except Exception as e:

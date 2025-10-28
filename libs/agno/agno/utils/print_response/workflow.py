@@ -7,7 +7,7 @@ from rich.markdown import Markdown
 from rich.status import Status
 from rich.text import Text
 
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
@@ -48,6 +48,7 @@ def print_response(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[File]] = None,
     markdown: bool = True,
     show_time: bool = True,
     show_step_details: bool = True,
@@ -76,6 +77,8 @@ def print_response(
         media_info.append(f"Images: {len(images)}")
     if videos:
         media_info.append(f"Videos: {len(videos)}")
+    if files:
+        media_info.append(f"Files: {len(files)}")
 
     workflow_info = f"""**Workflow:** {workflow.name}"""
     if workflow.description:
@@ -126,6 +129,7 @@ def print_response(
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 **kwargs,
             )  # type: ignore
 
@@ -186,6 +190,8 @@ def print_response_stream(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[File]] = None,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,
     markdown: bool = True,
     show_time: bool = True,
@@ -199,7 +205,7 @@ def print_response_stream(
 
         console = Console()
 
-    stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
+    stream_events = True  # With streaming print response, we need to stream intermediate steps
 
     # Show workflow info (same as before)
     media_info = []
@@ -209,6 +215,8 @@ def print_response_stream(
         media_info.append(f"Images: {len(images)}")
     if videos:
         media_info.append(f"Videos: {len(videos)}")
+    if files:
+        media_info.append(f"Files: {len(files)}")
 
     workflow_info = f"""**Workflow:** {workflow.name}"""
     if workflow.description:
@@ -313,8 +321,9 @@ def print_response_stream(
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 stream=True,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 **kwargs,
             ):  # type: ignore
                 # Handle the new event types
@@ -831,6 +840,7 @@ async def aprint_response(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[File]] = None,
     markdown: bool = True,
     show_time: bool = True,
     show_step_details: bool = True,
@@ -859,6 +869,8 @@ async def aprint_response(
         media_info.append(f"Images: {len(images)}")
     if videos:
         media_info.append(f"Videos: {len(videos)}")
+    if files:
+        media_info.append(f"Files: {len(files)}")
 
     workflow_info = f"""**Workflow:** {workflow.name}"""
     if workflow.description:
@@ -909,6 +921,7 @@ async def aprint_response(
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 **kwargs,
             )  # type: ignore
 
@@ -969,6 +982,8 @@ async def aprint_response_stream(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[File]] = None,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,
     markdown: bool = True,
     show_time: bool = True,
@@ -982,7 +997,7 @@ async def aprint_response_stream(
 
         console = Console()
 
-    stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
+    stream_events = True  # With streaming print response, we need to stream intermediate steps
 
     # Show workflow info (same as before)
     media_info = []
@@ -992,6 +1007,8 @@ async def aprint_response_stream(
         media_info.append(f"Images: {len(images)}")
     if videos:
         media_info.append(f"Videos: {len(videos)}")
+    if files:
+        media_info.append(f"Files: {len(files)}")
 
     workflow_info = f"""**Workflow:** {workflow.name}"""
     if workflow.description:
@@ -1088,7 +1105,7 @@ async def aprint_response_stream(
         live_log.update(status)
 
         try:
-            async for response in await workflow.arun(
+            async for response in workflow.arun(
                 input=input,
                 additional_data=additional_data,
                 user_id=user_id,
@@ -1096,8 +1113,9 @@ async def aprint_response_stream(
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 stream=True,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 **kwargs,
             ):  # type: ignore
                 # Handle the new event types
