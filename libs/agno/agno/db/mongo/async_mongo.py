@@ -27,11 +27,15 @@ from agno.utils.string import generate_id
 try:
     import asyncio
 
-    from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
+    from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase  # type: ignore
+except ImportError:
+    raise ImportError("`motor` not installed. Please install it using `pip install -U motor`")
+
+try:
     from pymongo import ReturnDocument
     from pymongo.errors import OperationFailure
 except ImportError:
-    raise ImportError("`motor` not installed. Please install it using `pip install -U motor`")
+    raise ImportError("`pymongo` not installed. Please install it using `pip install -U pymongo`")
 
 
 class AsyncMongoDb(AsyncBaseDb):
@@ -1060,7 +1064,7 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return [], 0
 
-            match_stage = {"user_id": {"$ne": None}}
+            match_stage: Dict[str, Any] = {"user_id": {"$ne": None}}
             if user_id is not None:
                 match_stage["user_id"] = user_id
 
