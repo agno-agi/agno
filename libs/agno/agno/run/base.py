@@ -176,7 +176,7 @@ class BaseRunOutputEvent:
         metrics = data.pop("metrics", None)
         if metrics:
             data["metrics"] = Metrics(**metrics)
-            
+
         session_summary = data.pop("session_summary", None)
         if session_summary:
             from agno.session.summary import SessionSummary

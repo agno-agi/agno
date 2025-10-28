@@ -6055,6 +6055,7 @@ class Agent:
 
         if self._has_async_db():
             import asyncio
+
             session = asyncio.run(self.aget_session(session_id=session_id))
         else:
             session = self.get_session(session_id=session_id)
