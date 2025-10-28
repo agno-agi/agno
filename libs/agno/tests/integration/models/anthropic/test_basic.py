@@ -1,13 +1,9 @@
-from pathlib import Path
-
 import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunOutput
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
-from agno.utils.log import log_warning
-from agno.utils.media import download_file
 
 
 @pytest.fixture(scope="module")

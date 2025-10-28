@@ -3,18 +3,18 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
-from agno.db.base import BaseDb, SessionType
+from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
+    abulk_upsert_metrics,
+    acreate_schema,
+    ais_table_available,
+    ais_valid_table,
     apply_sorting,
-    bulk_upsert_metrics,
     calculate_date_metrics,
-    create_schema,
     deserialize_cultural_knowledge,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    is_table_available,
-    is_valid_table,
     serialize_cultural_knowledge,
 )
 from agno.db.schemas.culture import CulturalKnowledge
@@ -23,35 +23,33 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.string import generate_id
 
 try:
     from sqlalchemy import Index, String, UniqueConstraint, func, update
     from sqlalchemy.dialects import postgresql
-    from sqlalchemy.engine import Engine, create_engine
-    from sqlalchemy.orm import scoped_session, sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Column, MetaData, Table
     from sqlalchemy.sql.expression import select, text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 
-class PostgresDb(BaseDb):
+class AsyncPostgresDb(AsyncBaseDb):
     def __init__(
         self,
+        db_id: Optional[str] = None,
         db_url: Optional[str] = None,
-        db_engine: Optional[Engine] = None,
+        db_engine: Optional[AsyncEngine] = None,
         db_schema: Optional[str] = None,
         session_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        id: Optional[str] = None,
+        culture_table: Optional[str] = None,
     ):
         """
-        Interface for interacting with a PostgreSQL database.
+        Async interface for interacting with a PostgreSQL database.
 
         The following order is used to determine the database connection:
             1. Use the db_engine if provided
@@ -59,8 +57,9 @@ class PostgresDb(BaseDb):
             3. Raise an error if neither is provided
 
         Args:
+            db_id (Optional[str]): The ID of the database.
             db_url (Optional[str]): The database URL to connect to.
-            db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
+            db_engine (Optional[AsyncEngine]): The SQLAlchemy async database engine to use.
             db_schema (Optional[str]): The database schema to use.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
             memory_table (Optional[str]): Name of the table to store memories.
@@ -68,29 +67,13 @@ class PostgresDb(BaseDb):
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             culture_table (Optional[str]): Name of the table to store cultural knowledge.
-            id (Optional[str]): ID of the database.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
-        _engine: Optional[Engine] = db_engine
-        if _engine is None and db_url is not None:
-            _engine = create_engine(db_url)
-        if _engine is None:
-            raise ValueError("One of db_url or db_engine must be provided")
-
-        self.db_url: Optional[str] = db_url
-        self.db_engine: Engine = _engine
-
-        if id is None:
-            base_seed = db_url or str(db_engine.url)  # type: ignore
-            schema_suffix = db_schema if db_schema is not None else "ai"
-            seed = f"{base_seed}#{schema_suffix}"
-            id = generate_id(seed)
-
         super().__init__(
-            id=id,
+            id=db_id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
@@ -99,14 +82,22 @@ class PostgresDb(BaseDb):
             culture_table=culture_table,
         )
 
+        _engine: Optional[AsyncEngine] = db_engine
+        if _engine is None and db_url is not None:
+            _engine = create_async_engine(db_url)
+        if _engine is None:
+            raise ValueError("One of db_url or db_engine must be provided")
+
+        self.db_url: Optional[str] = db_url
+        self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData()
 
-        # Initialize database session
-        self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+        # Initialize database session factory
+        self.async_session_factory = async_sessionmaker(bind=self.db_engine)
 
     # -- DB methods --
-    def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    async def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
 
@@ -156,29 +147,29 @@ class PostgresDb(BaseDb):
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
 
-            with self.Session() as sess, sess.begin():
-                create_schema(session=sess, db_schema=db_schema)
+            async with self.async_session_factory() as sess, sess.begin():
+                await acreate_schema(session=sess, db_schema=db_schema)
 
             # Create table
-            table.create(self.db_engine, checkfirst=True)
+            async with self.db_engine.begin() as conn:
+                await conn.run_sync(table.create, checkfirst=True)
 
             # Create indexes
             for idx in table.indexes:
                 try:
                     # Check if index already exists
-                    with self.Session() as sess:
+                    async with self.async_session_factory() as sess:
                         exists_query = text(
                             "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
                         )
-                        exists = (
-                            sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name}).scalar()
-                            is not None
-                        )
+                        result = await sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name})
+                        exists = result.scalar() is not None
                         if exists:
                             log_debug(f"Index {idx.name} already exists in {db_schema}.{table_name}, skipping creation")
                             continue
 
-                    idx.create(self.db_engine)
+                    async with self.db_engine.begin() as conn:
+                        await conn.run_sync(idx.create)
                     log_debug(f"Created index: {idx.name} for table {db_schema}.{table_name}")
 
                 except Exception as e:
@@ -191,66 +182,52 @@ class PostgresDb(BaseDb):
             log_error(f"Could not create table {db_schema}.{table_name}: {e}")
             raise
 
-    def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+    async def _get_table(self, table_type: str) -> Table:
         if table_type == "sessions":
-            self.session_table = self._get_or_create_table(
-                table_name=self.session_table_name,
-                table_type="sessions",
-                db_schema=self.db_schema,
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "session_table"):
+                self.session_table = await self._get_or_create_table(
+                    table_name=self.session_table_name, table_type="sessions", db_schema=self.db_schema
+                )
             return self.session_table
 
         if table_type == "memories":
-            self.memory_table = self._get_or_create_table(
-                table_name=self.memory_table_name,
-                table_type="memories",
-                db_schema=self.db_schema,
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "memory_table"):
+                self.memory_table = await self._get_or_create_table(
+                    table_name=self.memory_table_name, table_type="memories", db_schema=self.db_schema
+                )
             return self.memory_table
 
         if table_type == "metrics":
-            self.metrics_table = self._get_or_create_table(
-                table_name=self.metrics_table_name,
-                table_type="metrics",
-                db_schema=self.db_schema,
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "metrics_table"):
+                self.metrics_table = await self._get_or_create_table(
+                    table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
+                )
             return self.metrics_table
 
         if table_type == "evals":
-            self.eval_table = self._get_or_create_table(
-                table_name=self.eval_table_name,
-                table_type="evals",
-                db_schema=self.db_schema,
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "eval_table"):
+                self.eval_table = await self._get_or_create_table(
+                    table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
+                )
             return self.eval_table
 
         if table_type == "knowledge":
-            self.knowledge_table = self._get_or_create_table(
-                table_name=self.knowledge_table_name,
-                table_type="knowledge",
-                db_schema=self.db_schema,
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "knowledge_table"):
+                self.knowledge_table = await self._get_or_create_table(
+                    table_name=self.knowledge_table_name, table_type="knowledge", db_schema=self.db_schema
+                )
             return self.knowledge_table
 
         if table_type == "culture":
-            self.culture_table = self._get_or_create_table(
-                table_name=self.culture_table_name,
-                table_type="culture",
-                db_schema=self.db_schema,
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "culture_table"):
+                self.culture_table = await self._get_or_create_table(
+                    table_name=self.culture_table_name, table_type="culture", db_schema=self.db_schema
+                )
             return self.culture_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    def _get_or_create_table(
-        self, table_name: str, table_type: str, db_schema: str, create_table_if_not_found: Optional[bool] = False
-    ) -> Optional[Table]:
+    async def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
         """
         Check if the table exists and is valid, else create it.
 
@@ -260,19 +237,16 @@ class PostgresDb(BaseDb):
             db_schema (str): Database schema name
 
         Returns:
-            Optional[Table]: SQLAlchemy Table object representing the schema.
+            Table: SQLAlchemy Table object representing the schema.
         """
 
-        with self.Session() as sess, sess.begin():
-            table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=db_schema)
+        async with self.async_session_factory() as sess, sess.begin():
+            table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=db_schema)
 
         if not table_is_available:
-            if not create_table_if_not_found:
-                return None
+            return await self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
-            return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
-
-        if not is_valid_table(
+        if not await ais_valid_table(
             db_engine=self.db_engine,
             table_name=table_name,
             table_type=table_type,
@@ -281,16 +255,20 @@ class PostgresDb(BaseDb):
             raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
 
         try:
-            table = Table(table_name, self.metadata, schema=db_schema, autoload_with=self.db_engine)
-            return table
+            async with self.db_engine.connect() as conn:
+
+                def create_table(connection):
+                    return Table(table_name, self.metadata, schema=db_schema, autoload_with=connection)
+
+                table = await conn.run_sync(create_table)
+                return table
 
         except Exception as e:
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
 
     # -- Session methods --
-
-    def delete_session(self, session_id: str) -> bool:
+    async def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.
 
@@ -304,13 +282,11 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return False
+            table = await self._get_table(table_type="sessions")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
-                result = sess.execute(delete_stmt)
+                result = await sess.execute(delete_stmt)
 
                 if result.rowcount == 0:
                     log_debug(f"No session found to delete with session_id: {session_id} in table {table.name}")
@@ -322,9 +298,9 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
-            raise e
+            return False
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    async def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete all given sessions from the database.
         Can handle multiple session types in the same run.
 
@@ -335,21 +311,18 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return
+            table = await self._get_table(table_type="sessions")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
-                result = sess.execute(delete_stmt)
+                result = await sess.execute(delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
-            raise e
 
-    def get_session(
+    async def get_session(
         self,
         session_id: str,
         session_type: SessionType,
@@ -361,8 +334,8 @@ class PostgresDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to read.
-            session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
+            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -374,11 +347,9 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return None
+            table = await self._get_table(table_type="sessions")
 
-            with self.Session() as sess:
+            async with self.async_session_factory() as sess:
                 stmt = select(table).where(table.c.session_id == session_id)
 
                 if user_id is not None:
@@ -386,11 +357,12 @@ class PostgresDb(BaseDb):
                 if session_type is not None:
                     session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
                     stmt = stmt.where(table.c.session_type == session_type_value)
-                result = sess.execute(stmt).fetchone()
-                if result is None:
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
                     return None
 
-                session = dict(result._mapping)
+                session = dict(row._mapping)
 
             if not deserialize:
                 return session
@@ -406,9 +378,9 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from session table: {e}")
-            raise e
+            return None
 
-    def get_sessions(
+    async def get_sessions(
         self,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
@@ -426,9 +398,8 @@ class PostgresDb(BaseDb):
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
         Args:
-            session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
-            entity_id (Optional[str]): The ID of the agent / workflow to filter by.
+            component_id (Optional[str]): The ID of the agent / workflow to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
             end_timestamp (Optional[int]): The end timestamp to filter by.
             session_name (Optional[str]): The name of the session to filter by.
@@ -447,11 +418,9 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return [] if deserialize else ([], 0)
+            table = await self._get_table(table_type="sessions")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
 
                 # Filtering
@@ -479,7 +448,7 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.session_type == session_type_value)
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = await sess.scalar(count_stmt) or 0
 
                 # Sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -490,7 +459,8 @@ class PostgresDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                records = sess.execute(stmt).fetchall()
+                result = await sess.execute(stmt)
+                records = result.fetchall()
                 if records is None:
                     return [], 0
 
@@ -509,9 +479,9 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from session table: {e}")
-            raise e
+            return [] if deserialize else ([], 0)
 
-    def rename_session(
+    async def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
@@ -532,11 +502,9 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during renaming.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return None
+            table = await self._get_table(table_type="sessions")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = (
                     update(table)
                     .where(table.c.session_id == session_id)
@@ -553,7 +521,7 @@ class PostgresDb(BaseDb):
                     )
                     .returning(*table.c)
                 )
-                result = sess.execute(stmt)
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 if not row:
                     return None
@@ -576,9 +544,9 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
-            raise e
+            return None
 
-    def upsert_session(
+    async def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
@@ -597,14 +565,11 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
-            if table is None:
-                return None
-
+            table = await self._get_table(table_type="sessions")
             session_dict = session.to_dict()
 
             if isinstance(session, AgentSession):
-                with self.Session() as sess, sess.begin():
+                async with self.async_session_factory() as sess, sess.begin():
                     stmt = postgresql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.AGENT.value,
@@ -631,16 +596,20 @@ class PostgresDb(BaseDb):
                             updated_at=int(time.time()),
                         ),
                     ).returning(table)
-                    result = sess.execute(stmt)
+                    result = await sess.execute(stmt)
                     row = result.fetchone()
+                    if row is None:
+                        return None
                     session_dict = dict(row._mapping)
 
-                    if session_dict is None or not deserialize:
+                    log_debug(f"Upserted agent session with id '{session_dict.get('session_id')}'")
+
+                    if not deserialize:
                         return session_dict
                     return AgentSession.from_dict(session_dict)
 
             elif isinstance(session, TeamSession):
-                with self.Session() as sess, sess.begin():
+                async with self.async_session_factory() as sess, sess.begin():
                     stmt = postgresql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.TEAM.value,
@@ -667,16 +636,20 @@ class PostgresDb(BaseDb):
                             updated_at=int(time.time()),
                         ),
                     ).returning(table)
-                    result = sess.execute(stmt)
+                    result = await sess.execute(stmt)
                     row = result.fetchone()
+                    if row is None:
+                        return None
                     session_dict = dict(row._mapping)
 
-                    if session_dict is None or not deserialize:
+                    log_debug(f"Upserted team session with id '{session_dict.get('session_id')}'")
+
+                    if not deserialize:
                         return session_dict
                     return TeamSession.from_dict(session_dict)
 
             elif isinstance(session, WorkflowSession):
-                with self.Session() as sess, sess.begin():
+                async with self.async_session_factory() as sess, sess.begin():
                     stmt = postgresql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.WORKFLOW.value,
@@ -703,11 +676,15 @@ class PostgresDb(BaseDb):
                             updated_at=int(time.time()),
                         ),
                     ).returning(table)
-                    result = sess.execute(stmt)
+                    result = await sess.execute(stmt)
                     row = result.fetchone()
+                    if row is None:
+                        return None
                     session_dict = dict(row._mapping)
 
-                    if session_dict is None or not deserialize:
+                    log_debug(f"Upserted workflow session with id '{session_dict.get('session_id')}'")
+
+                    if not deserialize:
                         return session_dict
                     return WorkflowSession.from_dict(session_dict)
 
@@ -716,188 +693,11 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception upserting into sessions table: {e}")
-            raise e
-
-    def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
-    ) -> List[Union[Session, Dict[str, Any]]]:
-        """
-        Bulk insert or update multiple sessions.
-
-        Args:
-            sessions (List[Session]): The list of session data to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
-            preserve_updated_at (bool): If True, preserve the updated_at from the session object.
-
-        Returns:
-            List[Union[Session, Dict[str, Any]]]: List of upserted sessions
-
-        Raises:
-            Exception: If an error occurs during bulk upsert.
-        """
-        try:
-            if not sessions:
-                return []
-
-            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
-            if table is None:
-                return []
-
-            # Group sessions by type for better handling
-            agent_sessions = [s for s in sessions if isinstance(s, AgentSession)]
-            team_sessions = [s for s in sessions if isinstance(s, TeamSession)]
-            workflow_sessions = [s for s in sessions if isinstance(s, WorkflowSession)]
-
-            results: List[Union[Session, Dict[str, Any]]] = []
-
-            # Bulk upsert agent sessions
-            if agent_sessions:
-                session_records = []
-                for agent_session in agent_sessions:
-                    session_dict = agent_session.to_dict()
-                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
-                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
-                    session_records.append(
-                        {
-                            "session_id": session_dict.get("session_id"),
-                            "session_type": SessionType.AGENT.value,
-                            "agent_id": session_dict.get("agent_id"),
-                            "user_id": session_dict.get("user_id"),
-                            "agent_data": session_dict.get("agent_data"),
-                            "session_data": session_dict.get("session_data"),
-                            "summary": session_dict.get("summary"),
-                            "metadata": session_dict.get("metadata"),
-                            "runs": session_dict.get("runs"),
-                            "created_at": session_dict.get("created_at"),
-                            "updated_at": updated_at,
-                        }
-                    )
-
-                with self.Session() as sess, sess.begin():
-                    stmt: Any = postgresql.insert(table)
-                    update_columns = {
-                        col.name: stmt.excluded[col.name]
-                        for col in table.columns
-                        if col.name not in ["id", "session_id", "created_at"]
-                    }
-                    stmt = stmt.on_conflict_do_update(index_elements=["session_id"], set_=update_columns).returning(
-                        table
-                    )
-
-                    result = sess.execute(stmt, session_records)
-                    for row in result.fetchall():
-                        session_dict = dict(row._mapping)
-                        if deserialize:
-                            deserialized_agent_session = AgentSession.from_dict(session_dict)
-                            if deserialized_agent_session is None:
-                                continue
-                            results.append(deserialized_agent_session)
-                        else:
-                            results.append(session_dict)
-
-            # Bulk upsert team sessions
-            if team_sessions:
-                session_records = []
-                for team_session in team_sessions:
-                    session_dict = team_session.to_dict()
-                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
-                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
-                    session_records.append(
-                        {
-                            "session_id": session_dict.get("session_id"),
-                            "session_type": SessionType.TEAM.value,
-                            "team_id": session_dict.get("team_id"),
-                            "user_id": session_dict.get("user_id"),
-                            "team_data": session_dict.get("team_data"),
-                            "session_data": session_dict.get("session_data"),
-                            "summary": session_dict.get("summary"),
-                            "metadata": session_dict.get("metadata"),
-                            "runs": session_dict.get("runs"),
-                            "created_at": session_dict.get("created_at"),
-                            "updated_at": updated_at,
-                        }
-                    )
-
-                with self.Session() as sess, sess.begin():
-                    stmt = postgresql.insert(table)
-                    update_columns = {
-                        col.name: stmt.excluded[col.name]
-                        for col in table.columns
-                        if col.name not in ["id", "session_id", "created_at"]
-                    }
-                    stmt = stmt.on_conflict_do_update(index_elements=["session_id"], set_=update_columns).returning(
-                        table
-                    )
-
-                    result = sess.execute(stmt, session_records)
-                    for row in result.fetchall():
-                        session_dict = dict(row._mapping)
-                        if deserialize:
-                            deserialized_team_session = TeamSession.from_dict(session_dict)
-                            if deserialized_team_session is None:
-                                continue
-                            results.append(deserialized_team_session)
-                        else:
-                            results.append(session_dict)
-
-            # Bulk upsert workflow sessions
-            if workflow_sessions:
-                session_records = []
-                for workflow_session in workflow_sessions:
-                    session_dict = workflow_session.to_dict()
-                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
-                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
-                    session_records.append(
-                        {
-                            "session_id": session_dict.get("session_id"),
-                            "session_type": SessionType.WORKFLOW.value,
-                            "workflow_id": session_dict.get("workflow_id"),
-                            "user_id": session_dict.get("user_id"),
-                            "workflow_data": session_dict.get("workflow_data"),
-                            "session_data": session_dict.get("session_data"),
-                            "summary": session_dict.get("summary"),
-                            "metadata": session_dict.get("metadata"),
-                            "runs": session_dict.get("runs"),
-                            "created_at": session_dict.get("created_at"),
-                            "updated_at": updated_at,
-                        }
-                    )
-
-                with self.Session() as sess, sess.begin():
-                    stmt = postgresql.insert(table)
-                    update_columns = {
-                        col.name: stmt.excluded[col.name]
-                        for col in table.columns
-                        if col.name not in ["id", "session_id", "created_at"]
-                    }
-                    stmt = stmt.on_conflict_do_update(index_elements=["session_id"], set_=update_columns).returning(
-                        table
-                    )
-
-                    result = sess.execute(stmt, session_records)
-                    for row in result.fetchall():
-                        session_dict = dict(row._mapping)
-                        if deserialize:
-                            deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
-                            if deserialized_workflow_session is None:
-                                continue
-                            results.append(deserialized_workflow_session)
-                        else:
-                            results.append(session_dict)
-
-            return results
-
-        except Exception as e:
-            log_error(f"Exception bulk upserting sessions: {e}")
-            return []
+            return None
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
+    async def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the database.
-
-        Args:
-            memory_id (str): The ID of the memory to delete.
-            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
@@ -906,17 +706,11 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
-
-                if user_id is not None:
-                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
-
-                result = sess.execute(delete_stmt)
+                result = await sess.execute(delete_stmt)
 
                 success = result.rowcount > 0
                 if success:
@@ -926,30 +720,22 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
-            raise e
 
-    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+    async def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
-            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
-
-                if user_id is not None:
-                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
-
-                result = sess.execute(delete_stmt)
+                result = await sess.execute(delete_stmt)
 
                 if result.rowcount == 0:
                     log_debug(f"No user memories found with ids: {memory_ids}")
@@ -958,39 +744,35 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
-            raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    async def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
 
         Returns:
             List[str]: List of memory topics.
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return []
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
+                result = await sess.execute(stmt)
+                records = result.fetchall()
 
-                result = sess.execute(stmt).fetchall()
-
-                return list(set([record[0] for record in result]))
+                return list(set([record[0] for record in records]))
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
             return []
 
-    def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    async def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
-            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -1001,21 +783,17 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return None
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
 
-                if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
-
-                result = sess.execute(stmt).fetchone()
-                if not result:
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if not row:
                     return None
 
-                memory_raw = dict(result._mapping)
+                memory_raw = dict(row._mapping)
                 if not deserialize:
                     return memory_raw
 
@@ -1023,9 +801,9 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            raise e
+            return None
 
-    def get_user_memories(
+    async def get_user_memories(
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
@@ -1052,7 +830,6 @@ class PostgresDb(BaseDb):
             sort_order (Optional[str]): The order to sort by.
             deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
 
-
         Returns:
             Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
                 - When deserialize=True: List of UserMemory objects
@@ -1062,11 +839,9 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return [] if deserialize else ([], 0)
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
                 # Filtering
                 if user_id is not None:
@@ -1083,7 +858,7 @@ class PostgresDb(BaseDb):
 
                 # Get total count after applying filtering
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = await sess.scalar(count_stmt) or 0
 
                 # Sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -1094,11 +869,12 @@ class PostgresDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = sess.execute(stmt).fetchall()
-                if not result:
+                result = await sess.execute(stmt)
+                records = result.fetchall()
+                if not records:
                     return [] if deserialize else ([], 0)
 
-                memories_raw = [record._mapping for record in result]
+                memories_raw = [dict(record._mapping) for record in records]
                 if not deserialize:
                     return memories_raw, total_count
 
@@ -1106,27 +882,243 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            raise e
+            return [] if deserialize else ([], 0)
 
-    def clear_memories(self) -> None:
+    async def clear_memories(self) -> None:
         """Delete all memories from the database.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
-                sess.execute(table.delete())
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(table.delete())
 
         except Exception as e:
-            log_error(f"Exception deleting all memories: {e}")
+            log_warning(f"Exception deleting all memories: {e}")
+
+    # -- Cultural Knowledge methods --
+    async def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = await self._get_table(table_type="culture")
+
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(table.delete())
+
+        except Exception as e:
+            log_warning(f"Exception deleting all cultural knowledge: {e}")
+
+    async def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = await self._get_table(table_type="culture")
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.delete().where(table.c.id == id)
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_warning(f"Exception deleting cultural knowledge: {e}")
             raise e
 
-    def get_user_memory_stats(
+    async def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = await self._get_table(table_type="culture")
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.id == id)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+                db_row = dict(row._mapping)
+
+                if not deserialize:
+                    return db_row
+
+                return deserialize_cultural_knowledge(db_row)
+
+        except Exception as e:
+            log_warning(f"Exception reading cultural knowledge: {e}")
+            raise e
+
+    async def get_all_cultural_knowledge(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge with filtering and pagination.
+
+        Args:
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = await self._get_table(table_type="culture")
+
+            async with self.async_session_factory() as sess:
+                # Build query with filters
+                stmt = select(table)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if name is not None:
+                    stmt = stmt.where(table.c.name.ilike(f"%{name}%"))
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count_result = await sess.execute(count_stmt)
+                total_count = total_count_result.scalar() or 0
+
+                # Apply sorting
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
+                # Apply pagination
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                # Execute query
+                result = await sess.execute(stmt)
+                rows = result.fetchall()
+
+                db_rows = [dict(row._mapping) for row in rows]
+
+                if not deserialize:
+                    return db_rows, total_count
+
+                return [deserialize_cultural_knowledge(row) for row in db_rows]
+
+        except Exception as e:
+            log_warning(f"Exception reading all cultural knowledge: {e}")
+            raise e
+
+    async def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert cultural knowledge in the database.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = await self._get_table(table_type="culture")
+
+            # Generate ID if not present
+            if cultural_knowledge.id is None:
+                cultural_knowledge.id = str(uuid4())
+
+            # Serialize content, categories, and notes into a JSON dict for DB storage
+            content_dict = serialize_cultural_knowledge(cultural_knowledge)
+
+            async with self.async_session_factory() as sess, sess.begin():
+                # Use PostgreSQL-specific insert with on_conflict_do_update
+                insert_stmt = postgresql.insert(table).values(
+                    id=cultural_knowledge.id,
+                    name=cultural_knowledge.name,
+                    summary=cultural_knowledge.summary,
+                    content=content_dict if content_dict else None,
+                    metadata=cultural_knowledge.metadata,
+                    input=cultural_knowledge.input,
+                    created_at=cultural_knowledge.created_at,
+                    updated_at=int(time.time()),
+                    agent_id=cultural_knowledge.agent_id,
+                    team_id=cultural_knowledge.team_id,
+                )
+
+                # Update all fields except id on conflict
+                update_dict = {
+                    "name": cultural_knowledge.name,
+                    "summary": cultural_knowledge.summary,
+                    "content": content_dict if content_dict else None,
+                    "metadata": cultural_knowledge.metadata,
+                    "input": cultural_knowledge.input,
+                    "updated_at": int(time.time()),
+                    "agent_id": cultural_knowledge.agent_id,
+                    "team_id": cultural_knowledge.team_id,
+                }
+                upsert_stmt = insert_stmt.on_conflict_do_update(index_elements=["id"], set_=update_dict).returning(
+                    table
+                )
+
+                result = await sess.execute(upsert_stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+                db_row = dict(row._mapping)
+
+            if not deserialize:
+                return db_row
+
+            # Deserialize from DB format to model format
+            return deserialize_cultural_knowledge(db_row)
+
+        except Exception as e:
+            log_warning(f"Exception upserting cultural knowledge: {e}")
+            raise e
+
+    async def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
@@ -1151,11 +1143,9 @@ class PostgresDb(BaseDb):
         )
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return [], 0
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = (
                     select(
                         table.c.user_id,
@@ -1168,7 +1158,7 @@ class PostgresDb(BaseDb):
                 )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = await sess.scalar(count_stmt) or 0
 
                 # Pagination
                 if limit is not None:
@@ -1176,8 +1166,9 @@ class PostgresDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = sess.execute(stmt).fetchall()
-                if not result:
+                result = await sess.execute(stmt)
+                records = result.fetchall()
+                if not records:
                     return [], 0
 
                 return [
@@ -1186,14 +1177,14 @@ class PostgresDb(BaseDb):
                         "total_memories": record.total_memories,
                         "last_memory_updated_at": record.last_memory_updated_at,
                     }
-                    for record in result
+                    for record in records
                 ], total_count
 
         except Exception as e:
             log_error(f"Exception getting user memory stats: {e}")
-            raise e
+            return [], 0
 
-    def upsert_user_memory(
+    async def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Upsert a user memory in the database.
@@ -1211,11 +1202,9 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table(table_type="memories", create_table_if_not_found=True)
-            if table is None:
-                return None
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
@@ -1241,10 +1230,14 @@ class PostgresDb(BaseDb):
                     ),
                 ).returning(table)
 
-                result = sess.execute(stmt)
+                result = await sess.execute(stmt)
                 row = result.fetchone()
+                if row is None:
+                    return None
 
             memory_raw = dict(row._mapping)
+
+            log_debug(f"Upserted user memory with id '{memory.memory_id}'")
 
             if not memory_raw or not deserialize:
                 return memory_raw
@@ -1253,89 +1246,10 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception upserting user memory: {e}")
-            raise e
-
-    def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
-    ) -> List[Union[UserMemory, Dict[str, Any]]]:
-        """
-        Bulk insert or update multiple memories in the database for improved performance.
-
-        Args:
-            memories (List[UserMemory]): The list of memories to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
-            preserve_updated_at (bool): If True, preserve the updated_at from the memory object.
-                                       If False (default), set updated_at to current time.
-
-        Returns:
-            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories
-
-        Raises:
-            Exception: If an error occurs during bulk upsert.
-        """
-        try:
-            if not memories:
-                return []
-
-            table = self._get_table(table_type="memories", create_table_if_not_found=True)
-            if table is None:
-                return []
-
-            # Prepare memory records for bulk insert
-            memory_records = []
-            current_time = int(time.time())
-
-            for memory in memories:
-                if memory.memory_id is None:
-                    memory.memory_id = str(uuid4())
-
-                # Use preserved updated_at if flag is set (even if None), otherwise use current time
-                updated_at = memory.updated_at if preserve_updated_at else current_time
-                memory_records.append(
-                    {
-                        "memory_id": memory.memory_id,
-                        "memory": memory.memory,
-                        "input": memory.input,
-                        "user_id": memory.user_id,
-                        "agent_id": memory.agent_id,
-                        "team_id": memory.team_id,
-                        "topics": memory.topics,
-                        "updated_at": updated_at,
-                    }
-                )
-
-            results: List[Union[UserMemory, Dict[str, Any]]] = []
-
-            with self.Session() as sess, sess.begin():
-                insert_stmt = postgresql.insert(table)
-                update_columns = {
-                    col.name: insert_stmt.excluded[col.name]
-                    for col in table.columns
-                    if col.name not in ["memory_id"]  # Don't update primary key
-                }
-                stmt = insert_stmt.on_conflict_do_update(index_elements=["memory_id"], set_=update_columns).returning(
-                    table
-                )
-
-                result = sess.execute(stmt, memory_records)
-                for row in result.fetchall():
-                    memory_dict = dict(row._mapping)
-                    if deserialize:
-                        deserialized_memory = UserMemory.from_dict(memory_dict)
-                        if deserialized_memory is None:
-                            continue
-                        results.append(deserialized_memory)
-                    else:
-                        results.append(memory_dict)
-
-            return results
-
-        except Exception as e:
-            log_error(f"Exception bulk upserting memories: {e}")
-            return []
+            return None
 
     # -- Metrics methods --
-    def _get_all_sessions_for_metrics_calculation(
+    async def _get_all_sessions_for_metrics_calculation(
         self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
@@ -1352,9 +1266,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return []
+            table = await self._get_table(table_type="sessions")
 
             stmt = select(
                 table.c.user_id,
@@ -1369,16 +1281,17 @@ class PostgresDb(BaseDb):
             if end_timestamp is not None:
                 stmt = stmt.where(table.c.created_at <= end_timestamp)
 
-            with self.Session() as sess:
-                result = sess.execute(stmt).fetchall()
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(stmt)
+                records = result.fetchall()
 
-                return [record._mapping for record in result]
+                return [dict(record._mapping) for record in records]
 
         except Exception as e:
             log_error(f"Exception reading from sessions table: {e}")
-            raise e
+            return []
 
-    def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
+    async def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
         """Get the first date for which metrics calculation is needed:
 
         1. If there are metrics records, return the date of the first day without a complete metrics record.
@@ -1391,19 +1304,20 @@ class PostgresDb(BaseDb):
         Returns:
             Optional[date]: The starting date for which metrics calculation is needed.
         """
-        with self.Session() as sess:
+        async with self.async_session_factory() as sess:
             stmt = select(table).order_by(table.c.date.desc()).limit(1)
-            result = sess.execute(stmt).fetchone()
+            result = await sess.execute(stmt)
+            row = result.fetchone()
 
             # 1. Return the date of the first day without a complete metrics record.
-            if result is not None:
-                if result.completed:
-                    return result._mapping["date"] + timedelta(days=1)
+            if row is not None:
+                if row.completed:
+                    return row._mapping["date"] + timedelta(days=1)
                 else:
-                    return result._mapping["date"]
+                    return row._mapping["date"]
 
         # 2. No metrics records. Return the date of the first recorded session.
-        first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+        first_session, _ = await self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
 
         first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore[index]
 
@@ -1413,7 +1327,7 @@ class PostgresDb(BaseDb):
 
         return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
-    def calculate_metrics(self) -> Optional[list[dict]]:
+    async def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics.
 
         Returns:
@@ -1423,11 +1337,9 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         try:
-            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
-            if table is None:
-                return None
+            table = await self._get_table(table_type="metrics")
 
-            starting_date = self._get_metrics_calculation_starting_date(table)
+            starting_date = await self._get_metrics_calculation_starting_date(table)
 
             if starting_date is None:
                 log_info("No session data found. Won't calculate metrics.")
@@ -1447,7 +1359,7 @@ class PostgresDb(BaseDb):
                 .timestamp()
             )
 
-            sessions = self._get_all_sessions_for_metrics_calculation(
+            sessions = await self._get_all_sessions_for_metrics_calculation(
                 start_timestamp=start_timestamp, end_timestamp=end_timestamp
             )
 
@@ -1474,8 +1386,8 @@ class PostgresDb(BaseDb):
                 metrics_records.append(metrics_record)
 
             if metrics_records:
-                with self.Session() as sess, sess.begin():
-                    results = bulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
+                async with self.async_session_factory() as sess, sess.begin():
+                    results = await abulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
 
             log_debug("Updated metrics calculations")
 
@@ -1483,12 +1395,10 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception refreshing metrics: {e}")
-            raise e
+            return None
 
-    def get_metrics(
-        self,
-        starting_date: Optional[date] = None,
-        ending_date: Optional[date] = None,
+    async def get_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
@@ -1503,51 +1413,48 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
-            if table is None:
-                return [], None
+            table = await self._get_table(table_type="metrics")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
                 if starting_date:
                     stmt = stmt.where(table.c.date >= starting_date)
                 if ending_date:
                     stmt = stmt.where(table.c.date <= ending_date)
-                result = sess.execute(stmt).fetchall()
-                if not result:
+                result = await sess.execute(stmt)
+                records = result.fetchall()
+                if not records:
                     return [], None
 
                 # Get the latest updated_at
                 latest_stmt = select(func.max(table.c.updated_at))
-                latest_updated_at = sess.execute(latest_stmt).scalar()
+                latest_result = await sess.execute(latest_stmt)
+                latest_updated_at = latest_result.scalar()
 
-            return [row._mapping for row in result], latest_updated_at
+            return [dict(row._mapping) for row in records], latest_updated_at
 
         except Exception as e:
-            log_error(f"Exception getting metrics: {e}")
-            raise e
+            log_warning(f"Exception getting metrics: {e}")
+            return [], None
 
     # -- Knowledge methods --
-    def delete_knowledge_content(self, id: str):
+    async def delete_knowledge_content(self, id: str):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
         """
-        try:
-            table = self._get_table(table_type="knowledge")
-            if table is None:
-                return
+        table = await self._get_table(table_type="knowledge")
 
-            with self.Session() as sess, sess.begin():
+        try:
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
-                sess.execute(stmt)
+                await sess.execute(stmt)
 
         except Exception as e:
             log_error(f"Exception deleting knowledge content: {e}")
-            raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
@@ -1556,24 +1463,23 @@ class PostgresDb(BaseDb):
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
-        try:
-            table = self._get_table(table_type="knowledge")
-            if table is None:
-                return None
+        table = await self._get_table(table_type="knowledge")
 
-            with self.Session() as sess, sess.begin():
+        try:
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
-                result = sess.execute(stmt).fetchone()
-                if result is None:
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
                     return None
 
-                return KnowledgeRow.model_validate(result._mapping)
+                return KnowledgeRow.model_validate(row._mapping)
 
         except Exception as e:
             log_error(f"Exception getting knowledge content: {e}")
-            raise e
+            return None
 
-    def get_knowledge_contents(
+    async def get_knowledge_contents(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
@@ -1587,7 +1493,6 @@ class PostgresDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             List[KnowledgeRow]: The knowledge contents.
@@ -1595,12 +1500,10 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
-        try:
-            table = self._get_table(table_type="knowledge")
-            if table is None:
-                return [], 0
+        table = await self._get_table(table_type="knowledge")
 
-            with self.Session() as sess, sess.begin():
+        try:
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
 
                 # Apply sorting
@@ -1609,7 +1512,7 @@ class PostgresDb(BaseDb):
 
                 # Get total count before applying limit and pagination
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = await sess.scalar(count_stmt) or 0
 
                 # Apply pagination after count
                 if limit is not None:
@@ -1617,14 +1520,15 @@ class PostgresDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = sess.execute(stmt).fetchall()
-                return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+                result = await sess.execute(stmt)
+                records = result.fetchall()
+                return [KnowledgeRow.model_validate(record._mapping) for record in records], total_count
 
         except Exception as e:
             log_error(f"Exception getting knowledge contents: {e}")
-            raise e
+            return [], 0
 
-    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
+    async def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
 
         Args:
@@ -1634,11 +1538,8 @@ class PostgresDb(BaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table = self._get_table(table_type="knowledge", create_table_if_not_found=True)
-            if table is None:
-                return None
-
-            with self.Session() as sess, sess.begin():
+            table = await self._get_table(table_type="knowledge")
+            async with self.async_session_factory() as sess, sess.begin():
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
 
@@ -1682,7 +1583,7 @@ class PostgresDb(BaseDb):
                     # If we have insert_data, just do an insert without conflict resolution
                     if insert_data:
                         stmt = postgresql.insert(table).values(insert_data)
-                        sess.execute(stmt)
+                        await sess.execute(stmt)
                     else:
                         # If we have no data at all, this is an error
                         log_error("No valid fields found for knowledge row upsert")
@@ -1694,16 +1595,18 @@ class PostgresDb(BaseDb):
                         .values(insert_data)
                         .on_conflict_do_update(index_elements=["id"], set_=update_fields)
                     )
-                    sess.execute(stmt)
+                    await sess.execute(stmt)
+
+            log_debug(f"Upserted knowledge row with id '{knowledge_row.id}'")
 
             return knowledge_row
 
         except Exception as e:
             log_error(f"Error upserting knowledge row: {e}")
-            raise e
+            return None
 
     # -- Eval methods --
-    def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
+    async def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the database.
 
         Args:
@@ -1716,16 +1619,14 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during creation.
         """
         try:
-            table = self._get_table(table_type="evals", create_table_if_not_found=True)
-            if table is None:
-                return None
+            table = await self._get_table(table_type="evals")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 current_time = int(time.time())
                 stmt = postgresql.insert(table).values(
                     {"created_at": current_time, "updated_at": current_time, **eval_run.model_dump()}
                 )
-                sess.execute(stmt)
+                await sess.execute(stmt)
 
             log_debug(f"Created eval run with id '{eval_run.run_id}'")
 
@@ -1733,22 +1634,20 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error creating eval run: {e}")
-            raise e
+            return None
 
-    def delete_eval_run(self, eval_run_id: str) -> None:
+    async def delete_eval_run(self, eval_run_id: str) -> None:
         """Delete an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to delete.
         """
         try:
-            table = self._get_table(table_type="evals")
-            if table is None:
-                return
+            table = await self._get_table(table_type="evals")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id == eval_run_id)
-                result = sess.execute(stmt)
+                result = await sess.execute(stmt)
 
                 if result.rowcount == 0:
                     log_warning(f"No eval run found with ID: {eval_run_id}")
@@ -1757,22 +1656,19 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting eval run {eval_run_id}: {e}")
-            raise e
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
         """
         try:
-            table = self._get_table(table_type="evals")
-            if table is None:
-                return
+            table = await self._get_table(table_type="evals")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
-                result = sess.execute(stmt)
+                result = await sess.execute(stmt)
 
                 if result.rowcount == 0:
                     log_warning(f"No eval runs found with IDs: {eval_run_ids}")
@@ -1781,9 +1677,8 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
-            raise e
 
-    def get_eval_run(
+    async def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
@@ -1801,17 +1696,16 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="evals")
-            if table is None:
-                return None
+            table = await self._get_table(table_type="evals")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
-                result = sess.execute(stmt).fetchone()
-                if result is None:
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
                     return None
 
-                eval_run_raw = dict(result._mapping)
+                eval_run_raw = dict(row._mapping)
                 if not deserialize:
                     return eval_run_raw
 
@@ -1819,9 +1713,9 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval run {eval_run_id}: {e}")
-            raise e
+            return None
 
-    def get_eval_runs(
+    async def get_eval_runs(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
@@ -1849,7 +1743,6 @@ class PostgresDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -1860,11 +1753,9 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="evals")
-            if table is None:
-                return [] if deserialize else ([], 0)
+            table = await self._get_table(table_type="evals")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
 
                 # Filtering
@@ -1888,7 +1779,7 @@ class PostgresDb(BaseDb):
 
                 # Get total count after applying filtering
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = await sess.scalar(count_stmt) or 0
 
                 # Sorting
                 if sort_by is None:
@@ -1902,11 +1793,12 @@ class PostgresDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = sess.execute(stmt).fetchall()
-                if not result:
+                result = await sess.execute(stmt)
+                records = result.fetchall()
+                if not records:
                     return [] if deserialize else ([], 0)
 
-                eval_runs_raw = [row._mapping for row in result]
+                eval_runs_raw = [dict(row._mapping) for row in records]
                 if not deserialize:
                     return eval_runs_raw, total_count
 
@@ -1914,9 +1806,9 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            raise e
+            return [] if deserialize else ([], 0)
 
-    def rename_eval_run(
+    async def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
@@ -1932,17 +1824,14 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during update.
         """
         try:
-            table = self._get_table(table_type="evals")
-            if table is None:
-                return None
-
-            with self.Session() as sess, sess.begin():
+            table = await self._get_table(table_type="evals")
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
                 )
-                sess.execute(stmt)
+                await sess.execute(stmt)
 
-            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            eval_run_raw = await self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
             if not eval_run_raw or not deserialize:
                 return eval_run_raw
 
@@ -1950,238 +1839,11 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting eval run name {eval_run_id}: {e}")
-            raise e
-
-    # -- Culture methods --
-
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                sess.execute(table.delete())
-
-        except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {e}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete a cultural knowledge entry from the database.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                delete_stmt = table.delete().where(table.c.id == id)
-                result = sess.execute(delete_stmt)
-
-                success = result.rowcount > 0
-                if success:
-                    log_debug(f"Successfully deleted cultural knowledge id: {id}")
-                else:
-                    log_debug(f"No cultural knowledge found with id: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get a cultural knowledge entry from the database.
-
-        Args:
-            id (str): The ID of the cultural knowledge to get.
-            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge entry, or None if it doesn't exist.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return None
-
-            with self.Session() as sess, sess.begin():
-                stmt = select(table).where(table.c.id == id)
-                result = sess.execute(stmt).fetchone()
-                if result is None:
-                    return None
-
-                db_row = dict(result._mapping)
-                if not db_row or not deserialize:
-                    return db_row
-
-            return deserialize_cultural_knowledge(db_row)
-
-        except Exception as e:
-            log_error(f"Exception reading from cultural knowledge table: {e}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        name: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge from the database as CulturalKnowledge objects.
-
-        Args:
-            name (Optional[str]): The name of the cultural knowledge to filter by.
-            agent_id (Optional[str]): The ID of the agent to filter by.
-            team_id (Optional[str]): The ID of the team to filter by.
-            limit (Optional[int]): The maximum number of cultural knowledge entries to return.
-            page (Optional[int]): The page number.
-            sort_by (Optional[str]): The column to sort by.
-            sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: List of CulturalKnowledge dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return [] if deserialize else ([], 0)
-
-            with self.Session() as sess, sess.begin():
-                stmt = select(table)
-
-                # Filtering
-                if name is not None:
-                    stmt = stmt.where(table.c.name == name)
-                if agent_id is not None:
-                    stmt = stmt.where(table.c.agent_id == agent_id)
-                if team_id is not None:
-                    stmt = stmt.where(table.c.team_id == team_id)
-
-                # Get total count after applying filtering
-                count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
-
-                # Sorting
-                stmt = apply_sorting(stmt, table, sort_by, sort_order)
-                # Paginating
-                if limit is not None:
-                    stmt = stmt.limit(limit)
-                    if page is not None:
-                        stmt = stmt.offset((page - 1) * limit)
-
-                result = sess.execute(stmt).fetchall()
-                if not result:
-                    return [] if deserialize else ([], 0)
-
-                db_rows = [dict(record._mapping) for record in result]
-
-                if not deserialize:
-                    return db_rows, total_count
-
-            return [deserialize_cultural_knowledge(row) for row in db_rows]
-
-        except Exception as e:
-            log_error(f"Error reading from cultural knowledge table: {e}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert a cultural knowledge entry into the database.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
-
-        Returns:
-            Optional[CulturalKnowledge]: The upserted cultural knowledge entry.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            table = self._get_table(table_type="culture", create_table_if_not_found=True)
-            if table is None:
-                return None
-
-            if cultural_knowledge.id is None:
-                cultural_knowledge.id = str(uuid4())
-
-            # Serialize content, categories, and notes into a JSON dict for DB storage
-            content_dict = serialize_cultural_knowledge(cultural_knowledge)
-
-            with self.Session() as sess, sess.begin():
-                stmt = postgresql.insert(table).values(
-                    id=cultural_knowledge.id,
-                    name=cultural_knowledge.name,
-                    summary=cultural_knowledge.summary,
-                    content=content_dict if content_dict else None,
-                    metadata=cultural_knowledge.metadata,
-                    input=cultural_knowledge.input,
-                    created_at=cultural_knowledge.created_at,
-                    updated_at=int(time.time()),
-                    agent_id=cultural_knowledge.agent_id,
-                    team_id=cultural_knowledge.team_id,
-                )
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["id"],
-                    set_=dict(
-                        name=cultural_knowledge.name,
-                        summary=cultural_knowledge.summary,
-                        content=content_dict if content_dict else None,
-                        metadata=cultural_knowledge.metadata,
-                        input=cultural_knowledge.input,
-                        updated_at=int(time.time()),
-                        agent_id=cultural_knowledge.agent_id,
-                        team_id=cultural_knowledge.team_id,
-                    ),
-                ).returning(table)
-
-                result = sess.execute(stmt)
-                row = result.fetchone()
-
-                if row is None:
-                    return None
-
-            db_row = dict(row._mapping)
-            if not db_row or not deserialize:
-                return db_row
-
-            return deserialize_cultural_knowledge(db_row)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
-            raise e
+            return None
 
     # -- Migrations --
 
-    def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
+    async def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
         """Migrate all content in the given table to the right v2 table"""
 
         from agno.db.migrations.v1_to_v2 import (
@@ -2219,20 +1881,20 @@ class PostgresDb(BaseDb):
         # Insert the new content into the new table
         if v1_table_type == "agent_sessions":
             for session in sessions:
-                self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table_name}")
+                await self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table}")
 
         elif v1_table_type == "team_sessions":
             for session in sessions:
-                self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table_name}")
+                await self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table}")
 
         elif v1_table_type == "workflow_sessions":
             for session in sessions:
-                self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table_name}")
+                await self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table}")
 
         elif v1_table_type == "memories":
             for memory in memories:
-                self.upsert_user_memory(memory)
+                await self.upsert_user_memory(memory)
             log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")
