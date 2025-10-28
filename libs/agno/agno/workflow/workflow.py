@@ -946,6 +946,20 @@ class Workflow:
 
         return workflow_data
 
+    def _broadcast_to_websocket(
+        self,
+        event: Any,
+        websocket_handler: Optional[WebSocketHandler] = None,
+    ) -> None:
+        """Broadcast events to WebSocket if available (async context only)"""
+        if websocket_handler:
+            try:
+                loop = asyncio.get_running_loop()
+                if loop:
+                    asyncio.create_task(websocket_handler.handle_event(event))
+            except RuntimeError:
+                pass
+
     def _handle_event(
         self,
         event: "WorkflowRunOutputEvent",
@@ -973,15 +987,7 @@ class Workflow:
             workflow_run_response.events.append(event)
 
         # Broadcast to WebSocket if available (async context only)
-        if websocket_handler:
-            import asyncio
-
-            try:
-                loop = asyncio.get_running_loop()
-                if loop:
-                    asyncio.create_task(websocket_handler.handle_event(event))
-            except RuntimeError:
-                pass
+        self._broadcast_to_websocket(event, websocket_handler)
 
         return event
 
@@ -2596,10 +2602,19 @@ class Workflow:
         agent_response: Optional[RunOutput] = None
         workflow_executed = False
 
-        from agno.run.agent import RunContentEvent, RunStartedEvent, RunCompletedEvent
+        from agno.run.agent import RunContentEvent
         from agno.run.team import RunContentEvent as TeamRunContentEvent
+        from agno.run.workflow import WorkflowAgentCompletedEvent, WorkflowAgentStartedEvent
 
         log_debug(f"Executing workflow agent with streaming - input: {agent_input}...")
+
+        # Yield WorkflowAgentStartedEvent at the beginning
+        agent_started_event = WorkflowAgentStartedEvent(
+            workflow_name=self.name,
+            workflow_id=self.id,
+            session_id=session.session_id,
+        )
+        yield agent_started_event
 
         # Run the agent in streaming mode and yield all events
         for event in self.agent.run(  # type: ignore[union-attr]
@@ -2615,11 +2630,11 @@ class Workflow:
                 # Track if workflow was executed by checking for WorkflowCompletedEvent
                 if isinstance(event, WorkflowCompletedEvent):
                     workflow_executed = True
-            elif isinstance(event, (RunContentEvent, TeamRunContentEvent, RunStartedEvent, RunCompletedEvent)):
+            elif isinstance(event, (RunContentEvent, TeamRunContentEvent)):
                 if event.step_name is None:
                     # This is from the workflow agent itself
                     # Enrich with metadata to mark it as a workflow agent event
-                    
+
                     # workflow_agent field is used by FE to distinguish between workflow agent and regular agent
                     event.workflow_agent = True  # type: ignore
                 yield event  # type: ignore[misc]
@@ -2656,6 +2671,15 @@ class Workflow:
 
             log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
+            # Yield WorkflowAgentCompletedEvent
+            agent_completed_event = WorkflowAgentCompletedEvent(
+                workflow_name=self.name,
+                workflow_id=self.id,
+                session_id=session.session_id,
+                content=workflow_run_response.content,
+            )
+            yield agent_completed_event
+
             # Yield a workflow completed event with the agent's direct response
             completed_event = WorkflowCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -2674,6 +2698,15 @@ class Workflow:
             if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
                 # Get the last run (which is the one just created by the tool)
                 last_run = reloaded_session.runs[-1]
+
+                # Yield WorkflowAgentCompletedEvent
+                agent_completed_event = WorkflowAgentCompletedEvent(
+                    workflow_name=self.name,
+                    workflow_id=self.id,
+                    session_id=session.session_id,
+                    content=agent_response.content if agent_response else None,
+                )
+                yield agent_completed_event
 
                 # Update the last run with workflow_agent_run
                 last_run.workflow_agent_run = agent_response
@@ -2935,10 +2968,22 @@ class Workflow:
         agent_response: Optional[RunOutput] = None
         workflow_executed = False
 
-        from agno.run.agent import RunCompletedEvent, RunContentEvent, RunStartedEvent
+        from agno.run.agent import RunContentEvent
         from agno.run.team import RunContentEvent as TeamRunContentEvent
+        from agno.run.workflow import WorkflowAgentCompletedEvent, WorkflowAgentStartedEvent
 
         log_debug(f"Executing async workflow agent with streaming - input: {agent_input}...")
+
+        # Yield WorkflowAgentStartedEvent at the beginning
+        agent_started_event = WorkflowAgentStartedEvent(
+            workflow_name=self.name,
+            workflow_id=self.id,
+            session_id=session.session_id,
+        )
+
+        self._broadcast_to_websocket(agent_started_event, websocket_handler)
+
+        yield agent_started_event
 
         # Run the agent in streaming mode and yield all events
         async for event in self.agent.arun(  # type: ignore[union-attr]
@@ -2955,7 +3000,7 @@ class Workflow:
                     workflow_executed = True
                     log_debug("Workflow execution detected via WorkflowCompletedEvent")
 
-            elif isinstance(event, (RunContentEvent, TeamRunContentEvent, RunStartedEvent, RunCompletedEvent)):
+            elif isinstance(event, (RunContentEvent, TeamRunContentEvent)):
                 if event.step_name is None:
                     # This is from the workflow agent itself
                     # Enrich with metadata to mark it as a workflow agent event
@@ -2964,13 +3009,7 @@ class Workflow:
                     event.workflow_agent = True  # type: ignore
 
                     # Broadcast to WebSocket if available (async context only)
-                    if websocket_handler:
-                        try:
-                            loop = asyncio.get_running_loop()
-                            if loop:
-                                asyncio.create_task(websocket_handler.handle_event(event))
-                        except RuntimeError:
-                            pass
+                    self._broadcast_to_websocket(event, websocket_handler)
 
                 yield event  # type: ignore[misc]
 
@@ -3010,6 +3049,18 @@ class Workflow:
             else:
                 self.save_session(session=session)
 
+            # Yield WorkflowAgentCompletedEvent
+            agent_completed_event = WorkflowAgentCompletedEvent(
+                workflow_name=self.name,
+                workflow_id=self.id,
+                session_id=session.session_id,
+                content=workflow_run_response.content,
+            )
+
+            self._broadcast_to_websocket(agent_completed_event, websocket_handler)
+
+            yield agent_completed_event
+
             # Yield a workflow completed event with the agent's direct response
             completed_event = WorkflowCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -3031,6 +3082,18 @@ class Workflow:
             if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
                 # Get the last run (which is the one just created by the tool)
                 last_run = reloaded_session.runs[-1]
+
+                # Yield WorkflowAgentCompletedEvent
+                agent_completed_event = WorkflowAgentCompletedEvent(
+                    workflow_name=self.name,
+                    workflow_id=self.id,
+                    session_id=session.session_id,
+                    content=agent_response.content if agent_response else None,
+                )
+
+                self._broadcast_to_websocket(agent_completed_event, websocket_handler)
+
+                yield agent_completed_event
 
                 # Update the last run with workflow_agent_run
                 last_run.workflow_agent_run = agent_response

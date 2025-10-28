@@ -188,7 +188,6 @@ class RunStartedEvent(BaseAgentRunEvent):
     """Event sent when the run starts"""
 
     event: str = RunEvent.run_started.value
-    workflow_agent: bool = False # Used by FE to distinguish between workflow agent and regular agent
     model: str = ""
     model_provider: str = ""
 
@@ -199,7 +198,7 @@ class RunContentEvent(BaseAgentRunEvent):
 
     event: str = RunEvent.run_content.value
     content: Optional[Any] = None
-    workflow_agent: bool = False # Used by FE to distinguish between workflow agent and regular agent
+    workflow_agent: bool = False  # Used by FE to distinguish between workflow agent and regular agent
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     model_provider_data: Optional[Dict[str, Any]] = None
@@ -228,7 +227,6 @@ class IntermediateRunContentEvent(BaseAgentRunEvent):
 class RunCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_completed.value
     content: Optional[Any] = None
-    workflow_agent: bool = False # Used by FE to distinguish between workflow agent and regular agent
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None

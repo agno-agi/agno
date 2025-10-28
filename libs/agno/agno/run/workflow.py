@@ -25,6 +25,9 @@ class WorkflowRunEvent(str, Enum):
     workflow_cancelled = "WorkflowCancelled"
     workflow_error = "WorkflowError"
 
+    workflow_agent_started = "WorkflowAgentStarted"
+    workflow_agent_completed = "WorkflowAgentCompleted"
+
     step_started = "StepStarted"
     step_completed = "StepCompleted"
     step_error = "StepError"
@@ -118,6 +121,21 @@ class WorkflowStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when workflow execution starts"""
 
     event: str = WorkflowRunEvent.workflow_started.value
+
+
+@dataclass
+class WorkflowAgentStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow agent starts (before deciding to run workflow or answer directly)"""
+
+    event: str = WorkflowRunEvent.workflow_agent_started.value
+
+
+@dataclass
+class WorkflowAgentCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow agent completes (after running workflow or answering directly)"""
+
+    event: str = WorkflowRunEvent.workflow_agent_completed.value
+    content: Optional[Any] = None
 
 
 @dataclass
@@ -397,6 +415,8 @@ class CustomEvent(BaseWorkflowRunOutputEvent):
 # Union type for all workflow run response events
 WorkflowRunOutputEvent = Union[
     WorkflowStartedEvent,
+    WorkflowAgentStartedEvent,
+    WorkflowAgentCompletedEvent,
     WorkflowCompletedEvent,
     WorkflowErrorEvent,
     WorkflowCancelledEvent,
@@ -422,6 +442,8 @@ WorkflowRunOutputEvent = Union[
 # Map event string to dataclass for workflow events
 WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_started.value: WorkflowStartedEvent,
+    WorkflowRunEvent.workflow_agent_started.value: WorkflowAgentStartedEvent,
+    WorkflowRunEvent.workflow_agent_completed.value: WorkflowAgentCompletedEvent,
     WorkflowRunEvent.workflow_completed.value: WorkflowCompletedEvent,
     WorkflowRunEvent.workflow_cancelled.value: WorkflowCancelledEvent,
     WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,

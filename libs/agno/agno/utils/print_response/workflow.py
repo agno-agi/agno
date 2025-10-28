@@ -25,6 +25,8 @@ from agno.run.workflow import (
     StepsExecutionCompletedEvent,
     StepsExecutionStartedEvent,
     StepStartedEvent,
+    WorkflowAgentCompletedEvent,
+    WorkflowAgentStartedEvent,
     WorkflowCompletedEvent,
     WorkflowErrorEvent,
     WorkflowRunOutput,
@@ -345,6 +347,18 @@ def print_response_stream(
                         current_step_name = "Custom Function"
                         current_step_index = 0
                     live_log.update(status)
+
+                elif isinstance(response, WorkflowAgentStartedEvent):
+                    # Workflow agent is starting to process
+                    status.update("Workflow agent processing...")
+                    live_log.update(status)
+                    continue
+
+                elif isinstance(response, WorkflowAgentCompletedEvent):
+                    # Workflow agent has completed
+                    status.update("Workflow agent completed")
+                    live_log.update(status)
+                    continue
 
                 elif isinstance(response, StepStartedEvent):
                     step_name = response.step_name or "Unknown"
@@ -1172,6 +1186,18 @@ async def aprint_response_stream(
                         current_step_name = "Custom Function"
                         current_step_index = 0
                     live_log.update(status)
+
+                elif isinstance(response, WorkflowAgentStartedEvent):
+                    # Workflow agent is starting to process
+                    status.update("Workflow agent processing...")
+                    live_log.update(status)
+                    continue
+
+                elif isinstance(response, WorkflowAgentCompletedEvent):
+                    # Workflow agent has completed
+                    status.update("Workflow agent completed")
+                    live_log.update(status)
+                    continue
 
                 elif isinstance(response, StepStartedEvent):
                     # Skip step events if workflow hasn't started (agent direct response)

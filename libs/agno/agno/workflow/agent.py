@@ -234,7 +234,7 @@ class WorkflowAgent(Agent):
                 session_from_db = await workflow.aget_session(session_id=session.session_id)
             else:
                 session_from_db = workflow.get_session(session_id=session.session_id)
-                
+
             if session_from_db is None:
                 session_from_db = session  # Fallback to closure session if reload fails
                 log_debug(f"Fallback to closure session: {len(session_from_db.runs or [])} runs")
