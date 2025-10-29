@@ -13,6 +13,13 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.utils.log import log_error
+from agno.utils.media import (
+    reconstruct_audio_list,
+    reconstruct_files,
+    reconstruct_images,
+    reconstruct_response_audio,
+    reconstruct_videos,
+)
 
 
 @dataclass
@@ -82,21 +89,10 @@ class TeamRunInput:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRunInput":
         """Create TeamRunInput from dictionary"""
-        images = None
-        if data.get("images"):
-            images = [Image.model_validate(img_data) for img_data in data["images"]]
-
-        videos = None
-        if data.get("videos"):
-            videos = [Video.model_validate(vid_data) for vid_data in data["videos"]]
-
-        audios = None
-        if data.get("audios"):
-            audios = [Audio.model_validate(aud_data) for aud_data in data["audios"]]
-
-        files = None
-        if data.get("files"):
-            files = [File.model_validate(file_data) for file_data in data["files"]]
+        images = reconstruct_images(data.get("images"))
+        videos = reconstruct_videos(data.get("videos"))
+        audios = reconstruct_audio_list(data.get("audios"))
+        files = reconstruct_files(data.get("files"))
 
         return cls(
             input_content=data.get("input_content", ""), images=images, videos=videos, audios=audios, files=files
@@ -646,23 +642,15 @@ class TeamRunOutput:
         if references is not None:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
-        images = data.pop("images", [])
-        images = [Image.model_validate(image) for image in images] if images else None
-
-        videos = data.pop("videos", [])
-        videos = [Video.model_validate(video) for video in videos] if videos else None
-
-        audio = data.pop("audio", [])
-        audio = [Audio.model_validate(audio) for audio in audio] if audio else None
-
-        files = data.pop("files", [])
-        files = [File.model_validate(file) for file in files] if files else None
+        images = reconstruct_images(data.pop("images", []))
+        videos = reconstruct_videos(data.pop("videos", []))
+        audio = reconstruct_audio_list(data.pop("audio", []))
+        files = reconstruct_files(data.pop("files", []))
 
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
-        response_audio = data.pop("response_audio", None)
-        response_audio = Audio.model_validate(response_audio) if response_audio else None
+        response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         input_data = data.pop("input", None)
         input_obj = None
@@ -675,6 +663,12 @@ class TeamRunOutput:
 
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
+
+        # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
 
         return cls(
             messages=messages,
@@ -693,7 +687,7 @@ class TeamRunOutput:
             citations=citations,
             tools=tools,
             events=events,
-            **data,
+            **filtered_data,
         )
 
     def get_content_as_string(self, **kwargs) -> str:

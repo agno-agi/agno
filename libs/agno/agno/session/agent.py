@@ -140,6 +140,9 @@ class AgentSession:
         if team_id:
             session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
 
+        # Skip any messages that might be part of members of teams (for session re-use)
+        session_runs = [run for run in session_runs if run.parent_run_id is None]  # type: ignore
+
         # Filter by status
         session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_status]  # type: ignore
 

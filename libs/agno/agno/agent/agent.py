@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import asyncio
+from asyncio import CancelledError, create_task
 from collections import ChainMap, deque
 from dataclasses import dataclass
+from inspect import iscoroutinefunction
 from os import getenv
 from textwrap import dedent
 from typing import (
@@ -65,18 +66,35 @@ from agno.run.cancel import (
 from agno.run.messages import RunMessages
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
+from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
+    aget_chat_history_util,
+    aget_last_run_output_util,
+    aget_run_output_util,
+    aget_session_metrics_util,
+    aget_session_name_util,
+    aget_session_state_util,
+    aset_session_name_util,
+    aupdate_session_state_util,
     await_for_background_tasks,
     await_for_background_tasks_stream,
     collect_joint_audios,
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
+    get_chat_history_util,
+    get_last_run_output_util,
+    get_run_output_util,
+    get_session_metrics_util,
+    get_session_name_util,
+    get_session_state_util,
     scrub_history_messages_from_run_output,
     scrub_media_from_run_output,
     scrub_tool_results_from_run_output,
+    set_session_name_util,
+    update_session_state_util,
     wait_for_background_tasks,
     wait_for_background_tasks_stream,
 )
@@ -615,16 +633,15 @@ class Agent:
         self.telemetry = telemetry
 
         # If we are caching the agent session
-        self._agent_session: Optional[AgentSession] = None
+        self._cached_session: Optional[AgentSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
-        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
-        self._rebuild_tools: bool = True
 
         self._formatter: Optional[SafeFormatter] = None
 
         self._hooks_normalised = False
+
+        self._mcp_tools_initialized_on_run: List[Any] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -641,6 +658,14 @@ class Agent:
 
             self._background_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="agno-bg")
         return self._background_executor
+
+    @property
+    def should_parse_structured_output(self) -> bool:
+        return self.output_schema is not None and self.parse_response and self.parser_model is None
+
+    @property
+    def cached_session(self) -> Optional[AgentSession]:
+        return self._cached_session
 
     def set_id(self) -> None:
         if self.id is None:
@@ -798,19 +823,28 @@ class Agent:
         if self._formatter is None:
             self._formatter = SafeFormatter()
 
-    @property
-    def should_parse_structured_output(self) -> bool:
-        return self.output_schema is not None and self.parse_response and self.parser_model is None
-
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         if not self.tools:
             self.tools = []
         self.tools.append(tool)
-        self._rebuild_tools = True
 
     def set_tools(self, tools: Sequence[Union[Toolkit, Callable, Function, Dict]]):
         self.tools = list(tools) if tools else []
-        self._rebuild_tools = True
+
+    async def _connect_mcp_tools(self) -> None:
+        """Connect the MCP tools to the agent."""
+        if self.tools:
+            for tool in self.tools:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:  # type: ignore
+                    # Connect the MCP server
+                    await tool.connect()  # type: ignore
+                    self._mcp_tools_initialized_on_run.append(tool)
+
+    async def _disconnect_mcp_tools(self) -> None:
+        """Disconnect the MCP tools from the agent."""
+        for tool in self._mcp_tools_initialized_on_run:
+            await tool.close()
+        self._mcp_tools_initialized_on_run = []
 
     def _initialize_session(
         self,
@@ -909,15 +943,19 @@ class Agent:
             deque(pre_hook_iterator, maxlen=0)
 
         # 2. Determine tools for model
-        self._determine_tools_for_model(
+        processed_tools = self.get_tools(
+            run_response=run_response,
+            session=session,
+            user_id=user_id,
+            knowledge_filters=knowledge_filters,
+        )
+        _tools = self._determine_tools_for_model(
             model=self.model,
+            processed_tools=processed_tools,
             run_response=run_response,
             session=session,
             session_state=session_state,
             dependencies=dependencies,
-            user_id=user_id,
-            async_mode=False,
-            knowledge_filters=knowledge_filters,
         )
 
         # 3. Prepare run messages
@@ -937,6 +975,7 @@ class Agent:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
         if len(run_messages.messages) == 0:
@@ -978,8 +1017,7 @@ class Agent:
             self.model = cast(Model, self.model)
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
-                tools=self._tools_for_model,
-                functions=self._functions_for_model,
+                tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
                 response_format=response_format,
@@ -1128,15 +1166,19 @@ class Agent:
                 yield event
 
         # 2. Determine tools for model
-        self._determine_tools_for_model(
+        processed_tools = self.get_tools(
+            run_response=run_response,
+            session=session,
+            user_id=user_id,
+            knowledge_filters=knowledge_filters,
+        )
+        _tools = self._determine_tools_for_model(
             model=self.model,
+            processed_tools=processed_tools,
             run_response=run_response,
             session=session,
             session_state=session_state,
             dependencies=dependencies,
-            user_id=user_id,
-            async_mode=False,
-            knowledge_filters=knowledge_filters,
         )
 
         # 3. Prepare run messages
@@ -1156,6 +1198,7 @@ class Agent:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
         if len(run_messages.messages) == 0:
@@ -1210,6 +1253,7 @@ class Agent:
                     session=session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -1225,6 +1269,7 @@ class Agent:
                     session=session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -1748,15 +1793,19 @@ class Agent:
 
         # 5. Determine tools for model
         self.model = cast(Model, self.model)
-        await self._adetermine_tools_for_model(
+        processed_tools = await self.aget_tools(
+            run_response=run_response,
+            session=agent_session,
+            user_id=user_id,
+            knowledge_filters=knowledge_filters,
+        )
+        _tools = self._determine_tools_for_model(
             model=self.model,
+            processed_tools=processed_tools,
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
             dependencies=dependencies,
-            user_id=user_id,
-            async_mode=True,
-            knowledge_filters=knowledge_filters,
         )
 
         # 6. Prepare run messages
@@ -1776,6 +1825,7 @@ class Agent:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
         if len(run_messages.messages) == 0:
@@ -1784,10 +1834,8 @@ class Agent:
         # 7. Start memory creation as a background task (runs concurrently with the main execution)
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            import asyncio
-
             log_debug("Starting memory creation in background task.")
-            memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+            memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
         # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
         cultural_knowledge_task = None
@@ -1796,10 +1844,8 @@ class Agent:
             and self.culture_manager is not None
             and self.update_cultural_knowledge
         ):
-            import asyncio
-
             log_debug("Starting cultural knowledge creation in background thread.")
-            cultural_knowledge_task = asyncio.create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
+            cultural_knowledge_task = create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
 
         try:
             # Check for cancellation before model call
@@ -1814,8 +1860,7 @@ class Agent:
             # 9. Generate a response from the Model (includes running function calls)
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
-                tools=self._tools_for_model,
-                functions=self._functions_for_model,
+                tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
                 response_format=response_format,
@@ -1908,23 +1953,22 @@ class Agent:
             return run_response
 
         finally:
+            # Always disconnect MCP tools
+            await self._disconnect_mcp_tools()
+
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
-                import asyncio
-
                 memory_task.cancel()
                 try:
                     await memory_task
-                except asyncio.CancelledError:
+                except CancelledError:
                     pass
             # Cancel the cultural knowledge task if it's still running
             if cultural_knowledge_task is not None and not cultural_knowledge_task.done():
-                import asyncio
-
                 cultural_knowledge_task.cancel()
                 try:
                     await cultural_knowledge_task
-                except asyncio.CancelledError:
+                except CancelledError:
                     pass
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
@@ -2014,14 +2058,18 @@ class Agent:
 
         # 5. Determine tools for model
         self.model = cast(Model, self.model)
-        self._determine_tools_for_model(
+        processed_tools = await self.aget_tools(
+            run_response=run_response,
+            session=agent_session,
+            user_id=user_id,
+            knowledge_filters=knowledge_filters,
+        )
+        _tools = self._determine_tools_for_model(
             model=self.model,
+            processed_tools=processed_tools,
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
-            user_id=user_id,
-            async_mode=True,
-            knowledge_filters=knowledge_filters,
             dependencies=dependencies,
         )
 
@@ -2042,6 +2090,7 @@ class Agent:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
         if len(run_messages.messages) == 0:
@@ -2050,10 +2099,8 @@ class Agent:
         # 7. Start memory creation as a background task (runs concurrently with the main execution)
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            import asyncio
-
             log_debug("Starting memory creation in background task.")
-            memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+            memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
         # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
         cultural_knowledge_task = None
@@ -2062,10 +2109,8 @@ class Agent:
             and self.culture_manager is not None
             and self.update_cultural_knowledge
         ):
-            import asyncio
-
             log_debug("Starting cultural knowledge creation in background task.")
-            cultural_knowledge_task = asyncio.create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
+            cultural_knowledge_task = create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
 
         # Register run for cancellation tracking
         register_run(run_response.run_id)  # type: ignore
@@ -2088,6 +2133,7 @@ class Agent:
                     session=agent_session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -2103,6 +2149,7 @@ class Agent:
                     session=agent_session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -2256,19 +2303,22 @@ class Agent:
             # Cleanup and store the run response and session
             await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
         finally:
+            # Always disconnect MCP tools
+            await self._disconnect_mcp_tools()
+
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
                 memory_task.cancel()
                 try:
                     await memory_task
-                except asyncio.CancelledError:
+                except CancelledError:
                     pass
 
             if cultural_knowledge_task is not None and not cultural_knowledge_task.done():
                 cultural_knowledge_task.cancel()
                 try:
                     await cultural_knowledge_task
-                except asyncio.CancelledError:
+                except CancelledError:
                     pass
 
             # Always clean up the run tracking
@@ -2710,15 +2760,19 @@ class Agent:
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
 
-        self._determine_tools_for_model(
+        processed_tools = self.get_tools(
+            run_response=run_response,
+            session=agent_session,
+            user_id=user_id,
+            knowledge_filters=effective_filters,
+        )
+        _tools = self._determine_tools_for_model(
             model=self.model,
+            processed_tools=processed_tools,
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
             dependencies=run_dependencies,
-            user_id=user_id,
-            async_mode=False,
-            knowledge_filters=effective_filters,
         )
 
         last_exception = None
@@ -2741,6 +2795,7 @@ class Agent:
                     response_iterator = self._continue_run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
+                        tools=_tools,
                         user_id=user_id,
                         session=agent_session,
                         session_state=session_state,
@@ -2756,6 +2811,7 @@ class Agent:
                     response = self._continue_run(
                         run_response=run_response,
                         run_messages=run_messages,
+                        tools=_tools,
                         user_id=user_id,
                         session=agent_session,
                         session_state=session_state,
@@ -2808,6 +2864,7 @@ class Agent:
         run_response: RunOutput,
         run_messages: RunMessages,
         session: AgentSession,
+        tools: List[Union[Function, dict]],
         session_state: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -2834,7 +2891,7 @@ class Agent:
         self.model = cast(Model, self.model)
 
         # 1. Handle the updated tools
-        self._handle_tool_call_updates(run_response=run_response, run_messages=run_messages)
+        self._handle_tool_call_updates(run_response=run_response, run_messages=run_messages, tools=tools)
 
         try:
             # Check for cancellation before model call
@@ -2845,8 +2902,7 @@ class Agent:
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 response_format=response_format,
-                tools=self._tools_for_model,
-                functions=self._functions_for_model,
+                tools=tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
             )
@@ -2926,6 +2982,7 @@ class Agent:
         run_response: RunOutput,
         run_messages: RunMessages,
         session: AgentSession,
+        tools: List[Union[Function, dict]],
         session_state: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -2961,7 +3018,7 @@ class Agent:
 
         # 2. Handle the updated tools
         yield from self._handle_tool_call_updates_stream(
-            run_response=run_response, run_messages=run_messages, stream_events=stream_events
+            run_response=run_response, run_messages=run_messages, tools=tools, stream_events=stream_events
         )
 
         try:
@@ -2970,6 +3027,7 @@ class Agent:
                 session=session,
                 run_response=run_response,
                 run_messages=run_messages,
+                tools=tools,
                 response_format=response_format,
                 stream_events=stream_events,
             ):
@@ -3358,15 +3416,19 @@ class Agent:
 
         # 5. Determine tools for model
         self.model = cast(Model, self.model)
-        await self._adetermine_tools_for_model(
+        processed_tools = await self.aget_tools(
+            run_response=run_response,
+            session=agent_session,
+            user_id=user_id,
+            knowledge_filters=knowledge_filters,
+        )
+        _tools = self._determine_tools_for_model(
             model=self.model,
+            processed_tools=processed_tools,
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
             dependencies=dependencies,
-            user_id=user_id,
-            async_mode=True,
-            knowledge_filters=knowledge_filters,
         )
 
         # 6. Prepare run messages
@@ -3379,14 +3441,13 @@ class Agent:
 
         try:
             # 7. Handle the updated tools
-            await self._ahandle_tool_call_updates(run_response=run_response, run_messages=run_messages)
+            await self._ahandle_tool_call_updates(run_response=run_response, run_messages=run_messages, tools=_tools)
 
             # 8. Get model response
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
                 response_format=response_format,
-                tools=self._tools_for_model,
-                functions=self._functions_for_model,
+                tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
             )
@@ -3473,6 +3534,9 @@ class Agent:
 
             return run_response
         finally:
+            # Always disconnect MCP tools
+            await self._disconnect_mcp_tools()
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3514,7 +3578,7 @@ class Agent:
             await self._aresolve_run_dependencies(dependencies=dependencies)
 
         # 2. Read existing session from db
-        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
 
         # 3. Update session state and metadata
         self._update_metadata(session=agent_session)
@@ -3549,15 +3613,19 @@ class Agent:
 
         # 5. Determine tools for model
         self.model = cast(Model, self.model)
-        await self._adetermine_tools_for_model(
+        processed_tools = await self.aget_tools(
+            run_response=run_response,
+            session=agent_session,
+            user_id=user_id,
+            knowledge_filters=knowledge_filters,
+        )
+        _tools = self._determine_tools_for_model(
             model=self.model,
+            processed_tools=processed_tools,
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
             dependencies=dependencies,
-            user_id=user_id,
-            async_mode=True,
-            knowledge_filters=knowledge_filters,
         )
 
         # 6. Prepare run messages
@@ -3580,7 +3648,7 @@ class Agent:
 
             # 7. Handle the updated tools
             async for event in self._ahandle_tool_call_updates_stream(
-                run_response=run_response, run_messages=run_messages
+                run_response=run_response, run_messages=run_messages, tools=_tools, stream_events=stream_events
             ):
                 raise_if_cancelled(run_response.run_id)  # type: ignore
                 yield event
@@ -3591,6 +3659,7 @@ class Agent:
                     session=agent_session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -3606,6 +3675,7 @@ class Agent:
                     session=agent_session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -3739,6 +3809,9 @@ class Agent:
             # Cleanup and store the run response and session
             await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
         finally:
+            # Always disconnect MCP tools
+            await self._disconnect_mcp_tools()
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3857,7 +3930,7 @@ class Agent:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     # Synchronous function
@@ -3991,8 +4064,9 @@ class Agent:
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
+                from inspect import iscoroutinefunction
 
-                if asyncio.iscoroutinefunction(hook):
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     hook(**filtered_args)
@@ -4189,11 +4263,12 @@ class Agent:
         run_response: RunOutput,
         run_messages: RunMessages,
         tool: ToolExecution,
+        functions: Optional[Dict[str, Function]] = None,
         stream_events: bool = False,
     ) -> Iterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
         # Execute the tool
-        function_call = self.model.get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
+        function_call = self.model.get_function_call_to_run_from_tool_execution(tool, functions)
         function_call_results: List[Message] = []
 
         for call_result in self.model.run_function_call(
@@ -4227,9 +4302,11 @@ class Agent:
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
 
-    def _reject_tool_call(self, run_messages: RunMessages, tool: ToolExecution):
+    def _reject_tool_call(
+        self, run_messages: RunMessages, tool: ToolExecution, functions: Optional[Dict[str, Function]] = None
+    ):
         self.model = cast(Model, self.model)
-        function_call = self.model.get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
+        function_call = self.model.get_function_call_to_run_from_tool_execution(tool, functions)
         function_call.error = tool.confirmation_note or "Function call was rejected by the user"
         function_call_result = self.model.create_function_call_result(
             function_call=function_call,
@@ -4242,12 +4319,13 @@ class Agent:
         run_response: RunOutput,
         run_messages: RunMessages,
         tool: ToolExecution,
+        functions: Optional[Dict[str, Function]] = None,
         stream_events: bool = False,
     ) -> AsyncIterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
         # Execute the tool
-        function_call = self.model.get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
+        function_call = self.model.get_function_call_to_run_from_tool_execution(tool, functions)
         function_call_results: List[Message] = []
 
         async for call_result in self.model.arun_function_calls(
@@ -4280,17 +4358,21 @@ class Agent:
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
 
-    def _handle_tool_call_updates(self, run_response: RunOutput, run_messages: RunMessages):
+    def _handle_tool_call_updates(
+        self, run_response: RunOutput, run_messages: RunMessages, tools: List[Union[Function, dict]]
+    ):
         self.model = cast(Model, self.model)
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
         for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
-            if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
+            if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                     # Consume the generator without yielding
-                    deque(self._run_tool(run_response, run_messages, _t), maxlen=0)
+                    deque(self._run_tool(run_response, run_messages, _t, functions=_functions), maxlen=0)
                 else:
-                    self._reject_tool_call(run_messages, _t)
+                    self._reject_tool_call(run_messages, _t, functions=_functions)
                     _t.confirmed = False
                     _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                     _t.tool_call_error = True
@@ -4315,20 +4397,28 @@ class Agent:
                 _t.requires_user_input = False
                 _t.answered = True
                 # Consume the generator without yielding
-                deque(self._run_tool(run_response, run_messages, _t), maxlen=0)
+                deque(self._run_tool(run_response, run_messages, _t, functions=_functions), maxlen=0)
 
     def _handle_tool_call_updates_stream(
-        self, run_response: RunOutput, run_messages: RunMessages, stream_events: bool = False
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        tools: List[Union[Function, dict]],
+        stream_events: bool = False,
     ) -> Iterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
         for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
-            if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
+            if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                    yield from self._run_tool(run_response, run_messages, _t, stream_events=stream_events)
+                    yield from self._run_tool(
+                        run_response, run_messages, _t, functions=_functions, stream_events=stream_events
+                    )
                 else:
-                    self._reject_tool_call(run_messages, _t)
+                    self._reject_tool_call(run_messages, _t, functions=_functions)
                     _t.confirmed = False
                     _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                     _t.tool_call_error = True
@@ -4351,21 +4441,27 @@ class Agent:
             # Case 4: Handle user input required tools
             elif _t.requires_user_input is not None and _t.requires_user_input is True:
                 self._handle_user_input_update(tool=_t)
-                yield from self._run_tool(run_response, run_messages, _t, stream_events=stream_events)
+                yield from self._run_tool(
+                    run_response, run_messages, _t, functions=_functions, stream_events=stream_events
+                )
                 _t.requires_user_input = False
                 _t.answered = True
 
-    async def _ahandle_tool_call_updates(self, run_response: RunOutput, run_messages: RunMessages):
+    async def _ahandle_tool_call_updates(
+        self, run_response: RunOutput, run_messages: RunMessages, tools: List[Union[Function, dict]]
+    ):
         self.model = cast(Model, self.model)
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
         for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
-            if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
+            if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                    async for _ in self._arun_tool(run_response, run_messages, _t):
+                    async for _ in self._arun_tool(run_response, run_messages, _t, functions=_functions):
                         pass
                 else:
-                    self._reject_tool_call(run_messages, _t)
+                    self._reject_tool_call(run_messages, _t, functions=_functions)
                     _t.confirmed = False
                     _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                     _t.tool_call_error = True
@@ -4386,24 +4482,32 @@ class Agent:
             # Case 4: Handle user input required tools
             elif _t.requires_user_input is not None and _t.requires_user_input is True:
                 self._handle_user_input_update(tool=_t)
-                async for _ in self._arun_tool(run_response, run_messages, _t):
+                async for _ in self._arun_tool(run_response, run_messages, _t, functions=_functions):
                     pass
                 _t.requires_user_input = False
                 _t.answered = True
 
     async def _ahandle_tool_call_updates_stream(
-        self, run_response: RunOutput, run_messages: RunMessages, stream_events: bool = False
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        tools: List[Union[Function, dict]],
+        stream_events: bool = False,
     ) -> AsyncIterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+
         for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
-            if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
+            if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                    async for event in self._arun_tool(run_response, run_messages, _t, stream_events=stream_events):
+                    async for event in self._arun_tool(
+                        run_response, run_messages, _t, functions=_functions, stream_events=stream_events
+                    ):
                         yield event
                 else:
-                    self._reject_tool_call(run_messages, _t)
+                    self._reject_tool_call(run_messages, _t, functions=_functions)
                     _t.confirmed = False
                     _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                     _t.tool_call_error = True
@@ -4424,7 +4528,9 @@ class Agent:
             # # Case 4: Handle user input required tools
             elif _t.requires_user_input is not None and _t.requires_user_input is True:
                 self._handle_user_input_update(tool=_t)
-                async for event in self._arun_tool(run_response, run_messages, _t, stream_events=stream_events):
+                async for event in self._arun_tool(
+                    run_response, run_messages, _t, functions=_functions, stream_events=stream_events
+                ):
                     yield event
                 _t.requires_user_input = False
                 _t.answered = True
@@ -4530,6 +4636,7 @@ class Agent:
         session: AgentSession,
         run_response: RunOutput,
         run_messages: RunMessages,
+        tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
     ) -> Iterator[RunOutputEvent]:
@@ -4549,8 +4656,7 @@ class Agent:
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=tools,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
@@ -4608,6 +4714,7 @@ class Agent:
         session: AgentSession,
         run_response: RunOutput,
         run_messages: RunMessages,
+        tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
     ) -> AsyncIterator[RunOutputEvent]:
@@ -4627,8 +4734,7 @@ class Agent:
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=tools,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
@@ -5134,69 +5240,34 @@ class Agent:
         self,
         run_response: RunOutput,
         session: AgentSession,
-        async_mode: bool = False,
         user_id: Optional[str] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-    ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
+    ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Add provided tools
         if self.tools is not None:
             # If not running in async mode, raise if any tool is async
-            if not async_mode:
-                self._raise_if_async_tools()
+            self._raise_if_async_tools()
             agent_tools.extend(self.tools)
-
-            # If any of the tools has "agent" as parameter, set _rebuild_tools to True
-            for tool in agent_tools:
-                param_names = {
-                    "agent",
-                    "session_state",
-                    "team",
-                    "images",
-                    "videos",
-                    "audios",
-                    "files",
-                }
-
-                if isinstance(tool, Function):
-                    if param_names & set(tool.parameters):
-                        self._rebuild_tools = True
-                        break
-                elif isinstance(tool, Toolkit):
-                    for func in tool.functions.values():
-                        if param_names & set(func.parameters):
-                            self._rebuild_tools = True
-                            break
-                elif callable(tool):
-                    from inspect import signature
-
-                    if param_names & set(signature(tool).parameters):
-                        self._rebuild_tools = True
-                        break
 
         # Add tools for accessing memory
         if self.read_chat_history:
             agent_tools.append(self._get_chat_history_function(session=session))
-            self._rebuild_tools = True
         if self.read_tool_call_history:
             agent_tools.append(self._get_tool_call_history_function(session=session))
-            self._rebuild_tools = True
         if self.search_session_history:
             agent_tools.append(
                 self._get_previous_sessions_messages_function(
                     num_history_sessions=self.num_history_sessions, user_id=user_id
                 )
             )
-            self._rebuild_tools = True
 
         if self.enable_agentic_memory:
-            agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
-            self._rebuild_tools = True
+            agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=False))
 
         if self.enable_agentic_culture:
-            agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=async_mode))
-            self._rebuild_tools = True
+            agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=False))
 
         if self.enable_agentic_state:
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
@@ -5206,7 +5277,7 @@ class Agent:
             # Check if knowledge retriever is an async function but used in sync mode
             from inspect import iscoroutinefunction
 
-            if not async_mode and self.knowledge_retriever and iscoroutinefunction(self.knowledge_retriever):
+            if self.knowledge_retriever and iscoroutinefunction(self.knowledge_retriever):
                 log_warning(
                     "Async knowledge retriever function is being used with synchronous agent.run() or agent.print_response(). "
                     "It is recommended to use agent.arun() or agent.aprint_response() instead."
@@ -5218,7 +5289,7 @@ class Agent:
                     agent_tools.append(
                         self._search_knowledge_base_with_agentic_filters_function(
                             run_response=run_response,
-                            async_mode=async_mode,
+                            async_mode=False,
                             knowledge_filters=knowledge_filters,
                         )
                     )
@@ -5226,11 +5297,10 @@ class Agent:
                     agent_tools.append(
                         self._get_search_knowledge_base_function(
                             run_response=run_response,
-                            async_mode=async_mode,
+                            async_mode=False,
                             knowledge_filters=knowledge_filters,
                         )
                     )
-                self._rebuild_tools = True
 
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
@@ -5241,82 +5311,69 @@ class Agent:
         self,
         run_response: RunOutput,
         session: AgentSession,
-        async_mode: bool = False,
         user_id: Optional[str] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-    ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
+        check_mcp_tools: bool = True,
+    ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+        # Connect MCP tools
+        await self._connect_mcp_tools()
 
         # Add provided tools
         if self.tools is not None:
-            agent_tools.extend(self.tools)
+            for tool in self.tools:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                    if tool.refresh_connection:  # type: ignore
+                        try:
+                            is_alive = await tool.is_alive()  # type: ignore
+                            if not is_alive:
+                                await tool.connect(force=True)  # type: ignore
+                        except (RuntimeError, BaseException) as e:
+                            log_warning(f"Failed to check if MCP tool is alive or to connect to it: {e}")
+                            continue
 
-            # If any of the tools has "agent" as parameter, set _rebuild_tools to True
-            for tool in agent_tools:
-                if isinstance(tool, Function):
-                    if "agent" in tool.parameters:
-                        self._rebuild_tools = True
-                        break
-                    if "team" in tool.parameters:
-                        self._rebuild_tools = True
-                        break
-                if isinstance(tool, Toolkit):
-                    for func in tool.functions.values():
-                        if "agent" in func.parameters:
-                            self._rebuild_tools = True
-                            break
-                        if "team" in func.parameters:
-                            self._rebuild_tools = True
-                            break
-                if callable(tool):
-                    from inspect import signature
+                        try:
+                            await tool.build_tools()  # type: ignore
+                        except (RuntimeError, BaseException) as e:
+                            log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                            continue
 
-                    sig = signature(tool)
-                    if "agent" in sig.parameters:
-                        self._rebuild_tools = True
-                        break
-                    if "team" in sig.parameters:
-                        self._rebuild_tools = True
-                        break
+                    # Only add the tool if it successfully connected and built its tools
+                    if check_mcp_tools and not tool.initialized:  # type: ignore
+                        continue
+
+                    agent_tools.append(tool)
+                else:
+                    agent_tools.append(tool)
 
         # Add tools for accessing memory
         if self.read_chat_history:
             agent_tools.append(self._get_chat_history_function(session=session))
-            self._rebuild_tools = True
         if self.read_tool_call_history:
             agent_tools.append(self._get_tool_call_history_function(session=session))
-            self._rebuild_tools = True
         if self.search_session_history:
             agent_tools.append(
-                await self._aget_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions)
+                await self._aget_previous_sessions_messages_function(
+                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                )
             )
-            self._rebuild_tools = True
 
         if self.enable_agentic_memory:
-            agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
-            self._rebuild_tools = True
+            agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=True))
 
         if self.enable_agentic_state:
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
 
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.knowledge_retriever is not None:
-            # Check if knowledge retriever is an async function but used in sync mode
-            from inspect import iscoroutinefunction
-
-            if not async_mode and self.knowledge_retriever and iscoroutinefunction(self.knowledge_retriever):
-                log_warning(
-                    "Async knowledge retriever function is being used with synchronous agent.run() or agent.print_response(). "
-                    "It is recommended to use agent.arun() or agent.aprint_response() instead."
-                )
-
             if self.search_knowledge:
                 # Use async or sync search based on async_mode
                 if self.enable_agentic_knowledge_filters:
                     agent_tools.append(
                         self._search_knowledge_base_with_agentic_filters_function(
                             run_response=run_response,
-                            async_mode=async_mode,
+                            async_mode=True,
                             knowledge_filters=knowledge_filters,
                         )
                     )
@@ -5324,11 +5381,10 @@ class Agent:
                     agent_tools.append(
                         self._get_search_knowledge_base_function(
                             run_response=run_response,
-                            async_mode=async_mode,
+                            async_mode=True,
                             knowledge_filters=knowledge_filters,
                         )
                     )
-                self._rebuild_tools = True
 
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
@@ -5338,109 +5394,105 @@ class Agent:
     def _determine_tools_for_model(
         self,
         model: Model,
+        processed_tools: List[Union[Toolkit, Callable, Function, Dict]],
         run_response: RunOutput,
         session: AgentSession,
         session_state: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
-        async_mode: bool = False,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        if self._rebuild_tools:
-            self._rebuild_tools = False
+    ) -> List[Union[Function, dict]]:
+        _function_names = []
+        _functions: List[Union[Function, dict]] = []
+        self._tool_instructions = []
 
-            agent_tools = self.get_tools(
-                run_response=run_response,
-                session=session,
-                async_mode=async_mode,
-                user_id=user_id,
-                knowledge_filters=knowledge_filters,
-            )
+        # Get Agent tools
+        if processed_tools is not None and len(processed_tools) > 0:
+            log_debug("Processing tools for model")
 
-            self._tools_for_model = []
-            self._functions_for_model = {}
-            self._tool_instructions = []
+            # Check if we need strict mode for the functions for the model
+            strict = False
+            if (
+                self.output_schema is not None
+                and (self.structured_outputs or (not self.use_json_mode))
+                and model.supports_native_structured_outputs
+            ):
+                strict = True
 
-            # Get Agent tools
-            if agent_tools is not None and len(agent_tools) > 0:
-                log_debug("Processing tools for model")
+            for tool in processed_tools:
+                if isinstance(tool, Dict):
+                    # If a dict is passed, it is a builtin tool
+                    # that is run by the model provider and not the Agent
+                    _functions.append(tool)
+                    log_debug(f"Included builtin tool {tool}")
 
-                # Check if we need strict mode for the functions for the model
-                strict = False
-                if (
-                    self.output_schema is not None
-                    and (self.structured_outputs or (not self.use_json_mode))
-                    and model.supports_native_structured_outputs
-                ):
-                    strict = True
+                elif isinstance(tool, Toolkit):
+                    # For each function in the toolkit and process entrypoint
+                    for name, _func in tool.functions.items():
+                        if name in _function_names:
+                            continue
+                        _function_names.append(name)
+                        _func = _func.model_copy(deep=True)
+                        _func._agent = self
+                        _func.process_entrypoint(strict=strict)
+                        if strict and _func.strict is None:
+                            _func.strict = True
+                        if self.tool_hooks is not None:
+                            _func.tool_hooks = self.tool_hooks
+                        _functions.append(_func)
+                        log_debug(f"Added tool {name} from {tool.name}")
 
-                for tool in agent_tools:
-                    if isinstance(tool, Dict):
-                        # If a dict is passed, it is a builtin tool
-                        # that is run by the model provider and not the Agent
-                        self._tools_for_model.append(tool)
-                        log_debug(f"Included builtin tool {tool}")
+                    # Add instructions from the toolkit
+                    if tool.add_instructions and tool.instructions is not None:
+                        self._tool_instructions.append(tool.instructions)
 
-                    elif isinstance(tool, Toolkit):
-                        # For each function in the toolkit and process entrypoint
-                        for name, func in tool.functions.items():
-                            # If the function does not exist in self.functions
-                            if name not in self._functions_for_model:
-                                func._agent = self
-                                func.process_entrypoint(strict=strict)
-                                if strict and func.strict is None:
-                                    func.strict = True
-                                if self.tool_hooks is not None:
-                                    func.tool_hooks = self.tool_hooks
-                                self._functions_for_model[name] = func
-                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                log_debug(f"Added tool {name} from {tool.name}")
+                elif isinstance(tool, Function):
+                    if tool.name in _function_names:
+                        continue
+                    _function_names.append(tool.name)
 
-                        # Add instructions from the toolkit
-                        if tool.add_instructions and tool.instructions is not None:
-                            self._tool_instructions.append(tool.instructions)
+                    tool.process_entrypoint(strict=strict)
+                    tool = tool.model_copy(deep=True)
 
-                    elif isinstance(tool, Function):
-                        if tool.name not in self._functions_for_model:
-                            tool._agent = self
-                            tool.process_entrypoint(strict=strict)
-                            if strict and tool.strict is None:
-                                tool.strict = True
-                            if self.tool_hooks is not None:
-                                tool.tool_hooks = self.tool_hooks
-                            self._functions_for_model[tool.name] = tool
-                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                            log_debug(f"Added tool {tool.name}")
+                    tool._agent = self
+                    if strict and tool.strict is None:
+                        tool.strict = True
+                    if self.tool_hooks is not None:
+                        tool.tool_hooks = self.tool_hooks
+                    _functions.append(tool)
+                    log_debug(f"Added tool {tool.name}")
 
-                        # Add instructions from the Function
-                        if tool.add_instructions and tool.instructions is not None:
-                            self._tool_instructions.append(tool.instructions)
+                    # Add instructions from the Function
+                    if tool.add_instructions and tool.instructions is not None:
+                        self._tool_instructions.append(tool.instructions)
 
-                    elif callable(tool):
-                        try:
-                            function_name = tool.__name__
-                            if function_name not in self._functions_for_model:
-                                func = Function.from_callable(tool, strict=strict)
-                                func._agent = self
-                                if strict:
-                                    func.strict = True
-                                if self.tool_hooks is not None:
-                                    func.tool_hooks = self.tool_hooks
-                                self._functions_for_model[func.name] = func
-                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                log_debug(f"Added tool {func.name}")
-                        except Exception as e:
-                            log_warning(f"Could not add tool {tool}: {e}")
+                elif callable(tool):
+                    try:
+                        function_name = tool.__name__
+
+                        if function_name in _function_names:
+                            continue
+                        _function_names.append(function_name)
+
+                        _func = Function.from_callable(tool, strict=strict)
+                        _func = _func.model_copy(deep=True)
+                        _func._agent = self
+                        if strict:
+                            _func.strict = True
+                        if self.tool_hooks is not None:
+                            _func.tool_hooks = self.tool_hooks
+                        _functions.append(_func)
+                        log_debug(f"Added tool {_func.name}")
+                    except Exception as e:
+                        log_warning(f"Could not add tool {tool}: {e}")
 
         # Update the session state for the functions
-        if self._functions_for_model:
+        if _functions:
             from inspect import signature
 
             # Check if any functions need media before collecting
             needs_media = any(
                 any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
-                for func in self._functions_for_model.values()
-                if func.entrypoint is not None
+                for func in _functions
+                if isinstance(func, Function) and func.entrypoint is not None
             )
 
             # Only collect media if functions actually need them
@@ -5449,135 +5501,16 @@ class Agent:
             joint_audios = collect_joint_audios(run_response.input, session) if needs_media else None
             joint_videos = collect_joint_videos(run_response.input, session) if needs_media else None
 
-            for func in self._functions_for_model.values():
-                func._session_state = session_state
-                func._dependencies = dependencies
-                func._images = joint_images
-                func._files = joint_files
-                func._audios = joint_audios
-                func._videos = joint_videos
+            for func in _functions:  # type: ignore
+                if isinstance(func, Function):
+                    func._session_state = session_state
+                    func._dependencies = dependencies
+                    func._images = joint_images
+                    func._files = joint_files
+                    func._audios = joint_audios
+                    func._videos = joint_videos
 
-    async def _adetermine_tools_for_model(
-        self,
-        model: Model,
-        run_response: RunOutput,
-        session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
-        async_mode: bool = False,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        if self._rebuild_tools:
-            self._rebuild_tools = False
-
-            agent_tools = await self.aget_tools(
-                run_response=run_response,
-                session=session,
-                async_mode=async_mode,
-                user_id=user_id,
-                knowledge_filters=knowledge_filters,
-            )
-
-            self._tools_for_model = []
-            self._functions_for_model = {}
-            self._tool_instructions = []
-
-            # Get Agent tools
-            if agent_tools is not None and len(agent_tools) > 0:
-                log_debug("Processing tools for model")
-
-                # Check if we need strict mode for the functions for the model
-                strict = False
-                if (
-                    self.output_schema is not None
-                    and (self.structured_outputs or (not self.use_json_mode))
-                    and model.supports_native_structured_outputs
-                ):
-                    strict = True
-
-                for tool in agent_tools:
-                    if isinstance(tool, Dict):
-                        # If a dict is passed, it is a builtin tool
-                        # that is run by the model provider and not the Agent
-                        self._tools_for_model.append(tool)
-                        log_debug(f"Included builtin tool {tool}")
-
-                    elif isinstance(tool, Toolkit):
-                        # For each function in the toolkit and process entrypoint
-                        for name, func in tool.functions.items():
-                            # If the function does not exist in self.functions
-                            if name not in self._functions_for_model:
-                                func._agent = self
-                                func.process_entrypoint(strict=strict)
-                                if strict and func.strict is None:
-                                    func.strict = True
-                                if self.tool_hooks is not None:
-                                    func.tool_hooks = self.tool_hooks
-                                self._functions_for_model[name] = func
-                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                log_debug(f"Added tool {name} from {tool.name}")
-
-                        # Add instructions from the toolkit
-                        if tool.add_instructions and tool.instructions is not None:
-                            self._tool_instructions.append(tool.instructions)
-
-                    elif isinstance(tool, Function):
-                        if tool.name not in self._functions_for_model:
-                            tool._agent = self
-                            tool.process_entrypoint(strict=strict)
-                            if strict and tool.strict is None:
-                                tool.strict = True
-                            if self.tool_hooks is not None:
-                                tool.tool_hooks = self.tool_hooks
-                            self._functions_for_model[tool.name] = tool
-                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                            log_debug(f"Added tool {tool.name}")
-
-                        # Add instructions from the Function
-                        if tool.add_instructions and tool.instructions is not None:
-                            self._tool_instructions.append(tool.instructions)
-
-                    elif callable(tool):
-                        try:
-                            function_name = tool.__name__
-                            if function_name not in self._functions_for_model:
-                                func = Function.from_callable(tool, strict=strict)
-                                func._agent = self
-                                if strict:
-                                    func.strict = True
-                                if self.tool_hooks is not None:
-                                    func.tool_hooks = self.tool_hooks
-                                self._functions_for_model[func.name] = func
-                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                log_debug(f"Added tool {func.name}")
-                        except Exception as e:
-                            log_warning(f"Could not add tool {tool}: {e}")
-
-        # Update the session state for the functions
-        if self._functions_for_model:
-            from inspect import signature
-
-            # Check if any functions need media before collecting
-            needs_media = any(
-                any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
-                for func in self._functions_for_model.values()
-                if func.entrypoint is not None
-            )
-
-            # Only collect media if functions actually need them
-            joint_images = collect_joint_images(run_response.input, session) if needs_media else None
-            joint_files = collect_joint_files(run_response.input) if needs_media else None
-            joint_audios = collect_joint_audios(run_response.input, session) if needs_media else None
-            joint_videos = collect_joint_videos(run_response.input, session) if needs_media else None
-
-            for func in self._functions_for_model.values():
-                func._session_state = session_state
-                func._dependencies = dependencies
-                func._images = joint_images
-                func._files = joint_files
-                func._audios = joint_audios
-                func._videos = joint_videos
+        return _functions
 
     def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)
@@ -5676,6 +5609,18 @@ class Agent:
         if self.model is not None:
             agent_data["model"] = self.model.to_dict()
         return agent_data
+
+    @staticmethod
+    def cancel_run(run_id: str) -> bool:
+        """Cancel a running agent execution.
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return cancel_run_global(run_id)
 
     # -*- Session Database Functions
     def _read_session(
@@ -5780,8 +5725,8 @@ class Agent:
         from time import time
 
         # Returning cached session if we have one
-        if self._agent_session is not None and self._agent_session.session_id == session_id:
-            return self._agent_session
+        if self._cached_session is not None and self._cached_session.session_id == session_id:
+            return self._cached_session
 
         # Try to load from database
         agent_session = None
@@ -5809,7 +5754,7 @@ class Agent:
             )
 
         if self.cache_session:
-            self._agent_session = agent_session
+            self._cached_session = agent_session
 
         return agent_session
 
@@ -5821,8 +5766,8 @@ class Agent:
         from time import time
 
         # Returning cached session if we have one
-        if self._agent_session is not None and self._agent_session.session_id == session_id:
-            return self._agent_session
+        if self._cached_session is not None and self._cached_session.session_id == session_id:
+            return self._cached_session
 
         # Try to load from database
         agent_session = None
@@ -5852,10 +5797,11 @@ class Agent:
             )
 
         if self.cache_session:
-            self._agent_session = agent_session
+            self._cached_session = agent_session
 
         return agent_session
 
+    # -*- Public Convenience Functions
     def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
         """
         Get a RunOutput from the database.
@@ -5863,23 +5809,30 @@ class Agent:
         Args:
             run_id (str): The run_id to load from storage.
             session_id (Optional[str]): The session_id to load from storage.
+        Returns:
+            Optional[RunOutput]: The RunOutput from the database or None if not found.
         """
-        if self._agent_session is not None:
-            run_response = self._agent_session.get_run(run_id=run_id)
-            if run_response is not None:
-                return run_response
-            else:
-                log_warning(f"RunOutput {run_id} not found in AgentSession {self._agent_session.session_id}")
-                return None
-        else:
-            session = self.get_session(session_id=session_id)
-            if session is not None:
-                run_response = session.get_run(run_id=run_id)
-                if run_response is not None:
-                    return run_response
-                else:
-                    log_warning(f"RunOutput {run_id} not found in Session {session_id}")
-        return None
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return cast(RunOutput, get_run_output_util(self, run_id=run_id, session_id=session_id_to_load))
+
+    async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+        """
+        Get a RunOutput from the database.
+
+        Args:
+            run_id (str): The run_id to load from storage.
+            session_id (Optional[str]): The session_id to load from storage.
+        Returns:
+            Optional[RunOutput]: The RunOutput from the database or None if not found.
+        """
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return cast(RunOutput, await aget_run_output_util(self, run_id=run_id, session_id=session_id_to_load))
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
         """
@@ -5889,36 +5842,29 @@ class Agent:
             session_id (Optional[str]): The session_id to load from storage.
 
         Returns:
-            RunOutput: The last run response from the database.
+            Optional[RunOutput]: The last run response from the database or None if not found.
         """
-        if (
-            self._agent_session is not None
-            and self._agent_session.runs is not None
-            and len(self._agent_session.runs) > 0
-        ):
-            for run_output in reversed(self._agent_session.runs):
-                if hasattr(run_output, "agent_id") and run_output.agent_id == self.id:
-                    return run_output
-        else:
-            session = self.get_session(session_id=session_id)
-            if session is not None and session.runs is not None and len(session.runs) > 0:
-                for run_output in reversed(session.runs):
-                    if hasattr(run_output, "agent_id") and run_output.agent_id == self.id:
-                        return run_output
-            else:
-                log_warning(f"No run responses found in Session {session_id}")
-        return None
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
 
-    def cancel_run(self, run_id: str) -> bool:
-        """Cancel a running agent execution.
+        session_id_to_load = session_id or self.session_id
+        return cast(RunOutput, get_last_run_output_util(self, session_id=session_id_to_load))
+
+    async def aget_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
+        """
+        Get the last run response from the database.
 
         Args:
-            run_id (str): The run_id to cancel.
+            session_id (Optional[str]): The session_id to load from storage.
 
         Returns:
-            bool: True if the run was found and marked for cancellation, False otherwise.
+            Optional[RunOutput]: The last run response from the database or None if not found.
         """
-        return cancel_run_global(run_id)
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return cast(RunOutput, await aget_last_run_output_util(self, session_id=session_id_to_load))
 
     def get_session(
         self,
@@ -5938,9 +5884,12 @@ class Agent:
         session_id_to_load = session_id or self.session_id
 
         # If there is a cached session, return it
-        if self.cache_session and hasattr(self, "_agent_session") and self._agent_session is not None:
-            if self._agent_session.session_id == session_id_to_load:
-                return self._agent_session
+        if self.cache_session and hasattr(self, "_cached_session") and self._cached_session is not None:
+            if self._cached_session.session_id == session_id_to_load:
+                return self._cached_session
+
+        if self._has_async_db():
+            raise ValueError("Async database not supported for get_session")
 
         # Load and return the session from the database
         if self.db is not None:
@@ -5971,7 +5920,7 @@ class Agent:
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
-                self._agent_session = loaded_session
+                self._cached_session = loaded_session
 
             return loaded_session
 
@@ -5996,29 +5945,53 @@ class Agent:
         session_id_to_load = session_id or self.session_id
 
         # If there is a cached session, return it
-        if self.cache_session and hasattr(self, "_agent_session") and self._agent_session is not None:
-            if self._agent_session.session_id == session_id_to_load:
-                return self._agent_session
+        if self.cache_session and hasattr(self, "_cached_session") and self._cached_session is not None:
+            if self._cached_session.session_id == session_id_to_load:
+                return self._cached_session
 
         # Load and return the session from the database
         if self.db is not None:
-            agent_session = cast(AgentSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
+            loaded_session = None
+
+            # We have a standalone agent, so we are loading an AgentSession
+            if self.team_id is None and self.workflow_id is None:
+                loaded_session = cast(
+                    AgentSession,
+                    await self._aread_session(session_id=session_id_to_load, session_type=SessionType.AGENT),  # type: ignore
+                )
+
+            # We have a team member agent, so we are loading a TeamSession
+            if loaded_session is None and self.team_id is not None:
+                # Load session for team member agents
+                loaded_session = cast(
+                    TeamSession,
+                    await self._aread_session(session_id=session_id_to_load, session_type=SessionType.TEAM),  # type: ignore
+                )
+
+            # We have a workflow member agent, so we are loading a WorkflowSession
+            if loaded_session is None and self.workflow_id is not None:
+                # Load session for workflow memberagents
+                loaded_session = cast(
+                    WorkflowSession,
+                    await self._aread_session(session_id=session_id_to_load, session_type=SessionType.WORKFLOW),  # type: ignore
+                )
 
             # Cache the session if relevant
-            if agent_session is not None and self.cache_session:
-                self._agent_session = agent_session
+            if loaded_session is not None and self.cache_session:
+                self._cached_session = loaded_session
 
-            return agent_session
+            return loaded_session
 
         log_debug(f"AgentSession {session_id_to_load} not found in db")
         return None
 
     def save_session(self, session: AgentSession) -> None:
-        """Save the AgentSession to storage
-
-        Returns:
-            Optional[AgentSession]: The saved AgentSession or None if not saved.
         """
+        Save the AgentSession to storage
+        """
+        if self._has_async_db():
+            raise ValueError("Async database not supported for save_session")
+
         # If the agent is a member of a team, do not save the session to the database
         if (
             self.db is not None
@@ -6035,10 +6008,8 @@ class Agent:
             log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
     async def asave_session(self, session: AgentSession) -> None:
-        """Save the AgentSession to storage
-
-        Returns:
-            Optional[AgentSession]: The saved AgentSession or None if not saved.
+        """
+        Save the AgentSession to storage
         """
         # If the agent is a member of a team, do not save the session to the database
         if (
@@ -6058,27 +6029,56 @@ class Agent:
             log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
     def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session"""
-        if not session_id and not self.session_id:
-            raise Exception("No session_id provided")
+        """Read the chat history from the session
 
-        session_id_to_load = session_id or self.session_id
-        session = self.get_session(session_id=session_id_to_load)
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The chat history from the session.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            log_warning("Session ID is not set, cannot get chat history")
+            return []
 
-        if session is None:
-            raise Exception(f"Session {session_id_to_load} not found")
+        return get_chat_history_util(self, session_id=session_id)
 
-        return session.get_chat_history()
+    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
+        """Read the chat history from the session
 
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The chat history from the session.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            log_warning("Session ID is not set, cannot get chat history")
+            return []
+
+        return await aget_chat_history_util(self, session_id=session_id)
+
+    # -*- Session Management Functions
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
-        """Rename the Agent and save to storage"""
+        """
+        Rename the Agent and save to storage
+
+        Args:
+            name (str): The new name for the Agent.
+            session_id (Optional[str]): The session_id of the session where to store the new name. If not provided, the current cached session ID is used.
+        """
 
         session_id = session_id or self.session_id
 
         if session_id is None:
             raise Exception("Session ID is not set")
 
-        session = self.get_session(session_id=session_id)  # type: ignore
+        if self._has_async_db():
+            import asyncio
+
+            session = asyncio.run(self.aget_session(session_id=session_id))
+        else:
+            session = self.get_session(session_id=session_id)
 
         if session is None:
             raise Exception("Session not found")
@@ -6091,7 +6091,12 @@ class Agent:
             session.agent_data = {"name": name}
 
         # -*- Save to storage
-        self.save_session(session=session)  # type: ignore
+        if self._has_async_db():
+            import asyncio
+
+            asyncio.run(self.asave_session(session=session))
+        else:
+            self.save_session(session=session)
 
     def set_session_name(
         self,
@@ -6099,38 +6104,63 @@ class Agent:
         autogenerate: bool = False,
         session_name: Optional[str] = None,
     ) -> AgentSession:
-        """Set the session name and save to storage"""
+        """
+        Set the session name and save to storage
+
+        Args:
+            session_id: The session ID to set the name for. If not provided, the current cached session ID is used.
+            autogenerate: Whether to autogenerate the session name.
+            session_name: The session name to set. If not provided, the session name will be autogenerated.
+        Returns:
+            AgentSession: The updated session.
+        """
         session_id = session_id or self.session_id
 
         if session_id is None:
             raise Exception("Session ID is not set")
 
-        # -*- Read from storage
-        session = self.get_session(session_id=session_id)  # type: ignore
+        return cast(
+            AgentSession,
+            set_session_name_util(self, session_id=session_id, autogenerate=autogenerate, session_name=session_name),
+        )
 
-        if session is None:
-            raise Exception("Session not found")
+    async def aset_session_name(
+        self,
+        session_id: Optional[str] = None,
+        autogenerate: bool = False,
+        session_name: Optional[str] = None,
+    ) -> AgentSession:
+        """
+        Set the session name and save to storage
 
-        # -*- Generate name for session
-        if autogenerate:
-            session_name = self._generate_session_name(session=session)
-            log_debug(f"Generated Session Name: {session_name}")
-        elif session_name is None:
-            raise Exception("Session Name is not set")
+        Args:
+            session_id: The session ID to set the name for. If not provided, the current cached session ID is used.
+            autogenerate: Whether to autogenerate the session name.
+            session_name: The session name to set. If not provided, the session name will be autogenerated.
+        Returns:
+            AgentSession: The updated session.
+        """
+        session_id = session_id or self.session_id
 
-        # -*- Rename session
-        if session.session_data is not None:
-            session.session_data["session_name"] = session_name
-        else:
-            session.session_data = {"session_name": session_name}
+        if session_id is None:
+            raise Exception("Session ID is not set")
 
-        # -*- Save to storage
-        self.save_session(session=session)  # type: ignore
+        return cast(
+            AgentSession,
+            await aset_session_name_util(
+                self, session_id=session_id, autogenerate=autogenerate, session_name=session_name
+            ),
+        )
 
-        return session
+    def generate_session_name(self, session: AgentSession) -> str:
+        """
+        Generate a name for the session using the first 6 messages from the memory
 
-    def _generate_session_name(self, session: AgentSession) -> str:
-        """Generate a name for the session using the first 6 messages from the memory"""
+        Args:
+            session (AgentSession): The session to generate a name for.
+        Returns:
+            str: The generated session name.
+        """
 
         if self.model is None:
             raise Exception("Model not set")
@@ -6157,32 +6187,68 @@ class Agent:
         content = generated_name.content
         if content is None:
             log_error("Generated name is None. Trying again.")
-            return self._generate_session_name(session=session)
+            return self.generate_session_name(session=session)
 
         if len(content.split()) > 5:
             log_error("Generated name is too long. It should be less than 5 words. Trying again.")
-            return self._generate_session_name(session=session)
+            return self.generate_session_name(session=session)
         return content.replace('"', "").strip()
 
     def get_session_name(self, session_id: Optional[str] = None) -> str:
-        """Get the session name for the given session ID and user ID."""
+        """
+        Get the session name for the given session ID.
+
+        Args:
+            session_id: The session ID to get the name for. If not provided, the current cached session ID is used.
+        Returns:
+            str: The session name.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
-        session = self.get_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
-        return session.session_data.get("session_name", "") if session.session_data is not None else ""
+        return get_session_name_util(self, session_id=session_id)
+
+    async def aget_session_name(self, session_id: Optional[str] = None) -> str:
+        """
+        Get the session name for the given session ID.
+
+        Args:
+            session_id: The session ID to get the name for. If not provided, the current cached session ID is used.
+        Returns:
+            str: The session name.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        return await aget_session_name_util(self, session_id=session_id)
 
     def get_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get the session state for the given session ID and user ID."""
+        """
+        Get the session state for the given session ID.
+
+        Args:
+            session_id: The session ID to get the state for. If not provided, the current cached session ID is used.
+        Returns:
+            Dict[str, Any]: The session state.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
-        session = self.get_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
-        return session.session_data.get("session_state", {}) if session.session_data is not None else {}
+        return get_session_state_util(self, session_id=session_id)
+
+    async def aget_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get the session state for the given session ID.
+
+        Args:
+            session_id: The session ID to get the state for. If not provided, the current cached session ID is used.
+        Returns:
+            Dict[str, Any]: The session state.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        return await aget_session_state_util(self, session_id=session_id)
 
     def update_session_state(self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None) -> str:
         """
@@ -6196,20 +6262,7 @@ class Agent:
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
-        session = self.get_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
-
-        if session.session_data is not None and "session_state" not in session.session_data:
-            session.session_data["session_state"] = {}
-
-        # Overwrite the loaded DB session state with the new session state
-        for key, value in session_state_updates.items():
-            session.session_data["session_state"][key] = value  # type: ignore
-
-        self.save_session(session=session)
-
-        return session.session_data["session_state"]  # type: ignore
+        return update_session_state_util(self, session_state_updates=session_state_updates, session_id=session_id)
 
     async def aupdate_session_state(
         self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None
@@ -6225,52 +6278,65 @@ class Agent:
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
-        session = await self.aget_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
-
-        if session.session_data is not None and "session_state" not in session.session_data:
-            session.session_data["session_state"] = {}
-
-        for key, value in session_state_updates.items():
-            session.session_data["session_state"][key] = value  # type: ignore
-
-        await self.asave_session(session=session)
-
-        return session.session_data["session_state"]  # type: ignore
+        return await aupdate_session_state_util(
+            self, session_state_updates=session_state_updates, session_id=session_id
+        )
 
     def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
-        """Get the session metrics for the given session ID and user ID."""
+        """Get the session metrics for the given session ID.
+
+        Args:
+            session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
+        Returns:
+            Optional[Metrics]: The session metrics.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
 
-        session = self.get_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
+        return get_session_metrics_util(self, session_id=session_id)
 
-        if session.session_data is not None and session.session_data.get("session_metrics") is not None:
-            if isinstance(session.session_data.get("session_metrics"), dict):
-                return Metrics(**session.session_data.get("session_metrics", {}))
-            elif isinstance(session.session_data.get("session_metrics"), Metrics):
-                return session.session_data.get("session_metrics", None)
-        return None
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+        """Get the session metrics for the given session ID.
+
+        Args:
+            session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
+        Returns:
+            Optional[Metrics]: The session metrics.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+
+        return await aget_session_metrics_util(self, session_id=session_id)
 
     def delete_session(self, session_id: str):
         """Delete the current session and save to storage"""
         if self.db is None:
             return
-        # -*- Delete session
+
         self.db.delete_session(session_id=session_id)
 
+    async def adelete_session(self, session_id: str):
+        """Delete the current session and save to storage"""
+        if self.db is None:
+            return
+        await self.db.delete_session(session_id=session_id)  # type: ignore
+
     def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session"""
+        """Get messages for a session
+
+        Args:
+            session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The messages for the session.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
             log_warning("Session ID is not set, cannot get messages for session")
             return []
 
-        session = self.get_session(session_id=session_id)  # type: ignore
+        session = self.get_session(session_id=session_id)
 
         if session is None:
             raise Exception("Session not found")
@@ -6280,8 +6346,37 @@ class Agent:
             agent_id=self.id if self.team_id is not None else None,
         )
 
-    def get_session_summary(self, session_id: Optional[str] = None):
-        """Get the session summary for the given session ID and user ID."""
+    async def aget_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
+        """Get messages for a session
+
+        Args:
+            session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The messages for the session.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            log_warning("Session ID is not set, cannot get messages for session")
+            return []
+
+        session = await self.aget_session(session_id=session_id)
+
+        if session is None:
+            raise Exception("Session not found")
+
+        # Only filter by agent_id if this is part of a team
+        return session.get_messages_from_last_n_runs(
+            agent_id=self.id if self.team_id is not None else None,
+        )
+
+    def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
+        """Get the session summary for the given session ID and user ID
+
+        Args:
+            session_id: The session ID to get the summary for. If not provided, the current cached session ID is used.
+        Returns:
+            SessionSummary: The session summary.
+        """
         session_id = session_id if session_id is not None else self.session_id
         if session_id is None:
             raise ValueError("Session ID is required")
@@ -6293,8 +6388,33 @@ class Agent:
 
         return session.get_session_summary()
 
+    async def aget_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
+        """Get the session summary for the given session ID and user ID.
+
+        Args:
+            session_id: The session ID to get the summary for. If not provided, the current cached session ID is used.
+        Returns:
+            SessionSummary: The session summary.
+        """
+        session_id = session_id if session_id is not None else self.session_id
+        if session_id is None:
+            raise ValueError("Session ID is required")
+
+        session = await self.aget_session(session_id=session_id)
+
+        if session is None:
+            raise Exception(f"Session {session_id} not found")
+
+        return session.get_session_summary()
+
     def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-        """Get the user memories for the given user ID."""
+        """Get the user memories for the given user ID.
+
+        Args:
+            user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
+        Returns:
+            Optional[List[UserMemory]]: The user memories.
+        """
         if self.memory_manager is None:
             return None
         user_id = user_id if user_id is not None else self.user_id
@@ -6304,7 +6424,13 @@ class Agent:
         return self.memory_manager.get_user_memories(user_id=user_id)
 
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-        """Get the user memories for the given user ID."""
+        """Get the user memories for the given user ID.
+
+        Args:
+            user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
+        Returns:
+            Optional[List[UserMemory]]: The user memories.
+        """
         if self.memory_manager is None:
             return None
         user_id = user_id if user_id is not None else self.user_id
@@ -6314,19 +6440,28 @@ class Agent:
         return await self.memory_manager.aget_user_memories(user_id=user_id)
 
     def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        """Get the cultural knowledge the agent has access to"""
+        """Get the cultural knowledge the agent has access to
+
+        Returns:
+            Optional[List[CulturalKnowledge]]: The cultural knowledge.
+        """
         if self.culture_manager is None:
             return None
 
         return self.culture_manager.get_all_knowledge()
 
     async def aget_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        """Get the cultural knowledge the agent has access to"""
+        """Get the cultural knowledge the agent has access to
+
+        Returns:
+            Optional[List[CulturalKnowledge]]: The cultural knowledge.
+        """
         if self.culture_manager is None:
             return None
 
         return await self.culture_manager.aget_all_knowledge()
 
+    # -*- System & User Message Functions
     def _format_message_with_state_variables(
         self,
         message: Any,
@@ -6371,6 +6506,7 @@ class Agent:
         session: AgentSession,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -6442,7 +6578,7 @@ class Agent:
                 instructions.extend(_instructions)
 
         # 3.1.1 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
+        _model_instructions = self.model.get_instructions_for_model(tools)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
@@ -6677,7 +6813,7 @@ class Agent:
             )
 
         # 3.3.12 Add the system message from the Model
-        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
+        system_message_from_model = self.model.get_system_message_for_model(tools)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
@@ -6713,6 +6849,7 @@ class Agent:
         session: AgentSession,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[Message]:
@@ -6783,7 +6920,7 @@ class Agent:
                 instructions.extend(_instructions)
 
         # 3.1.1 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
+        _model_instructions = self.model.get_instructions_for_model(tools)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
@@ -7021,7 +7158,7 @@ class Agent:
             )
 
         # 3.3.12 Add the system message from the Model
-        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
+        system_message_from_model = self.model.get_system_message_for_model(tools)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
@@ -7240,6 +7377,7 @@ class Agent:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -7274,6 +7412,7 @@ class Agent:
             session=session,
             session_state=session_state,
             user_id=user_id,
+            tools=tools,
             dependencies=dependencies,
             metadata=metadata,
             add_session_state_to_context=add_session_state_to_context,
@@ -7445,6 +7584,7 @@ class Agent:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -7479,6 +7619,7 @@ class Agent:
             session=session,
             session_state=session_state,
             user_id=user_id,
+            tools=tools,
             dependencies=dependencies,
             metadata=metadata,
         )
@@ -9346,6 +9487,8 @@ class Agent:
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
+        import asyncio
+
         from agno.knowledge.reader.text_reader import TextReader
 
         asyncio.run(
@@ -9420,12 +9563,14 @@ class Agent:
 
         return get_previous_session_messages
 
-    async def _aget_previous_sessions_messages_function(self, num_history_sessions: Optional[int] = 2) -> Callable:
+    async def _aget_previous_sessions_messages_function(
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+    ) -> Function:
         """Factory function to create a get_previous_session_messages function.
 
         Args:
             num_history_sessions: The last n sessions to be taken from db
-
+            user_id: The user ID to filter sessions by
         Returns:
             Callable: A function that retrieves messages from previous sessions
         """
@@ -9443,12 +9588,22 @@ class Agent:
             if self.db is None:
                 return "Previous session messages not available"
 
-            if isinstance(self.db, AsyncBaseDb):
-                selected_sessions = await self.db.get_sessions(
-                    session_type=SessionType.AGENT, limit=num_history_sessions
+            if self._has_async_db():
+                selected_sessions = await self.db.get_sessions(  # type: ignore
+                    session_type=SessionType.AGENT,
+                    limit=num_history_sessions,
+                    user_id=user_id,
+                    sort_by="created_at",
+                    sort_order="desc",
                 )
             else:
-                selected_sessions = self.db.get_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
+                selected_sessions = self.db.get_sessions(
+                    session_type=SessionType.AGENT,
+                    limit=num_history_sessions,
+                    user_id=user_id,
+                    sort_by="created_at",
+                    sort_order="desc",
+                )
 
             all_messages = []
             seen_message_pairs = set()
@@ -9481,7 +9636,7 @@ class Agent:
 
             return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
 
-        return aget_previous_session_messages
+        return Function.from_callable(aget_previous_session_messages, name="get_previous_session_messages")
 
     ###########################################################################
     # Print Response
