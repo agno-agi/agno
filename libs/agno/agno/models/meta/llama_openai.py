@@ -71,8 +71,6 @@ class LlamaOpenAI(OpenAILike):
         client_params = self._get_client_params()
 
         # Use global async client - it's configured with proper limits
-        # Note: The default global client has follow_redirects enabled by default in httpx.AsyncClient
-        # If the Llama API requires specific timeout settings, consider adding a custom client creation here
         client_params["http_client"] = get_default_async_client()
 
         # Create and cache the client
