@@ -6,49 +6,47 @@ This script will update the provided tables to add the two new columns introduce
 - content_hash: String column for content hash tracking
 - content_id: String column for content ID tracking
 
-Usage: 
-- Configure your db_url and table details in the script
+To use the script simply:
+- For PGVector, set the `pg_vector_db_url` and `pg_vector_config` variables
+- For SingleStore, set the `singlestore_db_url` and `singlestore_config` variables
 - Run the script
 """
 
 from agno.utils.log import log_error, log_info, log_warning
 
-# --- Set these variables before running the script ---
+# ------------ Setup for PGVector ------------
 
-## Your database connection details ##
-db_url = ""  # For PgVector, SingleStore
+## Your database connection string
+pg_vector_db_url = ""  # Example: "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-## Postgres Sample ##
-# db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-
-## SingleStore Sample ##
-# db_url = "mysql+pymysql://user:password@host:port/database"
-
-## Configure which vectordbs to migrate ##
-vectordb_configs = {
-    # Uncomment and configure the databases you want to migrate
-    # "pgvector": {
-    #     "schema": "ai",  # Schema name where your vectordb tables are located
-    #     "table_names": ["knowledge_base", "documents"],  # List of table names to migrate
-    # },
-    # "singlestore": {
-    #     "schema": "ai",
-    #     "table_names": ["knowledge_base", "documents"],
-    # },
+## Configuration of the schema and tables to migrate
+pg_vector_config = {
+    # "schema": "ai",  # Schema where your tables are located
+    # "table_names": ["documents"],  # Tables to migrate
 }
+# -----------------------------------------
+
+# ------------ Setup for SingleStore ------------
+
+# Your database connection string
+singlestore_db_url = ""  # Example: "mysql+pymysql://user:password@host:port/database"
+
+# Exact configuration of the tables to migrate
+singlestore_config = {
+    # "schema": "ai",  # Schema where your tables are located
+    # "table_names": ["documents"],  # Tables to migrate
+}
+# -----------------------------------------
 
 # Migration batch size (adjust based on available memory and table size)
 migration_batch_size = 5000
 
-# --- Exit if no configurations are provided ---
-
-if not vectordb_configs:
-    log_info(
-        "No vectordb configurations provided. Update the vectordb_configs dictionary to include the databases you want to migrate."
+#  Exit if no configurations are provided
+if not (pg_vector_db_url and pg_vector_config) and not (singlestore_db_url and singlestore_config):
+    log_error(
+        "To run the migration, you need to set the `pg_vector_db_url` and `pg_vector_config` variables for PGVector, or `singlestore_db_url` and `singlestore_config` for SingleStore."
     )
     exit()
-
-# --- Run the migration ---
 
 
 def migrate_pgvector_table(table_name: str, schema: str = "ai") -> None:
@@ -68,13 +66,13 @@ def migrate_pgvector_table(table_name: str, schema: str = "ai") -> None:
         pgvector = PgVector(
             table_name=table_name,
             schema=schema,
-            db_url=db_url,
+            db_url=pg_vector_db_url,
             schema_version=1,  # Use v1 schema for compatibility
         )
 
         # Check if table exists
         if not pgvector.table_exists():
-            log_warning(f"Table {schema}.{table_name} does not exist. Skipping migration.")
+            log_warning(f"Table {schema}.{table_name} not found. Skipping migration.")
             return
 
         # Check if the new columns already exist
@@ -147,17 +145,16 @@ def migrate_singlestore_table(table_name: str, schema: str = "ai") -> None:
         singlestore = SingleStore(
             collection=table_name,
             schema=schema,
-            db_url=db_url,
+            db_url=singlestore_db_url,
         )
 
         # Check if table exists
         if not singlestore.table_exists():
-            log_warning(f"Table {schema}.{table_name} does not exist. Skipping migration.")
+            log_warning(f"Table {schema}.{table_name} not found. Skipping migration.")
             return
 
         # Check if the new columns already exist
         from sqlalchemy import inspect, text
-        from sqlalchemy.exc import SQLAlchemyError
 
         inspector = inspect(singlestore.db_engine)
         columns = inspector.get_columns(table_name, schema=schema)
@@ -187,31 +184,19 @@ def migrate_singlestore_table(table_name: str, schema: str = "ai") -> None:
         raise
 
 
-# Run migration for all configured vectordbs
-for vectordb_type, config in vectordb_configs.items():
-    try:
-        log_info(f"\n{'=' * 50}")
-        log_info(f"Processing {vectordb_type.upper()}")
-        log_info(f"{'=' * 50}")
+# Run the migrations
+try:
+    # PGVector migration
+    if pg_vector_config:
+        for table_name in pg_vector_config["table_names"]:
+            migrate_pgvector_table(table_name, pg_vector_config["schema"])
 
-        if vectordb_type == "pgvector":
-            if not db_url:
-                log_error("db_url is required for PgVector migration")
-                continue
-            for table_name in config["table_names"]:
-                migrate_pgvector_table(table_name, config["schema"])
+    # SingleStore migration
+    if singlestore_config:
+        for table_name in singlestore_config["table_names"]:
+            migrate_singlestore_table(table_name, singlestore_config["schema"])
 
-        elif vectordb_type == "singlestore":
-            if not db_url:
-                log_error("db_url is required for SingleStore migration")
-                continue
-            for table_name in config["table_names"]:
-                migrate_singlestore_table(table_name, config["schema"])
+except Exception as e:
+    log_error(f"Error during migration: {e}")
 
-        else:
-            log_warning(f"Unknown vectordb type: {vectordb_type}. Supported types: pgvector, singlestore")
-
-    except Exception as e:
-        log_error(f"Error processing {vectordb_type}: {e}")
-
-log_info("\nVectorDB migration completed.")
+log_info("VectorDB migration completed.")
