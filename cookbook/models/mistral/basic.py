@@ -1,9 +1,7 @@
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.mistral import MistralChat
-
 
 agent = Agent(
-    model=MistralChat(id="mistral-small-latest"),
+    model="mistral:mistral-small-latest",
     markdown=True,
 )
 

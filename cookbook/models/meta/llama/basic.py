@@ -1,8 +1,7 @@
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.meta import Llama
 
 agent = Agent(
-    model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+    model="meta:Llama-4-Maverick-17B-128E-Instruct-FP8",
     markdown=True,
 )
 
