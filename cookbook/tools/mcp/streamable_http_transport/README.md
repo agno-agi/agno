@@ -11,3 +11,5 @@ python cookbook/tools/mcp/streamable_http_transport/server.py
 ```bash
 python cookbook/tools/mcp/streamable_http_transport/client.py
 ```
+
+Optionally set `refresh_connection` to `True` on the `MCPTools` configuration to refresh the MCP tools on each run.

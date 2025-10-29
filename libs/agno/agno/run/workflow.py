@@ -632,6 +632,12 @@ class WorkflowRunOutput:
 
         input_data = data.pop("input", None)
 
+        # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
         return cls(
             step_results=parsed_step_results,
             metadata=metadata,
@@ -643,7 +649,7 @@ class WorkflowRunOutput:
             metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
             input=input_data,
-            **data,
+            **filtered_data,
         )
 
     def get_content_as_string(self, **kwargs) -> str:
