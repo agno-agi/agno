@@ -28,7 +28,6 @@ db_url = ""  # For PgVector, SingleStore
 ## Configure which vectordbs to migrate ##
 vectordb_configs = {
     # Uncomment and configure the databases you want to migrate
-    # SQL DATABASES - True schema migration (no re-indexing needed):
     # "pgvector": {
     #     "schema": "ai",  # Schema name where your vectordb tables are located
     #     "table_names": ["knowledge_base", "documents"],  # List of table names to migrate
