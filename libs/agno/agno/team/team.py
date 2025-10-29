@@ -8511,7 +8511,13 @@ class Team:
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                return self.knowledge_retriever(**knowledge_retriever_kwargs)
+                
+                result = self.knowledge_retriever(**knowledge_retriever_kwargs)
+
+                if isawaitable(result):
+                    result = await result
+
+                return result
             except Exception as e:
                 log_warning(f"Knowledge retriever failed: {e}")
                 raise e
