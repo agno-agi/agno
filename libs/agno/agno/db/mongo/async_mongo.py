@@ -1089,7 +1089,7 @@ class AsyncMongoDb(AsyncBaseDb):
             if limit is not None:
                 if page is not None:
                     pipeline.append({"$skip": (page - 1) * limit})  # type: ignore
-                pipeline.append({"$limit": limit})   # type: ignore
+                pipeline.append({"$limit": limit})  # type: ignore
 
             results = await collection.aggregate(pipeline).to_list(length=None)
 
