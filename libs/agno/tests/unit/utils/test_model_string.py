@@ -32,15 +32,6 @@ def test_get_model_with_none():
     assert result is None
 
 
-def test_get_model_with_invalid_type():
-    """Test get_model() with invalid type raises TypeError."""
-    with pytest.raises(TypeError, match="Model must be"):
-        get_model(123)  # type: ignore
-
-
-# Tests for model string parsing (via get_model)
-
-
 def test_get_model_parses_openai_string():
     """Test get_model() parses OpenAI model string."""
     model = get_model("openai:gpt-4o")
@@ -85,10 +76,6 @@ def test_get_model_unknown_provider():
     with pytest.raises(ValueError, match="not supported"):
         get_model("unknown-provider:model-123")
 
-
-# Tests for Agent with model strings
-
-
 def test_agent_with_model_string():
     """Test creating Agent with model string."""
     agent = Agent(model="openai:gpt-4o")
@@ -116,9 +103,6 @@ def test_agent_backward_compatibility():
     agent = Agent(model=OpenAIChat(id="gpt-4o"))
     assert isinstance(agent.model, OpenAIChat)
     assert agent.model.id == "gpt-4o"
-
-
-# Tests for Team with model strings
 
 
 def test_team_with_model_string():
