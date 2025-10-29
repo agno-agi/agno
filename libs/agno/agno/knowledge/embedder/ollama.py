@@ -86,7 +86,8 @@ class OllamaEmbedder(Embedder):
             kwargs["options"] = self.options
             
         # Add dimensions parameter for models that support it
-        kwargs["dimensions"] = self.dimensions
+        if self.dimensions is not None:
+            kwargs["dimensions"] = self.dimensions
 
         response = self.client.embed(input=text, model=self.id, **kwargs)
         if response and "embeddings" in response:
@@ -121,7 +122,8 @@ class OllamaEmbedder(Embedder):
             kwargs["options"] = self.options
 
         # Add dimensions parameter for models that support it
-        kwargs["dimensions"] = self.dimensions
+        if self.dimensions is not None:
+            kwargs["dimensions"] = self.dimensions
 
         response = await self.aclient.embed(input=text, model=self.id, **kwargs)
         if response and "embeddings" in response:
