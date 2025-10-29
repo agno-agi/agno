@@ -6,6 +6,7 @@ This script will update the provided tables to add the two new columns introduce
 - content_hash: String column for content hash tracking
 - content_id: String column for content ID tracking
 
+Usage: 
 - Configure your db_url and table details in the script
 - Run the script
 """
