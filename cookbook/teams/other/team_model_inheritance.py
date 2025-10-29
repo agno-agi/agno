@@ -78,6 +78,4 @@ if __name__ == "__main__":
     # analyst inherits Claude Haiku from its sub-team
     print(f"Analyst: {analyst.model.id}")
 
-    team.print_response(
-        "Write a brief article about AI", stream=True
-    )
+    team.print_response("Write a brief article about AI", stream=True)
