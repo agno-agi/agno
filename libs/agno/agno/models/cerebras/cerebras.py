@@ -63,7 +63,7 @@ class Cerebras(Model):
     max_retries: Optional[int] = None
     default_headers: Optional[Any] = None
     default_query: Optional[Any] = None
-    http_client: Optional[httpx.Client] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # Cerebras clients
@@ -102,12 +102,15 @@ class Cerebras(Model):
         Returns:
             CerebrasClient: An instance of the Cerebras client.
         """
-        if self.client:
+        if self.client and not self.client.is_closed():
             return self.client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client is not None:
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_debug("http_client is not an instance of httpx.Client.")
         self.client = CerebrasClient(**client_params)
         return self.client
 
@@ -118,13 +121,15 @@ class Cerebras(Model):
         Returns:
             AsyncCerebras: An instance of the asynchronous Cerebras client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client:
+        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
             client_params["http_client"] = self.http_client
         else:
+            if self.http_client:
+                log_debug("The current http_client is not async. A default httpx.AsyncClient will be used instead.")
             # Create a new async HTTP client with custom limits
             client_params["http_client"] = httpx.AsyncClient(
                 limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
