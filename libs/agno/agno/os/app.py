@@ -352,7 +352,7 @@ class AgentOS:
                 final_lifespan = self._mcp_app.lifespan  # type: ignore
                 if self.lifespan is not None:
                     # Wrap the user lifespan with agent_os parameter
-                    wrapped_lifespan = _wrap_lifespan_with_agent_os(self.lifespan, agent_os=self)
+                    wrapped_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
 
                     # Combine both lifespans
                     @asynccontextmanager
