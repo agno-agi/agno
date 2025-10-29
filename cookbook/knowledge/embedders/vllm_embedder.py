@@ -39,7 +39,7 @@ def main():
     )
 
     # Remote mode with Knowledge
-    knowledge_remote = Knowledge(
+    _knowledge_remote = Knowledge(
         vector_db=PgVector(
             db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
             table_name="vllm_embeddings_remote",

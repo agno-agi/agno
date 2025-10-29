@@ -42,7 +42,7 @@ def main():
     )
 
     # Example usage with Knowledge - Remote mode with batching
-    knowledge_remote = Knowledge(
+    _knowledge_remote = Knowledge(
         vector_db=PgVector(
             db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
             table_name="vllm_embeddings_remote_batch",
