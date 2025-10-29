@@ -237,4 +237,4 @@ def get_model(model: Union[Model, str, None]) -> Optional[Model]:
     elif isinstance(model, str):
         return _parse_model_string(model)
     else:
-        raise ValueError(f"Model must be a Model instance, string, or None")
+        raise ValueError("Model must be a Model instance, string, or None")
