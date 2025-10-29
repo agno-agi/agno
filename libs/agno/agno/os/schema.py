@@ -246,6 +246,7 @@ class AgentResponse(BaseModel):
         agent_tools = await agent.aget_tools(
             session=AgentSession(session_id=str(uuid4()), session_data={}),
             run_response=RunOutput(run_id=str(uuid4())),
+            check_mcp_tools=False,
         )
         formatted_tools = format_tools(agent_tools) if agent_tools else None
 
@@ -472,7 +473,9 @@ class TeamResponse(BaseModel):
             async_mode=True,
             session_state={},
             team_run_context={},
+            check_mcp_tools=False,
         )
+        print(team.tools, _tools)
         team_tools = _tools
         formatted_tools = format_team_tools(team_tools) if team_tools else None
 

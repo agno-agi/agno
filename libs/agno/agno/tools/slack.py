@@ -40,7 +40,7 @@ class SlackTools(Toolkit):
             raise ValueError("SLACK_TOKEN is not set")
         self.client = WebClient(token=self.token)
         self.markdown = markdown
-        
+
         tools: List[Any] = []
         if enable_send_message or all:
             tools.append(self.send_message)
@@ -84,7 +84,9 @@ class SlackTools(Toolkit):
             str: A JSON string containing the response from the Slack API.
         """
         try:
-            response = self.client.chat_postMessage(channel=channel, text=text, thread_ts=thread_ts, mrkdwn=self.markdown)
+            response = self.client.chat_postMessage(
+                channel=channel, text=text, thread_ts=thread_ts, mrkdwn=self.markdown
+            )
             return json.dumps(response.data)
         except SlackApiError as e:
             logger.error(f"Error sending message: {e}")
