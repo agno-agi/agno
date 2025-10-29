@@ -13,18 +13,15 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 db = PostgresDb(db_url=db_url, session_table="sessions")
 
-agent = Agent(model=OpenAIChat(id="o3-mini"))
+agent = Agent(model=OpenAIChat(id="gpt-5-mini"))
 
 team = Team(
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIChat(id="gpt-5-mini"),
     members=[agent],
     db=db,
     add_history_to_context=True,
-    num_history_runs=3,
+    num_history_messages=1,  # Only include the assistant response
 )
 
 team.print_response("Tell me a new interesting fact about space")
-
-team.print_response("Tell me a new interesting fact about oceans")
-
-team.print_response("What have we been talking about?")
+team.print_response("Repeat the last message, but make it much more concise")
