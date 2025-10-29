@@ -94,8 +94,6 @@ class MemoryManager:
         self.add_memories = add_memories
         self.clear_memories = clear_memories
         self.debug_mode = debug_mode
-        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
 
     def get_model(self) -> Model:
         if self.model is None:
@@ -913,22 +911,25 @@ class MemoryManager:
         return optimized_memories
 
     # --Memory Manager Functions--
-    def determine_tools_for_model(self, tools: List[Callable]) -> None:
+    def determine_tools_for_model(self, tools: List[Callable]) -> List[Union[Function, dict]]:
         # Have to reset each time, because of different user IDs
-        self._tools_for_model = []
-        self._functions_for_model = {}
+        _function_names = []
+        _functions: List[Union[Function, dict]] = []
 
         for tool in tools:
             try:
                 function_name = tool.__name__
-                if function_name not in self._functions_for_model:
-                    func = Function.from_callable(tool, strict=True)  # type: ignore
-                    func.strict = True
-                    self._functions_for_model[func.name] = func
-                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                    log_debug(f"Added function {func.name}")
+                if function_name in _function_names:
+                    continue
+                _function_names.append(function_name)
+                func = Function.from_callable(tool, strict=True)  # type: ignore
+                func.strict = True
+                _functions.append(func)
+                log_debug(f"Added function {func.name}")
             except Exception as e:
                 log_warning(f"Could not add function {tool}: {e}")
+
+        return _functions
 
     def get_system_message(
         self,
@@ -1036,7 +1037,7 @@ class MemoryManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.determine_tools_for_model(
+        _tools = self.determine_tools_for_model(
             self._get_db_tools(
                 user_id,
                 db,
@@ -1065,8 +1066,7 @@ class MemoryManager:
         # Generate a response from the Model (includes running function calls)
         response = model_copy.response(
             messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=_tools,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -1100,7 +1100,7 @@ class MemoryManager:
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
         if isinstance(db, AsyncBaseDb):
-            self.determine_tools_for_model(
+            _tools = self.determine_tools_for_model(
                 await self._aget_db_tools(
                     user_id,
                     db,
@@ -1114,7 +1114,7 @@ class MemoryManager:
                 ),
             )
         else:
-            self.determine_tools_for_model(
+            _tools = self.determine_tools_for_model(
                 self._get_db_tools(
                     user_id,
                     db,
@@ -1143,8 +1143,7 @@ class MemoryManager:
         # Generate a response from the Model (includes running function calls)
         response = await model_copy.aresponse(
             messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=_tools,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -1172,7 +1171,7 @@ class MemoryManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.determine_tools_for_model(
+        _tools = self.determine_tools_for_model(
             self._get_db_tools(
                 user_id,
                 db,
@@ -1200,8 +1199,7 @@ class MemoryManager:
         # Generate a response from the Model (includes running function calls)
         response = model_copy.response(
             messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=_tools,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -1230,7 +1228,7 @@ class MemoryManager:
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
         if isinstance(db, AsyncBaseDb):
-            self.determine_tools_for_model(
+            _tools = self.determine_tools_for_model(
                 await self._aget_db_tools(
                     user_id,
                     db,
@@ -1242,7 +1240,7 @@ class MemoryManager:
                 ),
             )
         else:
-            self.determine_tools_for_model(
+            _tools = self.determine_tools_for_model(
                 self._get_db_tools(
                     user_id,
                     db,
@@ -1270,8 +1268,7 @@ class MemoryManager:
         # Generate a response from the Model (includes running function calls)
         response = await model_copy.aresponse(
             messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=_tools,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -1334,6 +1331,9 @@ class MemoryManager:
                 str: A message indicating if the memory was updated successfully or not.
             """
             from agno.db.base import UserMemory
+
+            if memory == "":
+                return "Can't update memory with empty string. Use the delete memory function if available."
 
             try:
                 db.upsert_user_memory(
@@ -1453,6 +1453,9 @@ class MemoryManager:
                 str: A message indicating if the memory was updated successfully or not.
             """
             from agno.db.base import UserMemory
+
+            if memory == "":
+                return "Can't update memory with empty string. Use the delete memory function if available."
 
             try:
                 if isinstance(db, AsyncBaseDb):

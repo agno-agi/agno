@@ -42,6 +42,7 @@ basic_workflow = Workflow(
             agent=basic_agent,
         )
     ],
+    add_workflow_history_to_steps=True,
 )
 
 # Setup our AgentOS app

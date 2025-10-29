@@ -16,6 +16,7 @@ class SlackTools(Toolkit):
     def __init__(
         self,
         token: Optional[str] = None,
+        markdown: bool = True,
         enable_send_message: bool = True,
         enable_send_message_thread: bool = True,
         enable_list_channels: bool = True,
@@ -23,10 +24,22 @@ class SlackTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        """
+        Initialize the SlackTools class.
+        Args:
+            token: The Slack API token. Defaults to the SLACK_TOKEN environment variable.
+            markdown: Whether to enable Slack markdown formatting. Defaults to True.
+            enable_send_message: Whether to enable the send_message tool. Defaults to True.
+            enable_send_message_thread: Whether to enable the send_message_thread tool. Defaults to True.
+            enable_list_channels: Whether to enable the list_channels tool. Defaults to True.
+            enable_get_channel_history: Whether to enable the get_channel_history tool. Defaults to True.
+            all: Whether to enable all tools. Defaults to False.
+        """
         self.token: Optional[str] = token or getenv("SLACK_TOKEN")
         if self.token is None or self.token == "":
             raise ValueError("SLACK_TOKEN is not set")
         self.client = WebClient(token=self.token)
+        self.markdown = markdown
 
         tools: List[Any] = []
         if enable_send_message or all:
@@ -52,7 +65,7 @@ class SlackTools(Toolkit):
             str: A JSON string containing the response from the Slack API.
         """
         try:
-            response = self.client.chat_postMessage(channel=channel, text=text)
+            response = self.client.chat_postMessage(channel=channel, text=text, mrkdwn=self.markdown)
             return json.dumps(response.data)
         except SlackApiError as e:
             logger.error(f"Error sending message: {e}")
@@ -65,13 +78,15 @@ class SlackTools(Toolkit):
         Args:
             channel (str): The channel ID or name to send the message to.
             text (str): The text of the message to send.
-            thread_ts (ts): The thread to reply to
+            thread_ts (ts): The thread to reply to.
 
         Returns:
             str: A JSON string containing the response from the Slack API.
         """
         try:
-            response = self.client.chat_postMessage(channel=channel, text=text, thread_ts=thread_ts)
+            response = self.client.chat_postMessage(
+                channel=channel, text=text, thread_ts=thread_ts, mrkdwn=self.markdown
+            )
             return json.dumps(response.data)
         except SlackApiError as e:
             logger.error(f"Error sending message: {e}")
