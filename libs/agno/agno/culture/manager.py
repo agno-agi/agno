@@ -78,8 +78,6 @@ class CultureManager:
         self.delete_knowledge = delete_knowledge
         self.clear_knowledge = clear_knowledge
         self.debug_mode = debug_mode
-        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
 
     def get_model(self) -> Model:
         if self.model is None:
@@ -316,22 +314,26 @@ class CultureManager:
         return response
 
     # -*- Utility Functions -*-
-    def _determine_tools_for_model(self, tools: List[Callable]) -> None:
+    def _determine_tools_for_model(self, tools: List[Callable]) -> List[Union[Function, dict]]:
         # Have to reset each time, because of different user IDs
-        self._tools_for_model = []
-        self._functions_for_model = {}
+
+        _function_names = []
+        _functions: List[Union[Function, dict]] = []
 
         for tool in tools:
             try:
                 function_name = tool.__name__
-                if function_name not in self._functions_for_model:
-                    func = Function.from_callable(tool, strict=True)  # type: ignore
-                    func.strict = True
-                    self._functions_for_model[func.name] = func
-                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                    log_debug(f"Added function {func.name}")
+                if function_name in _function_names:
+                    continue
+                _function_names.append(function_name)
+                func = Function.from_callable(tool, strict=True)  # type: ignore
+                func.strict = True
+                _functions.append(func)
+                log_debug(f"Added function {func.name}")
             except Exception as e:
                 log_warning(f"Could not add function {tool}: {e}")
+
+        return _functions
 
     def get_system_message(
         self,
@@ -460,7 +462,7 @@ class CultureManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self._determine_tools_for_model(
+        _tools = self._determine_tools_for_model(
             self._get_db_tools(
                 db,
                 enable_add_knowledge=add_knowledge,
@@ -485,8 +487,7 @@ class CultureManager:
         # Generate a response from the Model (includes running function calls)
         response = model_copy.response(
             messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=_tools,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -513,7 +514,7 @@ class CultureManager:
         model_copy = deepcopy(self.model)
         db = cast(AsyncBaseDb, db)
 
-        self._determine_tools_for_model(
+        _tools = self._determine_tools_for_model(
             await self._aget_db_tools(
                 db,
                 enable_update_knowledge=update_knowledge,
@@ -535,8 +536,7 @@ class CultureManager:
         # Generate a response from the Model (includes running function calls)
         response = await model_copy.aresponse(
             messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=_tools,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -564,7 +564,7 @@ class CultureManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self._determine_tools_for_model(
+        _tools = self._determine_tools_for_model(
             self._get_db_tools(
                 db,
                 enable_delete_knowledge=delete_knowledge,
@@ -590,8 +590,7 @@ class CultureManager:
         # Generate a response from the Model (includes running function calls)
         response = model_copy.response(
             messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=_tools,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -620,7 +619,7 @@ class CultureManager:
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
         if isinstance(db, AsyncBaseDb):
-            self._determine_tools_for_model(
+            _tools = self._determine_tools_for_model(
                 await self._aget_db_tools(
                     db,
                     enable_delete_knowledge=delete_knowledge,
@@ -630,7 +629,7 @@ class CultureManager:
                 ),
             )
         else:
-            self._determine_tools_for_model(
+            _tools = self._determine_tools_for_model(
                 self._get_db_tools(
                     db,
                     enable_delete_knowledge=delete_knowledge,
@@ -656,8 +655,7 @@ class CultureManager:
         # Generate a response from the Model (includes running function calls)
         response = await model_copy.aresponse(
             messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=_tools,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:

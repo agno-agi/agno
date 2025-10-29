@@ -15,9 +15,11 @@ db = PostgresDb(db_url=db_url, session_table="sessions")
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     db=db,
-    session_id="session_storage",
     add_history_to_context=True,
-    num_history_runs=2,
+    num_history_runs=3,
 )
 
 agent.print_response("Tell me a new interesting fact about space")
+agent.print_response("Tell me a new interesting fact about oceans")
+
+agent.print_response("What have we been talking about?")

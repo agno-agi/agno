@@ -9,6 +9,12 @@ from agno.media import Audio, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
+from agno.utils.media import (
+    reconstruct_audio_list,
+    reconstruct_images,
+    reconstruct_response_audio,
+    reconstruct_videos,
+)
 
 if TYPE_CHECKING:
     from agno.workflow.types import StepOutput, WorkflowMetrics
@@ -600,17 +606,10 @@ class WorkflowRunOutput:
 
         metadata = data.pop("metadata", None)
 
-        images = data.pop("images", [])
-        images = [Image.model_validate(image) for image in images] if images else None
-
-        videos = data.pop("videos", [])
-        videos = [Video.model_validate(video) for video in videos] if videos else None
-
-        audio = data.pop("audio", [])
-        audio = [Audio.model_validate(audio) for audio in audio] if audio else None
-
-        response_audio = data.pop("response_audio", None)
-        response_audio = Audio.model_validate(response_audio) if response_audio else None
+        images = reconstruct_images(data.pop("images", []))
+        videos = reconstruct_videos(data.pop("videos", []))
+        audio = reconstruct_audio_list(data.pop("audio", []))
+        response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         events_data = data.pop("events", [])
         final_events = []
@@ -633,6 +632,12 @@ class WorkflowRunOutput:
 
         input_data = data.pop("input", None)
 
+        # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
         return cls(
             step_results=parsed_step_results,
             metadata=metadata,
@@ -644,7 +649,7 @@ class WorkflowRunOutput:
             metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
             input=input_data,
-            **data,
+            **filtered_data,
         )
 
     def get_content_as_string(self, **kwargs) -> str:
