@@ -183,7 +183,7 @@ class AgentResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
-    def from_agent(cls, agent: Agent) -> "AgentResponse":
+    async def from_agent(cls, agent: Agent) -> "AgentResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             """Filter out fields that match their default values, keeping only meaningful user configurations"""
             filtered = {}
@@ -243,10 +243,10 @@ class AgentResponse(BaseModel):
             "stream_intermediate_steps": False,
         }
 
-        agent_tools = agent.get_tools(
+        agent_tools = await agent.aget_tools(
             session=AgentSession(session_id=str(uuid4()), session_data={}),
             run_response=RunOutput(run_id=str(uuid4())),
-            async_mode=True,
+            check_mcp_tools=False,
         )
         formatted_tools = format_tools(agent_tools) if agent_tools else None
 
@@ -415,7 +415,7 @@ class TeamResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
-    def from_team(cls, team: Team) -> "TeamResponse":
+    async def from_team(cls, team: Team) -> "TeamResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             """Filter out fields that match their default values, keeping only meaningful user configurations"""
             filtered = {}
@@ -466,15 +466,17 @@ class TeamResponse(BaseModel):
             "stream_member_events": False,
         }
 
-        team.determine_tools_for_model(
+        _tools = team._determine_tools_for_model(
             model=team.model,  # type: ignore
             session=TeamSession(session_id=str(uuid4()), session_data={}),
             run_response=TeamRunOutput(run_id=str(uuid4())),
             async_mode=True,
             session_state={},
             team_run_context={},
+            check_mcp_tools=False,
         )
-        team_tools = list(team._functions_for_model.values()) if team._functions_for_model else []
+        print(team.tools, _tools)
+        team_tools = _tools
         formatted_tools = format_team_tools(team_tools) if team_tools else None
 
         model_name = team.model.name or team.model.__class__.__name__ if team.model else None
@@ -595,6 +597,15 @@ class TeamResponse(BaseModel):
         if team.model and team.model.provider is not None:
             _team_model_data["provider"] = team.model.provider
 
+        members: List[Union[AgentResponse, TeamResponse]] = []
+        for member in team.members:
+            if isinstance(member, Agent):
+                agent_response = await AgentResponse.from_agent(member)
+                members.append(agent_response)
+            if isinstance(member, Team):
+                team_response = await TeamResponse.from_team(member)
+                members.append(team_response)
+
         return TeamResponse(
             id=team.id,
             name=team.name,
@@ -609,14 +620,7 @@ class TeamResponse(BaseModel):
             system_message=filter_meaningful_config(system_message_info, team_defaults),
             response_settings=filter_meaningful_config(response_settings_info, team_defaults),
             streaming=filter_meaningful_config(streaming_info, team_defaults),
-            members=[  # type: ignore
-                AgentResponse.from_agent(member)
-                if isinstance(member, Agent)
-                else TeamResponse.from_team(member)
-                if isinstance(member, Team)
-                else None
-                for member in team.members
-            ],
+            members=members if members else None,
             metadata=team.metadata,
         )
 
@@ -633,7 +637,7 @@ class WorkflowResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
-    def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Parse Agents and Teams into AgentResponse and TeamResponse objects.
 
         If the given steps have nested steps, recursively work on those."""
@@ -651,13 +655,15 @@ class WorkflowResponse(BaseModel):
         for idx, step in enumerate(steps):
             if step.get("agent"):
                 # Convert to dict and exclude fields that are None
-                step["agent"] = AgentResponse.from_agent(step["agent"]).model_dump(exclude_none=True)
+                agent_response = await AgentResponse.from_agent(step.get("agent"))  # type: ignore
+                step["agent"] = agent_response.model_dump(exclude_none=True)
 
             if step.get("team"):
-                step["team"] = TeamResponse.from_team(step["team"]).model_dump(exclude_none=True)
+                team_response = await TeamResponse.from_team(step.get("team"))  # type: ignore
+                step["team"] = team_response.model_dump(exclude_none=True)
 
             if step.get("steps"):
-                step["steps"] = cls._resolve_agents_and_teams_recursively(step["steps"])
+                step["steps"] = await cls._resolve_agents_and_teams_recursively(step["steps"])
 
             # Prune None values in the entire step
             steps[idx] = _prune_none(step)
@@ -665,12 +671,12 @@ class WorkflowResponse(BaseModel):
         return steps
 
     @classmethod
-    def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
+    async def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
         workflow_dict = workflow.to_dict()
         steps = workflow_dict.get("steps")
 
         if steps:
-            steps = cls._resolve_agents_and_teams_recursively(steps)
+            steps = await cls._resolve_agents_and_teams_recursively(steps)
 
         return cls(
             id=workflow.id,
