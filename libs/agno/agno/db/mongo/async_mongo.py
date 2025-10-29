@@ -282,7 +282,7 @@ class AsyncMongoDb(AsyncBaseDb):
                     return None
                 # Note: Motor doesn't have sync create_index, so we use it as-is
                 # The indexes are created in the background
-                create_collection_indexes(collection, collection_type)
+                create_collection_indexes(collection, collection_type)  # type: ignore
                 setattr(self, f"_{collection_name}_initialized", True)
                 log_debug(f"Initialized collection '{collection_name}'")
             else:
@@ -1088,8 +1088,8 @@ class AsyncMongoDb(AsyncBaseDb):
             # Apply pagination
             if limit is not None:
                 if page is not None:
-                    pipeline.append({"$skip": (page - 1) * limit})
-                pipeline.append({"$limit": limit})
+                    pipeline.append({"$skip": (page - 1) * limit})  # type: ignore
+                pipeline.append({"$limit": limit})   # type: ignore
 
             results = await collection.aggregate(pipeline).to_list(length=None)
 
@@ -1584,7 +1584,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 metrics_records.append(metrics_record)
 
             if metrics_records:
-                results = bulk_upsert_metrics(collection, metrics_records)
+                results = bulk_upsert_metrics(collection, metrics_records)  # type: ignore
 
             return results
 
