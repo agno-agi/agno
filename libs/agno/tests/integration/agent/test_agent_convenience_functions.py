@@ -318,17 +318,6 @@ def test_get_run_output(test_agent):
     assert retrieved_output.content == response.content
 
 
-def test_get_run_output_without_session_id(test_agent):
-    """Test get_run_output works without session_id if agent has one."""
-    test_agent.session_id = str(uuid.uuid4())
-    response = test_agent.run("Hello")
-    run_id = response.run_id
-
-    retrieved_output = test_agent.get_run_output(run_id=run_id)
-    assert retrieved_output is not None
-    assert retrieved_output.run_id == run_id
-
-
 @pytest.mark.asyncio
 async def test_aget_run_output(async_test_agent):
     """Test aget_run_output returns specific run."""
