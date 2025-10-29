@@ -1,14 +1,21 @@
 import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import WebSocket
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.metrics import Metrics
+from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_warning
+from agno.utils.media import (
+    reconstruct_audio_list,
+    reconstruct_files,
+    reconstruct_images,
+    reconstruct_videos,
+)
 from agno.utils.serialize import json_serializer
 
 
@@ -79,6 +86,8 @@ class StepInput:
     videos: Optional[List[Video]] = None
     audio: Optional[List[Audio]] = None
     files: Optional[List[File]] = None
+
+    workflow_session: Optional["WorkflowSession"] = None
 
     def get_input_as_string(self) -> Optional[str]:
         """Convert input to string representation"""
@@ -170,6 +179,28 @@ class StepInput:
 
         # Use the helper method to get the deepest content
         return self._get_deepest_step_content(last_output)  # type: ignore[return-value]
+
+    def get_workflow_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
+        """Get workflow conversation history as structured data for custom function steps
+
+        Args:
+            num_runs: Number of recent runs to include. If None, returns all available history.
+        """
+        if not self.workflow_session:
+            return []
+
+        return self.workflow_session.get_workflow_history(num_runs=num_runs)
+
+    def get_workflow_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
+        """Get formatted workflow conversation history context for custom function steps
+
+        Args:
+            num_runs: Number of recent runs to include. If None, returns all available history.
+        """
+        if not self.workflow_session:
+            return None
+
+        return self.workflow_session.get_workflow_history_context(num_runs=num_runs)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -283,21 +314,10 @@ class StepOutput:
     def from_dict(cls, data: Dict[str, Any]) -> "StepOutput":
         """Create StepOutput from dictionary"""
         # Reconstruct media artifacts
-        images = data.get("images")
-        if images:
-            images = [Image.model_validate(img) for img in images]
-
-        videos = data.get("videos")
-        if videos:
-            videos = [Video.model_validate(vid) for vid in videos]
-
-        audio = data.get("audio")
-        if audio:
-            audio = [Audio.model_validate(aud) for aud in audio]
-
-        files = data.get("files")
-        if files:
-            files = [File.model_validate(file) for file in files]
+        images = reconstruct_images(data.get("images"))
+        videos = reconstruct_videos(data.get("videos"))
+        audio = reconstruct_audio_list(data.get("audio"))
+        files = reconstruct_files(data.get("files"))
 
         metrics_data = data.get("metrics")
         metrics = None

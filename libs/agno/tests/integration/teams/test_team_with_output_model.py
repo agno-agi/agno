@@ -17,7 +17,7 @@ team = Team(
     output_model=OpenAIChat(id="gpt-4o"),
     instructions="You have no members, answer directly",
     description="You are an expert on national parks and provide concise guides.",
-    stream_intermediate_steps=True,
+    stream_events=True,
     telemetry=False,
 )
 

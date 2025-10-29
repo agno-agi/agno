@@ -37,7 +37,7 @@ def test_tool_use_stream():
     responses = []
     tool_call_seen = False
 
-    for response in agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    for response in agent.run("What is the current price of TSLA?", stream=True, stream_events=True):
         responses.append(response)
         if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:
             if response.tool.tool_name:  # type: ignore
@@ -78,7 +78,7 @@ async def test_async_tool_use_stream():
     responses = []
     tool_call_seen = False
 
-    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_events=True):
         responses.append(response)
         if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:
             if response.tool.tool_name:  # type: ignore

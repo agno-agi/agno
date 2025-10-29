@@ -139,6 +139,46 @@ class Function(BaseModel):
             include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
         )
 
+    def model_copy(self, *, deep: bool = False) -> "Function":
+        """
+        Override model_copy to handle callable fields that can't be deep copied (pickled).
+        Callables should always be shallow copied (referenced), not deep copied.
+        """
+        # For deep copy, we need to handle callable fields specially
+        if deep:
+            # Fields that should NOT be deep copied (callables and complex objects)
+            shallow_fields = {
+                "entrypoint",
+                "pre_hook",
+                "post_hook",
+                "tool_hooks",
+                "_agent",
+                "_team",
+            }
+
+            # Create a copy with shallow references to callable fields
+            copied_data = {}
+            for field_name, field_value in self.__dict__.items():
+                if field_name in shallow_fields:
+                    # Shallow copy - just reference the same object
+                    copied_data[field_name] = field_value
+                elif field_name == "parameters":
+                    # Deep copy the parameters dict
+                    from copy import deepcopy
+
+                    copied_data[field_name] = deepcopy(field_value)
+                else:
+                    # For simple types, just copy the value
+                    copied_data[field_name] = field_value
+
+            # Create new instance with copied data
+            new_instance = self.__class__.model_construct(**copied_data)
+
+            return new_instance
+        else:
+            # For shallow copy, use the default Pydantic behavior
+            return super().model_copy(deep=False)
+
     @classmethod
     def from_callable(cls, c: Callable, name: Optional[str] = None, strict: bool = False) -> "Function":
         from inspect import getdoc, signature
@@ -473,6 +513,7 @@ class Function(BaseModel):
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name and arguments."""
+        import json
         from hashlib import md5
 
         copy_entrypoint_args = entrypoint_args.copy()
@@ -493,7 +534,8 @@ class Function(BaseModel):
             del copy_entrypoint_args["files"]
         if "dependencies" in copy_entrypoint_args:
             del copy_entrypoint_args["dependencies"]
-        args_str = str(copy_entrypoint_args)
+        # Use json.dumps with sort_keys=True to ensure consistent ordering regardless of dict key order
+        args_str = json.dumps(copy_entrypoint_args, sort_keys=True, default=str)
 
         kwargs_str = str(sorted((call_args or {}).items()))
         key_str = f"{self.name}:{args_str}:{kwargs_str}"
@@ -799,6 +841,9 @@ class FunctionCall(BaseModel):
                 return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
+        execution_result = None
+        exception_to_raise = None
+
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
@@ -822,22 +867,27 @@ class FunctionCall(BaseModel):
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
 
+            execution_result = FunctionExecutionResult(
+                status="success", result=self.result, updated_session_state=updated_session_state
+            )
+
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
-            raise
+            exception_to_raise = e
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return FunctionExecutionResult(status="failure", error=str(e))
+            execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
-        # Execute post-hook if it exists
-        self._handle_post_hook()
+        finally:
+            self._handle_post_hook()
 
-        return FunctionExecutionResult(
-            status="success", result=self.result, updated_session_state=updated_session_state
-        )
+            if exception_to_raise is not None:
+                raise exception_to_raise
+
+            return execution_result  # type: ignore[return-value]
 
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
@@ -991,6 +1041,9 @@ class FunctionCall(BaseModel):
                 return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
+        execution_result = None
+        exception_to_raise = None
+
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
@@ -1017,25 +1070,30 @@ class FunctionCall(BaseModel):
             if entrypoint_args.get("session_state") is not None:
                 updated_session_state = entrypoint_args.get("session_state")
 
+            execution_result = FunctionExecutionResult(
+                status="success", result=self.result, updated_session_state=updated_session_state
+            )
+
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
-            raise
+            exception_to_raise = e
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return FunctionExecutionResult(status="failure", error=str(e))
+            execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
-        # Execute post-hook if it exists
-        if iscoroutinefunction(self.function.post_hook):
-            await self._handle_post_hook_async()
-        else:
-            self._handle_post_hook()
+        finally:
+            if iscoroutinefunction(self.function.post_hook):
+                await self._handle_post_hook_async()
+            else:
+                self._handle_post_hook()
 
-        return FunctionExecutionResult(
-            status="success", result=self.result, updated_session_state=updated_session_state
-        )
+            if exception_to_raise is not None:
+                raise exception_to_raise
+
+            return execution_result  # type: ignore[return-value]
 
 
 class ToolResult(BaseModel):

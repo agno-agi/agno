@@ -57,11 +57,7 @@ def test_delegate_to_wrong_member(team):
         session_state={},
         team_run_context={},
     )
-    response = list(
-        function.entrypoint(
-            member_id="wrong-agent", task_description="Get the current stock price of AAPL", expected_output=""
-        )
-    )
+    response = list(function.entrypoint(member_id="wrong-agent", task="Get the current stock price of AAPL"))
     assert "Member with ID wrong-agent not found in the team or any subteams" in response[0]
 
 

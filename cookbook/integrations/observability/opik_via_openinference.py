@@ -4,11 +4,11 @@ Instrument your Agno agents with OpenTelemetry and stream traces to Opik for ric
 1. Install dependencies:
    pip install -U opik agno openai opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
 2. Point the OTLP exporter at the Opik collector:
-   - Opik Cloud:  
-     export OTEL_EXPORTER_OTLP_ENDPOINT=https://www.comet.com/opik/api/v1/private/otel  
+   - Opik Cloud:
+     export OTEL_EXPORTER_OTLP_ENDPOINT=https://www.comet.com/opik/api/v1/private/otel
      export OTEL_EXPORTER_OTLP_HEADERS='Authorization=<your-api-key>,Comet-Workspace=<workspace>,projectName=<project>'
-   - Self-hosted:  
-     export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:5173/api/v1/private/otel  
+   - Self-hosted:
+     export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:5173/api/v1/private/otel
      export OTEL_EXPORTER_OTLP_HEADERS='projectName=<project>'
 """
 
@@ -43,4 +43,6 @@ agent = Agent(
 
 if __name__ == "__main__":
     # The span hierarchy (agent → model → tool) will appear in Opik for every request
-    agent.print_response("What is the current price of Apple and how did it move today?")
+    agent.print_response(
+        "What is the current price of Apple and how did it move today?"
+    )

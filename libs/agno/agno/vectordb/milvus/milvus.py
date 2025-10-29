@@ -28,6 +28,9 @@ class Milvus(VectorDb):
     def __init__(
         self,
         collection: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         uri: str = "http://localhost:19530",
@@ -42,6 +45,8 @@ class Milvus(VectorDb):
 
         Args:
             collection (str): Name of the Milvus collection.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             embedder (Embedder): Embedder to use for embedding documents.
             distance (Distance): Distance metric to use for vector similarity.
             uri (Optional[str]): URI of the Milvus server.
@@ -63,6 +68,20 @@ class Milvus(VectorDb):
             reranker (Optional[Reranker]): Reranker to use for hybrid search results
             **kwargs: Additional keyword arguments to pass to the MilvusClient.
         """
+        # Validate required parameters
+        if not collection:
+            raise ValueError("Collection name must be provided.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            seed = f"{uri or 'milvus'}#{collection}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         self.collection: str = collection
 
         if embedder is None:
@@ -1141,3 +1160,7 @@ class Milvus(VectorDb):
         except Exception as e:
             log_error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.hybrid]
