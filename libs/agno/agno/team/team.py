@@ -8501,7 +8501,7 @@ class Team:
                     log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
-            from inspect import signature
+            from inspect import isawaitable, signature
 
             try:
                 sig = signature(self.knowledge_retriever)
@@ -8511,7 +8511,13 @@ class Team:
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                return self.knowledge_retriever(**knowledge_retriever_kwargs)
+
+                result = self.knowledge_retriever(**knowledge_retriever_kwargs)
+
+                if isawaitable(result):
+                    result = await result
+
+                return result
             except Exception as e:
                 log_warning(f"Knowledge retriever failed: {e}")
                 raise e
