@@ -1,3 +1,4 @@
+# mypy: disable-error-code=var-annotated
 """Use this script to migrate your Agno VectorDBs from v1 to v2
 
 This script works with PgVector and SingleStore.
