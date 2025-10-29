@@ -3,8 +3,7 @@ from typing import Optional, Union
 from agno.models.base import Model
 
 
-def get_model(model_id: str, model_provider: str) -> Model:
-    """Return the model instance given a model provider and id"""
+def _get_model_class(model_id: str, model_provider: str) -> Model:
     provider = model_provider.lower()
 
     if provider == "openai":
@@ -211,7 +210,7 @@ def get_model(model_id: str, model_provider: str) -> Model:
         raise ValueError(f"Model provider '{model_provider}' is not supported. ")
 
 
-def get_model_from_string(model_string: str) -> Model:
+def _parse_model_string(model_string: str) -> Model:
     if not model_string or not isinstance(model_string, str):
         raise ValueError(f"Model string must be a non-empty string, got: {model_string}")
 
@@ -229,15 +228,15 @@ def get_model_from_string(model_string: str) -> Model:
     if not provider or not model_id:
         raise ValueError(f"Invalid model string format: '{model_string}'")
 
-    return get_model(model_id=model_id, model_provider=provider)
+    return _get_model_class(model_id, provider)
 
 
-def resolve_model(model: Union[Model, str, None]) -> Optional[Model]:
+def get_model(model: Union[Model, str, None]) -> Optional[Model]:
     if model is None:
         return None
     elif isinstance(model, Model):
         return model
     elif isinstance(model, str):
-        return get_model_from_string(model)
+        return _parse_model_string(model)
     else:
         raise TypeError(f"Model must be a Model instance, string, or None. Got: {type(model).__name__}")

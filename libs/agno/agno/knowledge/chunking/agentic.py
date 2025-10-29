@@ -5,7 +5,7 @@ from agno.knowledge.document.base import Document
 from agno.models.base import Model
 from agno.models.defaults import DEFAULT_OPENAI_MODEL_ID
 from agno.models.message import Message
-from agno.models.utils import resolve_model
+from agno.models.utils import get_model
 
 
 class AgenticChunking(ChunkingStrategy):
@@ -13,7 +13,7 @@ class AgenticChunking(ChunkingStrategy):
 
     def __init__(self, model: Optional[Union[Model, str]] = None, max_chunk_size: int = 5000):
         # Convert model string to Model instance
-        model = resolve_model(model)
+        model = get_model(model)
         if model is None:
             try:
                 from agno.models.openai import OpenAIChat
@@ -21,7 +21,6 @@ class AgenticChunking(ChunkingStrategy):
                 raise ValueError("`openai` isn't installed. Please install it with `pip install openai`")
             model = OpenAIChat(DEFAULT_OPENAI_MODEL_ID)
 
-        print(f"Using model: {model.id} ({model.provider}) for agentic chunking")
         self.max_chunk_size = max_chunk_size
         self.model = model
 

@@ -11,7 +11,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.utils import resolve_model
+from agno.models.utils import get_model
 from agno.tools.function import Function
 from agno.utils.log import (
     log_debug,
@@ -78,8 +78,7 @@ class MemoryManager:
         clear_memories: bool = False,
         debug_mode: bool = False,
     ):
-        # Convert model string to Model instance
-        self.model = resolve_model(model)
+        self.model = get_model(model)
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions
         self.additional_instructions = additional_instructions

@@ -47,7 +47,7 @@ from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.models.utils import resolve_model
+from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import (
     RunEvent,
@@ -513,7 +513,7 @@ class Agent:
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
     ):
-        self.model = model
+        self.model = model  # type: ignore[assignment]
 
         self.name = name
         self.id = id
@@ -580,7 +580,7 @@ class Agent:
         self.post_hooks = post_hooks
 
         self.reasoning = reasoning
-        self.reasoning_model = reasoning_model
+        self.reasoning_model = get_model(reasoning_model)
         self.reasoning_agent = reasoning_agent
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
@@ -611,12 +611,12 @@ class Agent:
         self.retries = retries
         self.delay_between_retries = delay_between_retries
         self.exponential_backoff = exponential_backoff
-        self.parser_model = parser_model
+        self.parser_model = parser_model  # type: ignore[assignment]
         self.parser_model_prompt = parser_model_prompt
         self.input_schema = input_schema
         self.output_schema = output_schema
         self.parse_response = parse_response
-        self.output_model = output_model
+        self.output_model = output_model  # type: ignore[assignment]
         self.output_model_prompt = output_model_prompt
 
         self.structured_outputs = structured_outputs
@@ -819,14 +819,14 @@ class Agent:
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
 
     def _resolve_models(self) -> None:
-        if self.model is not None and isinstance(self.model, str):
-            self.model = resolve_model(self.model)
-        if self.reasoning_model is not None and isinstance(self.reasoning_model, str):
-            self.reasoning_model = resolve_model(self.reasoning_model)
-        if self.parser_model is not None and isinstance(self.parser_model, str):
-            self.parser_model = resolve_model(self.parser_model)
-        if self.output_model is not None and isinstance(self.output_model, str):
-            self.output_model = resolve_model(self.output_model)
+        if self.model is not None:
+            self.model = get_model(self.model)
+        if self.reasoning_model is not None:
+            self.reasoning_model = get_model(self.reasoning_model)
+        if self.parser_model is not None:
+            self.parser_model = get_model(self.parser_model)
+        if self.output_model is not None:
+            self.output_model = get_model(self.output_model)
 
     def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
         self._set_default_model()

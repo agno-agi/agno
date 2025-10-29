@@ -8,7 +8,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.utils import resolve_model
+from agno.models.utils import get_model
 from agno.tools.function import Function
 from agno.utils.log import (
     log_debug,
@@ -67,8 +67,7 @@ class CultureManager:
         clear_knowledge: bool = True,
         debug_mode: bool = False,
     ):
-        # Convert model string to Model instance
-        self.model = resolve_model(model)
+        self.model = get_model(model)
         self.db = db
         self.system_message = system_message
         self.culture_capture_instructions = culture_capture_instructions

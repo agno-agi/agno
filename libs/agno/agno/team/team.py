@@ -45,7 +45,7 @@ from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
-from agno.models.utils import resolve_model
+from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
@@ -536,7 +536,7 @@ class Team:
     ):
         self.members = members
 
-        self.model = model
+        self.model = model  # type: ignore[assignment]  # Resolved in _resolve_models()
 
         self.name = name
         self.id = id
@@ -619,9 +619,9 @@ class Team:
 
         self.input_schema = input_schema
         self.output_schema = output_schema
-        self.parser_model = parser_model
+        self.parser_model = parser_model  # type: ignore[assignment]  # Resolved in _resolve_models()
         self.parser_model_prompt = parser_model_prompt
-        self.output_model = output_model
+        self.output_model = output_model  # type: ignore[assignment]  # Resolved in _resolve_models()
         self.output_model_prompt = output_model_prompt
         self.use_json_mode = use_json_mode
         self.parse_response = parse_response
@@ -638,7 +638,7 @@ class Team:
         self.metadata = metadata
 
         self.reasoning = reasoning
-        self.reasoning_model = reasoning_model
+        self.reasoning_model = reasoning_model  # type: ignore[assignment]  # Resolved in _resolve_models()
         self.reasoning_agent = reasoning_agent
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
@@ -906,14 +906,19 @@ class Team:
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
 
     def _resolve_models(self) -> None:
-        if self.model is not None and isinstance(self.model, str):
-            self.model = resolve_model(self.model)
-        if self.reasoning_model is not None and isinstance(self.reasoning_model, str):
-            self.reasoning_model = resolve_model(self.reasoning_model)
-        if self.parser_model is not None and isinstance(self.parser_model, str):
-            self.parser_model = resolve_model(self.parser_model)
-        if self.output_model is not None and isinstance(self.output_model, str):
-            self.output_model = resolve_model(self.output_model)
+        """Resolve model strings to Model instances.
+
+        Converts model strings (e.g., 'openai:gpt-4o') to actual Model instances.
+        This happens after __init__ as suggested by PR #4415 reviewers.
+        """
+        if self.model is not None:
+            self.model = get_model(self.model)
+        if self.reasoning_model is not None:
+            self.reasoning_model = get_model(self.reasoning_model)
+        if self.parser_model is not None:
+            self.parser_model = get_model(self.parser_model)
+        if self.output_model is not None:
+            self.output_model = get_model(self.output_model)
 
     def initialize_team(self, debug_mode: Optional[bool] = None) -> None:
         # Make sure for the team, we are using the team logger
