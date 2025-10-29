@@ -1082,7 +1082,8 @@ def get_base_router(
 
         agents = []
         for agent in os.agents:
-            agents.append(AgentResponse.from_agent(agent=agent))
+            agent_response = await AgentResponse.from_agent(agent=agent)
+            agents.append(agent_response)
 
         return agents
 
@@ -1129,7 +1130,7 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        return AgentResponse.from_agent(agent)
+        return await AgentResponse.from_agent(agent)
 
     # -- Team routes ---
 
@@ -1414,7 +1415,8 @@ def get_base_router(
 
         teams = []
         for team in os.teams:
-            teams.append(TeamResponse.from_team(team=team))
+            team_response = await TeamResponse.from_team(team=team)
+            teams.append(team_response)
 
         return teams
 
@@ -1507,7 +1509,7 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        return TeamResponse.from_team(team)
+        return await TeamResponse.from_team(team)
 
     # -- Workflow routes ---
 
@@ -1580,7 +1582,7 @@ def get_base_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        return WorkflowResponse.from_workflow(workflow)
+        return await WorkflowResponse.from_workflow(workflow)
 
     @router.post(
         "/workflows/{workflow_id}/runs",

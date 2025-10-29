@@ -277,8 +277,6 @@ class DynamoDb(BaseDb):
 
             session = deserialize_from_dynamodb_item(item)
 
-            if session.get("session_type") != session_type.value:
-                return None
             if user_id and session.get("user_id") != user_id:
                 return None
 
