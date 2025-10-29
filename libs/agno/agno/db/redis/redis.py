@@ -327,8 +327,6 @@ class RedisDb(BaseDb):
             # Apply filters
             if user_id is not None and session.get("user_id") != user_id:
                 return None
-            if session_type is not None and session.get("session_type") != session_type:
-                return None
 
             if not deserialize:
                 return session

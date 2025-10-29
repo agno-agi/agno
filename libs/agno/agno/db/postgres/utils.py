@@ -164,7 +164,7 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
 
         # Get existing columns from the async engine
         async with db_engine.connect() as conn:
-            existing_columns = await conn.run_sync(_get_table_columns, table_name)
+            existing_columns = await conn.run_sync(_get_table_columns, table_name, db_schema)
 
         # Check if all expected columns exist
         missing_columns = expected_columns - existing_columns
@@ -178,10 +178,10 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
         return False
 
 
-def _get_table_columns(conn, table_name: str) -> set[str]:
+def _get_table_columns(conn, table_name: str, db_schema: str) -> set[str]:
     """Helper function to get table columns using sync inspector."""
     inspector = inspect(conn)
-    columns_info = inspector.get_columns(table_name)
+    columns_info = inspector.get_columns(table_name, schema=db_schema)
     return {col["name"] for col in columns_info}
 
 
