@@ -3457,7 +3457,7 @@ class Team:
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
         if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
-            log_debug("Creating user memories.")
+            log_debug("Creating, updating or deleting user memories.")
             self.memory_manager.create_user_memories(
                 message=user_message_str,
                 user_id=user_id,
@@ -3473,7 +3473,7 @@ class Team:
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
         if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
-            log_debug("Creating user memories.")
+            log_debug("Creating, updating or deleting user memories.")
             await self.memory_manager.acreate_user_memories(
                 message=user_message_str,
                 user_id=user_id,
