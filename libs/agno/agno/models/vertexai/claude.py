@@ -5,8 +5,7 @@ from typing import Any, Dict, Optional
 from agno.models.anthropic import Claude as AnthropicClaude
 
 try:
-    from anthropic import AnthropicVertex
-    from anthropic import AsyncAnthropicVertex
+    from anthropic import AnthropicVertex, AsyncAnthropicVertex
 except ImportError as e:
     raise ImportError("`anthropic` not installed. Please install it with `pip install anthropic`") from e
 
