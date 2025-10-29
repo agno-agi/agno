@@ -104,4 +104,4 @@ if memories_after:
     print("\nMerged memory:")
     print(f"  {memories_after[0].memory}")
 else:
-    print("\n⚠️  No memories found after optimization")
+    print("\n No memories found after optimization")
