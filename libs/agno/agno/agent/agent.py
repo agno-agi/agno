@@ -220,7 +220,9 @@ class Agent:
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_context: bool = False
     # Number of historical runs to include in the messages
-    num_history_runs: int = 3
+    num_history_runs: Optional[int] = None
+    # Number of historical messages to include in the messages list sent to the Model.
+    num_history_messages: Optional[int] = None
     # Maximum number of tool calls to include from history (None = no limit)
     max_tool_calls_from_history: Optional[int] = None
 
@@ -438,7 +440,8 @@ class Agent:
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_history_to_context: bool = False,
-        num_history_runs: int = 3,
+        num_history_runs: Optional[int] = None,
+        num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
         store_media: bool = True,
         store_tool_messages: bool = True,
@@ -541,6 +544,15 @@ class Agent:
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
+        self.num_history_messages = num_history_messages
+        if self.num_history_messages is not None and self.num_history_runs is not None:
+            log_warning(
+                "num_history_messages and num_history_runs cannot be set at the same time. Using num_history_runs."
+            )
+            self.num_history_messages = None
+        if self.num_history_messages is None and self.num_history_runs is None:
+            self.num_history_runs = 3
+
         self.max_tool_calls_from_history = max_tool_calls_from_history
 
         self.store_media = store_media
@@ -7461,6 +7473,7 @@ class Agent:
 
             history: List[Message] = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
+                last_n_messages=self.num_history_messages,
                 skip_role=skip_role,
                 agent_id=self.id if self.team_id is not None else None,
             )
@@ -7658,9 +7671,17 @@ class Agent:
         if add_history_to_context:
             from copy import deepcopy
 
+            # Only skip messages from history when system_message_role is NOT a standard conversation role.
+            # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+            # to preserve conversation continuity.
+            skip_role = (
+                self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
+            )
+
             history: List[Message] = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
-                skip_role=self.system_message_role,
+                last_n_messages=self.num_history_messages,
+                skip_role=skip_role,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
