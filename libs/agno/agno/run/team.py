@@ -664,6 +664,12 @@ class TeamRunOutput:
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
 
+        # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
         return cls(
             messages=messages,
             metrics=metrics,
@@ -681,7 +687,7 @@ class TeamRunOutput:
             citations=citations,
             tools=tools,
             events=events,
-            **data,
+            **filtered_data,
         )
 
     def get_content_as_string(self, **kwargs) -> str:
