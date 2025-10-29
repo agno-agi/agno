@@ -3,20 +3,20 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
-from agno.db.async_postgres.schemas import get_table_schema_definition
-from agno.db.async_postgres.utils import (
+from agno.db.base import AsyncBaseDb, SessionType
+from agno.db.postgres.schemas import get_table_schema_definition
+from agno.db.postgres.utils import (
+    abulk_upsert_metrics,
+    acreate_schema,
+    ais_table_available,
+    ais_valid_table,
     apply_sorting,
-    bulk_upsert_metrics,
     calculate_date_metrics,
-    create_schema,
     deserialize_cultural_knowledge,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    is_table_available,
-    is_valid_table,
     serialize_cultural_knowledge,
 )
-from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -148,7 +148,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             async with self.async_session_factory() as sess, sess.begin():
-                await create_schema(session=sess, db_schema=db_schema)
+                await acreate_schema(session=sess, db_schema=db_schema)
 
             # Create table
             async with self.db_engine.begin() as conn:
@@ -241,12 +241,12 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
 
         async with self.async_session_factory() as sess, sess.begin():
-            table_is_available = await is_table_available(session=sess, table_name=table_name, db_schema=db_schema)
+            table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=db_schema)
 
         if not table_is_available:
             return await self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
-        if not await is_valid_table(
+        if not await ais_valid_table(
             db_engine=self.db_engine,
             table_name=table_name,
             table_type=table_type,
@@ -288,7 +288,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
                 result = await sess.execute(delete_stmt)
 
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore
                     log_debug(f"No session found to delete with session_id: {session_id} in table {table.name}")
                     return False
 
@@ -317,7 +317,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
                 result = await sess.execute(delete_stmt)
 
-            log_debug(f"Successfully deleted {result.rowcount} sessions")
+            log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
@@ -354,9 +354,6 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
-                if session_type is not None:
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    stmt = stmt.where(table.c.session_type == session_type_value)
                 result = await sess.execute(stmt)
                 row = result.fetchone()
                 if row is None:
@@ -712,7 +709,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
                 result = await sess.execute(delete_stmt)
 
-                success = result.rowcount > 0
+                success = result.rowcount > 0  # type: ignore
                 if success:
                     log_debug(f"Successfully deleted user memory id: {memory_id}")
                 else:
@@ -737,10 +734,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
                 result = await sess.execute(delete_stmt)
 
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore
                     log_debug(f"No user memories found with ids: {memory_ids}")
                 else:
-                    log_debug(f"Successfully deleted {result.rowcount} user memories")
+                    log_debug(f"Successfully deleted {result.rowcount} user memories")  # type: ignore
 
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
@@ -1387,7 +1384,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             if metrics_records:
                 async with self.async_session_factory() as sess, sess.begin():
-                    results = await bulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
+                    results = await abulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
 
             log_debug("Updated metrics calculations")
 
@@ -1649,7 +1646,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 stmt = table.delete().where(table.c.run_id == eval_run_id)
                 result = await sess.execute(stmt)
 
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore
                     log_warning(f"No eval run found with ID: {eval_run_id}")
                 else:
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
@@ -1670,10 +1667,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
                 result = await sess.execute(stmt)
 
-                if result.rowcount == 0:
+                if result.rowcount == 0:  # type: ignore
                     log_warning(f"No eval runs found with IDs: {eval_run_ids}")
                 else:
-                    log_debug(f"Deleted {result.rowcount} eval runs")
+                    log_debug(f"Deleted {result.rowcount} eval runs")  # type: ignore
 
         except Exception as e:
             log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
