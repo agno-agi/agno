@@ -501,7 +501,7 @@ class Knowledge:
         await self._add_to_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
-            self._update_content(content)
+            await self._aupdate_content(content)
             return
 
         if self.vector_db.__class__.__name__ == "LightRag":
@@ -725,7 +725,7 @@ class Knowledge:
             await self._add_to_contents_db(content)
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
-                self._update_content(content)
+                await self._aupdate_content(content)
                 return
 
             if self.vector_db.__class__.__name__ == "LightRag":
@@ -741,7 +741,7 @@ class Knowledge:
                 log_error(f"No reader available for topic: {topic}")
                 content.status = ContentStatus.FAILED
                 content.status_message = "No reader available for topic"
-                self._update_content(content)
+                await self._aupdate_content(content)
                 continue
 
             read_documents = content.reader.read(topic)
