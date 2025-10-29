@@ -41,3 +41,10 @@ print(
 agent_specific.print_response(
     "Send a message 'Hello from limited bot!' to the channel #bot-test", markdown=True
 )
+
+# Example slack markdown formatting
+print("\n=== Example 3: Slack Markdown Formatting (enabled by default) ===")
+agent_all.print_response(
+    "Send a message to #bot-test with *bold text*, _italic text_, and a `code snippet`",
+    markdown=True,
+)
