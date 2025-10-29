@@ -1,6 +1,8 @@
 """Use this script to migrate your Agno VectorDBs from v1 to v2
 
-This script adds the new columns introduced in v2 to SQL-based vector databases:
+This script works with PgVector and SingleStore.
+
+This script will update the provided tables to add the two new columns introduced in v2:
 - content_hash: String column for content hash tracking
 - content_id: String column for content ID tracking
 
