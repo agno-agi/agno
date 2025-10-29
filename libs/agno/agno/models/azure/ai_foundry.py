@@ -160,9 +160,7 @@ class AzureAIFoundry(Model):
         Returns:
             ChatCompletionsClient: An instance of the Azure AI client.
         """
-        # Check if client exists and is not closed
-        # Azure's client doesn't have is_closed(), so we check if _client exists
-        if self.client and hasattr(self.client, "_client"):
+        if self.client:
             return self.client
 
         client_params = self._get_client_params()
@@ -176,27 +174,10 @@ class AzureAIFoundry(Model):
         Returns:
             AsyncChatCompletionsClient: An instance of the asynchronous Azure AI client.
         """
-        # Check if client exists and is not closed
-        # Azure's async client doesn't have is_closed(), so we check if _client exists
-        if self.async_client and hasattr(self.async_client, "_client"):
-            return self.async_client
-
         client_params = self._get_client_params()
 
         self.async_client = AsyncChatCompletionsClient(**client_params)
         return self.async_client
-
-    def close(self) -> None:
-        """Close the synchronous client and clean up resources."""
-        if self.client:
-            self.client.close()
-            self.client = None
-
-    async def aclose(self) -> None:
-        """Close the asynchronous client and clean up resources."""
-        if self.async_client:
-            await self.async_client.close()
-            self.async_client = None
 
     def invoke(
         self,
@@ -255,10 +236,11 @@ class AzureAIFoundry(Model):
                 run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
-            provider_response = await self.get_async_client().complete(
-                messages=[format_message(m) for m in messages],
-                **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
-            )
+            async with self.get_async_client() as client:
+                provider_response = await client.complete(
+                    messages=[format_message(m) for m in messages],
+                    **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
+                )
             assistant_message.metrics.stop_timer()
 
             model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
@@ -334,13 +316,14 @@ class AzureAIFoundry(Model):
 
             assistant_message.metrics.start_timer()
 
-            async_stream = await self.get_async_client().complete(
-                messages=[format_message(m) for m in messages],
-                stream=True,
-                **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
-            )
-            async for chunk in async_stream:  # type: ignore
-                yield self._parse_provider_response_delta(chunk)
+            async with self.get_async_client() as client:
+                async_stream = await client.complete(
+                    messages=[format_message(m) for m in messages],
+                    stream=True,
+                    **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
+                )
+                async for chunk in async_stream:  # type: ignore
+                    yield self._parse_provider_response_delta(chunk)
 
             assistant_message.metrics.stop_timer()
 
