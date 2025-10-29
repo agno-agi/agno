@@ -11,6 +11,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.utils import resolve_model
 from agno.tools.function import Function
 from agno.utils.log import (
     log_debug,
@@ -66,7 +67,7 @@ class MemoryManager:
 
     def __init__(
         self,
-        model: Optional[Model] = None,
+        model: Optional[Union[Model, str]] = None,
         system_message: Optional[str] = None,
         memory_capture_instructions: Optional[str] = None,
         additional_instructions: Optional[str] = None,
@@ -77,9 +78,8 @@ class MemoryManager:
         clear_memories: bool = False,
         debug_mode: bool = False,
     ):
-        self.model = model
-        if self.model is not None and isinstance(self.model, str):
-            raise ValueError("Model must be a Model object, not a string")
+        # Convert model string to Model instance
+        self.model = resolve_model(model)
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions
         self.additional_instructions = additional_instructions

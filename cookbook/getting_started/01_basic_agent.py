@@ -14,7 +14,7 @@ from agno.models.openai import OpenAIChat
 
 # Create our News Reporter with a fun personality
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model="openai:gpt-4o",
     instructions=dedent("""\
         You are an enthusiastic news reporter with a flair for storytelling! 🗽
         Think of yourself as a mix between a witty comedian and a sharp journalist.

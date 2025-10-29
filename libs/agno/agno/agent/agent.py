@@ -47,6 +47,7 @@ from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
+from agno.models.utils import resolve_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import (
     RunEvent,
@@ -414,7 +415,7 @@ class Agent:
     def __init__(
         self,
         *,
-        model: Optional[Model] = None,
+        model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
         id: Optional[str] = None,
         introduction: Optional[str] = None,
@@ -457,7 +458,7 @@ class Agent:
         pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         reasoning: bool = False,
-        reasoning_model: Optional[Model] = None,
+        reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
@@ -485,12 +486,12 @@ class Agent:
         retries: int = 0,
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
-        parser_model: Optional[Model] = None,
+        parser_model: Optional[Union[Model, str]] = None,
         parser_model_prompt: Optional[str] = None,
         input_schema: Optional[Union[Type[BaseModel], type]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
-        output_model: Optional[Model] = None,
+        output_model: Optional[Union[Model, str]] = None,
         output_model_prompt: Optional[str] = None,
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
@@ -510,6 +511,7 @@ class Agent:
         telemetry: bool = True,
     ):
         self.model = model
+
         self.name = name
         self.id = id
         self.introduction = introduction
@@ -645,6 +647,8 @@ class Agent:
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
+
+        self._resolve_models()
 
     @property
     def background_executor(self) -> Any:
@@ -801,6 +805,16 @@ class Agent:
     def _has_async_db(self) -> bool:
         """Return True if the db the agent is equipped with is an Async implementation"""
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
+
+    def _resolve_models(self) -> None:
+        if self.model is not None and isinstance(self.model, str):
+            self.model = resolve_model(self.model)
+        if self.reasoning_model is not None and isinstance(self.reasoning_model, str):
+            self.reasoning_model = resolve_model(self.reasoning_model)
+        if self.parser_model is not None and isinstance(self.parser_model, str):
+            self.parser_model = resolve_model(self.parser_model)
+        if self.output_model is not None and isinstance(self.output_model, str):
+            self.output_model = resolve_model(self.output_model)
 
     def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
         self._set_default_model()
