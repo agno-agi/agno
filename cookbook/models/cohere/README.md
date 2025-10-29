@@ -18,7 +18,7 @@ export CO_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U cohere duckduckgo-search duckdb yfinance agno
+pip install -U cohere ddgs duckdb yfinance agno
 ```
 
 ### 4. Run basic Agent

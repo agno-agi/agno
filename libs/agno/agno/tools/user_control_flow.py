@@ -9,6 +9,8 @@ class UserControlFlowTools(Toolkit):
         self,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
+        enable_get_user_input: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """A toolkit that provides the ability for the agent to interrupt the agent run and interact with the user."""
@@ -17,7 +19,10 @@ class UserControlFlowTools(Toolkit):
             self.instructions = self.DEFAULT_INSTRUCTIONS
         else:
             self.instructions = instructions
-        tools = [self.get_user_input]
+
+        tools = []
+        if all or enable_get_user_input:
+            tools.append(self.get_user_input)
 
         super().__init__(
             name="user_control_flow_tools",

@@ -43,7 +43,7 @@ python cookbook/models/meta/llama/basic.py
 
 ### 5. Run an Agent with Tools
 
-> Run `pip install duckduckgo-search` to install dependencies.
+> Run `pip install ddgs` to install dependencies.
 
 - Streaming on
 

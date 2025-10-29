@@ -177,25 +177,40 @@ def test_brave_search_with_custom_params(brave_search_tools, mock_brave_client):
     mock_result.web.results = []
     mock_brave_client.search.return_value = mock_result
 
-    brave_search_tools.brave_search(query="test query", max_results=3, country="UK", search_lang="en")
+    brave_search_tools.brave_search(query="test query", max_results=3, country="UK", search_lang="fr")
 
     # Verify the search was called with correct parameters
     mock_brave_client.search.assert_called_once_with(
-        q="test query", count=3, country="UK", search_lang="en", result_filter="web"
+        q="test query", count=3, country="UK", search_lang="fr", result_filter="web"
     )
 
 
-def test_brave_search_with_none_params(brave_search_tools, mock_brave_client):
-    """Test search with None parameters"""
+def test_brave_search_with_default_params(brave_search_tools, mock_brave_client):
+    """Test that default parameters are used when not specified"""
     mock_result = MagicMock()
     mock_result.web.results = []
     mock_brave_client.search.return_value = mock_result
 
-    brave_search_tools.brave_search(query="test query", max_results=None, country=None, search_lang=None)
+    brave_search_tools.brave_search(query="test query")
 
-    # Verify the search was called with None values
+    # Verify the search was called with default parameters
     mock_brave_client.search.assert_called_once_with(
-        q="test query", count=None, country=None, search_lang=None, result_filter="web"
+        q="test query", count=5, country="US", search_lang="en", result_filter="web"
+    )
+
+
+def test_brave_search_with_none_params(brave_search_tools, mock_brave_client):
+    """Test search with None parameters - should use defaults"""
+    mock_result = MagicMock()
+    mock_result.web.results = []
+    mock_brave_client.search.return_value = mock_result
+
+    # Note: max_results and search_lang now have defaults, None parameters will be overridden
+    brave_search_tools.brave_search(query="test query", country=None)
+
+    # Verify the search was called with default values for max_results and search_lang
+    mock_brave_client.search.assert_called_once_with(
+        q="test query", count=5, country=None, search_lang="en", result_filter="web"
     )
 
 
@@ -230,9 +245,9 @@ def test_brave_search_with_fixed_params():
         # Verify fixed parameters override the provided ones
         mock_instance.search.assert_called_once_with(
             q="test query",
-            count=5,  # Should use fixed_max_results
-            country=None,
-            search_lang="fr",  # Should use fixed_language
+            count=5,  # Should use fixed_max_results (not the provided 10)
+            country="US",  # Should use default value
+            search_lang="fr",  # Should use fixed_language (not the provided "en")
             result_filter="web",
         )
 

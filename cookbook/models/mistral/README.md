@@ -18,7 +18,7 @@ export MISTRAL_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U mistralai duckduckgo-search duckdb yfinance agno
+pip install -U mistralai ddgs duckdb yfinance agno
 ```
 
 ### 4. Run basic Agent

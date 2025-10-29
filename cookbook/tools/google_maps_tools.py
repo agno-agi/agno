@@ -1,14 +1,16 @@
 """
-Business Contact Search Agent for finding and extracting business contact information.
+Google Maps Tools - Location and Business Information Agent
+
 This example demonstrates various Google Maps API functionalities including business search,
-directions, geocoding, address validation, and more.
+directions, geocoding, address validation, and more. Shows how to use include_tools and
+exclude_tools parameters for selective function access.
 
 Prerequisites:
 - Set the environment variable `GOOGLE_MAPS_API_KEY` with your Google Maps API key.
   You can obtain the API key from the Google Cloud Console:
   https://console.cloud.google.com/projectselector2/google/maps-apis/credentials
 
-- You also need to activate the Address Validation API for your .
+- You also need to activate the Address Validation API for your project:
   https://console.developers.google.com/apis/api/addressvalidation.googleapis.com
 
 """
@@ -17,23 +19,66 @@ from agno.agent import Agent
 from agno.tools.crawl4ai import Crawl4aiTools
 from agno.tools.google_maps import GoogleMapTools
 
-agent = Agent(
-    name="Maps API Demo Agent",
+# Example 1: All functions available (default behavior)
+agent_full = Agent(
+    name="Full Maps API Agent",
     tools=[
-        GoogleMapTools(),  # For  on Google Maps
-        Crawl4aiTools(max_length=5000),  # For scraping business websites
+        GoogleMapTools(),  # All functions enabled by default
+        Crawl4aiTools(max_length=5000),
     ],
-    description="You are a location and business information specialist that can help with various mapping and location-based queries.",
+    description="You are a location and business information specialist with full Google Maps access.",
     instructions=[
-        "When given a search query:",
-        "1. Use appropriate Google Maps methods based on the query type",
-        "2. For place searches, combine Maps data with website data when available",
-        "3. Format responses clearly and provide relevant details based on the query",
-        "4. Handle errors gracefully and provide meaningful feedback",
+        "Use any Google Maps function as needed for location-based queries",
+        "Combine Maps data with website data when available",
+        "Format responses clearly and provide relevant details",
+        "Handle errors gracefully and provide meaningful feedback",
     ],
     markdown=True,
-    show_tool_calls=True,
 )
+
+# Example 2: Include only specific functions
+agent_search = Agent(
+    name="Search-focused Maps Agent",
+    tools=[
+        GoogleMapTools(
+            include_tools=[
+                "search_places",
+            ]
+        ),
+    ],
+    description="You are a location search specialist focused only on finding places.",
+    instructions=[
+        "Focus on place searches and getting place details",
+        "Use search_places for general queries",
+        "Use find_place_from_text for specific place names",
+        "Use get_nearby_places for proximity searches",
+    ],
+    markdown=True,
+)
+
+# Example 3: Exclude potentially expensive operations
+agent_safe = Agent(
+    name="Safe Maps API Agent",
+    tools=[
+        GoogleMapTools(
+            exclude_tools=[
+                "get_distance_matrix",  # Can be expensive with many origins/destinations
+                "get_directions",  # Excludes detailed route calculations
+            ]
+        ),
+        Crawl4aiTools(max_length=3000),
+    ],
+    description="You are a location specialist with restricted access to expensive operations.",
+    instructions=[
+        "Provide location information without detailed routing",
+        "Use geocoding and place searches freely",
+        "For directions, provide general guidance only",
+    ],
+    markdown=True,
+)
+
+# Using the full-featured agent for examples
+agent = agent_full
 
 # Example 1: Business Search
 print("\n=== Business Search Example ===")

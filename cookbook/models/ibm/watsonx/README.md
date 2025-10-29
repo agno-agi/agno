@@ -36,7 +36,7 @@ export IBM_WATSONX_URL=*** (optional, defaults to https://eu-de.ml.cloud.ibm.com
 ### 3. Install libraries
 
 ```shell
-pip install -U ibm-watsonx-ai duckduckgo-search agno
+pip install -U ibm-watsonx-ai ddgs agno
 ```
 
 ### 4. Run basic agent

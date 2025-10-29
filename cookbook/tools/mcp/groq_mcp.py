@@ -48,7 +48,6 @@ async def create_filesystem_agent(session):
             - Be concise and focus on relevant information\
         """),
         markdown=True,
-        show_tool_calls=True,
     )
 
 

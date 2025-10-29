@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional, cast
 
@@ -30,8 +30,8 @@ class Portkey(OpenAILike):
     name: str = "Portkey"
     provider: str = "Portkey"
 
-    portkey_api_key: Optional[str] = getenv("PORTKEY_API_KEY")
-    virtual_key: Optional[str] = getenv("PORTKEY_VIRTUAL_KEY")
+    portkey_api_key: Optional[str] = field(default_factory=lambda: getenv("PORTKEY_API_KEY"))
+    virtual_key: Optional[str] = field(default_factory=lambda: getenv("PORTKEY_VIRTUAL_KEY"))
     config: Optional[Dict[str, Any]] = None
     base_url: str = PORTKEY_GATEWAY_URL
 
@@ -40,13 +40,6 @@ class Portkey(OpenAILike):
         if not self.portkey_api_key:
             raise ModelProviderError(
                 message="PORTKEY_API_KEY not set. Please set the PORTKEY_API_KEY environment variable.",
-                model_name=self.name,
-                model_id=self.id,
-            )
-
-        if not self.virtual_key:
-            raise ModelProviderError(
-                message="PORTKEY_VIRTUAL_KEY not set. Please set the PORTKEY_VIRTUAL_KEY environment variable.",
                 model_name=self.name,
                 model_id=self.id,
             )

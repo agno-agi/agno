@@ -1,11 +1,14 @@
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar, get_type_hints
+from importlib.metadata import version
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
+from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
 
 from agno.exceptions import AgentRunException
+from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_debug, log_error, log_exception, log_warning
 
 T = TypeVar("T")
@@ -82,8 +85,6 @@ class Function(BaseModel):
     entrypoint: Optional[Callable] = None
     # If True, the entrypoint processing is skipped and the Function is used as is.
     skip_entrypoint_processing: bool = False
-    # If True, the arguments are sanitized before being passed to the function. (Deprecated)
-    sanitize_arguments: bool = False
     # If True, the function call will show the result along with sending it to the model.
     show_result: bool = False
     # If True, the agent will stop after the function call.
@@ -121,12 +122,62 @@ class Function(BaseModel):
     _agent: Optional[Any] = None
     # The team that the function is associated with
     _team: Optional[Any] = None
+    # The session state that the function is associated with
+    _session_state: Optional[Dict[str, Any]] = None
+    # The dependencies that the function is associated with
+    _dependencies: Optional[Dict[str, Any]] = None
+
+    # Media context that the function is associated with
+    _images: Optional[Sequence[Image]] = None
+    _videos: Optional[Sequence[Video]] = None
+    _audios: Optional[Sequence[Audio]] = None
+    _files: Optional[Sequence[File]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(
             exclude_none=True,
             include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
         )
+
+    def model_copy(self, *, deep: bool = False) -> "Function":
+        """
+        Override model_copy to handle callable fields that can't be deep copied (pickled).
+        Callables should always be shallow copied (referenced), not deep copied.
+        """
+        # For deep copy, we need to handle callable fields specially
+        if deep:
+            # Fields that should NOT be deep copied (callables and complex objects)
+            shallow_fields = {
+                "entrypoint",
+                "pre_hook",
+                "post_hook",
+                "tool_hooks",
+                "_agent",
+                "_team",
+            }
+
+            # Create a copy with shallow references to callable fields
+            copied_data = {}
+            for field_name, field_value in self.__dict__.items():
+                if field_name in shallow_fields:
+                    # Shallow copy - just reference the same object
+                    copied_data[field_name] = field_value
+                elif field_name == "parameters":
+                    # Deep copy the parameters dict
+                    from copy import deepcopy
+
+                    copied_data[field_name] = deepcopy(field_value)
+                else:
+                    # For simple types, just copy the value
+                    copied_data[field_name] = field_value
+
+            # Create new instance with copied data
+            new_instance = self.__class__.model_construct(**copied_data)
+
+            return new_instance
+        else:
+            # For shallow copy, use the default Pydantic behavior
+            return super().model_copy(deep=False)
 
     @classmethod
     def from_callable(cls, c: Callable, name: Optional[str] = None, strict: bool = False) -> "Function":
@@ -141,17 +192,32 @@ class Function(BaseModel):
             type_hints = get_type_hints(c)
 
             # If function has an the agent argument, remove the agent parameter from the type hints
-            if "agent" in sig.parameters:
+            if "agent" in sig.parameters and "agent" in type_hints:
                 del type_hints["agent"]
-            if "team" in sig.parameters:
+            if "team" in sig.parameters and "team" in type_hints:
                 del type_hints["team"]
+            if "session_state" in sig.parameters and "session_state" in type_hints:
+                del type_hints["session_state"]
+            # Remove media parameters from type hints as they are injected automatically
+            if "images" in sig.parameters and "images" in type_hints:
+                del type_hints["images"]
+            if "videos" in sig.parameters and "videos" in type_hints:
+                del type_hints["videos"]
+            if "audios" in sig.parameters and "audios" in type_hints:
+                del type_hints["audios"]
+            if "files" in sig.parameters and "files" in type_hints:
+                del type_hints["files"]
+            if "dependencies" in sig.parameters and "dependencies" in type_hints:
+                del type_hints["dependencies"]
             # log_info(f"Type hints for {function_name}: {type_hints}")
 
             # Filter out return type and only process parameters
             param_type_hints = {
                 name: type_hints.get(name)
                 for name in sig.parameters
-                if name != "return" and name not in ["agent", "team", "self"]
+                if name != "return"
+                and name
+                not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files", "dependencies"]
             }
 
             # Parse docstring for parameters
@@ -178,14 +244,39 @@ class Function(BaseModel):
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
                 parameters["required"] = [
-                    name for name in parameters["properties"] if name not in ["agent", "team", "self"]
+                    name
+                    for name in parameters["properties"]
+                    if name
+                    not in [
+                        "agent",
+                        "team",
+                        "session_state",
+                        "self",
+                        "images",
+                        "videos",
+                        "audios",
+                        "files",
+                        "dependencies",
+                    ]
                 ]
             else:
                 # Mark a field as required if it has no default value (this would include optional fields)
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name not in ["agent", "team"]
+                    if param.default == param.empty
+                    and name
+                    not in [
+                        "agent",
+                        "team",
+                        "session_state",
+                        "self",
+                        "images",
+                        "videos",
+                        "audios",
+                        "files",
+                        "dependencies",
+                    ]
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
@@ -230,14 +321,37 @@ class Function(BaseModel):
             type_hints = get_type_hints(self.entrypoint)
 
             # If function has an the agent argument, remove the agent parameter from the type hints
-            if "agent" in sig.parameters:
+            if "agent" in sig.parameters and "agent" in type_hints:
                 del type_hints["agent"]
-            if "team" in sig.parameters:
+            if "team" in sig.parameters and "team" in type_hints:
                 del type_hints["team"]
+            if "session_state" in sig.parameters and "session_state" in type_hints:
+                del type_hints["session_state"]
+            if "images" in sig.parameters and "images" in type_hints:
+                del type_hints["images"]
+            if "videos" in sig.parameters and "videos" in type_hints:
+                del type_hints["videos"]
+            if "audios" in sig.parameters and "audios" in type_hints:
+                del type_hints["audios"]
+            if "files" in sig.parameters and "files" in type_hints:
+                del type_hints["files"]
+            if "dependencies" in sig.parameters and "dependencies" in type_hints:
+                del type_hints["dependencies"]
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
-            excluded_params = ["return", "agent", "team", "self"]
+            excluded_params = [
+                "return",
+                "agent",
+                "team",
+                "session_state",
+                "self",
+                "images",
+                "videos",
+                "audios",
+                "files",
+                "dependencies",
+            ]
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -315,6 +429,9 @@ class Function(BaseModel):
         if not params_set_by_user:
             self.parameters = parameters
 
+        if strict:
+            self.process_schema_for_strict()
+
         try:
             self.entrypoint = self._wrap_callable(self.entrypoint)
         except Exception as e:
@@ -323,11 +440,21 @@ class Function(BaseModel):
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
-        from inspect import isasyncgenfunction
+        from inspect import isasyncgenfunction, iscoroutinefunction
 
-        # Don't wrap async generator with validate_call
+        pydantic_version = Version(version("pydantic"))
+
+        # Don't wrap async generators validate_call
         if isasyncgenfunction(func):
             return func
+
+        # Don't wrap coroutines with validate_call if pydantic version is less than 2.10.0
+        if iscoroutinefunction(func) and pydantic_version < Version("2.10.0"):
+            log_debug(
+                f"Skipping validate_call for {func.__name__} because pydantic version is less than 2.10.0, please consider upgrading to pydantic 2.10.0 or higher"
+            )
+            return func
+
         # Don't wrap callables that are already wrapped with validate_call
         elif getattr(func, "_wrapped_for_validation", False):
             return func
@@ -338,13 +465,55 @@ class Function(BaseModel):
             return wrapped
 
     def process_schema_for_strict(self):
-        self.parameters["additionalProperties"] = False
+        """Process the schema to make it strict mode compliant."""
+
+        def make_nested_strict(schema):
+            """Recursively ensure all object schemas have additionalProperties: false"""
+            if not isinstance(schema, dict):
+                return schema
+
+            # Make a copy to avoid modifying the original
+            result = schema.copy()
+
+            # If this is an object schema, ensure additionalProperties: false
+            if result.get("type") == "object" or "properties" in result:
+                result["additionalProperties"] = False
+
+            # If schema has no type but has other schema properties, give it a type
+            if "type" not in result:
+                if "properties" in result:
+                    result["type"] = "object"
+                    result["additionalProperties"] = False
+                elif result.get("title") and not any(
+                    key in result for key in ["properties", "items", "anyOf", "oneOf", "allOf", "enum"]
+                ):
+                    result["type"] = "string"
+
+            # Recursively process nested schemas
+            for key, value in result.items():
+                if key == "properties" and isinstance(value, dict):
+                    result[key] = {k: make_nested_strict(v) for k, v in value.items()}
+                elif key == "items" and isinstance(value, dict):
+                    # This handles array items like List[KnowledgeFilter]
+                    result[key] = make_nested_strict(value)
+                elif isinstance(value, dict):
+                    result[key] = make_nested_strict(value)
+
+            return result
+
+        # Apply strict mode to the entire schema
+        self.parameters = make_nested_strict(self.parameters)
+
         self.parameters["required"] = [
-            name for name in self.parameters["properties"] if name not in ["agent", "team", "self"]
+            name
+            for name in self.parameters["properties"]
+            if name
+            not in ["agent", "team", "session_state", "images", "videos", "audios", "files", "self", "dependencies"]
         ]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name and arguments."""
+        import json
         from hashlib import md5
 
         copy_entrypoint_args = entrypoint_args.copy()
@@ -353,7 +522,20 @@ class Function(BaseModel):
             del copy_entrypoint_args["agent"]
         if "team" in copy_entrypoint_args:
             del copy_entrypoint_args["team"]
-        args_str = str(copy_entrypoint_args)
+        if "session_state" in copy_entrypoint_args:
+            del copy_entrypoint_args["session_state"]
+        if "images" in copy_entrypoint_args:
+            del copy_entrypoint_args["images"]
+        if "videos" in copy_entrypoint_args:
+            del copy_entrypoint_args["videos"]
+        if "audios" in copy_entrypoint_args:
+            del copy_entrypoint_args["audios"]
+        if "files" in copy_entrypoint_args:
+            del copy_entrypoint_args["files"]
+        if "dependencies" in copy_entrypoint_args:
+            del copy_entrypoint_args["dependencies"]
+        # Use json.dumps with sort_keys=True to ensure consistent ordering regardless of dict key order
+        args_str = json.dumps(copy_entrypoint_args, sort_keys=True, default=str)
 
         kwargs_str = str(sorted((call_args or {}).items()))
         key_str = f"{self.name}:{args_str}:{kwargs_str}"
@@ -413,6 +595,14 @@ class FunctionExecutionResult(BaseModel):
     result: Optional[Any] = None
     error: Optional[str] = None
 
+    updated_session_state: Optional[Dict[str, Any]] = None
+
+    # New fields for media artifacts
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audios: Optional[List[Audio]] = None
+    files: Optional[List[File]] = None
+
 
 class FunctionCall(BaseModel):
     """Model for Function Calls"""
@@ -468,6 +658,9 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an team argument
                 if "team" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["team"] = self.function._team
+                # Check if the pre-hook has an session_state argument
+                if "session_state" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["session_state"] = self.function._session_state
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -493,6 +686,9 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an team argument
                 if "team" in signature(self.function.post_hook).parameters:
                     post_hook_args["team"] = self.function._team
+                # Check if the post-hook has an session_state argument
+                if "session_state" in signature(self.function.post_hook).parameters:
+                    post_hook_args["session_state"] = self.function._session_state
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
@@ -516,9 +712,25 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an team argument
         if "team" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["team"] = self.function._team
+        # Check if the entrypoint has an session_state argument
+        if "session_state" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["session_state"] = self.function._session_state
+        # Check if the entrypoint has an dependencies argument
+        if "dependencies" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["dependencies"] = self.function._dependencies
         # Check if the entrypoint has an fc argument
         if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["fc"] = self
+
+        # Check if the entrypoint has media arguments
+        if "images" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["images"] = self.function._images
+        if "videos" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["videos"] = self.function._videos
+        if "audios" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["audios"] = self.function._audios
+        if "files" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["files"] = self.function._files
         return entrypoint_args
 
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -532,6 +744,12 @@ class FunctionCall(BaseModel):
         # Check if the hook has an team argument
         if "team" in signature(hook).parameters:
             hook_args["team"] = self.function._team
+        # Check if the hook has an session_state argument
+        if "session_state" in signature(hook).parameters:
+            hook_args["session_state"] = self.function._session_state
+        # Check if the hook has an dependencies argument
+        if "dependencies" in signature(hook).parameters:
+            hook_args["dependencies"] = self.function._dependencies
 
         if "name" in signature(hook).parameters:
             hook_args["name"] = name
@@ -599,7 +817,7 @@ class FunctionCall(BaseModel):
 
     def execute(self) -> FunctionExecutionResult:
         """Runs the function call."""
-        from inspect import isgenerator
+        from inspect import isgenerator, isgeneratorfunction
 
         if self.function.entrypoint is None:
             return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
@@ -612,7 +830,7 @@ class FunctionCall(BaseModel):
         entrypoint_args = self._build_entrypoint_args()
 
         # Check cache if enabled and not a generator function
-        if self.function.cache_results and not isgenerator(self.function.entrypoint):
+        if self.function.cache_results and not isgeneratorfunction(self.function.entrypoint):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
@@ -623,16 +841,20 @@ class FunctionCall(BaseModel):
                 return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
+        execution_result = None
+        exception_to_raise = None
+
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
                 execution_chain = self._build_nested_execution_chain(entrypoint_args=entrypoint_args)
                 result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
-                arguments = entrypoint_args
-                if self.arguments is not None:
-                    arguments.update(self.arguments)
-                result = self.function.entrypoint(**arguments)
+                result = self.function.entrypoint(**entrypoint_args, **self.arguments)  # type: ignore
+
+            updated_session_state = None
+            if entrypoint_args.get("session_state") is not None:
+                updated_session_state = entrypoint_args.get("session_state")
 
             # Handle generator case
             if isgenerator(result):
@@ -645,20 +867,27 @@ class FunctionCall(BaseModel):
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
 
+            execution_result = FunctionExecutionResult(
+                status="success", result=self.result, updated_session_state=updated_session_state
+            )
+
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
-            raise
+            exception_to_raise = e
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return FunctionExecutionResult(status="failure", error=str(e))
+            execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
-        # Execute post-hook if it exists
-        self._handle_post_hook()
+        finally:
+            self._handle_post_hook()
 
-        return FunctionExecutionResult(status="success", result=self.result)
+            if exception_to_raise is not None:
+                raise exception_to_raise
+
+            return execution_result  # type: ignore[return-value]
 
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
@@ -673,6 +902,9 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an team argument
                 if "team" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["team"] = self.function._team
+                # Check if the pre-hook has an session_state argument
+                if "session_state" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["session_state"] = self.function._session_state
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -699,6 +931,10 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an team argument
                 if "team" in signature(self.function.post_hook).parameters:
                     post_hook_args["team"] = self.function._team
+                # Check if the post-hook has an session_state argument
+                if "session_state" in signature(self.function.post_hook).parameters:
+                    post_hook_args["session_state"] = self.function._session_state
+
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
@@ -718,7 +954,7 @@ class FunctionCall(BaseModel):
         Similar to _build_nested_execution_chain but for async execution.
         """
         from functools import reduce
-        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction
+        from inspect import isasyncgenfunction, iscoroutinefunction
 
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
@@ -727,9 +963,7 @@ class FunctionCall(BaseModel):
                 arguments.update(self.arguments)
 
             result = self.function.entrypoint(**arguments)  # type: ignore
-            if iscoroutinefunction(self.function.entrypoint) and not (
-                isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint)
-            ):
+            if iscoroutinefunction(self.function.entrypoint) and not isasyncgenfunction(self.function.entrypoint):
                 result = await result
             return result
 
@@ -779,7 +1013,7 @@ class FunctionCall(BaseModel):
 
     async def aexecute(self) -> FunctionExecutionResult:
         """Runs the function call asynchronously."""
-        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
+        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator, isgeneratorfunction
 
         if self.function.entrypoint is None:
             return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
@@ -796,7 +1030,7 @@ class FunctionCall(BaseModel):
 
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not (
-            isasyncgen(self.function.entrypoint) or isgenerator(self.function.entrypoint)
+            isasyncgenfunction(self.function.entrypoint) or isgeneratorfunction(self.function.entrypoint)
         ):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
@@ -807,6 +1041,9 @@ class FunctionCall(BaseModel):
                 return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
+        execution_result = None
+        exception_to_raise = None
+
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
@@ -818,7 +1055,7 @@ class FunctionCall(BaseModel):
                 else:
                     result = self.function.entrypoint(**entrypoint_args, **self.arguments)
 
-                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
+                if isasyncgenfunction(self.function.entrypoint):
                     self.result = result  # Store async generator directly
                 else:
                     self.result = await result
@@ -829,20 +1066,41 @@ class FunctionCall(BaseModel):
                 cache_file = self.function._get_cache_file_path(cache_key)
                 self.function._save_to_cache(cache_file, self.result)
 
+            updated_session_state = None
+            if entrypoint_args.get("session_state") is not None:
+                updated_session_state = entrypoint_args.get("session_state")
+
+            execution_result = FunctionExecutionResult(
+                status="success", result=self.result, updated_session_state=updated_session_state
+            )
+
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
-            raise
+            exception_to_raise = e
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return FunctionExecutionResult(status="failure", error=str(e))
+            execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
-        # Execute post-hook if it exists
-        if iscoroutinefunction(self.function.post_hook):
-            await self._handle_post_hook_async()
-        else:
-            self._handle_post_hook()
+        finally:
+            if iscoroutinefunction(self.function.post_hook):
+                await self._handle_post_hook_async()
+            else:
+                self._handle_post_hook()
 
-        return FunctionExecutionResult(status="success", result=self.result)
+            if exception_to_raise is not None:
+                raise exception_to_raise
+
+            return execution_result  # type: ignore[return-value]
+
+
+class ToolResult(BaseModel):
+    """Result from a tool that can include media artifacts."""
+
+    content: str
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audios: Optional[List[Audio]] = None
+    files: Optional[List[File]] = None

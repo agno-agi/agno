@@ -1,6 +1,4 @@
-agno
-cohere
-groq
+agno==2.0.0
 httpx
 nest_asyncio
 openai

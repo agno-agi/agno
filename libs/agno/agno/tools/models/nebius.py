@@ -4,9 +4,10 @@ from typing import Optional
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.models.nebius import Nebius
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_error, log_warning
 
 
@@ -21,6 +22,8 @@ class NebiusTools(Toolkit):
         image_quality: Optional[str] = "standard",
         image_size: Optional[str] = "1024x1024",
         image_style: Optional[str] = None,
+        enable_generate_image: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """Initialize Nebius AI Studio text-to-image tools.
@@ -35,9 +38,15 @@ class NebiusTools(Toolkit):
             image_quality: Image quality. Options: "standard", "hd".
             image_size: Image size in format "WIDTHxHEIGHT". Max supported: 2000x2000.
             image_style: Optional style preset to apply.
+            enable_generate_image: Enable image generation functionality.
+            all: Enable all functions.
             **kwargs: Additional arguments to pass to Toolkit.
         """
-        super().__init__(name="nebius_tools", tools=[self.generate_image], **kwargs)
+        tools = []
+        if all or enable_generate_image:
+            tools.append(self.generate_image)
+
+        super().__init__(name="nebius_tools", tools=tools, **kwargs)
 
         self.api_key = api_key or getenv("NEBIUS_API_KEY")
         if not self.api_key:
@@ -59,7 +68,7 @@ class NebiusTools(Toolkit):
         self,
         agent: Agent,
         prompt: str,
-    ) -> str:
+    ) -> ToolResult:
         """Generate images based on a text prompt using Nebius AI Studio.
 
         Args:
@@ -67,7 +76,7 @@ class NebiusTools(Toolkit):
             prompt: The text prompt to generate images from.
 
         Returns:
-            A message indicating success or failure.
+            ToolResult: A ToolResult containing the generated image or error message.
         """
         try:
             extra_params = {
@@ -91,18 +100,25 @@ class NebiusTools(Toolkit):
                 data = response.data[0]
             if data is None:
                 log_warning("Nebius API did not return any data.")
-                return "Failed to generate image: No data received from API."
+                return ToolResult(content="Failed to generate image: No data received from API.")
+
             if hasattr(data, "b64_json") and data.b64_json:
                 image_base64 = data.b64_json
                 image_content_bytes = base64.b64decode(image_base64)
                 media_id = str(uuid4())
-                agent.add_image(
-                    ImageArtifact(
-                        id=media_id, content=image_content_bytes, mime_type="image/png", original_prompt=prompt
-                    )
+
+                # Create ImageArtifact with raw bytes
+                image_artifact = Image(
+                    id=media_id, content=image_content_bytes, mime_type="image/png", original_prompt=prompt
                 )
-                return "Image generated successfully."
-            return "Failed to generate image: No content received from API."
+
+                return ToolResult(
+                    content="Image generated successfully.",
+                    images=[image_artifact],
+                )
+
+            return ToolResult(content="Failed to generate image: No content received from API.")
+
         except Exception as e:
             log_error(f"Failed to generate image using {self.image_model}: {e}")
-            return f"Failed to generate image: {e}"
+            return ToolResult(content=f"Failed to generate image: {e}")

@@ -10,22 +10,23 @@ class FileTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
-        save_files: bool = True,
-        read_files: bool = True,
-        list_files: bool = True,
-        search_files: bool = True,
+        enable_save_file: bool = True,
+        enable_read_file: bool = True,
+        enable_list_files: bool = True,
+        enable_search_files: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.base_dir: Path = base_dir or Path.cwd()
 
         tools: List[Any] = []
-        if save_files:
+        if all or enable_save_file:
             tools.append(self.save_file)
-        if read_files:
+        if all or enable_read_file:
             tools.append(self.read_file)
-        if list_files:
+        if all or enable_list_files:
             tools.append(self.list_files)
-        if search_files:
+        if all or enable_search_files:
             tools.append(self.search_files)
 
         super().__init__(name="file_tools", tools=tools, **kwargs)
@@ -74,7 +75,9 @@ class FileTools(Toolkit):
         """
         try:
             log_info(f"Reading files in : {self.base_dir}")
-            return json.dumps([str(file_path) for file_path in self.base_dir.iterdir()], indent=4)
+            return json.dumps(
+                [str(file_path.relative_to(self.base_dir)) for file_path in self.base_dir.iterdir()], indent=4
+            )
         except Exception as e:
             log_error(f"Error reading files: {e}")
             return f"Error reading files: {e}"
@@ -92,7 +95,7 @@ class FileTools(Toolkit):
             log_debug(f"Searching files in {self.base_dir} with pattern {pattern}")
             matching_files = list(self.base_dir.glob(pattern))
 
-            file_paths = [str(file_path) for file_path in matching_files]
+            file_paths = [str(file_path.relative_to(self.base_dir)) for file_path in matching_files]
 
             result = {
                 "pattern": pattern,

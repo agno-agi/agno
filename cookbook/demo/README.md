@@ -1,35 +1,49 @@
-# Agno Demo Agents
+# AgentOS Demo
 
-This cookbook contains a collection of demo agents that showcase the capabilities of Agno.
+This demo shows how to run a **multi-agent system** using **AgentOS**, the high-performance runtime built into the [Agno](https://agno.com) framework.
 
-> Note: Fork and clone the repository if needed
+It includes a set of example Agents and Teams that demonstrate how AgentOS can coordinate specialized agents for tasks like research, analysis, memory management, and data retrieval.
+
+---
+
+## What’s Included
+
+- 🧩 **Agno MCP Agent** — connects to the Agno MCP servers for live context and data
+- 📚 **Agno Knowledge Agent** — searches the Agno documentation for information
+- 🎥 **YouTube Agent** — analyzes YouTube videos and answers questions
+- 💹 **Finance Agent** — retrieves and analyzes stock and market data
+- 🔍 **Research Agent** — performs live research using ExaTools
+- 🧾 **Finance Team** — combines research and finance data into reports to provide a full investment brief
+- 🧠 **Memory Manager** — summarizes and maintains user memories
+
+---
+
+## Setup
+
+> 💡 **Tip:** Fork and clone the repository first if you plan to modify the demo.
 
 ### 1. Create a virtual environment
 
 ```shell
-uv venv --python 3.12
-source .venv/bin/activate
+uv venv .demoenv --python 3.12
+source .demoenv/bin/activate
 ```
 
-### 2. Install libraries
+### 2. Install dependencies
 
 ```shell
 uv pip install -r cookbook/demo/requirements.txt
 ```
 
-### 3. Run PgVector
+### 3. Run Postgres with PgVector
 
-Let's use Postgres for storing data and `PgVector` for vector search.
-
-> Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) first.
-
-- Run using a helper script
+We'll use postgres for storing session, memory and knowledge. Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) and run the following command to start a postgres container with PgVector.
 
 ```shell
 ./cookbook/scripts/run_pgvector.sh
 ```
 
-- OR run using the docker run command
+OR use the docker run command directly:
 
 ```shell
 docker run -d \
@@ -43,43 +57,38 @@ docker run -d \
   agnohq/pgvector:16
 ```
 
-### 4. Load data
+### 4. Export API Keys
 
-Load F1 data into the database.
-
-```shell
-python cookbook/demo/sql/load_f1_data.py
-```
-
-Load F1 knowledge base
-
-```shell
-python cookbook/demo/sql/load_knowledge.py
-```
-
-### 5. Export API Keys
-
-We recommend using claude-3-7-sonnet for this task, but you can use any Model you like.
+We recommend using claude-sonnet-4-5 for your agents, but you can use any Model you like.
 
 ```shell
 export ANTHROPIC_API_KEY=***
-```
-
-Other API keys are optional, but if you'd like to test:
-
-```shell
 export OPENAI_API_KEY=***
-export GOOGLE_API_KEY=***
-export GROQ_API_KEY=***
+export EXA_API_KEY=***
 ```
 
-### 6. Run Demo Agents
+### 5. Add Agno Documentation to the Knowledge Base
 
 ```shell
-python cookbook/demo/app.py
+python cookbook/demo/agno_knowledge_agent.py
 ```
 
-- Open [app.agno.com/playground](https://app.agno.com/playground?endpoint=localhost%3A7777) to chat with the demo agents.
+### 6. Run the demo AgentOS
 
-### 7. Message us on [discord](https://agno.link/discord) if you have any questions
+```shell
+python cookbook/demo/run.py
+```
 
+### 7. Connect to the AgentOS UI
+
+- Open the web interface: [os.agno.com](https://os.agno.com/)
+- Connect to http://localhost:7777 to interact with the demo AgentOS.
+
+---
+
+## Additional Resources
+
+Additional Resources
+
+📘 Documentation: https://docs.agno.com
+💬 Discord: https://agno.link/discord

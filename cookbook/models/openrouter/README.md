@@ -18,7 +18,7 @@ export OPENROUTER_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U openai duckduckgo-search duckdb yfinance agno
+pip install -U openai ddgs duckdb yfinance agno
 ```
 
 ### 4. Run basic Agent
@@ -49,4 +49,8 @@ python cookbook/models/openrouter/tool_use.py
 python cookbook/models/openrouter/structured_output.py
 ```
 
+### 7. Run Agent with dynamic model router
 
+```shell
+python cookbook/models/openrouter/dynamic_model_router.py
+```

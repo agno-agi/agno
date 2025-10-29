@@ -1,45 +1,107 @@
 import nest_asyncio
 import streamlit as st
-from agents import tutor_agent
-from agno.utils.log import logger
-from utils import (
-    CUSTOM_CSS,
-    about_widget,
+from agents import get_llama_tutor_agent
+from agno.utils.streamlit import (
+    COMMON_CSS,
+    MODELS,
+    about_section,
     add_message,
-    display_tool_calls,
-    rename_session_widget,
+    display_chat_messages,
+    display_response,
+    export_chat_history,
+    initialize_agent,
+    reset_session_state,
     session_selector_widget,
-    sidebar_widget,
 )
 
 nest_asyncio.apply()
-
-# Page configuration
 st.set_page_config(
-    page_title="Llama Tutor: Learn Anything",
-    page_icon=":book:",
+    page_title="Llama Tutor",
+    page_icon="🦙",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Load custom CSS with dark mode support
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+# Add custom CSS
+st.markdown(COMMON_CSS, unsafe_allow_html=True)
+
+# Extended models list including Groq models for Llama Tutor
+TUTOR_MODELS = MODELS + [
+    "groq:llama-3.3-70b-versatile",
+    "groq:llama-3.1-70b-versatile",
+    "groq:mixtral-8x7b-32768",
+]
 
 
-def main() -> None:
+def restart_agent(model_id: str = None, education_level: str = None):
+    target_model = model_id or st.session_state.get("current_model", TUTOR_MODELS[0])
+    target_education_level = education_level or st.session_state.get(
+        "education_level", "High School"
+    )
+
+    new_agent = get_llama_tutor_agent(
+        model_id=target_model, education_level=target_education_level, session_id=None
+    )
+
+    st.session_state["agent"] = new_agent
+    st.session_state["session_id"] = new_agent.session_id
+    st.session_state["messages"] = []
+    st.session_state["current_model"] = target_model
+    st.session_state["education_level"] = target_education_level
+    st.session_state["is_new_session"] = True
+
+
+def on_model_change():
+    selected_model = st.session_state.get("model_selector")
+    if selected_model:
+        if selected_model in TUTOR_MODELS:
+            new_model_id = selected_model
+            current_model = st.session_state.get("current_model")
+
+            if current_model and current_model != new_model_id:
+                try:
+                    st.session_state["is_loading_session"] = False
+                    # Start new chat with new model
+                    restart_agent(model_id=new_model_id)
+
+                except Exception as e:
+                    st.sidebar.error(f"Error switching to {selected_model}: {str(e)}")
+        else:
+            st.sidebar.error(f"Unknown model: {selected_model}")
+
+
+def on_education_level_change():
+    selected_level = st.session_state.get("education_level_selector")
+    current_level = st.session_state.get("education_level", "High School")
+
+    if selected_level and selected_level != current_level:
+        try:
+            # Start new chat with new education level
+            restart_agent(education_level=selected_level)
+        except Exception as e:
+            st.sidebar.error(f"Error switching to {selected_level}: {str(e)}")
+
+
+def main():
     ####################################################################
     # App header
     ####################################################################
     st.markdown("<h1 class='main-title'>Llama Tutor</h1>", unsafe_allow_html=True)
     st.markdown(
-        "<p class='subtitle'>Your intelligent answer engine powered by Agno</p>",
+        "<p class='subtitle'>Your intelligent educational assistant powered by Agno</p>",
         unsafe_allow_html=True,
     )
 
     ####################################################################
-    # Model configuration - always use Llama 3.3 70B
+    # Model selector
     ####################################################################
-    model_id = "groq:llama-3.3-70b-versatile"
+    selected_model = st.sidebar.selectbox(
+        "Select Model",
+        options=TUTOR_MODELS,
+        index=len(MODELS),  # Default to first Groq model
+        key="model_selector",
+        on_change=on_model_change,
+    )
 
     ####################################################################
     # Education level selector
@@ -58,83 +120,104 @@ def main() -> None:
         options=education_levels,
         index=2,  # Default to High School
         key="education_level_selector",
+        on_change=on_education_level_change,
     )
 
-    # Store the education level in session state
+    ####################################################################
+    # Initialize Agent and Session
+    ####################################################################
+    # Store the education level in session state for agent creation
     if "education_level" not in st.session_state:
         st.session_state["education_level"] = selected_education_level
-    elif st.session_state["education_level"] != selected_education_level:
-        st.session_state["education_level"] = selected_education_level
-        # Reset the agent if education level changes
-        if "llama_tutor" in st.session_state:
-            st.session_state["llama_tutor"] = None
 
-    ####################################################################
-    # Initialize Agent
-    ####################################################################
-    llama_tutor: Agent
-    if (
-        "llama_tutor" not in st.session_state
-        or st.session_state["llama_tutor"] is None
-        or st.session_state.get("current_model") != model_id
-    ):
-        logger.info("---*--- Creating new Llama Tutor agent ---*---")
-        llama_tutor = tutor_agent(
-            model_id=model_id, education_level=st.session_state["education_level"]
-        )
-        st.session_state["llama_tutor"] = llama_tutor
-        st.session_state["current_model"] = model_id
-    else:
-        llama_tutor = st.session_state["llama_tutor"]
+    llama_tutor_agent = initialize_agent(
+        selected_model,
+        lambda model_id, session_id: get_llama_tutor_agent(
+            model_id=model_id,
+            education_level=st.session_state.get("education_level", "High School"),
+            session_id=session_id,
+        ),
+    )
+    reset_session_state(llama_tutor_agent)
 
-    ####################################################################
-    # Load Agent Session from the database
-    ####################################################################
-    try:
-        st.session_state["llama_tutor_session_id"] = llama_tutor.load_session()
-    except Exception:
-        st.warning("Could not create Agent session, is the database running?")
-        return
-
-    ####################################################################
-    # Load runs from memory
-    ####################################################################
-    agent_runs = llama_tutor.memory.runs
-    if len(agent_runs) > 0:
-        logger.debug("Loading run history")
-        st.session_state["messages"] = []
-        for _run in agent_runs:
-            if _run.message is not None:
-                add_message(_run.message.role, _run.message.content)
-            if _run.response is not None:
-                add_message("assistant", _run.response.content, _run.response.tools)
-    else:
-        logger.debug("No run history found")
-        st.session_state["messages"] = []
-
-    ####################################################################
-    # Sidebar
-    ####################################################################
-    sidebar_widget()
-
-    ####################################################################
-    # Get user input
-    ####################################################################
     if prompt := st.chat_input("✨ What would you like to learn about?"):
         add_message("user", prompt)
 
+    ###############################################################
+    # Sample Questions
+    ###############################################################
+    st.sidebar.markdown("#### ❓ Sample Questions")
+    if st.sidebar.button("🧬 How does photosynthesis work?"):
+        add_message(
+            "user",
+            "How does photosynthesis work?",
+        )
+    if st.sidebar.button("📚 Explain calculus basics"):
+        add_message(
+            "user",
+            "What is calculus and how is it used in real life?",
+        )
+    if st.sidebar.button("🌍 Causes of World War I"):
+        add_message(
+            "user",
+            "What were the main causes of World War I?",
+        )
+    if st.sidebar.button("⚛️ What is quantum physics?"):
+        add_message(
+            "user",
+            "Explain quantum physics in simple terms",
+        )
+
+    ###############################################################
+    # Utility buttons
+    ###############################################################
+    st.sidebar.markdown("#### 🛠️ Utilities")
+    col1, col2 = st.sidebar.columns([1, 1])
+    with col1:
+        if st.sidebar.button("🔄 New Chat", use_container_width=True):
+            restart_agent()
+            st.rerun()
+
+    with col2:
+        has_messages = (
+            st.session_state.get("messages") and len(st.session_state["messages"]) > 0
+        )
+
+        if has_messages:
+            session_id = st.session_state.get("session_id")
+            if session_id:
+                try:
+                    session_name = llama_tutor_agent.get_session_name()
+                    if session_name:
+                        filename = f"llama_tutor_analysis_{session_name}.md"
+                    else:
+                        filename = f"llama_tutor_analysis_{session_id}.md"
+                except Exception:
+                    filename = f"llama_tutor_analysis_{session_id}.md"
+            else:
+                filename = "llama_tutor_analysis_new.md"
+
+            if st.sidebar.download_button(
+                "💾 Export Chat",
+                export_chat_history("Llama Tutor"),
+                file_name=filename,
+                mime="text/markdown",
+                use_container_width=True,
+                help=f"Export {len(st.session_state['messages'])} messages",
+            ):
+                st.sidebar.success("Chat history exported!")
+        else:
+            st.sidebar.button(
+                "💾 Export Chat",
+                disabled=True,
+                use_container_width=True,
+                help="No messages to export",
+            )
+
     ####################################################################
-    # Display chat history
+    # Display Chat Messages
     ####################################################################
-    for message in st.session_state["messages"]:
-        if message["role"] in ["user", "assistant"]:
-            _content = message["content"]
-            if _content is not None:
-                with st.chat_message(message["role"]):
-                    # Display tool calls if they exist in the message
-                    if "tool_calls" in message and message["tool_calls"]:
-                        display_tool_calls(st.empty(), message["tool_calls"])
-                    st.markdown(_content)
+    display_chat_messages()
 
     ####################################################################
     # Generate response for user message
@@ -144,41 +227,27 @@ def main() -> None:
     )
     if last_message and last_message.get("role") == "user":
         question = last_message["content"]
-        with st.chat_message("assistant"):
-            # Create container for tool calls
-            tool_calls_container = st.empty()
-            resp_container = st.empty()
-            with st.spinner(":book: Llama Tutor is preparing your lesson..."):
-                response = ""
-                try:
-                    # Run the agent and stream the response
-                    run_response = llama_tutor.run(question, stream=True)
-                    for _resp_chunk in run_response:
-                        # Display tool calls if available
-                        if hasattr(_resp_chunk, "tool") and _resp_chunk.tool:
-                            display_tool_calls(tool_calls_container, [_resp_chunk.tool])
-
-                        # Display response
-                        if _resp_chunk.content is not None:
-                            response += _resp_chunk.content
-                            resp_container.markdown(response)
-
-                    add_message("assistant", response, llama_tutor.run_response.tools)
-                except Exception as e:
-                    error_message = f"Sorry, I encountered an error: {str(e)}"
-                    add_message("assistant", error_message)
-                    st.error(error_message)
+        display_response(llama_tutor_agent, question)
 
     ####################################################################
-    # Session selector
+    # Session management widgets
     ####################################################################
-    session_selector_widget(llama_tutor, model_id)
-    rename_session_widget(llama_tutor)
+    session_selector_widget(
+        llama_tutor_agent,
+        selected_model,
+        lambda model_id, session_id: get_llama_tutor_agent(
+            model_id=model_id,
+            education_level=st.session_state.get("education_level", "High School"),
+            session_id=session_id,
+        ),
+    )
 
     ####################################################################
     # About section
     ####################################################################
-    about_widget()
+    about_section(
+        "This Llama Tutor provides personalized educational assistance across all subjects and education levels."
+    )
 
 
 if __name__ == "__main__":

@@ -31,5 +31,5 @@ def get_top_hackernews_stories(num_stories: int = 10) -> str:
     return json.dumps(stories)
 
 
-agent = Agent(tools=[get_top_hackernews_stories], show_tool_calls=True, markdown=True)
+agent = Agent(tools=[get_top_hackernews_stories], markdown=True)
 agent.print_response("Summarize the top 5 stories on hackernews?", stream=True)

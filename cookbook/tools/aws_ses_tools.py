@@ -78,7 +78,6 @@ agent = Agent(
         DuckDuckGoTools(),
     ],
     markdown=True,
-    show_tool_calls=True,
 )
 
 # Example 1: Send an email

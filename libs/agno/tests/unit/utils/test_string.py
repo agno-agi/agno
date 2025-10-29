@@ -2,76 +2,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
-from agno.utils.string import parse_response_model_str, safe_content_hash, url_safe_string
-
-
-def test_safe_content_hash_normal_content():
-    """Test safe_content_hash with normal content"""
-    content = "Hello, world!"
-    result = safe_content_hash(content)
-    # Should produce consistent hash
-    assert result == "6cd3556deb0da54bca060b4c39479839"
-    assert len(result) == 32  # MD5 hash length
-
-
-def test_safe_content_hash_null_characters():
-    """Test safe_content_hash with null characters"""
-    content = "Hello\x00world"
-    result = safe_content_hash(content)
-    # Should handle null characters by replacing with replacement character
-    assert result is not None
-    assert len(result) == 32
-    # Should be different from content without null chars
-    normal_result = safe_content_hash("Helloworld")
-    assert result != normal_result
-
-
-def test_safe_content_hash_unicode_surrogates():
-    """Test safe_content_hash with Unicode surrogate characters (PDF mathematical formulas)"""
-    # This is the type of content that causes UnicodeEncodeError in PDFs with math formulas
-    content = "Mathematical formula: \ud835\udc00 = \ud835\udc01 + \ud835\udc02"
-    result = safe_content_hash(content)
-    # Should not raise UnicodeEncodeError and produce valid hash
-    assert result is not None
-    assert len(result) == 32
-    assert isinstance(result, str)
-
-
-def test_safe_content_hash_mixed_problematic_content():
-    """Test safe_content_hash with both null characters and surrogates"""
-    content = "Formula\x00with\ud835\udc00surrogates\x00and\ud835\udc01nulls"
-    result = safe_content_hash(content)
-    # Should handle both types of problematic characters
-    assert result is not None
-    assert len(result) == 32
-
-
-def test_safe_content_hash_empty_content():
-    """Test safe_content_hash with empty content"""
-    content = ""
-    result = safe_content_hash(content)
-    # Should handle empty string
-    assert result == "d41d8cd98f00b204e9800998ecf8427e"  # MD5 of empty string
-    assert len(result) == 32
-
-
-def test_safe_content_hash_consistency():
-    """Test that safe_content_hash produces consistent results"""
-    content = "Test content for consistency"
-    result1 = safe_content_hash(content)
-    result2 = safe_content_hash(content)
-    # Should always produce the same hash for the same content
-    assert result1 == result2
-
-
-def test_safe_content_hash_pdf_mathematical_symbols():
-    """Test with actual mathematical symbols that appear in PDFs"""
-    # These are Unicode characters commonly found in mathematical PDFs that cause issues
-    content = "∑∏∫∂∇∆√∞≠≤≥±∓∈∉∪∩⊂⊃⊆⊇∀∃"
-    result = safe_content_hash(content)
-    # Should handle mathematical symbols without issues
-    assert result is not None
-    assert len(result) == 32
+from agno.utils.string import parse_response_model_str, url_safe_string
 
 
 def test_url_safe_string_spaces():

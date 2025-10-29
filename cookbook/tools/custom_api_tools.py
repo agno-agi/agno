@@ -11,9 +11,15 @@ Args:
     verify_ssl (bool): Whether to verify SSL certificates
     timeout (int): Request timeout in seconds
 """
+# Example 1: Enable specific API functions
 agent = Agent(
-    tools=[CustomApiTools(base_url="https://dog.ceo/api", make_request=True)],
-    show_tool_calls=True,
+    tools=[CustomApiTools(base_url="https://dog.ceo/api", enable_make_request=True)],
+    markdown=True,
+)
+
+# Example 2: Enable all API functions
+agent_all = Agent(
+    tools=[CustomApiTools(base_url="https://dog.ceo/api", all=True)],
     markdown=True,
 )
 

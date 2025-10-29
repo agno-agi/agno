@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.azure import AzureOpenAI
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -28,11 +28,11 @@ class MovieScript(BaseModel):
 agent = Agent(
     model=AzureOpenAI(id="gpt-4o-mini"),
     description="You help people write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Get the response in a variable
-run: RunResponse = agent.run("New York")
+run: RunOutput = agent.run("New York")
 pprint(run.content)
 
 # agent.print_response("New York")

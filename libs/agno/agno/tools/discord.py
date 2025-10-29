@@ -14,10 +14,12 @@ class DiscordTools(Toolkit):
     def __init__(
         self,
         bot_token: Optional[str] = None,
-        enable_messaging: bool = True,
-        enable_history: bool = True,
-        enable_channel_management: bool = True,
-        enable_message_management: bool = True,
+        enable_send_message: bool = True,
+        enable_get_channel_messages: bool = True,
+        enable_get_channel_info: bool = True,
+        enable_list_channels: bool = True,
+        enable_delete_message: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.bot_token = bot_token or getenv("DISCORD_BOT_TOKEN")
@@ -32,14 +34,15 @@ class DiscordTools(Toolkit):
         }
 
         tools: List[Any] = []
-        if enable_messaging:
+        if enable_send_message or all:
             tools.append(self.send_message)
-        if enable_history:
+        if enable_get_channel_messages or all:
             tools.append(self.get_channel_messages)
-        if enable_channel_management:
+        if enable_get_channel_info or all:
             tools.append(self.get_channel_info)
+        if enable_list_channels or all:
             tools.append(self.list_channels)
-        if enable_message_management:
+        if enable_delete_message or all:
             tools.append(self.delete_message)
 
         super().__init__(name="discord", tools=tools, **kwargs)
@@ -51,12 +54,12 @@ class DiscordTools(Toolkit):
         response.raise_for_status()
         return response.json() if response.text else {}
 
-    def send_message(self, channel_id: int, message: str) -> str:
+    def send_message(self, channel_id: str, message: str) -> str:
         """
         Send a message to a Discord channel.
 
         Args:
-            channel_id (int): The ID of the channel to send the message to.
+            channel_id (str): The ID of the channel to send the message to.
             message (str): The text of the message to send.
 
         Returns:
@@ -70,12 +73,12 @@ class DiscordTools(Toolkit):
             logger.error(f"Error sending message: {e}")
             return f"Error sending message: {str(e)}"
 
-    def get_channel_info(self, channel_id: int) -> str:
+    def get_channel_info(self, channel_id: str) -> str:
         """
         Get information about a Discord channel.
 
         Args:
-            channel_id (int): The ID of the channel to get information about.
+            channel_id (str): The ID of the channel to get information about.
 
         Returns:
             str: A JSON string containing the channel information.
@@ -87,12 +90,12 @@ class DiscordTools(Toolkit):
             logger.error(f"Error getting channel info: {e}")
             return f"Error getting channel info: {str(e)}"
 
-    def list_channels(self, guild_id: int) -> str:
+    def list_channels(self, guild_id: str) -> str:
         """
         List all channels in a Discord server.
 
         Args:
-            guild_id (int): The ID of the server to list channels from.
+            guild_id (str): The ID of the server to list channels from.
 
         Returns:
             str: A JSON string containing the list of channels.
@@ -104,12 +107,12 @@ class DiscordTools(Toolkit):
             logger.error(f"Error listing channels: {e}")
             return f"Error listing channels: {str(e)}"
 
-    def get_channel_messages(self, channel_id: int, limit: int = 100) -> str:
+    def get_channel_messages(self, channel_id: str, limit: int = 100) -> str:
         """
         Get the message history of a Discord channel.
 
         Args:
-            channel_id (int): The ID of the channel to fetch messages from.
+            channel_id (str): The ID of the channel to fetch messages from.
             limit (int): The maximum number of messages to fetch. Defaults to 100.
 
         Returns:
@@ -122,13 +125,13 @@ class DiscordTools(Toolkit):
             logger.error(f"Error getting messages: {e}")
             return f"Error getting messages: {str(e)}"
 
-    def delete_message(self, channel_id: int, message_id: int) -> str:
+    def delete_message(self, channel_id: str, message_id: str) -> str:
         """
         Delete a message from a Discord channel.
 
         Args:
-            channel_id (int): The ID of the channel containing the message.
-            message_id (int): The ID of the message to delete.
+            channel_id (str): The ID of the channel containing the message.
+            message_id (str): The ID of the message to delete.
 
         Returns:
             str: A success message or error message.

@@ -1,20 +1,18 @@
 # Chess Team Battle
 
-This example shows how to build an interactive Chess game where AI agents compete against each other. The application showcases how to:
-- Coordinate multiple AI agents in a turn-based chess game
-- Use different language models for different players
-- Create an interactive web interface with Streamlit
-- Handle chess game state and move validation
-- Display real-time game progress and move history
+An interactive game where different language models compete against each other in strategic matches. This example demonstrates advanced multi-agent coordination, real-time game state management, and sophisticated turn-based gameplay.
 
-## Features
-- Multiple AI models support (GPT-4, Claude, Gemini, etc.)
-- Real-time chess visualization
-- Move history tracking with board states
-- Interactive player selection
-- Game state management
-- Move validation and coordination
-- Pause/resume functionality
+## ✨ Features
+
+- **Multi-Agent Chess Gameplay**: Watch AI models compete with specialized roles
+- **Real-time Chess Visualization**: Interactive board with piece movement tracking
+- **Multiple AI Model Support**: Choose from GPT-4, Claude, Gemini, and more
+- **Move Validation**: Powered by python-chess for accurate game rules
+- **Game Analysis**: Get strategic insights and position evaluation
+- **Session Management**: Save and resume chess games
+- **Move History**: Detailed tracking of all moves and game progression
+
+## 🚀 Quick Start
 
 ### 1. Create a virtual environment
 
@@ -31,7 +29,7 @@ pip install -r cookbook/examples/streamlit_apps/chess_team/requirements.txt
 
 ### 3. Export API Keys
 
-The game supports multiple AI models. Export the API keys for the models you want to use:
+Set up API keys for the AI models you want to use:
 
 ```shell
 # Required for OpenAI models
@@ -40,70 +38,79 @@ export OPENAI_API_KEY=***
 # Optional - for additional models
 export ANTHROPIC_API_KEY=***  # For Claude models
 export GOOGLE_API_KEY=***     # For Gemini models
-export GROQ_API_KEY=***       # For Groq models
 ```
 
-### 4. Run the Game
+### 4. Run the Chess Game
 
 ```shell
 streamlit run cookbook/examples/streamlit_apps/chess_team/app.py
 ```
 
-- Open [localhost:8501](http://localhost:8501) to view the game interface
+Open [localhost:8501](http://localhost:8501) to view the chess interface.
 
-## How It Works
+## 🎮 How It Works
 
-The game consists of three agents:
+The chess game consists of three specialized AI agents:
 
-1. **Master Agent (Referee)**
-   - Coordinates the game
-   - Validates chess moves
-   - Maintains game state
-   - Determines game outcome
-   - Provides analysis after each turn
+### 🤖 Agent Roles
 
-2. **Two Player Agents (White and Black)**
-   - Make strategic chess moves
-   - Analyze board positions
-   - Follow chess rules
-   - Respond to opponent moves
+1. **White Player Agent**
+   - Strategizes and makes moves for white pieces
+   - Analyzes positions using chess principles
+   - Considers tactical and strategic elements
 
-## Available Models
+2. **Black Player Agent**  
+   - Strategizes and makes moves for black pieces
+   - Responds to white's strategy appropriately
+   - Applies opening and endgame knowledge
 
-The game supports various AI models:
-- GPT-4o (OpenAI)
-- GPT-o3-mini (OpenAI)
-- Gemini (Google)
-- Llama 3 (Groq)
-- Claude (Anthropic)
+3. **Game Master Agent**
+   - Coordinates gameplay between players
+   - Routes move requests to appropriate agents
+   - Provides position analysis and commentary
+   - Manages game state and flow
 
-## Game Features
+## 📊 Available Models
 
-1. **Interactive Chess Board**
-   - Real-time updates
-   - Visual move tracking
-   - Clear game status display
-   - Legal move validation
+Choose from various AI models for different playing styles:
 
-2. **Move History**
-   - Detailed move tracking
-   - Board state visualization
-   - Player action timeline
-   - Move analysis
+- **GPT-4o** (OpenAI) - Balanced strategic play
+- **o3-mini** (OpenAI) - Quick tactical decisions  
+- **Claude-4-Sonnet** (Anthropic) - Deep positional understanding
+- **Gemini-2.5-Pro** (Google) - Creative and dynamic play
 
-3. **Game Controls**
-   - Start/Pause game
-   - Reset board
-   - Select AI models
-   - View game history
+## 💡 Usage Examples
 
-4. **Performance Analysis**
-   - Move timing
-   - Strategy tracking
-   - Game statistics
-   - Position evaluation
+### Basic Game
+```python
+# Start a quick game with default models
+team = get_chess_team()
+```
 
-## Support
+### Custom Match
+```python
+# Set up a specific model matchup
+team = get_chess_team(
+    white_model="gpt-4o",
+    black_model="claude-4-sonnet", 
+    master_model="gpt-4o"
+)
+```
 
-Join our [Discord community](https://agno.link/discord) for help and discussions.
+### Game Analysis
+Ask the Game Master for insights:
+- "Analyze the current position"
+- "What are the key strategic themes?"
+- "Evaluate material balance and piece activity"
+- "Suggest candidate moves for the current player"
 
+## 📚 Documentation
+
+For more detailed information:
+
+- [Agno Documentation](https://docs.agno.com)
+- [Streamlit Documentation](https://docs.streamlit.io)
+
+## 🤝 Support
+
+Need help? Join our [Discord community](https://agno.link/discord)

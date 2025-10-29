@@ -18,7 +18,7 @@ export GROQ_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U groq duckduckgo-search duckdb yfinance agno
+pip install -U groq ddgs duckdb yfinance agno
 ```
 
 ### 4. Run basic Agent

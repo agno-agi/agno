@@ -7,49 +7,53 @@ Steps:
 """
 
 from agno.agent import Agent
-from agno.memory.v2.db.postgres import PostgresMemoryDb
-from agno.memory.v2.memory import Memory
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
-from agno.storage.agent.postgres import PostgresAgentStorage
 from rich.pretty import pprint
 
+# Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
+
 agent = Agent(
     model=OpenAIResponses(id="gpt-4o"),
-    # Store the memories and summary in a database
-    memory=Memory(
-        db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url),
-    ),
+    user_id="test_user",
+    session_id="test_session",
+    # Pass the database to the Agent
+    db=db,
+    # Enable user memories
     enable_user_memories=True,
+    # Enable session summaries
     enable_session_summaries=True,
-    # Store agent sessions in a database
-    storage=PostgresAgentStorage(
-        table_name="personalized_agent_sessions", db_url=db_url
-    ),
     # Show debug logs so, you can see the memory being created
-    # debug_mode=True,
 )
 
 # -*- Share personal information
 agent.print_response("My name is john billings?", stream=True)
-# -*- Print memories
-pprint(agent.memory.memories)
-# -*- Print summary
-pprint(agent.memory.summaries)
+# -*- Print memories and summary
+if agent.db:
+    pprint(agent.get_user_memories(user_id="test_user"))
+    pprint(
+        agent.get_session(session_id="test_session").summary  # type: ignore
+    )
 
 # -*- Share personal information
 agent.print_response("I live in nyc?", stream=True)
 # -*- Print memories
-pprint(agent.memory.memories)
-# -*- Print summary
-pprint(agent.memory.summaries)
+if agent.db:
+    pprint(agent.get_user_memories(user_id="test_user"))
+    pprint(
+        agent.get_session(session_id="test_session").summary  # type: ignore
+    )
 
 # -*- Share personal information
 agent.print_response("I'm going to a concert tomorrow?", stream=True)
 # -*- Print memories
-pprint(agent.memory.memories)
-# -*- Print summary
-pprint(agent.memory.summaries)
+if agent.db:
+    pprint(agent.get_user_memories(user_id="test_user"))
+    pprint(
+        agent.get_session(session_id="test_session").summary  # type: ignore
+    )
 
 # Ask about the conversation
 agent.print_response(

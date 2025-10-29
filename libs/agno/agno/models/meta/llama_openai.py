@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
@@ -31,7 +31,7 @@ class LlamaOpenAI(OpenAILike):
     name: str = "LlamaOpenAI"
     provider: str = "LlamaOpenAI"
 
-    api_key: Optional[str] = getenv("LLAMA_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("LLAMA_API_KEY"))
     base_url: Optional[str] = "https://api.llama.com/compat/v1/"
 
     # Request parameters

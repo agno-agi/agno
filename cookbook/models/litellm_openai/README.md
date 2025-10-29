@@ -18,7 +18,7 @@ export LITELLM_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U openai 'litellm[proxy]' duckduckgo-search duckdb yfinance agno
+pip install -U openai 'litellm[proxy]' ddgs duckdb yfinance agno
 ```
 
 ### 4. Start the proxy server
@@ -27,7 +27,7 @@ pip install -U openai 'litellm[proxy]' duckduckgo-search duckdb yfinance agno
 litellm --model gpt-4o --host 127.0.0.1 --port 4000
 ```
 or, if you want to use some other model like from Anthropic
-```shell    
+```shell
 litellm --model claude-3-sonnet-20240229 --host 127.0.0.1 --port 4000
 ```
 

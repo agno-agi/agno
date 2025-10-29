@@ -17,13 +17,15 @@ def temp_dir():
 def python_tools(temp_dir):
     return PythonTools(
         base_dir=temp_dir,
-        save_and_run=True,
-        pip_install=True,
-        uv_pip_install=True,
-        run_code=True,
-        list_files=True,
-        run_files=True,
-        read_files=True,
+        include_tools=[
+            "save_to_file_and_run",
+            "run_python_code",
+            "pip_install_package",
+            "uv_pip_install_package",
+            "run_python_file_return_variable",
+            "read_file",
+            "list_files",
+        ],
     )
 
 

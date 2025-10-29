@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.litellm import LiteLLM
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -28,7 +28,7 @@ class MovieScript(BaseModel):
 json_mode_agent = Agent(
     model=LiteLLM(id="gpt-4o"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
     use_json_mode=True,
 )
 

@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.groq import Groq
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -28,12 +28,12 @@ class MovieScript(BaseModel):
 json_mode_agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),
     description="You help people write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
     use_json_mode=True,
 )
 
 # Get the response in a variable
-run: RunResponse = json_mode_agent.run("New York")
+run: RunOutput = json_mode_agent.run("New York")
 pprint(run.content)
 
 # json_mode_agent.print_response("New York")

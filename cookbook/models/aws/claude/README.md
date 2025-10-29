@@ -33,7 +33,7 @@ agent = Agent(
 ### 3. Install libraries
 
 ```shell
-pip install -U anthropic duckduckgo-search agno
+pip install -U anthropic ddgs agno
 ```
 
 ### 4. Run basic agent

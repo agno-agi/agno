@@ -1,6 +1,6 @@
 from typing import Iterator  # noqa
 
-from agno.agent import Agent, RunResponseEvent  # noqa
+from agno.agent import Agent, RunOutputEvent  # noqa
 from agno.models.deepinfra import DeepInfra  # noqa
 
 agent = Agent(
@@ -9,7 +9,7 @@ agent = Agent(
 )
 
 # Get the response in a variable
-run_response: Iterator[RunResponseEvent] = agent.run(
+run_response: Iterator[RunOutputEvent] = agent.run(
     "Share a 2 sentence horror story", stream=True
 )
 for chunk in run_response:

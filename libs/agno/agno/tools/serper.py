@@ -16,6 +16,11 @@ class SerperTools(Toolkit):
         language: str = "en",
         num_results: int = 10,
         date_range: Optional[str] = None,
+        enable_search: bool = True,
+        enable_search_news: bool = True,
+        enable_search_scholar: bool = True,
+        enable_scrape_webpage: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """
@@ -38,10 +43,14 @@ class SerperTools(Toolkit):
         self.date_range = date_range
 
         tools: List[Any] = []
-        tools.append(self.search)
-        tools.append(self.search_news)
-        tools.append(self.search_scholar)
-        tools.append(self.scrape_webpage)
+        if all or enable_search:
+            tools.append(self.search_web)
+        if all or enable_search_news:
+            tools.append(self.search_news)
+        if all or enable_search_scholar:
+            tools.append(self.search_scholar)
+        if all or enable_scrape_webpage:
+            tools.append(self.scrape_webpage)
 
         super().__init__(name="serper_tools", tools=tools, **kwargs)
 
@@ -88,7 +97,7 @@ class SerperTools(Toolkit):
             log_error(f"Serper API error: {str(e)}")
             return {"success": False, "error": str(e)}
 
-    def search(
+    def search_web(
         self,
         query: str,
         num_results: Optional[int] = None,

@@ -47,22 +47,22 @@ def test_initialization_no_api_key(monkeypatch):
 
 
 def test_add_zep_message(zep_tools):
-    result = zep_tools.add_zep_message("user", "test message")
+    result = zep_tools.add_zep_message(role="user", content="test message")
     assert result == f"Message from 'user' added successfully to session {MOCK_SESSION_ID}."
-    zep_tools.zep_client.memory.add.assert_called_once()
+    zep_tools.zep_client.thread.add_messages.assert_called_once()
 
     # Check that ZepMessage was created with correct parameters
-    call_args = zep_tools.zep_client.memory.add.call_args
+    call_args = zep_tools.zep_client.thread.add_messages.call_args
     messages = call_args[1]["messages"]
     assert len(messages) == 1
-    assert messages[0].role_type == "user"
+    assert messages[0].role == "user"
     assert messages[0].content == "test message"
 
 
 def test_add_zep_message_not_initialized():
     tools = ZepTools(api_key=MOCK_API_KEY)  # Don't initialize
     tools.zep_client = None  # Ensure client is None
-    result = tools.add_zep_message("user", "test message")
+    result = tools.add_zep_message(role="user", content="test message")
     assert result == "Error: Zep client/session not initialized."
 
 
@@ -71,40 +71,26 @@ def test_get_zep_memory_context(zep_tools):
     mock_memory.context = "test context"
     mock_memory.relevant_facts = None
     mock_memory.messages = None
-    zep_tools.zep_client.memory.get.return_value = mock_memory
+    zep_tools.zep_client.thread.get_user_context.return_value = mock_memory
 
     result = zep_tools.get_zep_memory("context")
     assert result == "test context"
-    zep_tools.zep_client.memory.get.assert_called_once()
+    zep_tools.zep_client.thread.get_user_context.assert_called_once()
 
 
 def test_get_zep_memory_messages(zep_tools):
     mock_memory = Mock()
     mock_memory.messages = ["msg1", "msg2"]
-    zep_tools.zep_client.memory.get.return_value = mock_memory
+    zep_tools.zep_client.thread.get.return_value = mock_memory
 
     result = zep_tools.get_zep_memory("messages")
     assert result == "['msg1', 'msg2']"
 
 
-def test_get_zep_memory_relevant_facts(zep_tools):
-    mock_fact1 = Mock()
-    mock_fact1.fact = "fact 1"
-    mock_fact2 = Mock()
-    mock_fact2.fact = "fact 2"
-
-    mock_memory = Mock()
-    mock_memory.relevant_facts = [mock_fact1, mock_fact2]
-    zep_tools.zep_client.memory.get.return_value = mock_memory
-
-    result = zep_tools.get_zep_memory("relevant_facts")
-    assert result == "Relevant facts:\n- fact 1\n- fact 2"
-
-
 def test_get_zep_memory_unsupported_type(zep_tools):
     mock_memory = Mock()
     mock_memory.context = "fallback context"
-    zep_tools.zep_client.memory.get.return_value = mock_memory
+    zep_tools.zep_client.thread.get_user_context.return_value = mock_memory
 
     result = zep_tools.get_zep_memory("unsupported")
     assert "Unsupported memory_type requested: unsupported" in result
@@ -205,15 +191,15 @@ async def test_async_initialization(async_zep_tools):
 
 @pytest.mark.asyncio
 async def test_async_add_zep_message(async_zep_tools):
-    result = await async_zep_tools.add_zep_message("user", "test message")
+    result = await async_zep_tools.add_zep_message(role="user", content="test message")
     assert result == f"Message from 'user' added successfully to session {MOCK_SESSION_ID}."
-    async_zep_tools.zep_client.memory.add.assert_called_once()
+    async_zep_tools.zep_client.thread.add_messages.assert_called_once()
 
     # Check that ZepMessage was created with correct parameters
-    call_args = async_zep_tools.zep_client.memory.add.call_args
+    call_args = async_zep_tools.zep_client.thread.add_messages.call_args
     messages = call_args[1]["messages"]
     assert len(messages) == 1
-    assert messages[0].role_type == "user"
+    assert messages[0].role == "user"
     assert messages[0].content == "test message"
 
 
@@ -221,11 +207,11 @@ async def test_async_add_zep_message(async_zep_tools):
 async def test_async_get_zep_memory(async_zep_tools):
     mock_memory = Mock()
     mock_memory.context = "test context"
-    async_zep_tools.zep_client.memory.get.return_value = mock_memory
+    async_zep_tools.zep_client.thread.get_user_context.return_value = mock_memory
 
     result = await async_zep_tools.get_zep_memory()
     assert result == "test context"
-    async_zep_tools.zep_client.memory.get.assert_called_once()
+    async_zep_tools.zep_client.thread.get_user_context.assert_called_once()
 
 
 @pytest.mark.asyncio

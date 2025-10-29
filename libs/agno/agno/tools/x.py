@@ -1,5 +1,5 @@
 import json
-import os
+from os import getenv
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
@@ -35,11 +35,11 @@ class XTools(Toolkit):
             include_post_metrics Optional[bool]: Whether to include post metrics in the search results.
             wait_on_rate_limit Optional[bool]: Whether to wait on rate limit.
         """
-        self.bearer_token = bearer_token or os.getenv("X_BEARER_TOKEN")
-        self.consumer_key = consumer_key or os.getenv("X_CONSUMER_KEY")
-        self.consumer_secret = consumer_secret or os.getenv("X_CONSUMER_SECRET")
-        self.access_token = access_token or os.getenv("X_ACCESS_TOKEN")
-        self.access_token_secret = access_token_secret or os.getenv("X_ACCESS_TOKEN_SECRET")
+        self.bearer_token = bearer_token or getenv("X_BEARER_TOKEN")
+        self.consumer_key = consumer_key or getenv("X_CONSUMER_KEY")
+        self.consumer_secret = consumer_secret or getenv("X_CONSUMER_SECRET")
+        self.access_token = access_token or getenv("X_ACCESS_TOKEN")
+        self.access_token_secret = access_token_secret or getenv("X_ACCESS_TOKEN_SECRET")
         self.wait_on_rate_limit = wait_on_rate_limit
         self.client = tweepy.Client(
             bearer_token=self.bearer_token,
@@ -51,13 +51,14 @@ class XTools(Toolkit):
         )
         self.include_post_metrics = include_post_metrics
 
-        tools: List[Any] = []
-        tools.append(self.create_post)
-        tools.append(self.reply_to_post)
-        tools.append(self.send_dm)
-        tools.append(self.get_user_info)
-        tools.append(self.get_home_timeline)
-        tools.append(self.search_posts)
+        tools: List[Any] = [
+            self.create_post,
+            self.reply_to_post,
+            self.send_dm,
+            self.get_user_info,
+            self.get_home_timeline,
+            self.search_posts,
+        ]
 
         super().__init__(name="x", tools=tools, **kwargs)
 

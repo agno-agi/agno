@@ -40,7 +40,7 @@ class PageInformation(BaseModel):
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4.1"),
-    tools=[FirecrawlTools(scrape=True, crawl=True)],
+    tools=[FirecrawlTools(enable_scrape=True, enable_crawl=True)],
     instructions=dedent("""
         You are an expert web researcher and content extractor. Extract comprehensive, structured information
         from the provided webpage. Focus on:
@@ -53,7 +53,7 @@ agent = Agent(
 
         Be thorough but concise. If the page has extensive content, prioritize the most important information.
     """).strip(),
-    response_model=PageInformation,
+    output_schema=PageInformation,
 )
 
 result = agent.run("Extract all information from https://www.agno.com")
