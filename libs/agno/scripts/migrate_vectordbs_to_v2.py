@@ -20,7 +20,7 @@ from agno.utils.log import log_error, log_info, log_warning
 pg_vector_db_url = ""  # Example: "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 ## Configuration of the schema and tables to migrate
-pg_vector_config: dict[str, list[str]] = {
+pg_vector_config: dict[str, str | list[str]] = {
     # "schema": "ai",  # Schema where your tables are located
     # "table_names": ["documents"],  # Tables to migrate
 }
@@ -32,7 +32,7 @@ pg_vector_config: dict[str, list[str]] = {
 singlestore_db_url = ""  # Example: "mysql+pymysql://user:password@host:port/database"
 
 # Exact configuration of the tables to migrate
-singlestore_config: dict[str, list[str]] = {
+singlestore_config: dict[str, str | list[str]] = {
     # "schema": "ai",  # Schema where your tables are located
     # "table_names": ["documents"],  # Tables to migrate
 }
