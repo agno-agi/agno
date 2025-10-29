@@ -150,7 +150,7 @@ class TeamSession:
             session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
 
         if not member_runs:
-            # Filter for the main team runs
+            # Filter for the top-level runs (main team runs or agent runs when sharing session)
             session_runs = [run for run in session_runs if run.parent_run_id is None]  # type: ignore
         # Filter by status
         session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_status]  # type: ignore

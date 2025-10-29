@@ -59,18 +59,35 @@ from agno.run.cancel import (
 from agno.run.messages import RunMessages
 from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
+from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
+    aget_chat_history_util,
+    aget_last_run_output_util,
+    aget_run_output_util,
+    aget_session_metrics_util,
+    aget_session_name_util,
+    aget_session_state_util,
+    aset_session_name_util,
+    aupdate_session_state_util,
     await_for_background_tasks,
     await_for_background_tasks_stream,
     collect_joint_audios,
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
+    get_chat_history_util,
+    get_last_run_output_util,
+    get_run_output_util,
+    get_session_metrics_util,
+    get_session_name_util,
+    get_session_state_util,
     scrub_history_messages_from_run_output,
     scrub_media_from_run_output,
     scrub_tool_results_from_run_output,
+    set_session_name_util,
+    update_session_state_util,
     wait_for_background_tasks,
     wait_for_background_tasks_stream,
 )
@@ -131,7 +148,16 @@ from agno.utils.response import (
 )
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import generate_id_from_name, parse_response_model_str
-from agno.utils.team import format_member_agent_task, get_member_id
+from agno.utils.team import (
+    add_interaction_to_team_run_context,
+    format_member_agent_task,
+    get_member_id,
+    get_team_member_interactions_str,
+    get_team_run_context_audio,
+    get_team_run_context_files,
+    get_team_run_context_images,
+    get_team_run_context_videos,
+)
 from agno.utils.timer import Timer
 
 
@@ -640,20 +666,19 @@ class Team:
         self.videos: Optional[List[Video]] = None
 
         # Team session
-        self._team_session: Optional[TeamSession] = None
+        self._cached_session: Optional[TeamSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
-        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
 
         # True if we should parse a member response model
         self._member_response_model: Optional[Type[BaseModel]] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
-        self._rebuild_tools = True
-
         self._hooks_normalised = False
+
+        # List of MCP tools that were initialized on the last run
+        self._mcp_tools_initialized_on_run: List[Any] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -674,6 +699,10 @@ class Team:
     @property
     def should_parse_structured_output(self) -> bool:
         return self.output_schema is not None and self.parse_response and self.parser_model is None
+
+    @property
+    def cached_session(self) -> Optional[TeamSession]:
+        return self._cached_session
 
     def set_id(self) -> None:
         """Set the ID of the team if not set yet.
@@ -903,7 +932,8 @@ class Team:
     def set_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]]):
         self.tools = tools
 
-    def cancel_run(self, run_id: str) -> bool:
+    @staticmethod
+    def cancel_run(run_id: str) -> bool:
         """Cancel a running team execution.
 
         Args:
@@ -913,6 +943,21 @@ class Team:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
         return cancel_run_global(run_id)
+
+    async def _connect_mcp_tools(self) -> None:
+        """Connect the MCP tools to the agent."""
+        if self.tools is not None:
+            for tool in self.tools:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:  # type: ignore
+                    # Connect the MCP server
+                    await tool.connect()  # type: ignore
+                    self._mcp_tools_initialized_on_run.append(tool)
+
+    async def _disconnect_mcp_tools(self) -> None:
+        """Disconnect the MCP tools from the agent."""
+        for tool in self._mcp_tools_initialized_on_run:
+            await tool.close()
+        self._mcp_tools_initialized_on_run = []
 
     def _execute_pre_hooks(
         self,
@@ -1023,7 +1068,9 @@ class Team:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                from inspect import iscoroutinefunction
+
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     # Synchronous function
@@ -1154,7 +1201,9 @@ class Team:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
-                if asyncio.iscoroutinefunction(hook):
+                from inspect import iscoroutinefunction
+
+                if iscoroutinefunction(hook):
                     await hook(**filtered_args)
                 else:
                     hook(**filtered_args)
@@ -1235,7 +1284,7 @@ class Team:
         # Initialize team run context
         team_run_context: Dict[str, Any] = {}
 
-        self.determine_tools_for_model(
+        _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
@@ -1274,6 +1323,7 @@ class Team:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
         if len(run_messages.messages) == 0:
@@ -1303,8 +1353,7 @@ class Team:
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 response_format=response_format,
-                tools=self._tools_for_model,
-                functions=self._functions_for_model,
+                tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
                 send_media_to_model=self.send_media_to_model,
@@ -1447,7 +1496,7 @@ class Team:
         # Initialize team run context
         team_run_context: Dict[str, Any] = {}
 
-        self.determine_tools_for_model(
+        _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
@@ -1486,6 +1535,7 @@ class Team:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
         if len(run_messages.messages) == 0:
@@ -1529,6 +1579,7 @@ class Team:
                     session=session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -1539,6 +1590,7 @@ class Team:
                     session=session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -2052,7 +2104,8 @@ class Team:
         # 4. Determine tools for model
         team_run_context: Dict[str, Any] = {}
         self.model = cast(Model, self.model)
-        self.determine_tools_for_model(
+        await self._check_and_refresh_mcp_tools()
+        _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
@@ -2090,6 +2143,8 @@ class Team:
             dependencies=dependencies,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
+            metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
 
@@ -2097,8 +2152,6 @@ class Team:
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 6. Start memory creation in background task
-        import asyncio
-
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
@@ -2118,8 +2171,7 @@ class Team:
             # 8. Get the model response for the team leader
             model_response = await self.model.aresponse(
                 messages=run_messages.messages,
-                tools=self._tools_for_model,
-                functions=self._functions_for_model,
+                tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
                 response_format=response_format,
@@ -2200,6 +2252,7 @@ class Team:
 
             return run_response
         finally:
+            await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
                 memory_task.cancel()
@@ -2288,7 +2341,8 @@ class Team:
         # 5. Determine tools for model
         team_run_context: Dict[str, Any] = {}
         self.model = cast(Model, self.model)
-        self.determine_tools_for_model(
+        await self._check_and_refresh_mcp_tools()
+        _tools = self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             team_run_context=team_run_context,
@@ -2325,14 +2379,13 @@ class Team:
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
+            tools=_tools,
             **kwargs,
         )
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # 7. Start memory creation in background task
-        import asyncio
-
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
@@ -2372,6 +2425,7 @@ class Team:
                     session=team_session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -2382,6 +2436,7 @@ class Team:
                     session=team_session,
                     run_response=run_response,
                     run_messages=run_messages,
+                    tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
                 ):
@@ -2523,6 +2578,7 @@ class Team:
             await self._acleanup_and_store(run_response=run_response, session=team_session)
 
         finally:
+            await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
                 memory_task.cancel()
@@ -2884,6 +2940,7 @@ class Team:
         session: TeamSession,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
+        tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
@@ -2903,8 +2960,7 @@ class Team:
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=tools,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
@@ -2966,6 +3022,7 @@ class Team:
         session: TeamSession,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
+        tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
@@ -2985,8 +3042,7 @@ class Team:
         model_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=tools,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
@@ -4893,7 +4949,30 @@ class Team:
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
-    def determine_tools_for_model(
+    async def _check_and_refresh_mcp_tools(self) -> None:
+        # Connect MCP tools
+        await self._connect_mcp_tools()
+
+        # Add provided tools
+        if self.tools is not None:
+            for tool in self.tools:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                    if tool.refresh_connection:  # type: ignore
+                        try:
+                            is_alive = await tool.is_alive()  # type: ignore
+                            if not is_alive:
+                                await tool.connect(force=True)  # type: ignore
+                        except (RuntimeError, BaseException) as e:
+                            log_warning(f"Failed to check if MCP tool is alive: {e}")
+                            continue
+
+                        try:
+                            await tool.build_tools()  # type: ignore
+                        except (RuntimeError, BaseException) as e:
+                            log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                            continue
+
+    def _determine_tools_for_model(
         self,
         model: Model,
         run_response: TeamRunOutput,
@@ -4914,13 +4993,18 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:
+        check_mcp_tools: bool = True,
+    ) -> List[Union[Function, dict]]:
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                    # Only add the tool if it successfully connected and built its tools
+                    if check_mcp_tools and not tool.initialized:  # type: ignore
+                        continue
                 _tools.append(tool)
 
         if self.read_chat_history:
@@ -4935,7 +5019,7 @@ class Team:
         if self.search_session_history:
             _tools.append(
                 self._get_previous_sessions_messages_function(
-                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                    num_history_sessions=self.num_history_sessions, user_id=user_id, async_mode=async_mode
                 )
             )
 
@@ -5013,13 +5097,12 @@ class Team:
             if self.get_member_information_tool:
                 _tools.append(self.get_member_information)
 
-        self._functions_for_model = {}
-        self._tools_for_model = []
-        self._tool_instructions = []
-
         # Get Agent tools
         if len(_tools) > 0:
             log_debug("Processing tools for model")
+
+        _function_names = []
+        _functions: List[Union[Function, dict]] = []
 
         # Check if we need strict mode for the model
         strict = False
@@ -5030,25 +5113,25 @@ class Team:
             if isinstance(tool, Dict):
                 # If a dict is passed, it is a builtin tool
                 # that is run by the model provider and not the Agent
-                self._tools_for_model.append(tool)
+                _functions.append(tool)
                 log_debug(f"Included builtin tool {tool}")
 
             elif isinstance(tool, Toolkit):
                 # For each function in the toolkit and process entrypoint
-                for name, func in tool.functions.items():
-                    # If the function does not exist in self.functions
-                    if name not in self._functions_for_model:
-                        func._team = self
-                        func._session_state = session_state
-                        func._dependencies = dependencies
-                        func.process_entrypoint(strict=strict)
-                        if strict:
-                            func.strict = True
-                        if self.tool_hooks:
-                            func.tool_hooks = self.tool_hooks
-                        self._functions_for_model[name] = func
-                        self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                        log_debug(f"Added tool {name} from {tool.name}")
+                for name, _func in tool.functions.items():
+                    if name in _function_names:
+                        continue
+                    _function_names.append(name)
+                    _func = _func.model_copy(deep=True)
+
+                    _func._team = self
+                    _func.process_entrypoint(strict=strict)
+                    if strict:
+                        _func.strict = True
+                    if self.tool_hooks:
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func)
+                    log_debug(f"Added tool {_func.name} from {tool.name}")
 
                 # Add instructions from the toolkit
                 if tool.add_instructions and tool.instructions is not None:
@@ -5057,18 +5140,18 @@ class Team:
                     self._tool_instructions.append(tool.instructions)
 
             elif isinstance(tool, Function):
-                if tool.name not in self._functions_for_model:
-                    tool._team = self
-                    tool._session_state = session_state
-                    tool._dependencies = dependencies
-                    tool.process_entrypoint(strict=strict)
-                    if strict and tool.strict is None:
-                        tool.strict = True
-                    if self.tool_hooks:
-                        tool.tool_hooks = self.tool_hooks
-                    self._functions_for_model[tool.name] = tool
-                    self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                    log_debug(f"Added tool {tool.name}")
+                if tool.name in _function_names:
+                    continue
+                _function_names.append(tool.name)
+                tool = tool.model_copy(deep=True)
+                tool._team = self
+                tool.process_entrypoint(strict=strict)
+                if strict and tool.strict is None:
+                    tool.strict = True
+                if self.tool_hooks:
+                    tool.tool_hooks = self.tool_hooks
+                _functions.append(tool)
+                log_debug(f"Added tool {tool.name}")
 
                 # Add instructions from the Function
                 if tool.add_instructions and tool.instructions is not None:
@@ -5079,42 +5162,48 @@ class Team:
             elif callable(tool):
                 # We add the tools, which are callable functions
                 try:
-                    func = Function.from_callable(tool, strict=strict)
-                    func._team = self
-                    func._session_state = session_state
-                    func._dependencies = dependencies
+                    _func = Function.from_callable(tool, strict=strict)
+                    _func = _func.model_copy(deep=True)
+                    if _func.name in _function_names:
+                        continue
+                    _function_names.append(_func.name)
+
+                    _func._team = self
                     if strict:
-                        func.strict = True
+                        _func.strict = True
                     if self.tool_hooks:
-                        func.tool_hooks = self.tool_hooks
-                    self._functions_for_model[func.name] = func
-                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                    log_debug(f"Added tool {func.name}")
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func)
+                    log_debug(f"Added tool {_func.name}")
                 except Exception as e:
                     log_warning(f"Could not add tool {tool}: {e}")
 
-        if self._functions_for_model:
+        if _functions:
             from inspect import signature
 
             # Check if any functions need media before collecting
             needs_media = any(
                 any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
-                for func in self._functions_for_model.values()
-                if func.entrypoint is not None
+                for func in _functions
+                if isinstance(func, Function) and func.entrypoint is not None
             )
 
-            if needs_media:
-                # Only collect media if functions actually need them
-                joint_images = collect_joint_images(run_response.input, session)  # type: ignore
-                joint_files = collect_joint_files(run_response.input)  # type: ignore
-                joint_audios = collect_joint_audios(run_response.input, session)  # type: ignore
-                joint_videos = collect_joint_videos(run_response.input, session)  # type: ignore
+            # Only collect media if functions actually need them
+            joint_images = collect_joint_images(run_response.input, session) if needs_media else None  # type: ignore
+            joint_files = collect_joint_files(run_response.input) if needs_media else None  # type: ignore
+            joint_audios = collect_joint_audios(run_response.input, session) if needs_media else None  # type: ignore
+            joint_videos = collect_joint_videos(run_response.input, session) if needs_media else None  # type: ignore
 
-                for func in self._functions_for_model.values():
+            for func in _functions:  # type: ignore
+                if isinstance(func, Function):
+                    func._session_state = session_state
+                    func._dependencies = dependencies
                     func._images = joint_images
                     func._files = joint_files
                     func._audios = joint_audios
                     func._videos = joint_videos
+
+        return _functions
 
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
@@ -5159,6 +5248,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
     ) -> Optional[Message]:
         """Get the system message for the team."""
@@ -5212,7 +5302,7 @@ class Team:
                 instructions.extend(_instructions)
 
         # 1.2 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
+        _model_instructions = self.model.get_instructions_for_model(tools)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
@@ -5415,7 +5505,7 @@ class Team:
                 metadata=metadata,
             )
 
-        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
+        system_message_from_model = self.model.get_system_message_for_model(tools)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
@@ -5452,6 +5542,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
     ) -> Optional[Message]:
         """Get the system message for the team."""
@@ -5505,7 +5596,7 @@ class Team:
                 instructions.extend(_instructions)
 
         # 1.2 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
+        _model_instructions = self.model.get_instructions_for_model(tools)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
@@ -5713,7 +5804,7 @@ class Team:
                 metadata=metadata,
             )
 
-        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
+        system_message_from_model = self.model.get_system_message_for_model(tools)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
@@ -5760,6 +5851,7 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -5790,6 +5882,7 @@ class Team:
             dependencies=dependencies,
             metadata=metadata,
             add_session_state_to_context=add_session_state_to_context,
+            tools=tools,
         )
         if system_message is not None:
             run_messages.system_message = system_message
@@ -5898,6 +5991,7 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -5928,6 +6022,7 @@ class Team:
             dependencies=dependencies,
             metadata=metadata,
             add_session_state_to_context=add_session_state_to_context,
+            tools=tools,
         )
         if system_message is not None:
             run_messages.system_message = system_message
@@ -6525,7 +6620,7 @@ class Team:
         return f"Updated session state: {session_state}"
 
     def _get_previous_sessions_messages_function(
-        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None, async_mode: bool = False
     ):
         """Factory function to create a get_previous_session_messages function.
 
@@ -6602,13 +6697,22 @@ class Team:
                 return "Previous session messages not available"
 
             self.db = cast(AsyncBaseDb, self.db)
-            selected_sessions = await self.db.get_sessions(
-                session_type=SessionType.TEAM,
-                limit=num_history_sessions,
-                user_id=user_id,
-                sort_by="created_at",
-                sort_order="desc",
-            )
+            if self._has_async_db():
+                selected_sessions = await self.db.get_sessions(  # type: ignore
+                    session_type=SessionType.TEAM,
+                    limit=num_history_sessions,
+                    user_id=user_id,
+                    sort_by="created_at",
+                    sort_order="desc",
+                )
+            else:
+                selected_sessions = self.db.get_sessions(  # type: ignore
+                    session_type=SessionType.TEAM,
+                    limit=num_history_sessions,
+                    user_id=user_id,
+                    sort_by="created_at",
+                    sort_order="desc",
+                )
 
             all_messages = []
             seen_message_pairs = set()
@@ -6688,14 +6792,14 @@ class Team:
     ) -> Optional[str]:
         team_member_interactions_str = None
         if self.share_member_interactions:
-            team_member_interactions_str = self._get_team_member_interactions_str(team_run_context=team_run_context)  # type: ignore
-            if context_images := self._get_team_run_context_images(team_run_context=team_run_context):  # type: ignore
+            team_member_interactions_str = get_team_member_interactions_str(team_run_context=team_run_context)  # type: ignore
+            if context_images := get_team_run_context_images(team_run_context=team_run_context):  # type: ignore
                 images.extend(context_images)
-            if context_videos := self._get_team_run_context_videos(team_run_context=team_run_context):  # type: ignore
+            if context_videos := get_team_run_context_videos(team_run_context=team_run_context):  # type: ignore
                 videos.extend(context_videos)
-            if context_audio := self._get_team_run_context_audio(team_run_context=team_run_context):  # type: ignore
+            if context_audio := get_team_run_context_audio(team_run_context=team_run_context):  # type: ignore
                 audio.extend(context_audio)
-            if context_files := self._get_team_run_context_files(team_run_context=team_run_context):  # type: ignore
+            if context_files := get_team_run_context_files(team_run_context=team_run_context):  # type: ignore
                 files.extend(context_files)
         return team_member_interactions_str
 
@@ -6838,7 +6942,7 @@ class Team:
                 normalized_task = str(member_agent_task.content)
             else:
                 normalized_task = ""
-            self._add_interaction_to_team_run_context(
+            add_interaction_to_team_run_context(
                 team_run_context=team_run_context,
                 member_name=member_name,
                 task=normalized_task,
@@ -7463,57 +7567,6 @@ class Team:
             log_warning(f"Error upserting session into db: {e}")
         return None
 
-    def get_run_output(
-        self, run_id: str, session_id: Optional[str] = None
-    ) -> Optional[Union[TeamRunOutput, RunOutput]]:
-        """
-        Get a RunOutput from the database.
-
-        Args:
-            run_id (str): The run_id to load from storage.
-            session_id (Optional[str]): The session_id to load from storage.
-        """
-        if self._team_session is not None:
-            run_response = self._team_session.get_run(run_id=run_id)
-            if run_response is not None:
-                return run_response
-            else:
-                log_warning(f"RunOutput {run_id} not found in AgentSession {self._team_session.session_id}")
-                return None
-        else:
-            team_session = self.get_session(session_id=session_id)
-            if team_session is not None:
-                run_response = team_session.get_run(run_id=run_id)
-                if run_response is not None:
-                    return cast(TeamRunOutput, run_response)
-                else:
-                    log_warning(f"RunOutput {run_id} not found in AgentSession {session_id}")
-        return None
-
-    def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
-        """
-        Get the last run response from the database.
-
-        Args:
-            session_id (Optional[str]): The session_id to load from storage.
-
-        Returns:
-            RunOutput: The last run response from the database.
-        """
-        if self._team_session is not None and self._team_session.runs is not None and len(self._team_session.runs) > 0:
-            run_response = self._team_session.runs[-1]
-            if run_response is not None:
-                return run_response  # type: ignore
-        else:
-            agent_session = self.get_session(session_id=session_id)
-            if agent_session is not None and agent_session.runs is not None and len(agent_session.runs) > 0:
-                run_response = agent_session.runs[-1]
-                if run_response is not None:
-                    return run_response  # type: ignore
-            else:
-                log_warning(f"No run responses found in AgentSession {session_id}")
-        return None
-
     def _read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> TeamSession:
         """Load the TeamSession from storage
 
@@ -7525,8 +7578,8 @@ class Team:
         from agno.session.team import TeamSession
 
         # Return existing session if we have one
-        if self._team_session is not None and self._team_session.session_id == session_id:
-            return self._team_session
+        if self._cached_session is not None and self._cached_session.session_id == session_id:
+            return self._cached_session
 
         # Try to load from database
         team_session = None
@@ -7553,7 +7606,7 @@ class Team:
 
         # Cache the session if relevant
         if team_session is not None and self.cache_session:
-            self._team_session = team_session
+            self._cached_session = team_session
 
         return team_session
 
@@ -7568,8 +7621,8 @@ class Team:
         from agno.session.team import TeamSession
 
         # Return existing session if we have one
-        if self._team_session is not None and self._team_session.session_id == session_id:
-            return self._team_session
+        if self._cached_session is not None and self._cached_session.session_id == session_id:
+            return self._cached_session
 
         # Try to load from database
         team_session = None
@@ -7594,126 +7647,9 @@ class Team:
 
         # Cache the session if relevant
         if team_session is not None and self.cache_session:
-            self._team_session = team_session
+            self._cached_session = team_session
 
         return team_session
-
-    def get_session(
-        self,
-        session_id: Optional[str] = None,
-    ) -> Optional[TeamSession]:
-        """Load an TeamSession from database.
-
-        Args:
-            session_id: The session_id to load from storage.
-
-        Returns:
-            TeamSession: The TeamSession loaded from the database or created if it does not exist.
-        """
-        if not session_id and not self.session_id:
-            return None
-
-        session_id_to_load = session_id or self.session_id
-
-        # If there is a cached session, return it
-        if self.cache_session and hasattr(self, "_team_session") and self._team_session is not None:
-            if self._team_session.session_id == session_id_to_load:
-                return self._team_session
-
-        # Load and return the session from the database
-        if self.db is not None:
-            loaded_session = None
-            # We have a standalone team, so we are loading a TeamSession
-            if self.workflow_id is None:
-                loaded_session = cast(TeamSession, self._read_session(session_id=session_id_to_load))  # type: ignore
-            # We have a workflow team, so we are loading a WorkflowSession
-            else:
-                loaded_session = cast(WorkflowSession, self._read_session(session_id=session_id_to_load))  # type: ignore
-
-            # Cache the session if relevant
-            if loaded_session is not None and self.cache_session:
-                self._agent_session = loaded_session
-
-            return loaded_session
-
-        log_debug(f"TeamSession {session_id_to_load} not found in db")
-        return None
-
-    async def aget_session(
-        self,
-        session_id: Optional[str] = None,
-    ) -> Optional[TeamSession]:
-        """Load an TeamSession from database.
-
-        Args:
-            session_id: The session_id to load from storage.
-
-        Returns:
-            TeamSession: The TeamSession loaded from the database or created if it does not exist.
-        """
-        if not session_id and not self.session_id:
-            return None
-
-        session_id_to_load = session_id or self.session_id
-
-        # If there is a cached session, return it
-        if self.cache_session and hasattr(self, "_team_session") and self._team_session is not None:
-            if self._team_session.session_id == session_id_to_load:
-                return self._team_session
-
-        # Load and return the session from the database
-        if self.db is not None:
-            team_session = cast(TeamSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
-
-            # Cache the session if relevant
-            if team_session is not None and self.cache_session:
-                self._team_session = team_session
-
-            return team_session
-
-        log_debug(f"TeamSession {session_id_to_load} not found in db")
-        return None
-
-    def save_session(self, session: TeamSession) -> None:
-        """Save the TeamSession to storage"""
-        if self.db is not None and self.parent_team_id is None and self.workflow_id is None:
-            if session.session_data is not None and "session_state" in session.session_data:
-                session.session_data["session_state"].pop("current_session_id", None)  # type: ignore
-                session.session_data["session_state"].pop("current_user_id", None)  # type: ignore
-                session.session_data["session_state"].pop("current_run_id", None)  # type: ignore
-
-            # scrub the member responses based on storage settings
-            if session.runs is not None:
-                for run in session.runs:
-                    if hasattr(run, "member_responses"):
-                        if not self.store_member_responses:
-                            # Remove all member responses
-                            run.member_responses = []
-                        else:
-                            # Scrub individual member responses based on their storage flags
-                            self._scrub_member_responses(run.member_responses)
-            self._upsert_session(session=session)
-            log_debug(f"Created or updated TeamSession record: {session.session_id}")
-
-    async def asave_session(self, session: TeamSession) -> None:
-        """Save the TeamSession to storage"""
-        if self.db is not None and self.parent_team_id is None and self.workflow_id is None:
-            if session.session_data is not None and "session_state" in session.session_data:
-                session.session_data["session_state"].pop("current_session_id", None)  # type: ignore
-                session.session_data["session_state"].pop("current_user_id", None)  # type: ignore
-                session.session_data["session_state"].pop("current_run_id", None)  # type: ignore
-
-            # scrub the member responses if not storing them
-            if not self.store_member_responses and session.runs is not None:
-                for run in session.runs:
-                    if hasattr(run, "member_responses"):
-                        run.member_responses = []
-
-            if self._has_async_db():
-                await self._aupsert_session(session=session)
-            else:
-                self._upsert_session(session=session)
-            log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
     def _load_session_state(self, session: TeamSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
         """Load and return the stored session_state from the database, optionally merging it with the given one"""
@@ -7756,8 +7692,219 @@ class Team:
             # Update the current metadata with the metadata from the database which is updated in place
             self.metadata = session.metadata
 
-    def _generate_session_name(self, session: TeamSession) -> str:
-        """Generate a name for the team session"""
+    # -*- Public convenience functions
+    def get_run_output(
+        self, run_id: str, session_id: Optional[str] = None
+    ) -> Optional[Union[TeamRunOutput, RunOutput]]:
+        """
+        Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
+
+        Args:
+            run_id (str): The run_id to load from storage.
+            session_id (Optional[str]): The session_id to load from storage.
+        """
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return get_run_output_util(self, run_id=run_id, session_id=session_id_to_load)
+
+    async def aget_run_output(
+        self, run_id: str, session_id: Optional[str] = None
+    ) -> Optional[Union[TeamRunOutput, RunOutput]]:
+        """
+        Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
+
+        Args:
+            run_id (str): The run_id to load from storage.
+            session_id (Optional[str]): The session_id to load from storage.
+        """
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return await aget_run_output_util(self, run_id=run_id, session_id=session_id_to_load)
+
+    def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
+        """
+        Get the last run response from the database.
+
+        Args:
+            session_id (Optional[str]): The session_id to load from storage.
+
+        Returns:
+            RunOutput: The last run response from the database.
+        """
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return cast(TeamRunOutput, get_last_run_output_util(self, session_id=session_id_to_load))
+
+    async def aget_last_run_output(self, session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
+        """
+        Get the last run response from the database.
+
+        Args:
+            session_id (Optional[str]): The session_id to load from storage.
+
+        Returns:
+            RunOutput: The last run response from the database.
+        """
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return cast(TeamRunOutput, await aget_last_run_output_util(self, session_id=session_id_to_load))
+
+    def get_session(
+        self,
+        session_id: Optional[str] = None,
+    ) -> Optional[TeamSession]:
+        """Load an TeamSession from database.
+
+        Args:
+            session_id: The session_id to load from storage.
+
+        Returns:
+            TeamSession: The TeamSession loaded from the database or created if it does not exist.
+        """
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+
+        # If there is a cached session, return it
+        if self.cache_session and hasattr(self, "_cached_session") and self._cached_session is not None:
+            if self._cached_session.session_id == session_id_to_load:
+                return self._cached_session
+
+        if self._has_async_db():
+            raise ValueError("Async database not supported for get_session")
+
+        # Load and return the session from the database
+        if self.db is not None:
+            loaded_session = None
+            # We have a standalone team, so we are loading a TeamSession
+            if self.workflow_id is None:
+                loaded_session = cast(TeamSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+            # We have a workflow team, so we are loading a WorkflowSession
+            else:
+                loaded_session = cast(WorkflowSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+
+            # Cache the session if relevant
+            if loaded_session is not None and self.cache_session:
+                self._agent_session = loaded_session
+
+            return loaded_session
+
+        log_debug(f"TeamSession {session_id_to_load} not found in db")
+        return None
+
+    async def aget_session(
+        self,
+        session_id: Optional[str] = None,
+    ) -> Optional[TeamSession]:
+        """Load an TeamSession from database.
+
+        Args:
+            session_id: The session_id to load from storage.
+
+        Returns:
+            TeamSession: The TeamSession loaded from the database or created if it does not exist.
+        """
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+
+        # If there is a cached session, return it
+        if self.cache_session and hasattr(self, "_cached_session") and self._cached_session is not None:
+            if self._cached_session.session_id == session_id_to_load:
+                return self._cached_session
+
+        # Load and return the session from the database
+        if self.db is not None:
+            loaded_session = None
+            # We have a standalone team, so we are loading a TeamSession
+            if self.workflow_id is None:
+                loaded_session = cast(TeamSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
+            # We have a workflow team, so we are loading a WorkflowSession
+            else:
+                loaded_session = cast(WorkflowSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
+
+            # Cache the session if relevant
+            if loaded_session is not None and self.cache_session:
+                self._cached_session = loaded_session
+
+            return loaded_session
+
+        log_debug(f"TeamSession {session_id_to_load} not found in db")
+        return None
+
+    def save_session(self, session: TeamSession) -> None:
+        """
+        Save the TeamSession to storage
+
+        Args:
+            session: The TeamSession to save.
+        """
+        if self._has_async_db():
+            raise ValueError("Async database not supported for save_session")
+
+        if self.db is not None and self.parent_team_id is None and self.workflow_id is None:
+            if session.session_data is not None and "session_state" in session.session_data:
+                session.session_data["session_state"].pop("current_session_id", None)  # type: ignore
+                session.session_data["session_state"].pop("current_user_id", None)  # type: ignore
+                session.session_data["session_state"].pop("current_run_id", None)  # type: ignore
+
+            # scrub the member responses based on storage settings
+            if session.runs is not None:
+                for run in session.runs:
+                    if hasattr(run, "member_responses"):
+                        if not self.store_member_responses:
+                            # Remove all member responses
+                            run.member_responses = []
+                        else:
+                            # Scrub individual member responses based on their storage flags
+                            self._scrub_member_responses(run.member_responses)
+            self._upsert_session(session=session)
+            log_debug(f"Created or updated TeamSession record: {session.session_id}")
+
+    async def asave_session(self, session: TeamSession) -> None:
+        """
+        Save the TeamSession to storage
+
+        Args:
+            session: The TeamSession to save.
+        """
+        if self.db is not None and self.parent_team_id is None and self.workflow_id is None:
+            if session.session_data is not None and "session_state" in session.session_data:
+                session.session_data["session_state"].pop("current_session_id", None)  # type: ignore
+                session.session_data["session_state"].pop("current_user_id", None)  # type: ignore
+                session.session_data["session_state"].pop("current_run_id", None)  # type: ignore
+
+            # scrub the member responses if not storing them
+            if not self.store_member_responses and session.runs is not None:
+                for run in session.runs:
+                    if hasattr(run, "member_responses"):
+                        run.member_responses = []
+
+            if self._has_async_db():
+                await self._aupsert_session(session=session)
+            else:
+                self._upsert_session(session=session)
+            log_debug(f"Created or updated TeamSession record: {session.session_id}")
+
+    def generate_session_name(self, session: TeamSession) -> str:
+        """
+        Generate a name for the team session
+
+        Args:
+            session: The TeamSession to generate a name for.
+        Returns:
+            str: The generated session name.
+        """
 
         if self.model is None:
             raise Exception("Model not set")
@@ -7785,62 +7932,113 @@ class Team:
         content = generated_name.content
         if content is None:
             log_error("Generated name is None. Trying again.")
-            return self._generate_session_name(session=session)
+            return self.generate_session_name(session=session)
         if len(content.split()) > 15:
             log_error("Generated name is too long. Trying again.")
-            return self._generate_session_name(session=session)
+            return self.generate_session_name(session=session)
         return content.replace('"', "").strip()
 
     def set_session_name(
         self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
     ) -> TeamSession:
-        """Set the session name and save to storage"""
+        """
+        Set the session name and save to storage
+
+        Args:
+            session_id: The session ID to set the name for. If not provided, the current cached session ID is used.
+            autogenerate: Whether to autogenerate the session name.
+            session_name: The session name to set. If not provided, the session name will be autogenerated.
+        Returns:
+            TeamSession: The updated session.
+        """
         session_id = session_id or self.session_id
 
         if session_id is None:
             raise Exception("Session ID is not set")
 
-        # -*- Read from storage
-        session = self.get_session(session_id=session_id)  # type: ignore
+        return cast(
+            TeamSession,
+            set_session_name_util(self, session_id=session_id, autogenerate=autogenerate, session_name=session_name),
+        )
 
-        if session is None:
-            raise Exception("Session not found")
+    async def aset_session_name(
+        self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
+    ) -> TeamSession:
+        """
+        Set the session name and save to storage
 
-        # -*- Generate name for session
-        if autogenerate:
-            session_name = self._generate_session_name(session=session)
-            log_debug(f"Generated Session Name: {session_name}")
-        elif session_name is None:
-            raise Exception("Session Name is not set")
+        Args:
+            session_id: The session ID to set the name for. If not provided, the current cached session ID is used.
+            autogenerate: Whether to autogenerate the session name.
+            session_name: The session name to set. If not provided, the session name will be autogenerated.
+        Returns:
+            TeamSession: The updated session.
+        """
+        session_id = session_id or self.session_id
 
-        # -*- Rename session
-        if session.session_data is not None:
-            session.session_data["session_name"] = session_name
+        if session_id is None:
+            raise Exception("Session ID is not set")
 
-        # -*- Save to storage
-        self.save_session(session=session)  # type: ignore
-
-        return session
+        return cast(
+            TeamSession,
+            await aset_session_name_util(
+                self, session_id=session_id, autogenerate=autogenerate, session_name=session_name
+            ),
+        )
 
     def get_session_name(self, session_id: Optional[str] = None) -> str:
-        """Get the session name for the given session ID and user ID."""
+        """
+        Get the session name for the given session ID.
+
+        Args:
+            session_id: The session ID to get the name for. If not provided, the current cached session ID is used.
+        Returns:
+            str: The session name.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
-        session = self.get_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
-        return session.session_data.get("session_name", "") if session.session_data is not None else ""
+        return get_session_name_util(self, session_id=session_id)
+
+    async def aget_session_name(self, session_id: Optional[str] = None) -> str:
+        """
+        Get the session name for the given session ID.
+
+        Args:
+            session_id: The session ID to get the name for. If not provided, the current cached session ID is used.
+        Returns:
+            str: The session name.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        return await aget_session_name_util(self, session_id=session_id)
 
     def get_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get the session state for the given session ID and user ID."""
+        """Get the session state for the given session ID.
+
+        Args:
+            session_id: The session ID to get the state for. If not provided, the current cached session ID is used.
+        Returns:
+            Dict[str, Any]: The session state.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
-        session = self.get_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
-        return session.session_data.get("session_state", {}) if session.session_data is not None else {}
+        return get_session_state_util(self, session_id=session_id)
+
+    async def aget_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get the session state for the given session ID.
+
+        Args:
+            session_id: The session ID to get the state for. If not provided, the current cached session ID is used.
+        Returns:
+            Dict[str, Any]: The session state.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        return await aget_session_state_util(self, session_id=session_id)
 
     def update_session_state(self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None) -> str:
         """
@@ -7854,19 +8052,7 @@ class Team:
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
-        session = self.get_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
-
-        if session.session_data is not None and "session_state" not in session.session_data:
-            session.session_data["session_state"] = {}
-
-        for key, value in session_state_updates.items():
-            session.session_data["session_state"][key] = value  # type: ignore
-
-        self.save_session(session=session)
-
-        return session.session_data["session_state"]  # type: ignore
+        return update_session_state_util(self, session_state_updates=session_state_updates, session_id=session_id)
 
     async def aupdate_session_state(
         self, session_state_updates: Dict[str, Any], session_id: Optional[str] = None
@@ -7882,58 +8068,87 @@ class Team:
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
-        session = await self.aget_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
-
-        if session.session_data is not None and "session_state" not in session.session_data:
-            session.session_data["session_state"] = {}
-
-        for key, value in session_state_updates.items():
-            session.session_data["session_state"][key] = value  # type: ignore
-
-        await self.asave_session(session=session)
-
-        return session.session_data["session_state"]  # type: ignore
+        return await aupdate_session_state_util(
+            entity=self, session_state_updates=session_state_updates, session_id=session_id
+        )
 
     def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
-        """Get the session metrics for the given session ID and user ID."""
+        """Get the session metrics for the given session ID.
+
+        Args:
+            session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
+        Returns:
+            Optional[Metrics]: The session metrics.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is not set")
 
-        session = self.get_session(session_id=session_id)  # type: ignore
-        if session is None:
-            raise Exception("Session not found")
+        return get_session_metrics_util(self, session_id=session_id)
 
-        if session.session_data is not None:
-            if isinstance(session.session_data.get("session_metrics"), dict):
-                return Metrics(**session.session_data.get("session_metrics", {}))
-            elif isinstance(session.session_data.get("session_metrics"), Metrics):
-                return session.session_data.get("session_metrics")
-        return None
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+        """Get the session metrics for the given session ID.
 
-    def delete_session(self, session_id: str) -> None:
-        """Delete the current session and save to storage"""
-        if self.db is not None:
-            self.db.delete_session(session_id=session_id)
-
-    def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session"""
+        Args:
+            session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
+        Returns:
+            Optional[Metrics]: The session metrics.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
-            log_warning("Session ID is not set, cannot get chat history")
-            return []
+            raise Exception("Session ID is not set")
 
-        session = self.get_session(session_id=session_id)  # type: ignore
+        return await aget_session_metrics_util(self, session_id=session_id)
 
-        if session is None:
-            raise Exception("Session not found")
+    def delete_session(self, session_id: str):
+        """Delete the current session and save to storage"""
+        if self.db is None:
+            return
 
-        return session.get_chat_history()
+        self.db.delete_session(session_id=session_id)
+
+    async def adelete_session(self, session_id: str):
+        """Delete the current session and save to storage"""
+        if self.db is None:
+            return
+        await self.db.delete_session(session_id=session_id)  # type: ignore
+
+    def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
+        """Read the chat history from the session
+
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The chat history from the session.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+
+        return get_chat_history_util(self, session_id=session_id)
+
+    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
+        """Read the chat history from the session
+
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The chat history from the session.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+
+        return await aget_chat_history_util(self, session_id=session_id)
 
     def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session"""
+        """Get messages for a session
+
+        Args:
+            session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The messages for the session.
+        """
         session_id = session_id or self.session_id
         if session_id is None:
             log_warning("Session ID is not set, cannot get messages for session")
@@ -7950,8 +8165,38 @@ class Team:
             team_id=self.id,
         )
 
-    def get_session_summary(self, session_id: Optional[str] = None):
-        """Get the session summary for the given session ID and user ID."""
+    async def aget_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
+        """Get messages for a session
+
+        Args:
+            session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The messages for the session.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            log_warning("Session ID is not set, cannot get messages for session")
+            return []
+
+        session = await self.aget_session(session_id=session_id)  # type: ignore
+
+        if session is None:
+            log_warning(f"Session {session_id} not found")
+            return []
+
+        # Only filter by agent_id if this is part of a team
+        return session.get_messages_from_last_n_runs(
+            team_id=self.id,
+        )
+
+    def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
+        """Get the session summary for the given session ID and user ID.
+
+        Args:
+            session_id: The session ID to get the summary for. If not provided, the current cached session ID is used.
+        Returns:
+            SessionSummary: The session summary.
+        """
         session_id = session_id if session_id is not None else self.session_id
         if session_id is None:
             raise ValueError("Session ID is required")
@@ -7963,8 +8208,33 @@ class Team:
 
         return session.get_session_summary()  # type: ignore
 
+    async def aget_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
+        """Get the session summary for the given session ID and user ID.
+
+        Args:
+            session_id: The session ID to get the summary for. If not provided, the current cached session ID is used.
+        Returns:
+            SessionSummary: The session summary.
+        """
+        session_id = session_id if session_id is not None else self.session_id
+        if session_id is None:
+            raise ValueError("Session ID is required")
+
+        session = await self.aget_session(session_id=session_id)
+
+        if session is None:
+            raise Exception(f"Session {session_id} not found")
+
+        return session.get_session_summary()  # type: ignore
+
     def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-        """Get the user memories for the given user ID."""
+        """Get the user memories for the given user ID.
+
+        Args:
+            user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
+        Returns:
+            Optional[List[UserMemory]]: The user memories.
+        """
         if self.memory_manager is None:
             return None
         user_id = user_id if user_id is not None else self.user_id
@@ -7973,86 +8243,21 @@ class Team:
 
         return self.memory_manager.get_user_memories(user_id=user_id)
 
-    def _add_interaction_to_team_run_context(
-        self,
-        team_run_context: Dict[str, Any],
-        member_name: str,
-        task: str,
-        run_response: Union[RunOutput, TeamRunOutput],
-    ) -> None:
-        if "member_responses" not in team_run_context:
-            team_run_context["member_responses"] = []
-        team_run_context["member_responses"].append(
-            {
-                "member_name": member_name,
-                "task": task,
-                "run_response": run_response,
-            }
-        )
-        log_debug(f"Updated team run context with member name: {member_name}")
+    async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
+        """Get the user memories for the given user ID.
 
-    def _get_team_member_interactions_str(self, team_run_context: Dict[str, Any]) -> str:
-        if not team_run_context:
-            return ""
-        team_member_interactions_str = ""
-        if "member_responses" in team_run_context:
-            team_member_interactions_str += (
-                "<member_interaction_context>\nSee below interactions wit other team members.\n"
-            )
+        Args:
+            user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
+        Returns:
+            Optional[List[UserMemory]]: The user memories.
+        """
+        if self.memory_manager is None:
+            return None
+        user_id = user_id if user_id is not None else self.user_id
+        if user_id is None:
+            user_id = "default"
 
-            for interaction in team_run_context["member_responses"]:
-                response_dict = interaction["run_response"].to_dict()
-                response_content = (
-                    response_dict.get("content")
-                    or ",".join([tool.get("content", "") for tool in response_dict.get("tools", [])])
-                    or ""
-                )
-                team_member_interactions_str += f"Member: {interaction['member_name']}\n"
-                team_member_interactions_str += f"Task: {interaction['task']}\n"
-                team_member_interactions_str += f"Response: {response_content}\n"
-                team_member_interactions_str += "\n"
-            team_member_interactions_str += "</member_interaction_context>\n"
-        return team_member_interactions_str
-
-    def _get_team_run_context_images(self, team_run_context: Dict[str, Any]) -> List[Image]:
-        if not team_run_context:
-            return []
-        images = []
-        if "member_responses" in team_run_context:
-            for interaction in team_run_context["member_responses"]:
-                if interaction["run_response"].images:
-                    images.extend(interaction["run_response"].images)
-        return images
-
-    def _get_team_run_context_videos(self, team_run_context: Dict[str, Any]) -> List[Video]:
-        if not team_run_context:
-            return []
-        videos = []
-        if "member_responses" in team_run_context:
-            for interaction in team_run_context["member_responses"]:
-                if interaction["run_response"].videos:
-                    videos.extend(interaction["run_response"].videos)
-        return videos
-
-    def _get_team_run_context_audio(self, team_run_context: Dict[str, Any]) -> List[Audio]:
-        if not team_run_context:
-            return []
-        audio = []
-        if "member_responses" in team_run_context:
-            for interaction in team_run_context["member_responses"]:
-                if interaction["run_response"].audio:
-                    audio.extend(interaction["run_response"].audio)
-        return audio
-
-    def _get_team_run_context_files(self, team_run_context: Dict[str, Any]) -> List[File]:
-        if not team_run_context:
-            return []
-        files = []
-        if "member_responses" in team_run_context:
-            for interaction in team_run_context["member_responses"]:
-                if interaction["run_response"].files:
-                    files.extend(interaction["run_response"].files)
-        return files
+        return await self.memory_manager.aget_user_memories(user_id=user_id)
 
     ###########################################################################
     # Handle images, videos and audio
@@ -8201,6 +8406,8 @@ class Team:
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
+        import asyncio
+
         from agno.knowledge.reader.text_reader import TextReader
 
         asyncio.run(
