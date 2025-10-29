@@ -1,10 +1,8 @@
 from os import getenv
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, List, Literal, Optional
 from uuid import uuid4
 
-from agno.agent import Agent
 from agno.media import Image
-from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, logger
@@ -64,7 +62,7 @@ class DalleTools(Toolkit):
         # - Add support for saving images
         # - Add support for editing images
 
-    def create_image(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
+    def create_image(self, prompt: str) -> ToolResult:
         """Use this function to generate an image for a prompt.
 
         Args:

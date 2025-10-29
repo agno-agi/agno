@@ -5313,6 +5313,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        check_mcp_tools: bool = True,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
@@ -5339,7 +5340,7 @@ class Agent:
                             continue
 
                     # Only add the tool if it successfully connected and built its tools
-                    if not tool.initialized:  # type: ignore
+                    if check_mcp_tools and not tool.initialized:  # type: ignore
                         continue
 
                     agent_tools.append(tool)
@@ -5353,7 +5354,9 @@ class Agent:
             agent_tools.append(self._get_tool_call_history_function(session=session))
         if self.search_session_history:
             agent_tools.append(
-                await self._aget_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions)
+                await self._aget_previous_sessions_messages_function(
+                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                )
             )
 
         if self.enable_agentic_memory:
@@ -5427,14 +5430,14 @@ class Agent:
                         if name in _function_names:
                             continue
                         _function_names.append(name)
-
+                        _func = _func.model_copy(deep=True)
                         _func._agent = self
                         _func.process_entrypoint(strict=strict)
                         if strict and _func.strict is None:
                             _func.strict = True
                         if self.tool_hooks is not None:
                             _func.tool_hooks = self.tool_hooks
-                        _functions.append(_func.model_copy(deep=True))
+                        _functions.append(_func)
                         log_debug(f"Added tool {name} from {tool.name}")
 
                     # Add instructions from the toolkit
@@ -5446,13 +5449,15 @@ class Agent:
                         continue
                     _function_names.append(tool.name)
 
-                    tool._agent = self
                     tool.process_entrypoint(strict=strict)
+                    tool = tool.model_copy(deep=True)
+
+                    tool._agent = self
                     if strict and tool.strict is None:
                         tool.strict = True
                     if self.tool_hooks is not None:
                         tool.tool_hooks = self.tool_hooks
-                    _functions.append(tool.model_copy(deep=True))
+                    _functions.append(tool)
                     log_debug(f"Added tool {tool.name}")
 
                     # Add instructions from the Function
@@ -5468,12 +5473,13 @@ class Agent:
                         _function_names.append(function_name)
 
                         _func = Function.from_callable(tool, strict=strict)
+                        _func = _func.model_copy(deep=True)
                         _func._agent = self
                         if strict:
                             _func.strict = True
                         if self.tool_hooks is not None:
                             _func.tool_hooks = self.tool_hooks
-                        _functions.append(_func.model_copy(deep=True))
+                        _functions.append(_func)
                         log_debug(f"Added tool {_func.name}")
                     except Exception as e:
                         log_warning(f"Could not add tool {tool}: {e}")
@@ -5806,7 +5812,11 @@ class Agent:
         Returns:
             Optional[RunOutput]: The RunOutput from the database or None if not found.
         """
-        return cast(RunOutput, get_run_output_util(self, run_id=run_id, session_id=session_id))
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return cast(RunOutput, get_run_output_util(self, run_id=run_id, session_id=session_id_to_load))
 
     async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
         """
@@ -5818,7 +5828,11 @@ class Agent:
         Returns:
             Optional[RunOutput]: The RunOutput from the database or None if not found.
         """
-        return cast(RunOutput, await aget_run_output_util(self, run_id=run_id, session_id=session_id))
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return cast(RunOutput, await aget_run_output_util(self, run_id=run_id, session_id=session_id_to_load))
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
         """
@@ -5830,7 +5844,11 @@ class Agent:
         Returns:
             Optional[RunOutput]: The last run response from the database or None if not found.
         """
-        return cast(RunOutput, get_last_run_output_util(self, session_id=session_id))
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return cast(RunOutput, get_last_run_output_util(self, session_id=session_id_to_load))
 
     async def aget_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
         """
@@ -5842,7 +5860,11 @@ class Agent:
         Returns:
             Optional[RunOutput]: The last run response from the database or None if not found.
         """
-        return cast(RunOutput, await aget_last_run_output_util(self, session_id=session_id))
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return cast(RunOutput, await aget_last_run_output_util(self, session_id=session_id_to_load))
 
     def get_session(
         self,
@@ -9541,12 +9563,14 @@ class Agent:
 
         return get_previous_session_messages
 
-    async def _aget_previous_sessions_messages_function(self, num_history_sessions: Optional[int] = 2) -> Callable:
+    async def _aget_previous_sessions_messages_function(
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+    ) -> Function:
         """Factory function to create a get_previous_session_messages function.
 
         Args:
             num_history_sessions: The last n sessions to be taken from db
-
+            user_id: The user ID to filter sessions by
         Returns:
             Callable: A function that retrieves messages from previous sessions
         """
@@ -9564,12 +9588,22 @@ class Agent:
             if self.db is None:
                 return "Previous session messages not available"
 
-            if isinstance(self.db, AsyncBaseDb):
-                selected_sessions = await self.db.get_sessions(
-                    session_type=SessionType.AGENT, limit=num_history_sessions
+            if self._has_async_db():
+                selected_sessions = await self.db.get_sessions(  # type: ignore
+                    session_type=SessionType.AGENT,
+                    limit=num_history_sessions,
+                    user_id=user_id,
+                    sort_by="created_at",
+                    sort_order="desc",
                 )
             else:
-                selected_sessions = self.db.get_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
+                selected_sessions = self.db.get_sessions(
+                    session_type=SessionType.AGENT,
+                    limit=num_history_sessions,
+                    user_id=user_id,
+                    sort_by="created_at",
+                    sort_order="desc",
+                )
 
             all_messages = []
             seen_message_pairs = set()
@@ -9602,7 +9636,7 @@ class Agent:
 
             return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
 
-        return aget_previous_session_messages
+        return Function.from_callable(aget_previous_session_messages, name="get_previous_session_messages")
 
     ###########################################################################
     # Print Response

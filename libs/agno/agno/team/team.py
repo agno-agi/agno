@@ -4993,6 +4993,7 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        check_mcp_tools: bool = True,
     ) -> List[Union[Function, dict]]:
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
@@ -5002,7 +5003,7 @@ class Team:
             for tool in self.tools:
                 if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
                     # Only add the tool if it successfully connected and built its tools
-                    if not tool.initialized:  # type: ignore
+                    if check_mcp_tools and not tool.initialized:  # type: ignore
                         continue
                 _tools.append(tool)
 
@@ -5018,7 +5019,7 @@ class Team:
         if self.search_session_history:
             _tools.append(
                 self._get_previous_sessions_messages_function(
-                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                    num_history_sessions=self.num_history_sessions, user_id=user_id, async_mode=async_mode
                 )
             )
 
@@ -5121,6 +5122,7 @@ class Team:
                     if name in _function_names:
                         continue
                     _function_names.append(name)
+                    _func = _func.model_copy(deep=True)
 
                     _func._team = self
                     _func.process_entrypoint(strict=strict)
@@ -5128,7 +5130,7 @@ class Team:
                         _func.strict = True
                     if self.tool_hooks:
                         _func.tool_hooks = self.tool_hooks
-                    _functions.append(_func.model_copy(deep=True))
+                    _functions.append(_func)
                     log_debug(f"Added tool {_func.name} from {tool.name}")
 
                 # Add instructions from the toolkit
@@ -5141,14 +5143,14 @@ class Team:
                 if tool.name in _function_names:
                     continue
                 _function_names.append(tool.name)
-
+                tool = tool.model_copy(deep=True)
                 tool._team = self
                 tool.process_entrypoint(strict=strict)
                 if strict and tool.strict is None:
                     tool.strict = True
                 if self.tool_hooks:
                     tool.tool_hooks = self.tool_hooks
-                _functions.append(tool.model_copy(deep=True))
+                _functions.append(tool)
                 log_debug(f"Added tool {tool.name}")
 
                 # Add instructions from the Function
@@ -5161,7 +5163,7 @@ class Team:
                 # We add the tools, which are callable functions
                 try:
                     _func = Function.from_callable(tool, strict=strict)
-
+                    _func = _func.model_copy(deep=True)
                     if _func.name in _function_names:
                         continue
                     _function_names.append(_func.name)
@@ -5171,7 +5173,7 @@ class Team:
                         _func.strict = True
                     if self.tool_hooks:
                         _func.tool_hooks = self.tool_hooks
-                    _functions.append(_func.model_copy(deep=True))
+                    _functions.append(_func)
                     log_debug(f"Added tool {_func.name}")
                 except Exception as e:
                     log_warning(f"Could not add tool {tool}: {e}")
@@ -6618,7 +6620,7 @@ class Team:
         return f"Updated session state: {session_state}"
 
     def _get_previous_sessions_messages_function(
-        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None, async_mode: bool = False
     ):
         """Factory function to create a get_previous_session_messages function.
 
@@ -6695,13 +6697,22 @@ class Team:
                 return "Previous session messages not available"
 
             self.db = cast(AsyncBaseDb, self.db)
-            selected_sessions = await self.db.get_sessions(
-                session_type=SessionType.TEAM,
-                limit=num_history_sessions,
-                user_id=user_id,
-                sort_by="created_at",
-                sort_order="desc",
-            )
+            if self._has_async_db():
+                selected_sessions = await self.db.get_sessions(  # type: ignore
+                    session_type=SessionType.TEAM,
+                    limit=num_history_sessions,
+                    user_id=user_id,
+                    sort_by="created_at",
+                    sort_order="desc",
+                )
+            else:
+                selected_sessions = self.db.get_sessions(  # type: ignore
+                    session_type=SessionType.TEAM,
+                    limit=num_history_sessions,
+                    user_id=user_id,
+                    sort_by="created_at",
+                    sort_order="desc",
+                )
 
             all_messages = []
             seen_message_pairs = set()
@@ -7692,7 +7703,11 @@ class Team:
             run_id (str): The run_id to load from storage.
             session_id (Optional[str]): The session_id to load from storage.
         """
-        return get_run_output_util(self, run_id=run_id, session_id=session_id)
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return get_run_output_util(self, run_id=run_id, session_id=session_id_to_load)
 
     async def aget_run_output(
         self, run_id: str, session_id: Optional[str] = None
@@ -7704,7 +7719,11 @@ class Team:
             run_id (str): The run_id to load from storage.
             session_id (Optional[str]): The session_id to load from storage.
         """
-        return await aget_run_output_util(self, run_id=run_id, session_id=session_id)
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return await aget_run_output_util(self, run_id=run_id, session_id=session_id_to_load)
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
         """
@@ -7716,7 +7735,11 @@ class Team:
         Returns:
             RunOutput: The last run response from the database.
         """
-        return cast(TeamRunOutput, get_last_run_output_util(self, session_id=session_id))
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return cast(TeamRunOutput, get_last_run_output_util(self, session_id=session_id_to_load))
 
     async def aget_last_run_output(self, session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
         """
@@ -7728,7 +7751,11 @@ class Team:
         Returns:
             RunOutput: The last run response from the database.
         """
-        return cast(TeamRunOutput, await aget_last_run_output_util(self, session_id=session_id))
+        if not session_id and not self.session_id:
+            raise Exception("No session_id provided")
+
+        session_id_to_load = session_id or self.session_id
+        return cast(TeamRunOutput, await aget_last_run_output_util(self, session_id=session_id_to_load))
 
     def get_session(
         self,
