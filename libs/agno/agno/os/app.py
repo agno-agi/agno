@@ -224,13 +224,31 @@ class AgentOS:
         except (ValueError, TypeError):
             return lifespan
 
-    def resync(self) -> None:
+    def resync(self, app: FastAPI) -> None:
         """Resync the AgentOS to discover, initialize and configure: agents, teams, workflows, databases and knowledge bases."""
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
+        self._reprovision_routers(app=app)
+
+    def _reprovision_routers(self, app: FastAPI) -> None:
+        """Re-provision all routes for the AgentOS."""
+        updated_routers = [
+            get_session_router(dbs=self.dbs),
+            get_memory_router(dbs=self.dbs),
+            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
+            get_metrics_router(dbs=self.dbs),
+            get_knowledge_router(knowledge_instances=self.knowledge_instances),
+        ]
+
+        # Clear all previously existing routes
+        app.router.routes = []
+
+        # Add the updated routes
+        for router in updated_routers:
+            self._add_router(app, router)
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant

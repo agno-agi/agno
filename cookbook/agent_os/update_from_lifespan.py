@@ -1,12 +1,13 @@
 from contextlib import asynccontextmanager
 
 from agno.agent.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.postgres.postgres import PostgresDb
 from agno.os import AgentOS
+
+db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # First agent. We will add this to the AgentOS on initialization.
 agent1 = Agent(
-    id="first-agent",
     name="First Agent",
     markdown=True,
 )
@@ -16,7 +17,7 @@ agent2 = Agent(
     id="second-agent",
     name="Second Agent",
     markdown=True,
-    db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
+    db=db,
 )
 
 
@@ -27,7 +28,7 @@ async def lifespan(app, agent_os):
     agent_os.agents.append(agent2)
 
     # Resync the AgentOS
-    agent_os.resync()
+    agent_os.resync(app=app)
 
     yield
 
