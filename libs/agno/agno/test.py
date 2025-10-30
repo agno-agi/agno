@@ -121,14 +121,12 @@ def prepare_notion_input(step_input: StepInput) -> StepOutput:
         try:
             classification = ClassificationResult(**json.loads(previous_output))
         except:
-            # Fallback - shouldn't happen but just in case
             classification = ClassificationResult(
                 query=str(step_input.input),
                 tag="general-blogs",
                 message="Failed to parse classification"
             )
     else:
-        # It's already a ClassificationResult or BaseModel
         classification = previous_output
     
     # Create a clear instruction for the Notion agent with EXPLICIT tag requirement

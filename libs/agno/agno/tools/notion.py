@@ -174,26 +174,60 @@ class NotionTools(Toolkit):
         try:
             log_debug(f"Searching for pages with tag: {tag}")
             
-            # Query the database for pages with the specified tag
-            response = self.client.databases.query(
-                database_id=self.database_id,
-                filter={
+            import httpx
+            
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Notion-Version": "2022-06-28",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "filter": {
                     "property": "Tag",
                     "select": {
                         "equals": tag
                     }
                 }
+            }
+            
+            response = httpx.post(
+                f"https://api.notion.com/v1/databases/{self.database_id}/query",
+                headers=headers,
+                json=payload,
+                timeout=30.0
             )
             
+            if response.status_code != 200:
+                return json.dumps({
+                    "success": False,
+                    "error": f"API request failed with status {response.status_code}",
+                    "message": response.text
+                })
+            
+            data = response.json()
             pages = []
-            for page in response["results"]:
-                page_info = {
-                    "page_id": page["id"],
-                    "title": page["properties"]["Name"]["title"][0]["text"]["content"] if page["properties"]["Name"]["title"] else "Untitled",
-                    "tag": page["properties"]["Tag"]["select"]["name"] if page["properties"]["Tag"]["select"] else None,
-                    "url": page["url"]
-                }
-                pages.append(page_info)
+            
+            for page in data.get("results", []):
+                try:
+                    page_title = "Untitled"
+                    if page.get("properties", {}).get("Name", {}).get("title"):
+                        page_title = page["properties"]["Name"]["title"][0]["text"]["content"]
+                    
+                    page_tag = None
+                    if page.get("properties", {}).get("Tag", {}).get("select"):
+                        page_tag = page["properties"]["Tag"]["select"]["name"]
+                    
+                    page_info = {
+                        "page_id": page["id"],
+                        "title": page_title,
+                        "tag": page_tag,
+                        "url": page.get("url", "")
+                    }
+                    pages.append(page_info)
+                except Exception as page_error:
+                    log_debug(f"Error parsing page: {page_error}")
+                    continue
             
             result = {
                 "success": True,
@@ -206,6 +240,7 @@ class NotionTools(Toolkit):
             logger.exception(e)
             return json.dumps({
                 "success": False,
-                "error": str(e)
+                "error": str(e),
+                "message": "Failed to search pages. Make sure the database is shared with the integration and has a 'Tag' property."
             })
 
