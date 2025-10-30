@@ -21,7 +21,9 @@ document_agent = Agent(
     name="Document Creator",
     model=Claude(
         id="claude-sonnet-4-5-20250929",
-        skills=[{"type": "anthropic", "skill_id": "docx", "version": "latest"}],  # Enable Word document skill
+        skills=[
+            {"type": "anthropic", "skill_id": "docx", "version": "latest"}
+        ],  # Enable Word document skill
     ),
     instructions=[
         "You are a professional document writer with access to Word document skills.",

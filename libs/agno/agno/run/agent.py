@@ -70,12 +70,39 @@ class RunInput:
                 result["input_content"] = self.input_content.model_dump(exclude_none=True)
             elif isinstance(self.input_content, Message):
                 result["input_content"] = self.input_content.to_dict()
+
+            # Handle input_content provided as a list of Message objects
             elif (
                 isinstance(self.input_content, list)
                 and self.input_content
                 and isinstance(self.input_content[0], Message)
             ):
                 result["input_content"] = [m.to_dict() for m in self.input_content]
+
+            # Handle input_content provided as a list of dicts
+            elif (
+                isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], dict)
+            ):
+                for content in self.input_content:
+                    # Handle media input
+                    if isinstance(content, dict):
+                        if content.get("images"):
+                            content["images"] = [
+                                img.to_dict() if isinstance(img, Image) else img for img in content["images"]
+                            ]
+                        if content.get("videos"):
+                            content["videos"] = [
+                                vid.to_dict() if isinstance(vid, Video) else vid for vid in content["videos"]
+                            ]
+                        if content.get("audios"):
+                            content["audios"] = [
+                                aud.to_dict() if isinstance(aud, Audio) else aud for aud in content["audios"]
+                            ]
+                        if content.get("files"):
+                            content["files"] = [
+                                file.to_dict() if isinstance(file, File) else file for file in content["files"]
+                            ]
+                result["input_content"] = self.input_content
             else:
                 result["input_content"] = self.input_content
 
@@ -707,6 +734,12 @@ class RunOutput:
         if references is not None:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
+        # Filter data to only include fields that are actually defined in the RunOutput dataclass
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
         return cls(
             messages=messages,
             metrics=metrics,
@@ -723,7 +756,7 @@ class RunOutput:
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,
-            **data,
+            **filtered_data,
         )
 
     def get_content_as_string(self, **kwargs) -> str:

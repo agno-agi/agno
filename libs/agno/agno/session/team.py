@@ -113,11 +113,25 @@ class TeamSession:
 
         log_debug("Added RunOutput to Team Session")
 
+    def _should_skip_message(
+        self, message: Message, skip_role: Optional[str] = None, skip_history_messages: bool = True
+    ) -> bool:
+        """Processes a message for history"""
+        # Skip messages that were tagged as history in previous runs
+        if hasattr(message, "from_history") and message.from_history and skip_history_messages:
+            return True
+
+        # Skip messages with specified role
+        if skip_role and message.role == skip_role:
+            return True
+        return False
+
     def get_messages_from_last_n_runs(
         self,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         last_n: Optional[int] = None,
+        last_n_messages: Optional[int] = None,
         skip_role: Optional[str] = None,
         skip_status: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
@@ -129,6 +143,7 @@ class TeamSession:
             agent_id: The id of the agent to get the messages from.
             team_id: The id of the team to get the messages from.
             last_n: The number of runs to return from the end of the conversation. Defaults to all runs.
+            last_n_messages: The number of messages to return from the end of the conversation. Defaults to all messages.
             skip_role: Skip messages with this role.
             skip_status: Skip messages with this status.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
@@ -150,36 +165,60 @@ class TeamSession:
             session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
 
         if not member_runs:
-            # Filter for the main team runs
+            # Filter for the top-level runs (main team runs or agent runs when sharing session)
             session_runs = [run for run in session_runs if run.parent_run_id is None]  # type: ignore
         # Filter by status
         session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_status]  # type: ignore
 
-        # Filter by last_n
-        runs_to_process = session_runs[-last_n:] if last_n is not None else session_runs
         messages_from_history = []
         system_message = None
 
-        for run_response in runs_to_process:
-            if not (run_response and run_response.messages):
-                continue
-
-            for message in run_response.messages or []:
-                # Skip messages that were tagged as history in previous runs
-                if hasattr(message, "from_history") and message.from_history and skip_history_messages:
+        # Filter by last_n_messages
+        if last_n_messages is not None:
+            for run_response in session_runs:
+                if not run_response or not run_response.messages:
                     continue
 
-                # Skip messages with specified role
-                if skip_role and message.role == skip_role:
+                for message in run_response.messages or []:
+                    if self._should_skip_message(message, skip_role, skip_history_messages):
+                        continue
+
+                    if message.role == "system":
+                        # Only add the system message once
+                        if system_message is None:
+                            system_message = message
+                    else:
+                        messages_from_history.append(message)
+
+            if system_message:
+                messages_from_history = [system_message] + messages_from_history[
+                    -(last_n_messages - 1) :
+                ]  # Grab one less message then add the system message
+            else:
+                messages_from_history = messages_from_history[-last_n_messages:]
+
+            # Remove tool result messages that don't have an associated assistant message with tool calls
+            while len(messages_from_history) > 0 and messages_from_history[0].role == "tool":
+                messages_from_history.pop(0)
+        else:
+            # Filter by last_n runs
+            runs_to_process = session_runs[-last_n:] if last_n is not None else session_runs
+
+            for run_response in runs_to_process:
+                if not (run_response and run_response.messages):
                     continue
 
-                if message.role == "system":
-                    # Only add the system message once
-                    if system_message is None:
-                        system_message = message
-                        messages_from_history.append(system_message)
-                else:
-                    messages_from_history.append(message)
+                for message in run_response.messages or []:
+                    if self._should_skip_message(message, skip_role, skip_history_messages):
+                        continue
+
+                    if message.role == "system":
+                        # Only add the system message once
+                        if system_message is None:
+                            system_message = message
+                            messages_from_history.append(system_message)
+                    else:
+                        messages_from_history.append(message)
 
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history

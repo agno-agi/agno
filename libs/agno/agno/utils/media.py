@@ -6,8 +6,9 @@ from typing import List, Optional
 
 import httpx
 
+from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_info, log_warning
-from agno.media import Image, Video, Audio, File
+
 
 class SampleDataFileExtension(str, Enum):
     DOCX = "docx"
@@ -298,7 +299,7 @@ def reconstruct_file_from_dict(file_data):
 
 def reconstruct_images(images: Optional[List[dict]]) -> Optional[List[Image]]:
     """Reconstruct a list of Image objects from list of dictionaries.
-    
+
     Failed reconstructions are skipped with a warning logged.
     """
     if not images:
@@ -310,7 +311,7 @@ def reconstruct_images(images: Optional[List[dict]]) -> Optional[List[Image]]:
 
 def reconstruct_videos(videos: Optional[List[dict]]) -> Optional[List[Video]]:
     """Reconstruct a list of Video objects from list of dictionaries.
-    
+
     Failed reconstructions are skipped with a warning logged.
     """
     if not videos:
@@ -322,7 +323,7 @@ def reconstruct_videos(videos: Optional[List[dict]]) -> Optional[List[Video]]:
 
 def reconstruct_audio_list(audio: Optional[List[dict]]) -> Optional[List[Audio]]:
     """Reconstruct a list of Audio objects from list of dictionaries.
-    
+
     Failed reconstructions are skipped with a warning logged.
     """
     if not audio:
@@ -334,7 +335,7 @@ def reconstruct_audio_list(audio: Optional[List[dict]]) -> Optional[List[Audio]]
 
 def reconstruct_files(files: Optional[List[dict]]) -> Optional[List[File]]:
     """Reconstruct a list of File objects from list of dictionaries.
-    
+
     Failed reconstructions are skipped with a warning logged.
     """
     if not files:
