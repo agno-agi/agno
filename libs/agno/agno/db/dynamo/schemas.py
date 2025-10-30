@@ -243,6 +243,49 @@ METRICS_TABLE_SCHEMA = {
     "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
 }
 
+CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
+    "TableName": "agno_cultural_knowledge",
+    "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+    "AttributeDefinitions": [
+        {"AttributeName": "id", "AttributeType": "S"},
+        {"AttributeName": "name", "AttributeType": "S"},
+        {"AttributeName": "agent_id", "AttributeType": "S"},
+        {"AttributeName": "team_id", "AttributeType": "S"},
+        {"AttributeName": "created_at", "AttributeType": "N"},
+    ],
+    "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "name-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "name", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+        {
+            "IndexName": "agent_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "agent_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+        {
+            "IndexName": "team_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "team_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+    ],
+    "BillingMode": "PROVISIONED",
+    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+}
+
 
 def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
     """
@@ -260,6 +303,7 @@ def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
         "evals": EVAL_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
+        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

@@ -188,6 +188,7 @@ jobs:
 
   # Run tests for Deepseek
   test-deepseek:
+    if: false # Disable deepseek tests until we get a production account
     runs-on: ubuntu-latest
     strategy:
       matrix:
