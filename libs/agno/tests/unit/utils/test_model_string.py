@@ -76,6 +76,7 @@ def test_get_model_unknown_provider():
     with pytest.raises(ValueError, match="not supported"):
         get_model("unknown-provider:model-123")
 
+
 def test_agent_with_model_string():
     """Test creating Agent with model string."""
     agent = Agent(model="openai:gpt-4o")

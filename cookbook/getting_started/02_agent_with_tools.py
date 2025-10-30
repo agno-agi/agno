@@ -10,11 +10,12 @@ Run `pip install openai ddgs agno` to install dependencies.
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Create a News Reporter Agent with a fun personality
 agent = Agent(
-    model="openai:gpt-4o",
+    model=OpenAIChat(id="gpt-4o"),
     instructions=dedent("""\
         You are an enthusiastic news reporter with a flair for storytelling! 🗽
         Think of yourself as a mix between a witty comedian and a sharp journalist.

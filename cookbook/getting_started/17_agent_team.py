@@ -12,6 +12,7 @@ Run: `pip install openai ddgs yfinance agno` to install the dependencies
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
@@ -19,7 +20,7 @@ from agno.tools.exa import ExaTools
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
-    model="openai:gpt-4o",
+    model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
     instructions=dedent("""\
         You are an experienced web researcher and news analyst! 🔍
@@ -46,7 +47,7 @@ web_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
-    model="openai:gpt-4o",
+    model=OpenAIChat(id="gpt-4o"),
     tools=[
         ExaTools(
             include_domains=["trendlyne.com"],
@@ -79,7 +80,7 @@ finance_agent = Agent(
 
 agent_team = Team(
     members=[web_agent, finance_agent],
-    model="openai:gpt-4o",
+    model=OpenAIChat(id="gpt-4o"),
     instructions=dedent("""\
         You are the lead editor of a prestigious financial news desk! 📰
 

@@ -1,7 +1,8 @@
 from agno.agent import Agent, RunOutput  # noqa
+from agno.models.together import Together
 
 agent = Agent(
-    model="together:meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", markdown=True
+    model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"), markdown=True
 )
 
 # Get the response in a variable
