@@ -1,6 +1,6 @@
 """Example showing how to set the model for an Agent using a model string"""
 
-from agno.agent import Agent    
+from agno.agent import Agent
 
 # Model strings follow the format "{provider}:{model_id}", for example:
 model_string = "openai:gpt-4o"
