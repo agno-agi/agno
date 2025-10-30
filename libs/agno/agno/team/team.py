@@ -909,7 +909,6 @@ class Team:
         """Resolve model strings to Model instances.
 
         Converts model strings (e.g., 'openai:gpt-4o') to actual Model instances.
-        This happens after __init__ as suggested by PR #4415 reviewers.
         """
         if self.model is not None:
             self.model = get_model(self.model)
