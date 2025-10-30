@@ -51,7 +51,7 @@ reasoning_model_agent = Agent(
     role="Reasoning about Math",
     id="reasoning-model-agent",
     model=OpenAIChat(id="gpt-4o"),
-    reasoning_model="openai:o3-mini",
+    reasoning_model=OpenAIChat(id="o3-mini"),
     instructions=["You are a reasoning agent that can reason about math."],
     markdown=True,
     db=db,

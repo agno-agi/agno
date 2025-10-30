@@ -11,5 +11,4 @@ except ImportError:
 
 __all__ = [
     "LiteLLM",
-    "LiteLLMOpenAI",
 ]

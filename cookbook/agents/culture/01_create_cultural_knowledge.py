@@ -9,6 +9,7 @@ Agents can reference to stay consistent in tone, reasoning, and best practices.
 
 from agno.culture.manager import CultureManager
 from agno.db.sqlite import SqliteDb
+from agno.models.anthropic import Claude
 from rich.pretty import pprint
 
 # ---------------------------------------------------------------------------
@@ -23,7 +24,7 @@ db = SqliteDb(db_file="tmp/demo.db")
 # that your Agents can access for consistent reasoning and behavior.
 culture_manager = CultureManager(
     db=db,
-    model="anthropic:claude-sonnet-4-5",
+    model=Claude(id="claude-sonnet-4-5"),
 )
 
 # ---------------------------------------------------------------------------
