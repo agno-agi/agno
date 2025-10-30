@@ -23,15 +23,11 @@ agent2 = Agent(
 # Lifespan function receiving the AgentOS instance as parameter.
 @asynccontextmanager
 async def lifespan(app, agent_os):
-    # Add the new agent to the AgentOS.
+    # Add the new Agent
     agent_os.agents.append(agent2)
-    agent_os._initialize_agents()
 
-    # Add the new agent's database to the AgentOS.
-    agent_os._auto_discover_databases()
-
-    # Add the new agent's Knowledge bases to the AgentOS.
-    agent_os._auto_discover_knowledge_instances()
+    # Resync the AgentOS
+    agent_os.resync()
 
     yield
 

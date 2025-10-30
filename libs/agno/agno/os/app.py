@@ -224,6 +224,14 @@ class AgentOS:
         except (ValueError, TypeError):
             return lifespan
 
+    def resync(self) -> None:
+        """Resync the AgentOS to discover, initialize and configure: agents, teams, workflows, databases and knowledge bases."""
+        self._initialize_agents()
+        self._initialize_teams()
+        self._initialize_workflows()
+        self._auto_discover_databases()
+        self._auto_discover_knowledge_instances()
+
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
         app_lifespan = lifespan
