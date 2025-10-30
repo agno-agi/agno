@@ -378,7 +378,9 @@ class Team:
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_context: bool = False
     # Number of historical runs to include in the messages
-    num_history_runs: int = 3
+    num_history_runs: Optional[int] = None
+    # Number of historical messages to include in the messages list sent to the Model.
+    num_history_messages: Optional[int] = None
     # Maximum number of tool calls to include from history (None = no limit)
     max_tool_calls_from_history: Optional[int] = None
 
@@ -485,7 +487,9 @@ class Team:
         store_history_messages: bool = True,
         send_media_to_model: bool = True,
         add_history_to_context: bool = False,
-        num_history_runs: int = 3,
+        num_history_runs: Optional[int] = None,
+        num_history_messages: Optional[int] = None,
+        max_tool_calls_from_history: Optional[int] = None,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -508,7 +512,6 @@ class Team:
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
-        max_tool_calls_from_history: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
@@ -553,6 +556,17 @@ class Team:
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
+        self.num_history_messages = num_history_messages
+        if self.num_history_messages is not None and self.num_history_runs is not None:
+            log_warning(
+                "num_history_messages and num_history_runs cannot be set at the same time. Using num_history_runs."
+            )
+            self.num_history_messages = None
+        if self.num_history_messages is None and self.num_history_runs is None:
+            self.num_history_runs = 3
+
+        self.max_tool_calls_from_history = max_tool_calls_from_history
+
         self.add_team_history_to_members = add_team_history_to_members
         self.num_team_history_runs = num_team_history_runs
         self.search_session_history = search_session_history
@@ -620,9 +634,6 @@ class Team:
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
         self.add_session_summary_to_context = add_session_summary_to_context
-        self.add_history_to_context = add_history_to_context
-        self.num_history_runs = num_history_runs
-        self.max_tool_calls_from_history = max_tool_calls_from_history
         self.metadata = metadata
 
         self.reasoning = reasoning
@@ -3479,7 +3490,7 @@ class Team:
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
         if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
-            log_debug("Creating user memories.")
+            log_debug("Managing user memories")
             self.memory_manager.create_user_memories(
                 message=user_message_str,
                 user_id=user_id,
@@ -3495,7 +3506,7 @@ class Team:
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
         if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
-            log_debug("Creating user memories.")
+            log_debug("Managing user memories")
             await self.memory_manager.acreate_user_memories(
                 message=user_message_str,
                 user_id=user_id,
@@ -5950,6 +5961,7 @@ class Team:
 
             history = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
+                last_n_messages=self.num_history_messages,
                 skip_role=skip_role,
                 team_id=self.id if self.parent_team_id is not None else None,
             )
@@ -6081,9 +6093,16 @@ class Team:
         if add_history_to_context:
             from copy import deepcopy
 
+            # Only skip messages from history when system_message_role is NOT a standard conversation role.
+            # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+            # to preserve conversation continuity.
+            skip_role = (
+                self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
+            )
             history = session.get_messages_from_last_n_runs(
                 last_n=self.num_history_runs,
-                skip_role=self.system_message_role,
+                last_n_messages=self.num_history_messages,
+                skip_role=skip_role,
                 team_id=self.id,
             )
 
@@ -6787,6 +6806,7 @@ class Team:
 
         history = session.get_messages_from_last_n_runs(
             last_n=member_agent.num_history_runs or self.num_history_runs,
+            last_n_messages=member_agent.num_history_messages,
             skip_role=skip_role,
             agent_id=member_agent_id,
             team_id=member_team_id,
@@ -8523,7 +8543,7 @@ class Team:
                     log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
-            from inspect import signature
+            from inspect import isawaitable, signature
 
             try:
                 sig = signature(self.knowledge_retriever)
@@ -8533,7 +8553,13 @@ class Team:
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                return self.knowledge_retriever(**knowledge_retriever_kwargs)
+
+                result = self.knowledge_retriever(**knowledge_retriever_kwargs)
+
+                if isawaitable(result):
+                    result = await result
+
+                return result
             except Exception as e:
                 log_warning(f"Knowledge retriever failed: {e}")
                 raise e

@@ -475,7 +475,6 @@ class TeamResponse(BaseModel):
             team_run_context={},
             check_mcp_tools=False,
         )
-        print(team.tools, _tools)
         team_tools = _tools
         formatted_tools = format_team_tools(team_tools) if team_tools else None
 
