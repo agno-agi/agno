@@ -659,7 +659,7 @@ class Agent:
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
 
-        self._resolve_models()
+        self._get_models()
 
     @property
     def background_executor(self) -> Any:
