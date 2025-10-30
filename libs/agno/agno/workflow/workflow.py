@@ -2495,7 +2495,7 @@ class Workflow:
         workflow_tool = Function.from_callable(workflow_tool_func)
 
         self.agent.tools = [workflow_tool]  # type: ignore
-        self.agent._rebuild_tools = True # type: ignore
+        self.agent._rebuild_tools = True  # type: ignore
 
         log_debug("Workflow agent initialized with run_workflow tool")
 
@@ -2649,7 +2649,7 @@ class Workflow:
                     # Enrich with metadata to mark it as a workflow agent event
 
                     if workflow_executed:
-                        continue # Skip if workflow was already executed
+                        continue  # Skip if workflow was already executed
 
                     # workflow_agent field is used by consumers of the events to distinguish between workflow agent and regular agent
                     event.workflow_agent = True  # type: ignore
@@ -2665,7 +2665,7 @@ class Workflow:
             direct_reply_run_response.content = agent_response.content if agent_response else ""
             direct_reply_run_response.status = RunStatus.completed
             direct_reply_run_response.workflow_agent_run = agent_response
-            
+
             workflow_run_response = direct_reply_run_response
 
             # Store the full agent RunOutput and establish parent-child relationship
@@ -2871,7 +2871,7 @@ class Workflow:
         workflow_tool = Function.from_callable(workflow_tool_func)
 
         self.agent.tools = [workflow_tool]  # type: ignore
-        self.agent._rebuild_tools = True # type: ignore
+        self.agent._rebuild_tools = True  # type: ignore
 
         log_debug("Workflow agent initialized with async run_workflow tool")
 
@@ -3013,7 +3013,7 @@ class Workflow:
             stream=True,
             stream_intermediate_steps=True,
             yield_run_response=True,
-            session_id=session.session_id, 
+            session_id=session.session_id,
             dependencies=dependencies,  # Pass context dynamically per-run
         ):  # type: ignore
             if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
@@ -3029,7 +3029,7 @@ class Workflow:
                     # Enrich with metadata to mark it as a workflow agent event
 
                     if workflow_executed:
-                        continue # Skip if workflow was already executed
+                        continue  # Skip if workflow was already executed
 
                     # workflow_agent field is used by consumers of the events to distinguish between workflow agent and regular agent
                     event.workflow_agent = True  # type: ignore
@@ -3052,7 +3052,7 @@ class Workflow:
             direct_reply_run_response.content = agent_response.content if agent_response else ""
             direct_reply_run_response.status = RunStatus.completed
             direct_reply_run_response.workflow_agent_run = agent_response
-            
+
             workflow_run_response = direct_reply_run_response
 
             # Store the full agent RunOutput and establish parent-child relationship
@@ -3089,7 +3089,7 @@ class Workflow:
                 await self.asave_session(session=session)
             else:
                 self.save_session(session=session)
-                
+
         else:
             # Workflow was executed by the tool
             if self._has_async_db():

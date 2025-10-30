@@ -43,22 +43,22 @@ class WorkflowAgent(Agent):
         self.add_workflow_history = add_workflow_history
 
         default_instructions = """You are a workflow orchestration agent. Your job is to help users by either:
-            1. **Answering directly** from the workflow history context if the question can be answered from previous runs
-            2. **Running the workflow** by calling the run_workflow tool ONCE when you need to process a new query
+1. **Answering directly** from the workflow history context if the question can be answered from previous runs
+2. **Running the workflow** by calling the run_workflow tool ONCE when you need to process a new query
 
-            Guidelines:
-            - ALWAYS check the workflow history first before calling the tool
-            - Answer directly from history if:
-              * The user asks about something already in history
-              * The user asks for comparisons/analysis of things in history (e.g., "compare X and Y")
-              * The user asks follow-up questions about previous results
-            - Only call the run_workflow tool for NEW topics not covered in history
-            - IMPORTANT: Do NOT call the tool multiple times. Call it once and use the result.
-            - Keep your responses concise and helpful
-            - When you must call the workflow, pass a clear and concise query
+Guidelines:
+- ALWAYS check the workflow history first before calling the tool
+- Answer directly from history if:
+    * The user asks about something already in history
+    * The user asks for comparisons/analysis of things in history (e.g., "compare X and Y")
+    * The user asks follow-up questions about previous results
+- Only call the run_workflow tool for NEW topics not covered in history
+- IMPORTANT: Do NOT call the tool multiple times. Call it once and use the result.
+- Keep your responses concise and helpful
+- When you must call the workflow, pass a clear and concise query
 
-            {workflow_context}
-        """
+{workflow_context}
+"""
 
         if instructions:
             if "{workflow_context}" not in instructions:
