@@ -1387,19 +1387,20 @@ class Agent:
                         store_events=self.store_events,
                     )
 
-            # Create the run completed event
+            # Set the run status to completed
+            run_response.status = RunStatus.completed
+
+            # 10. Cleanup and store the run response and session
+            # This also updates run_response.session_state from session
+            self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
+
+            # Create the run completed event (after cleanup so session_state is set)
             completed_event = handle_event(  # type: ignore
                 create_run_completed_event(from_run_response=run_response),
                 run_response,
                 events_to_skip=self.events_to_skip,  # type: ignore
                 store_events=self.store_events,
             )
-
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
-
-            # 10. Cleanup and store the run response and session
-            self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
 
             if stream_events:
                 yield completed_event  # type: ignore
@@ -2270,19 +2271,20 @@ class Agent:
                         store_events=self.store_events,
                     )
 
-            # Create the run completed event
+            # Set the run status to completed
+            run_response.status = RunStatus.completed
+
+            # 13. Cleanup and store the run response and session
+            # This also updates run_response.session_state from session
+            await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
+
+            # Create the run completed event (after cleanup so session_state is set)
             completed_event = handle_event(
                 create_run_completed_event(from_run_response=run_response),
                 run_response,
                 events_to_skip=self.events_to_skip,  # type: ignore
                 store_events=self.store_events,
             )
-
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
-
-            # 13. Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
 
             if stream_events:
                 yield completed_event  # type: ignore
@@ -3110,19 +3112,20 @@ class Agent:
                         store_events=self.store_events,
                     )
 
-            # Create the run completed event
+            # Set the run status to completed
+            run_response.status = RunStatus.completed
+
+            # 5. Cleanup and store the run response and session
+            # This also updates run_response.session_state from session
+            self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
+
+            # Create the run completed event (after cleanup so session_state is set)
             completed_event = handle_event(
                 create_run_completed_event(run_response),
                 run_response,
                 events_to_skip=self.events_to_skip,  # type: ignore
                 store_events=self.store_events,
             )
-
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
-
-            # 5. Cleanup and store the run response and session
-            self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
 
             if stream_events:
                 yield completed_event  # type: ignore
@@ -3780,19 +3783,20 @@ class Agent:
                         store_events=self.store_events,
                     )
 
-            # Create the run completed event
+            # Set the run status to completed
+            run_response.status = RunStatus.completed
+
+            # 10. Cleanup and store the run response and session
+            # This also updates run_response.session_state from session
+            await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
+
+            # Create the run completed event (after cleanup so session_state is set)
             completed_event = handle_event(
                 create_run_completed_event(run_response),
                 run_response,
                 events_to_skip=self.events_to_skip,  # type: ignore
                 store_events=self.store_events,
             )
-
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
-
-            # 10. Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
 
             if stream_events:
                 yield completed_event  # type: ignore
@@ -10010,6 +10014,11 @@ class Agent:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
+        # Update run_response.session_state from session
+        # This ensures RunOutput reflects all tool modifications
+        if session.session_data is not None and "session_state" in session.session_data:
+            run_response.session_state = session.session_data["session_state"]
+
         # Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response,
@@ -10036,6 +10045,11 @@ class Agent:
         # Stop the timer for the Run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
+
+        # Update run_response.session_state from session
+        # This ensures RunOutput reflects all tool modifications
+        if session.session_data is not None and "session_state" in session.session_data:
+            run_response.session_state = session.session_data["session_state"]
 
         # Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(

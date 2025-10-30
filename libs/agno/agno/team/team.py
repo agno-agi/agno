@@ -1694,7 +1694,15 @@ class Team:
                     )
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
-            # Create the run completed event
+
+            # Set the run status to completed
+            run_response.status = RunStatus.completed
+
+            # 10. Cleanup and store the run response
+            # This also updates run_response.session_state from session
+            self._cleanup_and_store(run_response=run_response, session=session)
+
+            # Create the run completed event (after cleanup so session_state is set)
             completed_event = handle_event(
                 create_team_run_completed_event(
                     from_run_response=run_response,
@@ -1703,12 +1711,6 @@ class Team:
                 events_to_skip=self.events_to_skip,
                 store_events=self.store_events,
             )
-
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
-
-            # 10. Cleanup and store the run response
-            self._cleanup_and_store(run_response=run_response, session=session)
 
             if stream_events:
                 yield completed_event
@@ -2241,6 +2243,7 @@ class Team:
                     log_warning(f"Error in session summary creation: {str(e)}")
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
+
             run_response.status = RunStatus.completed
 
             # 15. Cleanup and store the run response and session
@@ -2546,19 +2549,20 @@ class Team:
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # Create the run completed event
+            # Set the run status to completed
+            run_response.status = RunStatus.completed
+
+            # 13. Cleanup and store the run response and session
+            # This also updates run_response.session_state from session
+            await self._acleanup_and_store(run_response=run_response, session=team_session)
+
+            # Create the run completed event (after cleanup so session_state is set)
             completed_event = handle_event(
                 create_team_run_completed_event(from_run_response=run_response),
                 run_response,
                 events_to_skip=self.events_to_skip,
                 store_events=self.store_events,
             )
-
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
-
-            # 13. Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=team_session)
 
             if stream_events:
                 yield completed_event
@@ -3433,6 +3437,11 @@ class Team:
         if run_response.metrics:
             run_response.metrics.stop_timer()
 
+        # Update run_response.session_state from session
+        # This ensures TeamRunOutput reflects all tool modifications
+        if session.session_data is not None and "session_state" in session.session_data:
+            run_response.session_state = session.session_data["session_state"]
+
         # Add RunOutput to Agent Session
         session.upsert_run(run_response=run_response)
 
@@ -3449,6 +3458,11 @@ class Team:
         # Stop the timer for the Run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
+
+        # Update run_response.session_state from session
+        # This ensures TeamRunOutput reflects all tool modifications
+        if session.session_data is not None and "session_state" in session.session_data:
+            run_response.session_state = session.session_data["session_state"]
 
         # Add RunOutput to Agent Session
         session.upsert_run(run_response=run_response)

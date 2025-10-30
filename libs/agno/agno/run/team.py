@@ -261,6 +261,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[Metrics] = None
+    session_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -500,6 +501,7 @@ class TeamRunOutput:
     citations: Optional[Citations] = None
     model_provider_data: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
 
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
