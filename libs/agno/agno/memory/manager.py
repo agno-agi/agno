@@ -38,7 +38,7 @@ class MemoryManager:
     """Memory Manager"""
 
     # Model used for memory management
-    model: Optional[Union[Model, str]] = None
+    model: Optional[Model] = None
 
     # Provide the system message for the manager as a string. If not provided, the default system message will be used.
     system_message: Optional[str] = None

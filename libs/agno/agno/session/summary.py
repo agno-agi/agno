@@ -62,7 +62,7 @@ class SessionSummaryManager:
     """Session Summary Manager"""
 
     # Model used for session summary generation
-    model: Optional[Union[Model, str]] = None
+    model: Optional[Model] = None
 
     # Prompt used for session summary generation
     session_summary_prompt: Optional[str] = None
