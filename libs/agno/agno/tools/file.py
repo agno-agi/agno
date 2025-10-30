@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error
 
 
 class FileTools(Toolkit):
@@ -49,7 +49,7 @@ class FileTools(Toolkit):
 
         super().__init__(name="file_tools", tools=tools, **kwargs)
 
-    def save_file(self, contents: str, file_name: str, overwrite: bool = True) -> str:
+    def save_file(self, contents: str, file_name: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
         """Saves the contents to a file called `file_name` and returns the file name if successful.
 
         :param contents: The contents to save.
@@ -67,36 +67,37 @@ class FileTools(Toolkit):
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             if file_path.exists() and not overwrite:
                 return f"File {file_name} already exists"
-            file_path.write_text(contents)
-            log_info(f"Saved: {file_path}")
+            file_path.write_text(contents, encoding=encoding)
+            log_debug(f"Saved: {file_path}")
             return str(file_name)
         except Exception as e:
             log_error(f"Error saving to file: {e}")
             return f"Error saving to file: {e}"
 
-    def read_file_chunk(self, file_name: str, start_line: int, end_line: int) -> str:
+    def read_file_chunk(self, file_name: str, start_line: int, end_line: int, encoding: str = "utf-8") -> str:
         """Reads the contents of the file `file_name` and returns lines from start_line to end_line.
 
         :param file_name: The name of the file to read.
         :param start_line: Number of first line in the returned chunk
         :param end_line: Number of the last line in the returned chunk
+        :param encoding: Encoding to use, default - utf-8
 
         :return: The contents of the selected chunk
         """
         try:
-            log_info(f"Reading file: {file_name}")
+            log_debug(f"Reading file: {file_name}")
             safe, file_path = self.check_escape(file_name)
             if not (safe):
                 log_error(f"Attempted to read file: {file_name}")
                 return "Error reading file"
-            contents = file_path.read_text(encoding="utf-8")
+            contents = file_path.read_text(encoding=encoding)
             lines = contents.split(self.line_separator)
             return self.line_separator.join(lines[start_line : end_line + 1])
         except Exception as e:
             log_error(f"Error reading file: {e}")
             return f"Error reading file: {e}"
 
-    def replace_file_chunk(self, file_name: str, start_line: int, end_line: int, chunk: str) -> str:
+    def replace_file_chunk(self, file_name: str, start_line: int, end_line: int, chunk: str, encoding: str = "utf-8") -> str:
         """Reads the contents of the file, replaces lines
         between start_line and end_line with chunk and writes the file
 
@@ -104,37 +105,39 @@ class FileTools(Toolkit):
         :param start_line: Number of first line in the replaced chunk
         :param end_line: Number of the last line in the replaced chunk
         :param chunk: String to be inserted instead of lines from start_line to end_line. Can have multiple lines.
+        :param encoding: Encoding to use, default - utf-8
 
         :return: file name if successfull, error message otherwise
         """
         try:
-            log_info(f"Patching file: {file_name}")
+            log_debug(f"Patching file: {file_name}")
             safe, file_path = self.check_escape(file_name)
             if not (safe):
                 log_error(f"Attempted to read file: {file_name}")
                 return "Error reading file"
-            contents = file_path.read_text(encoding="utf-8")
+            contents = file_path.read_text(encoding=encoding)
             lines = contents.split(self.line_separator)
             start = lines[0:start_line]
             end = lines[end_line + 1 :]
-            return self.save_file(file_name=file_name, contents=self.line_separator.join(start + [chunk] + end))
+            return self.save_file(file_name=file_name, contents=self.line_separator.join(start + [chunk] + end), encoding=encoding)
         except Exception as e:
             log_error(f"Error patching file: {e}")
             return f"Error patching file: {e}"
 
-    def read_file(self, file_name: str) -> str:
+    def read_file(self, file_name: str, encoding: str = "utf-8") -> str:
         """Reads the contents of the file `file_name` and returns the contents if successful.
 
         :param file_name: The name of the file to read.
+        :param encoding: Encoding to use, default - utf-8
         :return: The contents of the file if successful, otherwise returns an error message.
         """
         try:
-            log_info(f"Reading file: {file_name}")
+            log_debug(f"Reading file: {file_name}")
             safe, file_path = self.check_escape(file_name)
             if not (safe):
                 log_error(f"Attempted to read file: {file_name}")
                 return "Error reading file"
-            contents = file_path.read_text(encoding="utf-8")
+            contents = file_path.read_text(encoding=encoding)
             if len(contents) > self.max_file_length:
                 return "Error reading file: file too long. Use read_file_chunk instead"
             if len(contents.split(self.line_separator)) > self.max_file_lines:
@@ -164,7 +167,7 @@ class FileTools(Toolkit):
                 return "Incorrect file_name"
         except Exception as e:
             log_error(f"Error removing {file_name}: {e}")
-            return str(e)
+            return f"Error removing file: {e}"
 
     def check_escape(self, relative_path: str) -> Tuple[bool, Path]:
         d = self.base_dir.joinpath(Path(relative_path)).resolve()
@@ -185,7 +188,7 @@ class FileTools(Toolkit):
         """
         directory = kwargs.get("directory", ".")
         try:
-            log_info(f"Reading files in : {self.base_dir}/{directory}")
+            log_debug(f"Reading files in : {self.base_dir}/{directory}")
             safe, d = self.check_escape(directory)
             if safe:
                 return json.dumps([str(file_path.relative_to(self.base_dir)) for file_path in d.iterdir()], indent=4)
