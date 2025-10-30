@@ -38,7 +38,7 @@ class MemoryManager:
     """Memory Manager"""
 
     # Model used for memory management
-    model: Optional[Model] = None
+    model: Optional[Union[Model, str]] = None
 
     # Provide the system message for the manager as a string. If not provided, the default system message will be used.
     system_message: Optional[str] = None
@@ -78,7 +78,7 @@ class MemoryManager:
         clear_memories: bool = False,
         debug_mode: bool = False,
     ):
-        self.model = get_model(model)
+        self.model = model
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions
         self.additional_instructions = additional_instructions
@@ -90,6 +90,7 @@ class MemoryManager:
         self.debug_mode = debug_mode
 
     def get_model(self) -> Model:
+        self.model = get_model(self.model)
         if self.model is None:
             try:
                 from agno.models.openai import OpenAIChat
