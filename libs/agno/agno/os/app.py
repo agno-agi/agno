@@ -260,20 +260,23 @@ class AgentOS:
         self._add_router(app, get_health_router())
         self._add_router(app, get_home_router(self))
 
+        # Add A2A interface if relevant
         has_a2a_interface = False
         for interface in self.interfaces:
             if not has_a2a_interface and interface.__class__.__name__ == "A2A":
                 has_a2a_interface = True
             interface_router = interface.get_router()
             self._add_router(app, interface_router)
-
-        # Add A2A interface if requested and not provided in self.interfaces
         if self.a2a_interface and not has_a2a_interface:
             from agno.os.interfaces.a2a import A2A
 
             a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
+
+        # Add the home router if MCP server is not enabled
+        if not self.enable_mcp_server:
+            self._add_router(app, get_home_router(self))
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
