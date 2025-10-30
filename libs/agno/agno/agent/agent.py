@@ -262,7 +262,7 @@ class Agent:
     tool_hooks: Optional[List[Callable]] = None
 
     # --- Agent Hooks ---
-    # Functio
+    # Functions called right after agent-session is loaded, before processing starts
     pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
     post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
