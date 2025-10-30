@@ -2626,7 +2626,7 @@ class Workflow:
             workflow_id=self.id,
             session_id=session.session_id,
         )
-        yield self._handle_event(agent_started_event, direct_reply_run_response)
+        yield agent_started_event
 
         # Run the agent in streaming mode and yield all events
         for event in self.agent.run(  # type: ignore[union-attr]
@@ -2683,7 +2683,7 @@ class Workflow:
                 session_id=session.session_id,
                 content=workflow_run_response.content,
             )
-            yield self._handle_event(agent_completed_event, workflow_run_response)
+            yield agent_completed_event
 
             # Yield a workflow completed event with the agent's direct response
             completed_event = WorkflowCompletedEvent(
@@ -3005,7 +3005,8 @@ class Workflow:
             workflow_id=self.id,
             session_id=session.session_id,
         )
-        yield self._handle_event(agent_started_event, direct_reply_run_response, websocket_handler=websocket_handler)
+        self._broadcast_to_websocket(agent_started_event, websocket_handler)
+        yield agent_started_event
 
         # Run the agent in streaming mode and yield all events
         async for event in self.agent.arun(  # type: ignore[union-attr]
@@ -3068,7 +3069,8 @@ class Workflow:
                 session_id=session.session_id,
                 content=workflow_run_response.content,
             )
-            yield self._handle_event(agent_completed_event, workflow_run_response, websocket_handler=websocket_handler)
+            self._broadcast_to_websocket(agent_completed_event, websocket_handler)
+            yield agent_completed_event
 
             # Yield a workflow completed event with the agent's direct response (user internally by aprint_response_stream)
             completed_event = WorkflowCompletedEvent(
