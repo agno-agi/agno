@@ -217,7 +217,7 @@ def _parse_model_string(model_string: str) -> Model:
 
     parts = model_string.split(":", 1)
     if len(parts) != 2:
-        raise ValueError(f"Invalid model string format: '{model_string}'")
+        raise ValueError(f"Invalid model string format: '{model_string}'. Model strings should be in format '<provider>:<model_id>' e.g. 'openai:gpt-4o'")
 
     model_provider, model_id = parts
     model_provider = model_provider.strip().lower()
