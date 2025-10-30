@@ -579,7 +579,7 @@ class Agent:
         self.post_hooks = post_hooks
 
         self.reasoning = reasoning
-        self.reasoning_model = reasoning_model
+        self.reasoning_model = reasoning_model # type: ignore[assignment]
         self.reasoning_agent = reasoning_agent
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
@@ -817,7 +817,7 @@ class Agent:
         """Return True if the db the agent is equipped with is an Async implementation"""
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
 
-    def _resolve_models(self) -> None:
+    def _get_models(self) -> None:
         if self.model is not None:
             self.model = get_model(self.model)
         if self.reasoning_model is not None:
@@ -8467,7 +8467,7 @@ class Agent:
                         store_events=self.store_events,
                     )
             else:
-                log_warning(
+                log_info(
                     f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
                 use_default_reasoning = True
@@ -8760,7 +8760,7 @@ class Agent:
                         store_events=self.store_events,
                     )
             else:
-                log_warning(
+                log_info(
                     f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
                 use_default_reasoning = True

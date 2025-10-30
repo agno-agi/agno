@@ -233,18 +233,24 @@ def _parse_model_string(model_string: str) -> Model:
         raise ValueError(f"Model string must be a non-empty string, got: {model_string}")
 
     if ":" not in model_string:
-        raise ValueError(f"Invalid model string format: '{model_string}'. Model strings should be in format '<provider>:<model_id>' e.g. 'openai:gpt-4o'")
+        raise ValueError(
+            f"Invalid model string format: '{model_string}'. Model strings should be in format '<provider>:<model_id>' e.g. 'openai:gpt-4o'"
+        )
 
     parts = model_string.split(":", 1)
     if len(parts) != 2:
-        raise ValueError(f"Invalid model string format: '{model_string}'. Model strings should be in format '<provider>:<model_id>' e.g. 'openai:gpt-4o'")
+        raise ValueError(
+            f"Invalid model string format: '{model_string}'. Model strings should be in format '<provider>:<model_id>' e.g. 'openai:gpt-4o'"
+        )
 
     model_provider, model_id = parts
     model_provider = model_provider.strip().lower()
     model_id = model_id.strip()
 
     if not model_provider or not model_id:
-        raise ValueError(f"Invalid model string format: '{model_string}'. Model strings should be in format '<provider>:<model_id>' e.g. 'openai:gpt-4o'")
+        raise ValueError(
+            f"Invalid model string format: '{model_string}'. Model strings should be in format '<provider>:<model_id>' e.g. 'openai:gpt-4o'"
+        )
 
     return _get_model_class(model_id, model_provider)
 

@@ -2,7 +2,6 @@ from agno.agent import Agent
 from agno.knowledge.chunking.agentic import AgenticChunking
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.pdf_reader import PDFReader
-from agno.models.openai import OpenAIChat
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -15,15 +14,13 @@ knowledge.add_content(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     reader=PDFReader(
         name="Agentic Chunking Reader",
-        chunking_strategy=AgenticChunking(model=OpenAIChat(id="gpt-4o-mini")),
-    ),
+        chunking_strategy=AgenticChunking(model="openai:gpt-4o-mini")),
 )
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model="openai:gpt-4o",
     knowledge=knowledge,
     search_knowledge=True,
-    debug_mode=True,
 )
 
 agent.print_response("How to make Thai curry?", markdown=True)

@@ -98,7 +98,7 @@ reasoning_agent = Agent(
     name="Reasoning Agent",
     role="Reasoning about Math",
     model=OpenAIChat(id="gpt-4o"),
-    reasoning_model=DeepSeek(id="deepseek-reasoner"),
+    reasoning_model="deepseek:deepseek-reasoner",
     instructions=["You are a reasoning agent that can reason about math."],
     markdown=True,
     debug_mode=True,

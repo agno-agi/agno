@@ -11,7 +11,6 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.memory import MemoryManager  # noqa: F401
-from agno.models.openai import OpenAIChat
 from agno.team import Team
 from rich.pretty import pprint
 
@@ -21,15 +20,15 @@ db = PostgresDb(db_url=db_url)
 session_id = str(uuid4())
 john_doe_id = "john_doe@example.com"
 
-memory_manager = MemoryManager(model=OpenAIChat(id="o3-mini"))
+memory_manager = MemoryManager(model="openai:o3-mini")
 
 memory_manager.clear()
 
 agent = Agent(
-    model=OpenAIChat(id="o3-mini"),
+    model="openai:o3-mini",
 )
 team = Team(
-    model=OpenAIChat(id="o3-mini"),
+    model="openai:o3-mini",
     memory_manager=memory_manager,
     members=[agent],
     db=db,
