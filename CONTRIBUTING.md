@@ -95,7 +95,7 @@ Make sure all tests pass before submitting your pull request. If you add new fea
 4. If the Model provider does not support the OpenAI API spec:
    - Reach out to us on [Discord](https://discord.gg/4MtYHHrgA8) or open an issue to discuss the best way to integrate your LLM provider.
    - Checkout [`agno/models/anthropic/claude.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/anthropic/claude.py) or [`agno/models/cohere/chat.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/cohere/chat.py) for inspiration.
-5. **REQUIRED:** Add your model provider to `libs/agno/agno/models/utils.py`:
+5. **IMPORTANT:** Add your model provider to `libs/agno/agno/models/utils.py`:
    - Add a new `elif` clause in the `get_model()` function with your provider name
    - Use the provider name that matches your module directory (e.g., "meta" for `models/meta/`)
    - Import and return your Model class with the provided `model_id`
@@ -106,14 +106,11 @@ Make sure all tests pass before submitting your pull request. If you add new fea
          from agno.models.yourprovider import YourModel
          return YourModel(id=model_id)
      ```
-6. Add a test for your model provider in `libs/agno/tests/models/test_model_string.py`:
-   - Test that your provider works with both `get_model()` and `get_model_from_string()`
-   - Verify the correct model class is instantiated
-7. Add a recipe for using your Model provider under `cookbook/models/<your_model>`.
+6. Add a recipe for using your Model provider under `cookbook/models/<your_model>`.
    - Checkout [`agno/cookbook/models/aws/claude`](https://github.com/agno-agi/agno/tree/main/cookbook/models/aws/claude) for an example.
    - Show both the model class and string syntax in your examples
-8. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
-9. Submit a pull request.
+7. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
+8. Submit a pull request.
 
 ## Adding a new Tool.
 

@@ -906,10 +906,7 @@ class Team:
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
 
     def _resolve_models(self) -> None:
-        """Resolve model strings to Model instances.
-
-        Converts model strings (e.g., 'openai:gpt-4o') to actual Model instances.
-        """
+        """Resolve model strings to Model instances."""
         if self.model is not None:
             self.model = get_model(self.model)
         if self.reasoning_model is not None:
