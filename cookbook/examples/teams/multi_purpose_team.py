@@ -1,5 +1,6 @@
 from agno.agent import Agent
 from agno.models.anthropic import Claude
+from agno.models.deepseek import DeepSeek
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
@@ -122,7 +123,7 @@ code_execution_agent = Agent(
 
 agent_team = Team(
     name="Agent Team",
-    model=Claude(id="claude-3-5-sonnet-latest"),
+    model=Claude(id="claude-3-7-sonnet-latest"),
     members=[
         web_agent,
         finance_agent,
