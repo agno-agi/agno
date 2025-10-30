@@ -224,7 +224,7 @@ def _parse_model_string(model_string: str) -> Model:
     model_id = model_id.strip()
 
     if not model_provider or not model_id:
-        raise ValueError(f"Invalid model string format: '{model_string}'")
+        raise ValueError(f"Invalid model string format: '{model_string}'. Model strings should be in format '<provider>:<model_id>' e.g. 'openai:gpt-4o'")
 
     return _get_model_class(model_id, model_provider)
 
