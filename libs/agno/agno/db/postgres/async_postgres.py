@@ -74,6 +74,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
+        if db_id is not None:
+            log_warning("db_id is deprecated and will be removed in a future version, use id instead.")
+
         super().__init__(
             id=id or db_id,
             session_table=session_table,
