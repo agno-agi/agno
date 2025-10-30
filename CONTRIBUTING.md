@@ -95,7 +95,7 @@ Make sure all tests pass before submitting your pull request. If you add new fea
 4. If the Model provider does not support the OpenAI API spec:
    - Reach out to us on [Discord](https://discord.gg/4MtYHHrgA8) or open an issue to discuss the best way to integrate your LLM provider.
    - Checkout [`agno/models/anthropic/claude.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/anthropic/claude.py) or [`agno/models/cohere/chat.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/cohere/chat.py) for inspiration.
-5. **IMPORTANT:** Add your model provider to `libs/agno/agno/models/utils.py`:
+5. Add your model provider to `libs/agno/agno/models/utils.py`:
    - Add a new `elif` clause in the `get_model()` function with your provider name
    - Use the provider name that matches your module directory (e.g., "meta" for `models/meta/`)
    - Import and return your Model class with the provided `model_id`
