@@ -2553,7 +2553,7 @@ class Workflow:
             WorkflowRunOutput if stream=False, Iterator[WorkflowRunOutputEvent] if stream=True
         """
         if stream:
-            return self._execute_workflow_agent_streaming(
+            return self._run_workflow_agent_stream(
                 agent_input=user_input,
                 session=session,
                 execution_input=execution_input,
@@ -2562,7 +2562,7 @@ class Workflow:
                 **kwargs,
             )
         else:
-            return self._execute_workflow_agent_non_streaming(
+            return self._run_workflow_agent(
                 agent_input=user_input,
                 session=session,
                 execution_input=execution_input,
@@ -2570,7 +2570,7 @@ class Workflow:
                 stream=stream,
             )
 
-    def _execute_workflow_agent_streaming(
+    def _run_workflow_agent_stream(
         self,
         agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
         session: WorkflowSession,
@@ -2734,7 +2734,7 @@ class Workflow:
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
 
-    def _execute_workflow_agent_non_streaming(
+    def _run_workflow_agent(
         self,
         agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
         session: WorkflowSession,
@@ -2918,7 +2918,7 @@ class Workflow:
                 session, session_state_loaded = await self._aload_session_for_workflow_agent(
                     session_id, user_id, session_state
                 )
-                async for event in self._aexecute_workflow_agent_streaming(
+                async for event in self._arun_workflow_agent_stream(
                     agent_input=user_input,
                     session=session,
                     execution_input=execution_input,
@@ -2936,7 +2936,7 @@ class Workflow:
                 session, session_state_loaded = await self._aload_session_for_workflow_agent(
                     session_id, user_id, session_state
                 )
-                return await self._aexecute_workflow_agent_non_streaming(
+                return await self._arun_workflow_agent(
                     agent_input=user_input,
                     session=session,
                     execution_input=execution_input,
@@ -2946,7 +2946,7 @@ class Workflow:
 
             return _execute()
 
-    async def _aexecute_workflow_agent_streaming(
+    async def _arun_workflow_agent_stream(
         self,
         agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
         session: WorkflowSession,
@@ -3133,7 +3133,7 @@ class Workflow:
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
 
-    async def _aexecute_workflow_agent_non_streaming(
+    async def _arun_workflow_agent(
         self,
         agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
         session: WorkflowSession,
