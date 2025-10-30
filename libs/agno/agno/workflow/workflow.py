@@ -2507,7 +2507,7 @@ class Workflow:
 
         if self.agent and isinstance(self.agent, WorkflowAgent):
             add_history = self.agent.add_workflow_history
-            num_runs = self.agent.num_history_runs
+            num_runs = self.agent.num_history_runs or 5  
 
         if add_history:
             history_context = (

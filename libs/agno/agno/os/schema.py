@@ -635,7 +635,7 @@ class WorkflowResponse(BaseModel):
     agent: Optional[AgentResponse] = Field(None, description="Agent configuration if used")
     team: Optional[TeamResponse] = Field(None, description="Team configuration if used")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
-    is_workflow_agent: bool = Field(False, description="Whether this workflow uses a WorkflowAgent")
+    workflow_agent: bool = Field(False, description="Whether this workflow uses a WorkflowAgent")
 
     @classmethod
     async def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -687,7 +687,7 @@ class WorkflowResponse(BaseModel):
             steps=steps,
             input_schema=get_workflow_input_schema_dict(workflow),
             metadata=workflow.metadata,
-            is_workflow_agent=isinstance(workflow.agent, WorkflowAgent) if workflow.agent else False,
+            workflow_agent=isinstance(workflow.agent, WorkflowAgent) if workflow.agent else False,
         )
 
 
