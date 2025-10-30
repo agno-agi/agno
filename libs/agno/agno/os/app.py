@@ -250,6 +250,31 @@ class AgentOS:
         for router in updated_routers:
             self._add_router(app, router)
 
+        # Add the built-in routes
+        self._add_built_in_routes(app=app)
+
+    def _add_built_in_routes(self, app: FastAPI) -> None:
+        """Add all AgentOSbuilt-in routes to the given app."""
+        self._add_router(app, get_base_router(self, settings=self.settings))
+        self._add_router(app, get_websocket_router(self, settings=self.settings))
+        self._add_router(app, get_health_router())
+        self._add_router(app, get_home_router(self))
+
+        has_a2a_interface = False
+        for interface in self.interfaces:
+            if not has_a2a_interface and interface.__class__.__name__ == "A2A":
+                has_a2a_interface = True
+            interface_router = interface.get_router()
+            self._add_router(app, interface_router)
+
+        # Add A2A interface if requested and not provided in self.interfaces
+        if self.a2a_interface and not has_a2a_interface:
+            from agno.os.interfaces.a2a import A2A
+
+            a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
+            self.interfaces.append(a2a_interface)
+            self._add_router(app, a2a_interface.get_router())
+
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
         app_lifespan = lifespan
@@ -399,26 +424,7 @@ class AgentOS:
 
                 fastapi_app = self._make_app(lifespan=wrapped_user_lifespan)
 
-        # Add routes
-        self._add_router(fastapi_app, get_base_router(self, settings=self.settings))
-        self._add_router(fastapi_app, get_websocket_router(self, settings=self.settings))
-        self._add_router(fastapi_app, get_health_router())
-        self._add_router(fastapi_app, get_home_router(self))
-
-        has_a2a_interface = False
-        for interface in self.interfaces:
-            if not has_a2a_interface and interface.__class__.__name__ == "A2A":
-                has_a2a_interface = True
-            interface_router = interface.get_router()
-            self._add_router(fastapi_app, interface_router)
-
-        # Add A2A interface if requested and not provided in self.interfaces
-        if self.a2a_interface and not has_a2a_interface:
-            from agno.os.interfaces.a2a import A2A
-
-            a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
-            self.interfaces.append(a2a_interface)
-            self._add_router(fastapi_app, a2a_interface.get_router())
+        self._add_built_in_routes(app=fastapi_app)
 
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
