@@ -3,6 +3,7 @@ from typing import Iterator, List  # noqa
 
 from agno.agent import Agent, RunOutput, RunOutputEvent  # noqa
 from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
 from agno.team import Team
 from pydantic import BaseModel, Field
 from rich.pretty import pprint
@@ -69,10 +70,10 @@ weather_expert = Agent(
 )
 
 national_park_expert = Team(
-    model="openai:o3-mini",
+    model=OpenAIChat(id="o3-mini"),
     members=[itinerary_planner, weather_expert],
     output_schema=NationalParkAdventure,
-    parser_model="openai:o3-mini",
+    parser_model=OpenAIChat(id="o3-mini"),
 )
 
 # Get the response in a variable

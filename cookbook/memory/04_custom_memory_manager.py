@@ -9,6 +9,7 @@ We also set custom system prompts for the memory manager and summarizer. You can
 from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.memory import MemoryManager
+from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -17,7 +18,7 @@ db = PostgresDb(db_url=db_url)
 
 # You can also override the entire `system_message` for the memory manager
 memory_manager = MemoryManager(
-    model="openai:gpt-4o",
+    model=OpenAIChat(id="gpt-4o"),
     additional_instructions="""
     IMPORTANT: Don't store any memories about the user's name. Just say "The User" instead of referencing the user's name.
     """,
@@ -27,7 +28,7 @@ memory_manager = MemoryManager(
 john_doe_id = "john_doe@example.com"
 
 agent = Agent(
-    model="openai:gpt-4o",
+    model=OpenAIChat(id="gpt-4o"),
     db=db,
     memory_manager=memory_manager,
     enable_user_memories=True,
