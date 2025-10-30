@@ -1,6 +1,9 @@
 import json
 from itertools import chain
+from time import time
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
+
+from agno.utils.serialize import json_serializer
 from uuid import uuid4
 
 from fastapi import (
@@ -48,6 +51,7 @@ from agno.os.utils import (
     process_video,
 )
 from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
+from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput, WorkflowRunOutputEvent
@@ -194,6 +198,17 @@ class WebSocketManager:
         """Register a workflow run with its WebSocket connection"""
         self.active_connections[run_id] = websocket
         logger.debug(f"Registered WebSocket for run_id: {run_id}")
+    
+    async def broadcast_to_workflow(self, run_id: str, message: str):
+        """Broadcast a message to the websocket registered for this workflow run"""
+        if run_id in self.active_connections:
+            websocket = self.active_connections[run_id]
+            try:
+                await websocket.send_text(message)
+            except Exception as e:
+                log_warning(f"Failed to broadcast to workflow {run_id}: {e}")
+                # Remove dead connection
+                await self.disconnect_by_run_id(run_id)
 
     async def disconnect_by_run_id(self, run_id: str):
         """Remove WebSocket connection by run_id"""
@@ -223,9 +238,131 @@ class WebSocketManager:
         return self.active_connections.get(run_id)
 
 
-# Global manager instance
+class WorkflowEventBuffer:
+    """
+    In-memory buffer for workflow events to support WebSocket reconnection.
+    
+    Stores recent events for active workflow runs, allowing clients to catch up
+    on missed events when reconnecting after disconnection or page refresh.
+    
+    Buffers all event types: WorkflowRunOutputEvent, RunOutputEvent (from agents), 
+    and TeamRunOutputEvent (from teams).
+    """
+
+    def __init__(self, max_events_per_run: int = 1000, cleanup_interval: int = 3600):
+        """
+        Initialize the event buffer.
+        
+        Args:
+            max_events_per_run: Maximum number of events to store per run (prevents memory bloat)
+            cleanup_interval: How long (in seconds) to keep completed runs in buffer
+        """
+        # Store all event types (WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent)
+        self.buffers: Dict[str, List[Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]] = {}
+        self.run_metadata: Dict[str, Dict[str, Any]] = {}  # {run_id: {status, last_updated, etc}}
+        self.max_events_per_run = max_events_per_run
+        self.cleanup_interval = cleanup_interval
+
+    def add_event(self, run_id: str, event: Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]) -> int:
+        """Add event to buffer for a specific run and return the event index (handles workflow, agent, and team events)"""
+        if run_id not in self.buffers:
+            self.buffers[run_id] = []
+            self.run_metadata[run_id] = {
+                "status": RunStatus.running,
+                "created_at": time(),
+                "last_updated": time(),
+            }
+
+        self.buffers[run_id].append(event)
+        self.run_metadata[run_id]["last_updated"] = time()
+
+        # Get the index of the event we just added (before potential trimming)
+        event_index = len(self.buffers[run_id]) - 1
+
+        # Keep buffer size under control - trim oldest events if exceeded
+        if len(self.buffers[run_id]) > self.max_events_per_run:
+            self.buffers[run_id] = self.buffers[run_id][-self.max_events_per_run :]
+            log_debug(f"Trimmed event buffer for run {run_id} to {self.max_events_per_run} events")
+        
+        return event_index
+
+    def get_events_since(
+        self, run_id: str, last_event_index: Optional[int] = None
+    ) -> List[Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]:
+        """
+        Get events since the last received event index.
+        
+        Args:
+            run_id: The workflow run ID
+            last_event_index: Index of last event received by client (0-based)
+        
+        Returns:
+            List of events since last_event_index, or all events if None
+        """
+        events = self.buffers.get(run_id, [])
+        
+        if last_event_index is None:
+            # Client has no events, send all
+            return events
+        
+        # Client has events up to last_event_index, send new ones
+        # last_event_index is 0-based, so we want events starting from index + 1
+        if last_event_index >= len(events) - 1:
+            # Client is caught up
+            return []
+        
+        return events[last_event_index + 1 :]
+
+    def get_current_event_count(self, run_id: str) -> int:
+        """Get the current number of events for a run"""
+        return len(self.buffers.get(run_id, []))
+
+    def mark_run_completed(self, run_id: str, status: RunStatus) -> None:
+        """Mark a run as completed/cancelled/error for future cleanup"""
+        if run_id in self.run_metadata:
+            self.run_metadata[run_id]["status"] = status
+            self.run_metadata[run_id]["completed_at"] = time()
+            log_debug(f"Marked run {run_id} as {status}")
+
+    def cleanup_run(self, run_id: str) -> None:
+        """Remove buffer for a completed run (called after retention period)"""
+        if run_id in self.buffers:
+            del self.buffers[run_id]
+        if run_id in self.run_metadata:
+            del self.run_metadata[run_id]
+        log_debug(f"Cleaned up event buffer for run {run_id}")
+
+    def cleanup_old_runs(self) -> None:
+        """Clean up runs that have been completed for longer than cleanup_interval"""
+        current_time = time()
+        runs_to_cleanup = []
+
+        for run_id, metadata in self.run_metadata.items():
+            # Only cleanup completed runs
+            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
+                completed_at = metadata.get("completed_at", metadata["last_updated"])
+                if current_time - completed_at > self.cleanup_interval:
+                    runs_to_cleanup.append(run_id)
+
+        for run_id in runs_to_cleanup:
+            self.cleanup_run(run_id)
+
+        if runs_to_cleanup:
+            log_debug(f"Cleaned up {len(runs_to_cleanup)} old workflow run buffers")
+
+    def get_run_status(self, run_id: str) -> Optional[RunStatus]:
+        """Get the status of a run from metadata"""
+        metadata = self.run_metadata.get(run_id)
+        return metadata["status"] if metadata else None
+
+
+# Global manager instances
 websocket_manager = WebSocketManager(
     active_connections={},
+)
+event_buffer = WorkflowEventBuffer(
+    max_events_per_run=10000,  # Keep last 1000 events per run
+    cleanup_interval=1800,  # Clean up completed runs after 30 minutes
 )
 
 
@@ -401,7 +538,9 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
 
         workflow_run_output = cast(WorkflowRunOutput, workflow_result)
 
-        await websocket_manager.register_workflow_websocket(workflow_run_output.run_id, websocket)  # type: ignore
+        # NOTE: Don't register the original websocket in the manager
+        # It's already handled by the WebSocketHandler passed to the workflow
+        # The manager is ONLY for reconnected clients (see handle_workflow_subscription)
 
     except (InputCheckError, OutputCheckError) as e:
         await websocket.send_text(
@@ -425,6 +564,164 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
         }
         error_payload = {k: v for k, v in error_payload.items() if v is not None}
         await websocket.send_text(json.dumps(error_payload))
+
+
+async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: "AgentOS"):
+    """
+    Handle subscription/reconnection to an existing workflow run.
+    
+    Allows clients to reconnect after page refresh or disconnection and catch up on missed events.
+    """
+    try:
+        run_id = message.get("run_id")
+        workflow_id = message.get("workflow_id")
+        session_id = message.get("session_id")
+        last_event_index = message.get("last_event_index")  # 0-based index of last received event
+
+        if not run_id:
+            await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required for subscription"}))
+            return
+
+        # Check if run exists in event buffer
+        buffer_status = event_buffer.get_run_status(run_id)
+        
+        if buffer_status is None:
+            # Run not in buffer - check database
+            if workflow_id and session_id:
+                workflow = get_workflow_by_id(workflow_id, os.workflows)
+                if workflow:
+                    workflow_run = await workflow.aget_run_output(run_id, session_id)
+                    
+                    if workflow_run:
+                        # Run exists in DB - send all events from DB
+                        if workflow_run.events:
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "replay",
+                                        "run_id": run_id,
+                                        "status": workflow_run.status.value if workflow_run.status else "unknown",
+                                        "total_events": len(workflow_run.events),
+                                        "message": "Run completed. Replaying all events from database.",
+                                    }
+                                )
+                            )
+                            
+                            # Send events one by one
+                            for idx, event in enumerate(workflow_run.events):
+                                # Convert event to dict and add event_index
+                                event_dict = event.model_dump() if hasattr(event, 'model_dump') else event.to_dict()
+                                event_dict["event_index"] = idx
+                                if "run_id" not in event_dict:
+                                    event_dict["run_id"] = run_id
+                                
+                                await websocket.send_text(json.dumps(event_dict, default=json_serializer))
+                        else:
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "replay",
+                                        "run_id": run_id,
+                                        "status": workflow_run.status.value if workflow_run.status else "unknown",
+                                        "total_events": 0,
+                                        "message": "Run completed but no events stored.",
+                                    }
+                                )
+                            )
+                        return
+            
+            # Run not found anywhere
+            await websocket.send_text(
+                json.dumps({"event": "error", "error": f"Run {run_id} not found in buffer or database"})
+            )
+            return
+
+        # Run is in buffer (still active or recently completed)
+        if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
+            # Run finished - send all events from buffer
+            all_events = event_buffer.get_events_since(run_id, last_event_index=None)
+            
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "event": "replay",
+                        "run_id": run_id,
+                        "status": buffer_status.value,
+                        "total_events": len(all_events),
+                        "message": f"Run {buffer_status.value}. Replaying all events.",
+                    }
+                )
+            )
+            
+            # Send all events
+            for idx, event in enumerate(all_events):
+                # Convert event to dict and add event_index
+                event_dict = event.model_dump() if hasattr(event, 'model_dump') else event.to_dict()
+                event_dict["event_index"] = idx
+                if "run_id" not in event_dict:
+                    event_dict["run_id"] = run_id
+                
+                await websocket.send_text(json.dumps(event_dict))
+            return
+
+        # Run is still active - send missed events and subscribe to new ones
+        missed_events = event_buffer.get_events_since(run_id, last_event_index)
+        current_event_count = event_buffer.get_current_event_count(run_id)
+
+        if missed_events:
+            # Send catch-up notification
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "event": "catch_up",
+                        "run_id": run_id,
+                        "status": "running",
+                        "missed_events": len(missed_events),
+                        "current_event_count": current_event_count,
+                        "message": f"Catching up on {len(missed_events)} missed events.",
+                    }
+                )
+            )
+            
+            # Send missed events
+            start_index = (last_event_index + 1) if last_event_index is not None else 0
+            for idx, event in enumerate(missed_events):
+                # Convert event to dict and add event_index
+                event_dict = event.model_dump() if hasattr(event, 'model_dump') else event.to_dict()
+                event_dict["event_index"] = start_index + idx
+                if "run_id" not in event_dict:
+                    event_dict["run_id"] = run_id
+                
+                await websocket.send_text(json.dumps(event_dict))
+        
+        # Register websocket for future events
+        await websocket_manager.register_workflow_websocket(run_id, websocket)
+        
+        # Send subscription confirmation
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "event": "subscribed",
+                    "run_id": run_id,
+                    "status": "running",
+                    "current_event_count": current_event_count,
+                    "message": "Subscribed to workflow run. You will receive new events as they occur.",
+                }
+            )
+        )
+        
+        log_debug(f"Client subscribed to workflow run {run_id} (last_event_index: {last_event_index})")
+
+    except Exception as e:
+        logger.error(f"Error handling workflow subscription: {e}")
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "event": "error",
+                    "error": f"Subscription failed: {str(e)}",
+                }
+            )
+        )
 
 
 async def workflow_response_streamer(
@@ -526,6 +823,10 @@ def get_websocket_router(
                 elif action == "start-workflow":
                     # Handle workflow execution directly via WebSocket
                     await handle_workflow_via_websocket(websocket, message, os)
+
+                elif action == "reconnect":
+                    # Subscribe/reconnect to an existing workflow run
+                    await handle_workflow_subscription(websocket, message, os)
 
                 else:
                     await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
