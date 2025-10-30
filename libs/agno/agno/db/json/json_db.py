@@ -13,7 +13,6 @@ from agno.db.json.utils import (
     deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    hydrate_session,
     serialize_cultural_knowledge_for_db,
 )
 from agno.db.schemas.culture import CulturalKnowledge
@@ -202,21 +201,16 @@ class JsonDb(BaseDb):
                 if session_data.get("session_id") == session_id:
                     if user_id is not None and session_data.get("user_id") != user_id:
                         continue
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    if session_data.get("session_type") != session_type_value:
-                        continue
-
-                    session = hydrate_session(session_data)
 
                     if not deserialize:
-                        return session
+                        return session_data
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session)
+                        return AgentSession.from_dict(session_data)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session)
+                        return TeamSession.from_dict(session_data)
                     elif session_type == SessionType.WORKFLOW:
-                        return WorkflowSession.from_dict(session)
+                        return WorkflowSession.from_dict(session_data)
                     else:
                         raise ValueError(f"Invalid session type: {session_type}")
 

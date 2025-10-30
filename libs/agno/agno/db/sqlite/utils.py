@@ -4,6 +4,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.utils.log import log_debug, log_error, log_warning
@@ -50,6 +52,7 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
     """
     Check if a table with the given name exists.
     Note: db_schema parameter is ignored in SQLite but kept for API compatibility.
+
     Returns:
         bool: True if the table exists, False otherwise.
     """
@@ -57,6 +60,25 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
         # SQLite uses sqlite_master instead of information_schema
         exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
         exists = session.execute(exists_query, {"table": table_name}).scalar() is not None
+        if not exists:
+            log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
+        return exists
+    except Exception as e:
+        log_error(f"Error checking if table exists: {e}")
+        return False
+
+
+async def ais_table_available(session: AsyncSession, table_name: str, db_schema: Optional[str] = None) -> bool:
+    """
+    Check if a table with the given name exists.
+    Note: db_schema parameter is ignored in SQLite but kept for API compatibility.
+
+    Returns:
+        bool: True if the table exists, False otherwise.
+    """
+    try:
+        exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
+        exists = (await session.execute(exists_query, {"table": table_name})).scalar() is not None
         if not exists:
             log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
@@ -98,6 +120,47 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
         return False
 
 
+async def ais_valid_table(
+    db_engine: AsyncEngine, table_name: str, table_type: str, db_schema: Optional[str] = None
+) -> bool:
+    """
+    Check if the existing table has the expected column names.
+    Note: db_schema parameter is ignored in SQLite but kept for API compatibility.
+    Args:
+        db_engine (Engine): Database engine
+        table_name (str): Name of the table to validate
+        table_type (str): Type of table to get expected schema
+        db_schema (Optional[str]): Database schema name (ignored in SQLite)
+    Returns:
+        bool: True if table has all expected columns, False otherwise
+    """
+    try:
+        expected_table_schema = get_table_schema_definition(table_type)
+        expected_columns = {col_name for col_name in expected_table_schema.keys() if not col_name.startswith("_")}
+
+        # Get existing columns from the async engine
+        async with db_engine.connect() as conn:
+            existing_columns = await conn.run_sync(_get_table_columns, table_name)
+
+        missing_columns = expected_columns - existing_columns
+        if missing_columns:
+            log_warning(f"Missing columns {missing_columns} in table {table_name}")
+            return False
+
+        return True
+
+    except Exception as e:
+        log_error(f"Error validating table schema for {table_name}: {e}")
+        return False
+
+
+def _get_table_columns(conn, table_name: str) -> set[str]:
+    """Helper function to get table columns using sync inspector."""
+    inspector = inspect(conn)
+    columns_info = inspector.get_columns(table_name)
+    return {col["name"] for col in columns_info}
+
+
 # -- Metrics util methods --
 
 
@@ -130,6 +193,39 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
     result = session.execute(stmt, metrics_records)
     results = [row._mapping for row in result.fetchall()]
     session.commit()
+
+    return results  # type: ignore
+
+
+async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_records: list[dict]) -> list[dict]:
+    """Bulk upsert metrics into the database.
+
+    Args:
+        table (Table): The table to upsert into.
+        metrics_records (list[dict]): The metrics records to upsert.
+
+    Returns:
+        list[dict]: The upserted metrics records.
+    """
+    if not metrics_records:
+        return []
+
+    results = []
+    stmt = sqlite.insert(table)
+
+    # Columns to update in case of conflict
+    update_columns = {
+        col.name: stmt.excluded[col.name]
+        for col in table.columns
+        if col.name not in ["id", "date", "created_at", "aggregation_period"]
+    }
+
+    stmt = stmt.on_conflict_do_update(index_elements=["date", "aggregation_period"], set_=update_columns).returning(  # type: ignore
+        table
+    )
+    result = await session.execute(stmt, metrics_records)
+    results = [dict(row._mapping) for row in result.fetchall()]
+    await session.commit()
 
     return results  # type: ignore
 
