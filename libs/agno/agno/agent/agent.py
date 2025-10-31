@@ -8333,7 +8333,7 @@ class Agent:
         use_default_reasoning = False
 
         # Get the reasoning model
-        reasoning_model = cast(Optional[Model], self.reasoning_model)
+        reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             from copy import deepcopy
@@ -8626,7 +8626,7 @@ class Agent:
         use_default_reasoning = False
 
         # Get the reasoning model
-        reasoning_model = cast(Optional[Model], self.reasoning_model)
+        reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             from copy import deepcopy
@@ -8933,7 +8933,7 @@ class Agent:
         if self.output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model)
             messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format)
-            parser_model_response: ModelResponse = cast(Model, self.parser_model).response(
+            parser_model_response: ModelResponse = self.parser_model.response(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
             )
@@ -8956,7 +8956,7 @@ class Agent:
         if self.output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model)
             messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format)
-            parser_model_response: ModelResponse = await cast(Model, self.parser_model).aresponse(
+            parser_model_response: ModelResponse = await self.parser_model.aresponse(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
             )
@@ -8988,7 +8988,7 @@ class Agent:
                 messages_for_parser_model = self._get_messages_for_parser_model_stream(
                     run_response, parser_response_format
                 )
-                for model_response_event in cast(Model, self.parser_model).response_stream(
+                for model_response_event in self.parser_model.response_stream(  # type: ignore
                     messages=messages_for_parser_model,
                     response_format=parser_response_format,
                     stream_model_response=False,
@@ -9043,7 +9043,7 @@ class Agent:
                 messages_for_parser_model = self._get_messages_for_parser_model_stream(
                     run_response, parser_response_format
                 )
-                model_response_stream = cast(Model, self.parser_model).aresponse_stream(
+                model_response_stream = self.parser_model.aresponse_stream(
                     messages=messages_for_parser_model,
                     response_format=parser_response_format,
                     stream_model_response=False,
@@ -9086,9 +9086,7 @@ class Agent:
             return
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
-        output_model_response: ModelResponse = cast(Model, self.output_model).response(
-            messages=messages_for_output_model
-        )
+        output_model_response: ModelResponse = self.output_model.response(messages=messages_for_output_model)
         model_response.content = output_model_response.content
 
     def _generate_response_with_output_model_stream(
@@ -9119,7 +9117,7 @@ class Agent:
 
         model_response = ModelResponse(content="")
 
-        for model_response_event in cast(Model, self.output_model).response_stream(messages=messages_for_output_model):
+        for model_response_event in self.output_model.response_stream(messages=messages_for_output_model):
             yield from self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -9149,9 +9147,7 @@ class Agent:
             return
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
-        output_model_response: ModelResponse = await cast(Model, self.output_model).aresponse(
-            messages=messages_for_output_model
-        )
+        output_model_response: ModelResponse = await self.output_model.aresponse(messages=messages_for_output_model)
         model_response.content = output_model_response.content
 
     async def _agenerate_response_with_output_model_stream(
@@ -9182,7 +9178,7 @@ class Agent:
 
         model_response = ModelResponse(content="")
 
-        model_response_stream = cast(Model, self.output_model).aresponse_stream(messages=messages_for_output_model)
+        model_response_stream = self.output_model.aresponse_stream(messages=messages_for_output_model)
 
         async for model_response_event in model_response_stream:
             for event in self._handle_model_response_chunk(
