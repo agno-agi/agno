@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 
 @tool()
-def answer_from_known_questions(run_context: RunContext, question: str) -> str:
+def answer_from_known_questions(question: str, run_context: RunContext) -> str:
     """Answer a question from a list of known questions
 
     Args:
