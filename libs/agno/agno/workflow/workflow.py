@@ -237,6 +237,13 @@ class Workflow:
         self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
 
+        # Warn if workflow history is enabled without a database
+        if self.add_workflow_history_to_steps and self.db is None:
+            log_warning(
+                "Workflow history is enabled (add_workflow_history_to_steps=True) but no database is configured. "
+                "History won't be persisted. Add a database to persist runs across executions. "
+            )
+
     def set_id(self) -> None:
         if self.id is None:
             if self.name is not None:
@@ -3629,6 +3636,12 @@ class Workflow:
                     step_name = step.name or f"step_{i + 1}"
                     log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
+                if isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
+                    log_warning(
+                        f"Step '{step.name or f'step_{i+1}'}' has add_workflow_history=True "
+                        "but no database is configured in the Workflow. "
+                        "History won't be persisted. Add a database to persist runs across executions."
+                    )
                 elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                     step_type = type(step).__name__
                     step_name = getattr(step, "name", f"unnamed_{step_type.lower()}")
