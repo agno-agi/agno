@@ -17,6 +17,31 @@ class ClassificationResult(BaseModel):
     message: str
 
 
+# Agents
+notion_agent = Agent(
+    name="Notion Manager",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        NotionTools(
+            api_key=os.getenv("NOTION_API_KEY", ""),
+            database_id=os.getenv("NOTION_DATABASE_ID", ""),
+        )
+    ],
+    instructions=[
+        "You are a Notion page manager.",
+        "You will receive instructions with a query and a pre-classified tag.",
+        "CRITICAL: Use ONLY the exact tag provided in the instructions. Do NOT create new tags or modify the tag name.",
+        "The valid tags are: travel, tech, general-blogs, fashion, documents",
+        "Workflow:",
+        "1. Search for existing pages with the EXACT tag provided",
+        "2. If a page exists: Update that page with the new query content",
+        "3. If no page exists: Create a new page using the EXACT tag provided",
+        "Always preserve the exact tag name as given in the instructions.",
+    ],
+)
+
+
+# Executor functions
 # Step 1: Custom classifier function to assign tags
 def classify_query(step_input: StepInput) -> StepOutput:
     """
@@ -70,37 +95,6 @@ def classify_query(step_input: StepInput) -> StepOutput:
     return StepOutput(content=result)
 
 
-# Step 2: Create agent with Notion tools
-notion_agent = Agent(
-    name="Notion Manager",
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        NotionTools(
-            api_key=os.getenv("NOTION_API_KEY", ""),
-            database_id=os.getenv("NOTION_DATABASE_ID", ""),
-        )
-    ],
-    instructions=[
-        "You are a Notion page manager.",
-        "You will receive instructions with a query and a pre-classified tag.",
-        "CRITICAL: Use ONLY the exact tag provided in the instructions. Do NOT create new tags or modify the tag name.",
-        "The valid tags are: travel, tech, general-blogs, fashion, documents",
-        "Workflow:",
-        "1. Search for existing pages with the EXACT tag provided",
-        "2. If a page exists: Update that page with the new query content",
-        "3. If no page exists: Create a new page using the EXACT tag provided",
-        "Always preserve the exact tag name as given in the instructions.",
-    ],
-)
-
-# Create workflow steps
-classify_step = Step(
-    name="Classify Query",
-    executor=classify_query,
-    description="Classify the user query into a tag category",
-)
-
-
 # Custom function to prepare input for Notion agent
 def prepare_notion_input(step_input: StepInput) -> StepOutput:
     """
@@ -146,6 +140,13 @@ def prepare_notion_input(step_input: StepInput) -> StepOutput:
 
     return StepOutput(content=instruction)
 
+
+# Steps
+classify_step = Step(
+    name="Classify Query",
+    executor=classify_query,
+    description="Classify the user query into a tag category",
+)
 
 notion_prep_step = Step(
     name="Prepare Notion Input",
