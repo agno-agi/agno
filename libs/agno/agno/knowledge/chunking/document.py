@@ -12,7 +12,6 @@ class DocumentChunking(ChunkingStrategy):
         self.overlap = overlap
 
     def chunk(self, document: Document) -> List[Document]:
-        print(f"Chunking document: {document.name} with chunk size: {self.chunk_size} and overlap: {self.overlap}")
         """Split document into chunks based on document structure"""
         if len(document.content) <= self.chunk_size:
             return [document]
