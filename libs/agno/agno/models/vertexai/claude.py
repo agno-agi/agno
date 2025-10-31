@@ -31,8 +31,8 @@ class Claude(AnthropicClaude):
     base_url: Optional[str] = None
 
     # Anthropic clients
-    client: Optional[AnthropicClient] = None
-    async_client: Optional[AsyncAnthropicClient] = None
+    client: Optional[AnthropicClient] = None  # type: ignore[assignment]
+    async_client: Optional[AsyncAnthropicClient] = None  # type: ignore[assignment]
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
