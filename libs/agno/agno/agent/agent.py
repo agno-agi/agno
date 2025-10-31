@@ -7286,7 +7286,10 @@ class Agent:
         self,
         *,
         run_response: RunOutput,
-        run_context: RunContext,
+        run_context: Optional[RunContext] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -7294,6 +7297,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -7302,6 +7306,13 @@ class Agent:
         2. If build_user_context is False or if the message is a list, return the message as is.
         3. Build the default user message for the Agent
         """
+        # Consider both run_context and session_state, dependencies, metadata, knowledge_filters (deprecated fields)
+        if run_context is not None:
+            session_state = run_context.session_state or session_state
+            dependencies = run_context.dependencies or dependencies
+            metadata = run_context.metadata or metadata
+            knowledge_filters = run_context.knowledge_filters or knowledge_filters
+
         # Get references from the knowledge base to use in the user message
         references = None
 
@@ -7386,7 +7397,7 @@ class Agent:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=run_context.knowledge_filters, **kwargs
+                            query=user_msg_content, filters=knowledge_filters, **kwargs
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -7407,9 +7418,9 @@ class Agent:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
                         user_id=user_id,
-                        session_state=run_context.session_state,
-                        dependencies=run_context.dependencies,
-                        metadata=run_context.metadata,
+                        session_state=session_state,
+                        dependencies=dependencies,
+                        metadata=metadata,
                     )
 
                 # Convert to string for concatenation operations
@@ -7427,9 +7438,9 @@ class Agent:
                     user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
                     user_msg_content_str += "</references>"
                 # 4.2 Add context to user message
-                if add_dependencies_to_context and run_context.dependencies is not None:
+                if add_dependencies_to_context and dependencies is not None:
                     user_msg_content_str += "\n\n<additional context>\n"
-                    user_msg_content_str += self._convert_dependencies_to_string(run_context.dependencies) + "\n"
+                    user_msg_content_str += self._convert_dependencies_to_string(dependencies) + "\n"
                     user_msg_content_str += "</additional context>"
 
                 # Use the string version for the final content
@@ -7796,16 +7807,17 @@ class Agent:
         ):
             user_message = self._get_user_message(
                 run_response=run_response,
+                run_context=run_context,
                 session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 input=input,
                 audio=audio,
                 images=images,
                 videos=videos,
                 files=files,
                 knowledge_filters=knowledge_filters,
-                dependencies=dependencies,
                 add_dependencies_to_context=add_dependencies_to_context,
-                metadata=metadata,
                 **kwargs,
             )
 
