@@ -5163,8 +5163,9 @@ class Team:
 
             for func in _functions:  # type: ignore
                 if isinstance(func, Function):
-                    func._session_state = session_state
-                    func._dependencies = dependencies
+                    func._run_context = run_context
+                    func._session_state = run_context.session_state
+                    func._dependencies = run_context.dependencies
                     func._images = joint_images
                     func._files = joint_files
                     func._audios = joint_audios
@@ -6197,7 +6198,9 @@ class Team:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
                         user_id=user_id,
-                        run_context=run_context,
+                        session_state=run_context.session_state,
+                        dependencies=run_context.dependencies,
+                        metadata=run_context.metadata,
                     )
 
                 # Convert to string for concatenation operations
