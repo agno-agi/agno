@@ -2,8 +2,10 @@ from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel, Field
+from agno.db.sqlite import SqliteDb
 
 
 class ResearchTopic(BaseModel):
@@ -22,25 +24,19 @@ hackernews_agent = Agent(
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
     input_schema=ResearchTopic,
+    db=SqliteDb(
+        session_table="agent_session",
+        db_file="tmp/agent.db",
+    ),
 )
 
 
-# Pass a dict that matches the input schema
-hackernews_agent.print_response(
-    input={
-        "topic": "AI",
-        "focus_areas": ["AI", "Machine Learning"],
-        "target_audience": "Developers",
-        "sources_required": "5",
-    }
+agent_os = AgentOS(
+    id="agentos-demo",
+    agents=[hackernews_agent],
 )
+app = agent_os.get_app()
 
-# Pass a pydantic model that matches the input schema
-hackernews_agent.print_response(
-    input=ResearchTopic(
-        topic="AI",
-        focus_areas=["AI", "Machine Learning"],
-        target_audience="Developers",
-        sources_required=5,
-    )
-)
+
+if __name__ == "__main__":
+    agent_os.serve(app="agent_with_input_schema:app", port=7777)

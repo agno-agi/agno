@@ -98,7 +98,6 @@ class Claude(Model):
     timeout: Optional[float] = None
     client_params: Optional[Dict[str, Any]] = None
 
-    # Anthropic clients
     client: Optional[AnthropicClient] = None
     async_client: Optional[AsyncAnthropicClient] = None
 
@@ -145,7 +144,7 @@ class Claude(Model):
         """
         Returns an instance of the async Anthropic client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         _client_params = self._get_client_params()
