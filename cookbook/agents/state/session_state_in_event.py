@@ -26,6 +26,5 @@ response = agent.run(
     "Add milk, eggs, and bread to the shopping list", stream=True, stream_events=True
 )
 for event in response:
-    print(f"Event: {type(event)}")
     if isinstance(event, RunCompletedEvent):
         print(f"Session state: {event.session_state}")
