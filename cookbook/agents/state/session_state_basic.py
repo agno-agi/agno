@@ -1,4 +1,4 @@
-from agno.agent import Agent, RunOutput # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 
@@ -25,6 +25,6 @@ agent = Agent(
 agent.print_response("Add milk, eggs, and bread to the shopping list", stream=True)
 print(f"Final session state: {agent.get_session_state()}")
 
-# Alternatively, 
+# Alternatively,
 # response: RunOutput = agent.run("Add milk, eggs, and bread to the shopping list")
 # print(f"Final session state: {response.session_state}")
