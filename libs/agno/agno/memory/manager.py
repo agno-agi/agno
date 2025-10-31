@@ -78,7 +78,7 @@ class MemoryManager:
         clear_memories: bool = False,
         debug_mode: bool = False,
     ):
-        self.model = model  # type: ignore[assignment] 
+        self.model = model  # type: ignore[assignment]
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions
         self.additional_instructions = additional_instructions
@@ -89,8 +89,13 @@ class MemoryManager:
         self.clear_memories = clear_memories
         self.debug_mode = debug_mode
 
+        self._get_models()
+
+    def _get_models(self) -> None:
+        if self.model is not None:
+            self.model = get_model(self.model)
+
     def get_model(self) -> Model:
-        self.model = get_model(self.model)
         if self.model is None:
             try:
                 from agno.models.openai import OpenAIChat
