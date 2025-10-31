@@ -11,7 +11,7 @@ class DeleteMemoriesRequest(BaseModel):
 
 class UserMemorySchema(BaseModel):
     memory_id: str = Field(..., description="Unique identifier for the memory")
-    memory: str = Field(..., description="Memory content text", min_length=1)
+    memory: str = Field(..., description="Memory content text")
     topics: Optional[List[str]] = Field(None, description="Topics or tags associated with the memory")
 
     agent_id: Optional[str] = Field(None, description="Agent ID associated with this memory")
@@ -21,7 +21,10 @@ class UserMemorySchema(BaseModel):
     updated_at: Optional[datetime] = Field(None, description="Timestamp when memory was last updated")
 
     @classmethod
-    def from_dict(cls, memory_dict: Dict[str, Any]) -> "UserMemorySchema":
+    def from_dict(cls, memory_dict: Dict[str, Any]) -> Optional["UserMemorySchema"]:
+        if memory_dict["memory"] == "":
+            return None
+
         return cls(
             memory_id=memory_dict["memory_id"],
             user_id=str(memory_dict["user_id"]),

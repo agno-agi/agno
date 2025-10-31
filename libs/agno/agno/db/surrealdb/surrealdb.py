@@ -238,12 +238,6 @@ class SurrealDb(BaseDb):
         where = WhereClause()
         if user_id is not None:
             where = where.and_("user_id", user_id)
-        if session_type == SessionType.AGENT:
-            where = where.and_("agent", None, "!=")
-        elif session_type == SessionType.TEAM:
-            where = where.and_("team", None, "!=")
-        elif session_type == SessionType.WORKFLOW:
-            where = where.and_("workflow", None, "!=")
         where_clause, where_vars = where.build()
         query = dedent(f"""
             SELECT *
