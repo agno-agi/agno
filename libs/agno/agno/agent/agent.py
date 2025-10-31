@@ -952,9 +952,9 @@ class Agent:
         # 2. Determine tools for model
         processed_tools = self.get_tools(
             run_response=run_response,
+            run_context=run_context,
             session=session,
             user_id=user_id,
-            knowledge_filters=knowledge_filters,
         )
         _tools = self._determine_tools_for_model(
             model=self.model,
@@ -962,8 +962,6 @@ class Agent:
             run_response=run_response,
             session=session,
             run_context=run_context,
-            user_id=user_id,
-            async_mode=False,
         )
 
         # 3. Prepare run messages
@@ -1170,9 +1168,9 @@ class Agent:
         # 2. Determine tools for model
         processed_tools = self.get_tools(
             run_response=run_response,
+            run_context=run_context,
             session=session,
             user_id=user_id,
-            knowledge_filters=knowledge_filters,
         )
         _tools = self._determine_tools_for_model(
             model=self.model,
@@ -1180,8 +1178,6 @@ class Agent:
             run_response=run_response,
             session=session,
             run_context=run_context,
-            user_id=user_id,
-            async_mode=False,
         )
 
         # 3. Prepare run messages
@@ -1291,7 +1287,7 @@ class Agent:
                     stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
+                    yield event  # type: ignore
 
             # Check for cancellation after model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1773,7 +1769,7 @@ class Agent:
 
         # 3. Resolve dependencies
         if run_context.dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=run_context.dependencies)
+            await self._aresolve_run_dependencies(run_context=run_context)
 
         # 4. Execute pre-hooks
         run_input = cast(RunInput, run_response.input)
@@ -2067,18 +2063,17 @@ class Agent:
         self.model = cast(Model, self.model)
         processed_tools = await self.aget_tools(
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
             user_id=user_id,
-            knowledge_filters=knowledge_filters,
         )
+
         _tools = self._determine_tools_for_model(
             model=self.model,
             processed_tools=processed_tools,
             run_response=run_response,
             run_context=run_context,
             session=agent_session,
-            user_id=user_id,
-            async_mode=True,
         )
 
         # 6. Prepare run messages
@@ -3449,10 +3444,11 @@ class Agent:
         self.model = cast(Model, self.model)
         processed_tools = await self.aget_tools(
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
             user_id=user_id,
-            knowledge_filters=knowledge_filters,
         )
+
         _tools = self._determine_tools_for_model(
             model=self.model,
             processed_tools=processed_tools,
@@ -3653,18 +3649,17 @@ class Agent:
         self.model = cast(Model, self.model)
         processed_tools = await self.aget_tools(
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
             user_id=user_id,
-            knowledge_filters=knowledge_filters,
         )
+
         _tools = self._determine_tools_for_model(
             model=self.model,
             processed_tools=processed_tools,
             run_response=run_response,
             run_context=run_context,
             session=agent_session,
-            user_id=user_id,
-            async_mode=True,
         )
 
         # 6. Prepare run messages
