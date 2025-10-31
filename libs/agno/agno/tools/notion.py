@@ -191,6 +191,7 @@ class NotionTools(Toolkit):
                 }
             }
             
+            # The SDK client does not support the query method
             response = httpx.post(
                 f"https://api.notion.com/v1/databases/{self.database_id}/query",
                 headers=headers,
