@@ -280,8 +280,6 @@ class FirestoreDb(BaseDb):
 
             if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
-            if session_type is not None:
-                query = query.where(filter=FieldFilter("session_type", "==", session_type.value))
 
             docs = query.stream()
             result = None

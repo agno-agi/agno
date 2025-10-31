@@ -374,8 +374,6 @@ class SqliteDb(BaseDb):
                 # Filtering
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
-                if session_type is not None:
-                    stmt = stmt.where(table.c.session_type == session_type)
 
                 result = sess.execute(stmt).fetchone()
                 if result is None:
