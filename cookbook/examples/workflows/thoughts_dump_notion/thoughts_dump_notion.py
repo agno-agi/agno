@@ -1,7 +1,5 @@
 import os
 
-from pydantic import BaseModel
-
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
@@ -9,6 +7,7 @@ from agno.os import AgentOS
 from agno.tools.notion import NotionTools
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
+from pydantic import BaseModel
 
 
 # Pydantic model for classification output
@@ -22,12 +21,12 @@ class ClassificationResult(BaseModel):
 def classify_query(step_input: StepInput) -> StepOutput:
     """
     Classify the user query into one of the predefined tags.
-    
+
     Available tags: travel, tech, general-blogs, fashion, documents
     """
     # Get the user query from step_input
     query = step_input.input
-    
+
     # Create an agent to classify the query
     classifier_agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -50,26 +49,24 @@ def classify_query(step_input: StepInput) -> StepOutput:
             "- 'The rise of AI and machine learning' -> tech",
             "- 'Fashion trends 2025' -> fashion",
             "- 'My resume and CV' -> documents",
-            "- 'Random thoughts about life' -> general-blogs"
+            "- 'Random thoughts about life' -> general-blogs",
         ],
     )
-    
+
     # Get classification
     response = classifier_agent.run(query)
     tag = response.content.strip().lower()
-    
+
     # Validate the tag
     valid_tags = ["travel", "tech", "general-blogs", "fashion", "documents"]
     if tag not in valid_tags:
         tag = "general-blogs"  # Default fallback
-    
+
     # Return structured data using Pydantic model
     result = ClassificationResult(
-        query=str(query),
-        tag=tag,
-        message=f"Query classified as: {tag}"
+        query=str(query), tag=tag, message=f"Query classified as: {tag}"
     )
-    
+
     return StepOutput(content=result)
 
 
@@ -80,7 +77,7 @@ notion_agent = Agent(
     tools=[
         NotionTools(
             api_key=os.getenv("NOTION_API_KEY", ""),
-            database_id=os.getenv("NOTION_DATABASE_ID", "")
+            database_id=os.getenv("NOTION_DATABASE_ID", ""),
         )
     ],
     instructions=[
@@ -92,7 +89,7 @@ notion_agent = Agent(
         "1. Search for existing pages with the EXACT tag provided",
         "2. If a page exists: Update that page with the new query content",
         "3. If no page exists: Create a new page using the EXACT tag provided",
-        "Always preserve the exact tag name as given in the instructions."
+        "Always preserve the exact tag name as given in the instructions.",
     ],
 )
 
@@ -100,8 +97,9 @@ notion_agent = Agent(
 classify_step = Step(
     name="Classify Query",
     executor=classify_query,
-    description="Classify the user query into a tag category"
+    description="Classify the user query into a tag category",
 )
+
 
 # Custom function to prepare input for Notion agent
 def prepare_notion_input(step_input: StepInput) -> StepOutput:
@@ -110,24 +108,25 @@ def prepare_notion_input(step_input: StepInput) -> StepOutput:
     """
     # Get the classification result from the previous step (Classify Query)
     previous_output = step_input.previous_step_content
-    
+
     # Parse it into our Pydantic model if it's a dict
     if isinstance(previous_output, dict):
         classification = ClassificationResult(**previous_output)
     elif isinstance(previous_output, str):
         # If it's a string, try to parse it or use the original input
         import json
+
         try:
             classification = ClassificationResult(**json.loads(previous_output))
         except (json.JSONDecodeError, TypeError, KeyError, ValueError):
             classification = ClassificationResult(
                 query=str(step_input.input),
                 tag="general-blogs",
-                message="Failed to parse classification"
+                message="Failed to parse classification",
             )
     else:
         classification = previous_output
-    
+
     # Create a clear instruction for the Notion agent with EXPLICIT tag requirement
     instruction = f"""Process this classified query:
 
@@ -144,20 +143,20 @@ def prepare_notion_input(step_input: StepInput) -> StepOutput:
 
         The tag MUST be exactly: {classification.tag}
     """
-    
+
     return StepOutput(content=instruction)
 
 
 notion_prep_step = Step(
     name="Prepare Notion Input",
     executor=prepare_notion_input,
-    description="Format the classification result for the Notion agent"
+    description="Format the classification result for the Notion agent",
 )
 
 notion_step = Step(
     name="Manage Notion Page",
     agent=notion_agent,
-    description="Create or update Notion page based on query and tag"
+    description="Create or update Notion page based on query and tag",
 )
 
 # Create the workflow

@@ -1,5 +1,6 @@
 import json
-from typing import Any, List
+import os
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -13,10 +14,10 @@ except ImportError:
 class NotionTools(Toolkit):
     """
     Notion toolkit for creating and managing Notion pages.
-    
+
     Args:
-        api_key (str): Notion API key (integration token)
-        database_id (str): The ID of the database to work with
+        api_key (Optional[str]): Notion API key (integration token). If not provided, uses NOTION_API_KEY env var.
+        database_id (Optional[str]): The ID of the database to work with. If not provided, uses NOTION_DATABASE_ID env var.
         enable_create_page (bool): Enable creating pages. Default is True.
         enable_update_page (bool): Enable updating pages. Default is True.
         enable_search_pages (bool): Enable searching pages. Default is True.
@@ -25,18 +26,28 @@ class NotionTools(Toolkit):
 
     def __init__(
         self,
-        api_key: str,
-        database_id: str,
+        api_key: Optional[str] = None,
+        database_id: Optional[str] = None,
         enable_create_page: bool = True,
         enable_update_page: bool = True,
         enable_search_pages: bool = True,
         all: bool = False,
-        **kwargs
+        **kwargs,
     ):
-        self.api_key = api_key
-        self.database_id = database_id
-        self.client = Client(auth=api_key)
-        
+        self.api_key = api_key or os.getenv("NOTION_API_KEY")
+        self.database_id = database_id or os.getenv("NOTION_DATABASE_ID")
+
+        if not self.api_key:
+            raise ValueError(
+                "Notion API key is required. Either pass api_key parameter or set NOTION_API_KEY environment variable."
+            )
+        if not self.database_id:
+            raise ValueError(
+                "Notion database ID is required. Either pass database_id parameter or set NOTION_DATABASE_ID environment variable."
+            )
+
+        self.client = Client(auth=self.api_key)
+
         tools: List[Any] = []
         if all or enable_create_page:
             tools.append(self.create_page)
@@ -60,59 +71,26 @@ class NotionTools(Toolkit):
         """
         try:
             log_debug(f"Creating Notion page with title: {title}, tag: {tag}")
-            
+
             # Create the page in the database
             new_page = self.client.pages.create(
                 parent={"database_id": self.database_id},
-                properties={
-                    "Name": {
-                        "title": [
-                            {
-                                "text": {
-                                    "content": title
-                                }
-                            }
-                        ]
-                    },
-                    "Tag": {
-                        "select": {
-                            "name": tag
-                        }
-                    }
-                },
+                properties={"Name": {"title": [{"text": {"content": title}}]}, "Tag": {"select": {"name": tag}}},
                 children=[
                     {
                         "object": "block",
                         "type": "paragraph",
-                        "paragraph": {
-                            "rich_text": [
-                                {
-                                    "type": "text",
-                                    "text": {
-                                        "content": content
-                                    }
-                                }
-                            ]
-                        }
+                        "paragraph": {"rich_text": [{"type": "text", "text": {"content": content}}]},
                     }
-                ]
+                ],
             )
-            
-            result = {
-                "success": True,
-                "page_id": new_page["id"],
-                "url": new_page["url"],
-                "title": title,
-                "tag": tag
-            }
+
+            result = {"success": True, "page_id": new_page["id"], "url": new_page["url"], "title": title, "tag": tag}
             return json.dumps(result, indent=2)
-            
+
         except Exception as e:
             logger.exception(e)
-            return json.dumps({
-                "success": False,
-                "error": str(e)
-            })
+            return json.dumps({"success": False, "error": str(e)})
 
     def update_page(self, page_id: str, content: str) -> str:
         """Add content to an existing Notion page.
@@ -126,7 +104,7 @@ class NotionTools(Toolkit):
         """
         try:
             log_debug(f"Updating Notion page: {page_id}")
-            
+
             # Append content to the page
             self.client.blocks.children.append(
                 block_id=page_id,
@@ -134,33 +112,17 @@ class NotionTools(Toolkit):
                     {
                         "object": "block",
                         "type": "paragraph",
-                        "paragraph": {
-                            "rich_text": [
-                                {
-                                    "type": "text",
-                                    "text": {
-                                        "content": content
-                                    }
-                                }
-                            ]
-                        }
+                        "paragraph": {"rich_text": [{"type": "text", "text": {"content": content}}]},
                     }
-                ]
+                ],
             )
-            
-            result = {
-                "success": True,
-                "page_id": page_id,
-                "message": "Content added successfully"
-            }
+
+            result = {"success": True, "page_id": page_id, "message": "Content added successfully"}
             return json.dumps(result, indent=2)
-            
+
         except Exception as e:
             logger.exception(e)
-            return json.dumps({
-                "success": False,
-                "error": str(e)
-            })
+            return json.dumps({"success": False, "error": str(e)})
 
     def search_pages(self, tag: str) -> str:
         """Search for pages in the database by tag.
@@ -173,75 +135,67 @@ class NotionTools(Toolkit):
         """
         try:
             log_debug(f"Searching for pages with tag: {tag}")
-            
+
             import httpx
-            
+
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Notion-Version": "2022-06-28",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             }
-            
-            payload = {
-                "filter": {
-                    "property": "Tag",
-                    "select": {
-                        "equals": tag
-                    }
-                }
-            }
-            
+
+            payload = {"filter": {"property": "Tag", "select": {"equals": tag}}}
+
             # The SDK client does not support the query method
             response = httpx.post(
                 f"https://api.notion.com/v1/databases/{self.database_id}/query",
                 headers=headers,
                 json=payload,
-                timeout=30.0
+                timeout=30.0,
             )
-            
+
             if response.status_code != 200:
-                return json.dumps({
-                    "success": False,
-                    "error": f"API request failed with status {response.status_code}",
-                    "message": response.text
-                })
-            
+                return json.dumps(
+                    {
+                        "success": False,
+                        "error": f"API request failed with status {response.status_code}",
+                        "message": response.text,
+                    }
+                )
+
             data = response.json()
             pages = []
-            
+
             for page in data.get("results", []):
                 try:
                     page_title = "Untitled"
                     if page.get("properties", {}).get("Name", {}).get("title"):
                         page_title = page["properties"]["Name"]["title"][0]["text"]["content"]
-                    
+
                     page_tag = None
                     if page.get("properties", {}).get("Tag", {}).get("select"):
                         page_tag = page["properties"]["Tag"]["select"]["name"]
-                    
+
                     page_info = {
                         "page_id": page["id"],
                         "title": page_title,
                         "tag": page_tag,
-                        "url": page.get("url", "")
+                        "url": page.get("url", ""),
                     }
                     pages.append(page_info)
                 except Exception as page_error:
                     log_debug(f"Error parsing page: {page_error}")
                     continue
-            
-            result = {
-                "success": True,
-                "count": len(pages),
-                "pages": pages
-            }
+
+            result = {"success": True, "count": len(pages), "pages": pages}
             return json.dumps(result, indent=2)
-            
+
         except Exception as e:
             logger.exception(e)
-            return json.dumps({
-                "success": False,
-                "error": str(e),
-                "message": "Failed to search pages. Make sure the database is shared with the integration and has a 'Tag' property."
-            })
-
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": str(e),
+                    "message": "Failed to search pages. Make sure the database is shared with the integration and has a 'Tag' property.",
+                }
+            )
