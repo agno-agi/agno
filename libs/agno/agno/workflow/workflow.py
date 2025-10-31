@@ -2791,9 +2791,9 @@ class Workflow:
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
                 if isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
                     log_warning(
-                        f"Step '{step.name or f'step_{i+1}'}' has add_workflow_history=True but "
-                        "the Workflow has no database configured. Workflow history will not persist. "
-                        "Add db=SqliteDb() or another database to the Workflow."
+                        f"Step '{step.name or f'step_{i+1}'}' has add_workflow_history=True "
+                        "but no database is configured in the Workflow. "
+                        "History won't be persisted. Add a database to persist runs across executions."
                     )
                 elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                     step_type = type(step).__name__
