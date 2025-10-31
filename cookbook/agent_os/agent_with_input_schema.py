@@ -1,11 +1,11 @@
 from typing import List
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel, Field
-from agno.db.sqlite import SqliteDb
 
 
 class ResearchTopic(BaseModel):

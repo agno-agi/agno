@@ -9,13 +9,14 @@ dictionary inputs into Pydantic models, ensuring type safety and data validation
 from typing import List
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel, Field
-from agno.db.sqlite import SqliteDb
+
 
 class ResearchProject(BaseModel):
     """Structured research project with validation requirements."""
@@ -28,9 +29,7 @@ class ResearchProject(BaseModel):
     depth_level: str = Field(
         description="Research depth level", pattern="^(basic|intermediate|advanced)$"
     )
-    max_sources: int = Field(
-        description="Maximum number of sources to use", default=10
-    )
+    max_sources: int = Field(description="Maximum number of sources to use", default=10)
     include_recent_only: bool = Field(
         description="Whether to focus only on recent sources", default=True
     )
